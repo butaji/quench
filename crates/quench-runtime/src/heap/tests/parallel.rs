@@ -70,9 +70,9 @@ fn record_chain(heap: &mut Heap, keys: [Value; 2]) -> (Value, Vec<Value>) {
             elements.extend(keys);
         }
         let object = heap.alloc_object(plain_object());
-        heap.object_mut_ref(object).unwrap().record().set_inline_property(0, link);
+        heap.object_mut(object).unwrap().record().set_inline_property(0, link);
         let property = heap.alloc_string(format!("object:{index}").into());
-        heap.object_mut_ref(object).unwrap().record().set_inline_property(1, property);
+        heap.object_mut(object).unwrap().record().set_inline_property(1, property);
         strings.push(property);
         elements.push(object);
         link = heap.alloc_array(ArrayObject::new(plain_object(), elements));

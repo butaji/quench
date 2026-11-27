@@ -1676,7 +1676,7 @@ impl LaneStack {
         self.callback_return.caller_registers.set(header.caller_registers);
         // At depth 0, which the push need not load.
         quench_runtime::staged::protocol::push_plain_at(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, 0,
         );
     }
@@ -1699,7 +1699,7 @@ impl LaneStack {
         // counts this window, which starts at the values' top and takes at least `CONTEXT` words.
         if depth == 0 { self.refresh_plain_bound(window.addr()); }
         quench_runtime::staged::protocol::push_plain_at(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, depth as u64,
         );
     }
@@ -1791,7 +1791,7 @@ impl LaneStack {
             );
             let side = lane_frames::Side::of(script, activation.caller_program(), flags);
             push_plain(
-                &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+                &mut quench_runtime::staged::Concrete::pure(),
                 self.plain_frames_word() as u64, window.expose_provenance() as u64, header, u64::from(activation.caller_program().raw()),
             );
             if let Some(side) = side { self.sides.get_mut().push(side); }
@@ -3670,9 +3670,9 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (object, home) = (r.get(i.b), r.get(i.c));
         // The site's last add from this shape under this home (`PrivateSiteHomes::define_shape`).
-        if let Some(data) = vm.object_data(object)
+        if let Some(data) = vm.heap_reads().object(object)
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
-            && vm.private_element_addable(data)
+            && vm.private_element_addable(data.record()) // the record: `private_element_addable` takes the Object
         {
             vm.add_property(object, r.get(i.a), next);
             note_allocation(vm);
@@ -3680,11 +3680,11 @@ script_handler! {
         }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let before = vm.object_data(object).map(|data| data.shape());
+        let before = vm.heap_reads().object(object).map(|data| data.shape());
         if let Err(error) = vm.initialize_private_field(code, object, home, i.imm(), r.get(i.a)) {
             return raise_in_lane(cx, ip, error, |vm, code| vm.initialize_private_field(code, object, home, i.imm(), r.get(i.a)));
         }
-        if let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
+        if let (Some(before), Some(after)) = (before, vm.heap_reads().object(object).map(|data| data.shape()))
             && vm.private_shape_cacheable(before)
             && vm.private_shape_cacheable(after)
         {
@@ -3707,9 +3707,9 @@ script_handler! {
         // The site's last brand from this shape under this home (`PrivateSiteHomes::define_shape`);
         // the shape lacks the brand, so the object is not branded yet.
         if object != home
-            && let Some(data) = vm.object_data(object)
+            && let Some(data) = vm.heap_reads().object(object)
             && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
-            && vm.private_element_addable(data)
+            && vm.private_element_addable(data.record()) // the record: `private_element_addable` takes the Object
         {
             vm.add_property(object, Value::UNDEFINED, next);
             note_allocation(vm);
@@ -3717,12 +3717,12 @@ script_handler! {
         }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let before = vm.object_data(object).map(|data| data.shape());
+        let before = vm.heap_reads().object(object).map(|data| data.shape());
         if let Err(error) = vm.mark_private_name(code, object, home, i.imm()) {
             return raise_in_lane(cx, ip, error, |vm, code| vm.mark_private_name(code, object, home, i.imm()));
         }
         if object != home
-            && let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
+            && let (Some(before), Some(after)) = (before, vm.heap_reads().object(object).map(|data| data.shape()))
             && before != after
             && vm.private_shape_cacheable(before)
             && vm.private_shape_cacheable(after)
@@ -3784,7 +3784,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
+    /// `PrivateIn` (`#x in object`) of an object with its own data (`Heap::object`): whether
     /// it carries the name's brand at this record (`private_brand_in_lane`), a field's or a
     /// method's. Any other operand, which may raise, takes `general_step_in_lane`.
     #[inline(never)]
@@ -3798,11 +3798,11 @@ script_handler! {
         let known = {
             let vm = unsafe { vm(cx) };
             vm.private_classes.unique_name(atom)
-                && vm.object_data(object).is_some_and(|data| vm.private_site_homes.unique_carrier(ip.addr(), data.shape()))
+                && vm.heap_reads().object(object).is_some_and(|data| vm.private_site_homes.unique_carrier(ip.addr(), data.shape()))
         };
         let carries = if known { Some(true) } else { private_brand_in_lane(cx, ip, code, atom).and_then(|brand| {
             let vm = unsafe { vm(cx) };
-            let shape = vm.object_data(object)?.shape();
+            let shape = vm.heap_reads().object(object)?.shape();
             let carries = vm.has_private_name(object, brand);
             if carries && vm.private_shape_cacheable(shape) && vm.private_classes.register(atom, brand.home) {
                 match vm.private_field_slot(object, brand) {
@@ -3842,11 +3842,11 @@ script_handler! {
                 // site's entry a method's or accessor's brand.
                 let vm = unsafe { vm(cx) };
                 if vm.private_classes.unique_name(i.imm()) {
-                    let data = vm.object_data(object)?;
+                    let data = vm.heap_reads().object(object)?;
                     let shape = data.shape();
                     let hint = i.field_hint();
                     if shape == hint.receiver {
-                        return vm.heap_reads().property_get(data, usize::from(hint.slot)).map(PrivateRead::Value);
+                        return vm.heap_reads().property_get_ref(data, usize::from(hint.slot)).map(PrivateRead::Value);
                     }
                     if let Some(element) = vm.private_site_homes.unique_element(ip.addr(), shape) {
                         return Some(element_read(element, object));
@@ -3855,9 +3855,9 @@ script_handler! {
             }
             if let Some(slot) = lane_private_field_slot(cx, ip, code, object, i.imm()) {
                 let vm = unsafe { vm(cx) };
-                let data = vm.object_data(object)?;
+                let data = vm.heap_reads().object(object)?;
                 hint_private_field(vm, ip, i.imm(), data.shape(), slot);
-                return vm.heap_reads().property_get(data, slot).map(PrivateRead::Value);
+                return vm.heap_reads().property_get_ref(data, slot).map(PrivateRead::Value);
             }
             let brand = private_brand_in_lane(cx, ip, code, i.imm())?;
             let vm = unsafe { vm(cx) };
@@ -3869,7 +3869,7 @@ script_handler! {
                     // The brand is the shape's (a key under the brand's home), so the site's
                     // next reads of this shape answer the element from the shape alone, where
                     // the home is the class's that owns the name.
-                    if let Some(shape) = vm.object_data(object).map(|data| data.shape())
+                    if let Some(shape) = vm.heap_reads().object(object).map(|data| data.shape())
                         && vm.private_shape_cacheable(shape)
                         && vm.private_classes.register(i.imm(), brand.home)
                     {

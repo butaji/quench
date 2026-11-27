@@ -9,11 +9,19 @@ use super::{
     superinstructions::ConstArrayPairSuperinstructionsExt, suspend::OperationSuspendExt,
     wasm_access::OperationWasmAccessExt, wasm_state::OperationWasmStateExt,
 };
+#[cfg(not(stencil_build))]
+use super::wasm_float::OperationWasmFloatExt;
+#[cfg(not(stencil_build))]
+use super::wasm_simd::OperationWasmSimdExt;
 
 #[cfg(not(stencil_build))]
 mod glue;
 #[cfg(not(stencil_build))]
 pub use glue::*;
+#[cfg(not(stencil_build))]
+mod records;
+#[cfg(not(stencil_build))]
+pub use records::*;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

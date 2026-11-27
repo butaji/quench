@@ -4,7 +4,8 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::{
-    Access, Memory, WasmMemory, WasmMemoryWrite, copy, fill, load, size, store,
+    Access, AccessWasmMemoryExt, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryWrite, copy,
+    fill, load, size, store,
 };
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;

@@ -744,8 +744,8 @@ impl Vm {
         }
         if promise_resolver {
             self.resolver_function_shape = self
-                .object_data(function)
-                .map(crate::heap::Object::shape)
+                .heap.object(function)
+                .map(|object| object.shape())
                 .filter(|&shape| !self.shape_is_dictionary(shape));
         }
         function
@@ -1703,10 +1703,10 @@ impl Vm {
                 .collect(),
             "Deferred Module",
         )?;
-        let Some(object) = self.object_data_mut(namespace) else {
+        let Some(mut object) = self.heap.object_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
-        object.set_deferred_module(Some(module.clone()));
+        object.record_mut_departing().set_deferred_module(Some(module.clone()));
         Ok(namespace)
     }
 
@@ -1715,9 +1715,10 @@ impl Vm {
         p: &ResidualProgram,
         namespace: Value,
     ) -> Result<Value, JsError> {
+        // The deferred module is record data.
         let Some(module) = self
-            .object_data(namespace)
-            .and_then(|object| object.deferred_module().cloned())
+            .heap.object(namespace)
+            .and_then(|object| object.record().deferred_module().cloned())
         else {
             return Ok(namespace);
         };
@@ -1768,8 +1769,8 @@ impl Vm {
             }
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
-                if let Some(object) = self.object_data_mut(namespace) {
-                    object.set_deferred_module(Some(module));
+                if let Some(mut object) = self.heap.object_mut(namespace) {
+                    object.record_mut_departing().set_deferred_module(Some(module));
                 }
                 settled?;
                 Ok(namespace)
@@ -1785,8 +1786,8 @@ impl Vm {
     ) -> Result<(), JsError> {
         // Only a deferred namespace can evaluate; most objects are rejected before the key.
         if !self
-            .object_data(namespace)
-            .is_some_and(|object| object.deferred_module().is_some())
+            .heap.object(namespace)
+            .is_some_and(|object| object.record().deferred_module().is_some())
         {
             return Ok(());
         }
@@ -1855,12 +1856,14 @@ impl Vm {
         target: Value,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let Some(source) = self.object_data(source).cloned() else {
+        // The record is copied whole: its bindings and deferred module are record data.
+        let Some(source) = self.heap.object(source).map(|object| object.record().clone()) else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         if self.heap.copy_property_storage(&source, target)
-            && let Some(target) = self.object_data_mut(target)
+            && let Some(mut object) = self.heap.object_mut(target)
         {
+            let target = object.record_mut_departing();
             target.set_proto(source.proto());
             if source.is_module_namespace() {
                 target.set_module_namespace();
@@ -2307,8 +2310,9 @@ impl Vm {
             let named_binding = match (&import.imported, module_type) {
                 (crate::bytecode::ModuleImportName::Named(name), "javascript") => {
                     let atom = self.intern_atom(name);
-                    self.object_data(namespace)
-                        .and_then(|object| object.module_binding(atom))
+                    self.heap.object(namespace)
+                        // Module bindings are record data.
+                        .and_then(|object| object.record().module_binding(atom))
                 }
                 _ => None,
             };
@@ -2328,8 +2332,8 @@ impl Vm {
                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
                     let atom = self.intern_atom(name);
                     let is_namespace = self
-                        .object_data(namespace)
-                        .is_some_and(Object::is_module_namespace);
+                        .heap.object(namespace)
+                        .is_some_and(|object| object.is_module_namespace());
                     // A named import of a pending builtin export takes the member's value now.
                     let fallback = match self.own_property(namespace, atom) {
                         Some(value) => Some(self.resolve_pending_binding(p, value)?),
@@ -3354,8 +3358,9 @@ impl Vm {
         namespace: Value,
     ) -> Result<(), JsError> {
         let bindings = self
-            .object_data(namespace)
-            .map(|object| object.module_bindings().to_vec())
+            .heap.object(namespace)
+            // Module bindings are record data.
+            .map(|object| object.record().module_bindings().to_vec())
             .unwrap_or_default();
         for (atom, program, slot) in bindings {
             let Some(environment) = self.programs.module_environment(program) else {
@@ -3366,7 +3371,7 @@ impl Vm {
                 .environment_slot(environment, usize::from(slot))
                 .ok_or_else(|| self.type_error(p, "module export slot is unavailable".into()))?;
             let property = self
-                .object_data(namespace)
+                .heap.object(namespace)
                 .and_then(|object| self.shape_slot(object.shape(), atom))
                 .ok_or_else(|| {
                     self.type_error(p, "module export property is unavailable".into())
@@ -4497,14 +4502,15 @@ impl Vm {
             values.push((name, value));
         }
         let namespace = self.module_namespace(values)?;
-        if let Some(object) = self.object_data_mut(namespace) {
-            object.set_module_bindings(bindings);
+        if let Some(mut object) = self.heap.object_mut(namespace) {
+            object.record_mut_departing().set_module_bindings(bindings);
         }
         Ok(namespace)
     }
 
     fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
-        let object = self.object_data(namespace)?;
+        // The module bindings are record data.
+        let object = self.heap.object(namespace)?.record();
         let bindings = object
             .module_bindings()
             .iter()
@@ -4630,8 +4636,8 @@ impl Vm {
         let namespace = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
-        if let Some(object) = self.object_data_mut(namespace) {
-            object.set_module_namespace();
+        if let Some(mut object) = self.heap.object_mut(namespace) {
+            object.record_mut_departing().set_module_namespace();
         }
         self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
         // Export names are distinct, so each is appended with its final attributes and
@@ -4670,7 +4676,7 @@ impl Vm {
                 },
             );
         }
-        if let Some(object) = self.object_data_mut(namespace) {
+        if let Some(mut object) = self.heap.object_mut(namespace) {
             object.set_extensible(false);
         }
         Ok(namespace)
@@ -4765,7 +4771,7 @@ impl Vm {
     /// observes nothing: `undefined` for a non-object, else its plain-data `then`
     /// (`plain_named_load`). `None` where the read could run guest code.
     pub fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
-        if self.object_data(value).is_none() {
+        if self.heap.object(value).is_none() {
             return Some(Value::UNDEFINED);
         }
         if let Some(then) = self.memoized_resolution_then(value) {
@@ -4805,7 +4811,7 @@ impl Vm {
             return;
         }
         self.heap.mark_prototype(prototype);
-        let Some(holder) = self.heap.object_ref(prototype) else { return };
+        let Some(holder) = self.heap.object(prototype) else { return };
         if holder.record().has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
             return;
         }
@@ -4910,14 +4916,14 @@ impl Vm {
         // The holder is `hops` links up from the promise.
         let mut holder = promise;
         for _ in 0..hops {
-            let Some(link) = self.heap.object_ref(holder) else { return };
+            let Some(link) = self.heap.object(holder) else { return };
             holder = link.proto();
         }
         let (Some(chain), Some(own)) = (self.chain_cell(prototype, hops), self.chain_cell(constructor, 1)) else {
             *self.promise_species_proof.borrow_mut() = None;
             return;
         };
-        let watch = |object| self.heap.object_ref(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
+        let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
             .map(|(holder, constructor)| PromiseSpeciesProof {
                 layout,

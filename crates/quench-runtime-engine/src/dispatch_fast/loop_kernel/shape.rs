@@ -499,7 +499,7 @@ fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
         (SymOp::Arith(operation @ NumberArithmetic::Subtract), Sym::Affine(register, offset), other) => (register, offset, other, operation),
         _ => return None,
     };
-    let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+    let mut stage = quench_runtime::staged::Concrete::pure();
     let (word, overflowed) = quench_runtime::staged::NumericStage::int_arithmetic(
         &mut stage,
         operation,

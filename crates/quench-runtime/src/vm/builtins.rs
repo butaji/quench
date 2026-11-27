@@ -400,7 +400,7 @@ impl Vm {
                 .insert((self.realm.globals, native), prototype);
         }
         let object_proto = self.object_proto;
-        self.object_data_mut(self.realm.globals)
+        self.heap.object_mut(self.realm.globals)
             .unwrap()
             .set_proto(object_proto);
     }
@@ -590,7 +590,7 @@ impl Vm {
                 },
             );
         }
-        self.object_data_mut(thrower)
+        self.heap.object_mut(thrower)
             .expect("ThrowTypeError is a function object")
             .set_extensible(false);
         self.set_builtin_value_named(global, INTRINSIC_KEY, thrower)?;

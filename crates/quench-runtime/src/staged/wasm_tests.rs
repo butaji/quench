@@ -12,6 +12,7 @@ use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as F
 use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator as Binary, I64UnaryOperator as Unary,
 };
+use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
 
 /// Operands at the edges of both widths: zero, signs, shift counts at and past the width,

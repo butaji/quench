@@ -736,15 +736,12 @@ pub fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, upper_wor
 }
 
 /// The value at `slot` of the live object `object`, whose exact shape (no dictionary) holds
-/// it, through the arena whose values start at `property_values`: the interpreter's reading
-/// of `own_layout` and `read_slot`.
+/// it, through the arena `stage` is over: the interpreter's reading of `own_layout` and `read_slot`.
 ///
 /// # Safety
-/// `object` is a live record whose exact shape covers `slot`, and `property_values` is the
-/// base of the arena that holds its run.
+/// `object` is a live record of the heap `stage` is over, whose exact shape covers `slot`.
 #[inline(always)]
-pub unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
-    let mut stage = Concrete::new(property_values);
+pub unsafe fn concrete_own_read(object: &crate::heap::Object, mut stage: Concrete, slot: usize) -> crate::Value {
     let record = object as *const crate::heap::Object as u64;
     let word = header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, slot + 1, PackedAccess::Reload, ())

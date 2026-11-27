@@ -1,7 +1,7 @@
 //! Waiter lifecycle belongs to the linear-memory backing, independently of VM frames.
 
 use crate::shared_backing::memory_order;
-use super::memory::{MemoryLoad, MemoryStorage, SharedMemory};
+use super::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStorage, SharedMemory};
 use super::{WasmTrap, WasmValue};
 use std::time::Duration;
 

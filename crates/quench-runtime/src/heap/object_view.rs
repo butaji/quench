@@ -1,10 +1,9 @@
-//! The views through which callers reach an ordinary object. `Heap::object_ref` and `Heap::object_mut_ref`
+//! The views through which callers reach an ordinary object. `Heap::object` and `Heap::object_mut`
 //! return an `ObjectRef` or `ObjectMut`: either a class cell (`heap/class_space.rs`, fixed class, fields
 //! inline) or a record (`&Object`, the record table, the form every object has today).
 //!
 //! The read and mutation methods here are the ones callers use on an object: class, shape, prototype and
-//! flags. Each forwards to the `Object` method of the same name, so a caller converts by changing
-//! `heap.object(v)` to `heap.object_ref(v)` and keeps its method calls. Anything else (extras, elements,
+//! flags. Each forwards to the `Object` method of the same name, so a caller keeps its method calls on the view. Anything else (extras, elements,
 //! arena runs, inline values, payload words) is reached through `record()`: on a cell that takes the
 //! departure edge (R4-C4), so the record view is always the full object.
 //!
@@ -94,7 +93,7 @@ impl<'a> ObjectMut<'a> {
     pub fn as_shared(&self) -> ObjectRef<'_> {
         match self {
             ObjectMut::Record(object) => ObjectRef::Record(&**object),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -104,6 +103,26 @@ impl<'a> ObjectMut<'a> {
     pub fn record(&mut self) -> &mut Object {
         match self {
             ObjectMut::Record(object) => &mut **object,
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
+        }
+    }
+
+    /// The record view of the object for a mutation that needs record data (extras, arena runs, record
+    /// flags). R4-C4 departs a cell first: on a cell this takes the departure edge, so the record is the whole object.
+    #[inline(always)]
+    pub fn record_mut_departing(&mut self) -> &mut Object {
+        match self {
+            ObjectMut::Record(object) => &mut **object,
+            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+        }
+    }
+
+    /// The record view for a mutation of record-only state, consuming the view so the record outlives it.
+    /// R4-C4 departs a cell first; until then this is the Record arm only.
+    #[inline(always)]
+    pub fn record_mut_departing(self) -> &'a mut Object {
+        match self {
+            ObjectMut::Record(object) => object,
             ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
         }
     }
@@ -166,13 +185,25 @@ impl<'a> ObjectMut<'a> {
         self.as_shared().is_module_namespace()
     }
 
-    // Mutations. Class-changing edges (`set_class`, departure) arrive with R4-C4.
+    /// The class edge (R4-C4): makes `class` the object's class, its header word. A cell's header
+    /// holds the class id (`live_header`); a record takes it through `Object::set_class`. The caller
+    /// retires the readers of the old class (`Heap::set_class`).
+    #[inline(always)]
+    pub fn set_class(&mut self, class: u32) {
+        match self {
+            ObjectMut::Record(object) => object.set_class(class),
+            ObjectMut::Cell(cell) => *cell.header = super::class_space::live_header(class),
+        }
+    }
+
+    // Mutations. A class cell departs before its mutable view is made (`Heap::object_mut`), so
+    // these reach records only; the cell arms are unreachable by construction.
 
     #[inline(always)]
     pub fn set_proto(&mut self, proto: Value) {
         match self {
             ObjectMut::Record(object) => object.set_proto(proto),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -180,7 +211,7 @@ impl<'a> ObjectMut<'a> {
     pub fn set_extensible(&mut self, value: bool) {
         match self {
             ObjectMut::Record(object) => object.set_extensible(value),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -188,7 +219,7 @@ impl<'a> ObjectMut<'a> {
     pub fn set_frozen(&mut self, value: bool) {
         match self {
             ObjectMut::Record(object) => object.set_frozen(value),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -196,7 +227,7 @@ impl<'a> ObjectMut<'a> {
     pub fn mark_as_prototype(&mut self) {
         match self {
             ObjectMut::Record(object) => object.mark_as_prototype(),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -204,7 +235,7 @@ impl<'a> ObjectMut<'a> {
     pub fn mark_constant(&mut self) {
         match self {
             ObjectMut::Record(object) => object.mark_constant(),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 
@@ -212,7 +243,7 @@ impl<'a> ObjectMut<'a> {
     pub fn note_constant_write(&mut self) {
         match self {
             ObjectMut::Record(object) => object.note_constant_write(),
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Cell(_) => unreachable!("a class cell departs before its mutable view"),
         }
     }
 }

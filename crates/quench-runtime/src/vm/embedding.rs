@@ -38,7 +38,8 @@ impl Vm {
     }
 
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
-        self.object_data(value)?.boxed_primitive()
+        // record-only: boxed primitive state
+        self.heap.object(value)?.record().boxed_primitive()
     }
 
     pub(super) fn boxed_primitive_data(
@@ -325,7 +326,7 @@ impl Vm {
         Ok(match brand {
             B::External => self
                 .heap
-                .object_ref(value)
+                .object(value)
                 .and_then(|object| object.record().external_address())
                 .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
@@ -346,8 +347,8 @@ impl Vm {
                 matches!(cell, Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
             }
             B::ArgumentsObject => self
-                .object_data(value)
-                .is_some_and(Object::is_arguments_object),
+                .heap.object(value)
+                .is_some_and(|object| object.record().is_arguments_object()), // record-only: arguments flag
             B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
                 Some(FunctionRecord {
                     kind:
@@ -396,7 +397,7 @@ impl Vm {
                 value.direct_object_index().is_some()
                     && self
                         .heap
-                        .object_ref(value)
+                        .object(value)
                         .is_some_and(|object| object.is_module_namespace())
             }
             B::BooleanObject
@@ -465,8 +466,8 @@ impl Vm {
         let value = self.embedding_value(error)?;
         // Proxy objects deliberately do not expose their target's captured metadata.
         if let Some(crate::heap::StackData::Captured { records, source }) = self
-            .object_data(value)
-            .and_then(crate::heap::Object::stack_data)
+            .heap.object(value)
+            .and_then(|object| object.record().stack_data()) // record-only: stack data
             && let Some(record) = records
                 .iter()
                 .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
@@ -892,7 +893,7 @@ impl Vm {
 
     fn own_data_string(&self, object: Value, name: &str) -> Option<String> {
         let atom = self.lookup_atom(name)?;
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         let index = self.shape_slot(data.shape(), atom)?;
         if self
             .property_attributes(object, super::property_key::PropertyKey::string(atom))
@@ -900,7 +901,7 @@ impl Vm {
         {
             return None;
         }
-        let value = self.heap.property_get(data, index)?;
+        let value = self.heap.property_get_ref(data, index)?;
         self.heap.string(value).map(|text| text.host_string().to_owned())
     }
 
@@ -1233,7 +1234,7 @@ impl Vm {
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
         self.heap
-            .object_mut_ref(value)
+            .object_mut(value)
             .expect("new native object")
             .record().set_external_address(address);
         Ok(value)
@@ -1241,7 +1242,7 @@ impl Vm {
 
     pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
         let value = self.root_value(root)?;
-        self.heap.object_ref(value)?.record().external_address()
+        self.heap.object(value)?.record().external_address()
     }
 
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {

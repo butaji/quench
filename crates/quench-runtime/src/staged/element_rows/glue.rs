@@ -36,7 +36,7 @@ impl<W, P> OperationElementRowsExt<W, P> for Operation<W, P> {
 #[inline(always)]
 pub fn concrete_record_replace(records: *const crate::heap::ArrayObject, base: crate::Value, index: usize,
     value: crate::Value) -> bool {
-    let mut stage = Concrete::new(core::ptr::null());
+    let mut stage = Concrete::pure();
     prove_view(&mut stage, records as u64, base.to_bits(), true, ())
         .and_then(|view| replace_present(&mut stage, view, index as u64, value.to_bits(), ()))
         .is_some()

@@ -232,7 +232,7 @@ pub(crate) fn concrete_is_integral(value: Value) -> bool {
 /// (`call_native::step_number_native_of`): false for any value that is no Number.
 #[inline(always)]
 pub(crate) fn concrete_number_predicate(native: super::call_native::NumberNative, value: Value) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let answer = super::call_native::step_number_native_of(&mut stage, native, &[value.to_bits()], ());
     answer == Some(Value::boolean(true).to_bits())
 }
@@ -241,7 +241,7 @@ pub(crate) fn concrete_number_predicate(native: super::call_native::NumberNative
 /// when either is no Number.
 #[inline(always)]
 pub(crate) fn concrete_same_number(left: Value, right: Value) -> Option<bool> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let answer = super::call_native::step_number_native_of(&mut stage, super::call_native::NumberNative::SameValue, &[left.to_bits(), right.to_bits()], ())?;
     Some(answer == Value::boolean(true).to_bits())
 }
@@ -250,7 +250,7 @@ pub(crate) fn concrete_same_number(left: Value, right: Value) -> Option<bool> {
 /// `record_base` whose backing has room for `room` values: the new length.
 #[inline(always)]
 pub(crate) fn concrete_array_push(record_base: *const ArrayObject, array: Value, room: usize, value: Value) -> Option<Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
     step_array_native_of(&mut stage, ArrayNative::Push { room: room as u64, value: value.to_bits() }, backing, ()).map(Value::from_bits)
 }
@@ -258,7 +258,7 @@ pub(crate) fn concrete_array_push(record_base: *const ArrayObject, array: Value,
 /// The interpreter's `pop` of `array` (`step_array_native_of`), a direct array among the records at `record_base`.
 #[inline(always)]
 pub(crate) fn concrete_array_pop(record_base: *const ArrayObject, array: Value) -> Option<Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let backing = array_backing(&mut stage, record_base as u64, array.to_bits(), ())?;
     step_array_native_of(&mut stage, ArrayNative::Pop, backing, ()).map(Value::from_bits)
 }
@@ -268,7 +268,7 @@ mod tests {
     use super::*;
     use crate::heap::{ArrayElements, NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
 
-    fn stage() -> Concrete { Concrete::new(std::ptr::null()) }
+    fn stage() -> Concrete { Concrete::pure() }
 
     #[test]
     fn length_is_an_int32_word_up_to_int32_and_leaves_past_it() {

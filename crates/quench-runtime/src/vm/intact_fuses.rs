@@ -73,7 +73,7 @@ impl Vm {
     fn prove_fuse(&mut self, fuse: IntactFuse, holder: Value) -> bool {
         self.heap.mark_prototype(holder);
         let slot = self.fuse_slot(fuse, holder);
-        if let Some(subject) = self.heap.object_ref(holder).and_then(|data| data.watched_subject()) {
+        if let Some(subject) = self.heap.object(holder).and_then(|data| data.watched_subject()) {
             let slot = slot.and_then(|slot| u32::try_from(slot).ok());
             self.heap.dependencies_mut().fuses_mut().prove(fuse, holder, subject, slot);
         }
@@ -83,20 +83,21 @@ impl Vm {
     /// The slot where `holder` keeps `fuse`'s intrinsic as an own data property, if it does.
     fn fuse_slot(&self, fuse: IntactFuse, holder: Value) -> Option<usize> {
         let (key, native) = self.fuse_property(fuse)?;
-        let data = self.object_data(holder)?;
+        let data = self.heap.object(holder)?;
         let slot = self.property_shape_slot(data.shape(), key)?;
         // A getter-only accessor keeps its getter in the slot, as the fuse's intrinsic; a
         // data property holds its value there.
         let getter = matches!(IntactFuse::SPEC[fuse as usize].0, FuseKey::SpeciesSymbol);
+        // record: slot_attributes takes the record
         let holds = if getter {
             !self.shape_is_dictionary(data.shape()) && self.shape_slot_attributes(data.shape(), slot).is_some_and(ShapeAttributes::slot_getter)
         } else {
-            !self.slot_attributes(data, slot)?.accessor
+            !self.slot_attributes(data.record(), slot)?.accessor
         };
         if !holds {
             return None;
         }
-        let value = self.heap.property_get(data, slot)?;
+        let value = self.heap.property_get_ref(data, slot)?;
         self.is_current_realm_native(value, native).then_some(slot)
     }
 

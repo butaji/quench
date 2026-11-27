@@ -160,7 +160,7 @@ pub(crate) fn leaf_call_handler(entry: CallEntry, i: &LaneInstruction) -> Handle
 #[inline(always)]
 fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
     quench_runtime::staged::call_leaf::guard_receiver_binds(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), receiver.to_bits(), target.this_binding == ThisBinding::Sloppy, (),
+        &mut quench_runtime::staged::Concrete::pure(), receiver.to_bits(), target.this_binding == ThisBinding::Sloppy, (),
     )
     .is_some()
 }
@@ -249,7 +249,7 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
         let context = LeafContext { this: this.to_bits(), env: target.env.to_bits(), capture: target.capture.expose_provenance() as u64 };
         let leaf = std::ptr::addr_of_mut!((*cx).leaf);
         step_leaf_call_of(
-            &mut Concrete::new(std::ptr::null()), &mut window_fill, leaf.expose_provenance() as u64,
+            &mut Concrete::pure(), &mut window_fill, leaf.expose_provenance() as u64,
             window.0.expose_provenance() as u64, entry, context,
         );
         (*leaf).caller_program = caller_program;
@@ -300,7 +300,7 @@ fn lane_return_leaf(cx: *mut LaneContext, value: Value, form: LeafForm) -> Optio
         u64::from((*call).a & quench_runtime::bytecode::REGISTER_MASK) * 8
     };
     let caller = quench_runtime::staged::call_leaf::step_leaf_return_of(
-        &mut Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, value.to_bits(), result_at, (),
+        &mut Concrete::pure(), leaf.expose_provenance() as u64, value.to_bits(), result_at, (),
     )?;
     let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
     let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));

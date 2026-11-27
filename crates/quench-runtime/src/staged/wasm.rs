@@ -29,7 +29,7 @@ impl Width {
     }
 
     #[inline]
-    pub(crate) const fn of(ty: WasmType) -> Option<Self> {
+    pub const fn of(ty: WasmType) -> Option<Self> {
         match ty {
             WasmType::I32 => Some(Self::I32),
             WasmType::I64 => Some(Self::I64),
@@ -46,20 +46,20 @@ impl Width {
 
     /// The most negative value of the width, sign-extended to 64 bits.
     #[inline]
-    pub(crate) const fn minimum(self) -> i64 {
+    pub const fn minimum(self) -> i64 {
         i64::MIN >> (i64::BITS - self.bits())
     }
 }
 
 /// The machine a Wasm integer operation runs on: its primitives (`MachineStage`) and nothing
 /// more, so every machine of the primitives is a Wasm stage.
-pub(crate) trait WasmStage: MachineStage {}
+pub trait WasmStage: MachineStage {}
 
 impl<S: MachineStage> WasmStage for S {}
 
 /// Whether `operator` compares: its result is an `I32` flag at either width.
 #[inline(always)]
-pub(crate) const fn is_comparison(operator: Binary) -> bool {
+pub const fn is_comparison(operator: Binary) -> bool {
     matches!(
         operator,
         Binary::Equal
@@ -77,7 +77,7 @@ pub(crate) const fn is_comparison(operator: Binary) -> bool {
 
 /// The width of `operator`'s result at `width` operands.
 #[inline(always)]
-pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
+pub const fn binary_result(operator: Binary, width: Width) -> Width {
     if is_comparison(operator) {
         Width::I32
     } else {
@@ -87,7 +87,7 @@ pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
 
 /// The width of `operator`'s result at a `width` operand: a test of zero is a flag.
 #[inline(always)]
-pub(crate) const fn unary_result(operator: Unary, width: Width) -> Width {
+pub const fn unary_result(operator: Unary, width: Width) -> Width {
     match operator {
         Unary::EqualZero => Width::I32,
         _ => width,
@@ -146,7 +146,7 @@ fn check_division<S: WasmStage>(
 /// The integer operator a tag names. A tag outside the family names no row, so the first operator
 /// stands in (the dispatch never reaches it).
 #[cfg(stencil_build)]
-pub(crate) const fn binary_operator(tag: u32) -> Binary {
+pub const fn binary_operator(tag: u32) -> Binary {
     match Binary::from_tag(tag) {
         Some(operator) => operator,
         None => Binary::Add,
@@ -155,7 +155,7 @@ pub(crate) const fn binary_operator(tag: u32) -> Binary {
 
 /// The integer unary operator a tag names, as `binary_operator`.
 #[cfg(stencil_build)]
-pub(crate) const fn unary_operator(tag: u32) -> Unary {
+pub const fn unary_operator(tag: u32) -> Unary {
     match Unary::from_tag(tag) {
         Some(operator) => operator,
         None => Unary::EqualZero,

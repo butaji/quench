@@ -108,7 +108,7 @@ fn concrete_arithmetic(left: NumberWord, right: NumberWord, operation: NumberAri
 /// `concrete_arithmetic` with `zero` for the product's negative zero.
 fn concrete_arithmetic_zero(left: NumberWord, right: NumberWord, operation: NumberArithmetic,
     (domain, overflow): (Domain, Overflow), zero: NegativeZero) -> Option<NumberWord> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Arithmetic {
         destination: 2, left: Operand::register(0), right: Operand::register(1),
@@ -122,7 +122,7 @@ fn concrete_arithmetic_zero(left: NumberWord, right: NumberWord, operation: Numb
 }
 
 fn concrete_relation(left: NumberWord, right: NumberWord, relation: NumberRelation, domain: Domain) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Relation {
         left: Operand::register(0), right: Operand::register(1), relation, domain,
@@ -214,7 +214,7 @@ fn staged_number_relations_are_ieee_comparisons_in_both_domains() {
 
 /// `++`/`--` of an int32 register, or `None` where it left at its miss edge.
 fn concrete_increment(value: i32, decrement: bool, overflow: Overflow) -> Option<NumberWord> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = number_frame(NumberWord::Int(value), NumberWord::Int(0));
     let operation = Operation::Number(NumberOperation::IncDec { destination: 2, source: 0, decrement, overflow });
     match step(&mut stage, &mut frame, operation) {
@@ -237,7 +237,7 @@ fn staged_increments_are_int32_sums_with_one() {
 
 /// The remainder result, or `None` where the operation left at its miss edge.
 fn concrete_remainder(left: NumberWord, right: NumberWord, domain: Domain) -> Option<NumberWord> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Remainder {
         destination: 2, left: Operand::register(0), right: Operand::register(1), domain,

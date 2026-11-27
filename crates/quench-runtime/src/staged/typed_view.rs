@@ -141,7 +141,7 @@ pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: cr
     -> Option<TypedView<u64>> {
     let relocations = crate::heap::buffer_relocations_address();
     let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64, relocations: relocations.addr() as u64 };
-    prove_typed_view(&mut Concrete::new(std::ptr::null()), records, base.to_bits(), access, ())
+    prove_typed_view(&mut Concrete::pure(), records, base.to_bits(), access, ())
 }
 
 /// The interpreter's Number (an `f64`'s bits) at element `index` of `view`: the element row
@@ -149,7 +149,7 @@ pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: cr
 #[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<u64> {
-    typed_read(&mut Concrete::new(std::ptr::null()), view, index as u64, ())
+    typed_read(&mut Concrete::pure(), view, index as u64, ())
 }
 
 /// The Number of the DataView element `kind` at byte `index` of `bytes` (a view's bytes), in

@@ -241,7 +241,7 @@ impl Vm {
         let constructor = self.native_value(native);
         let prototype_atom = self.prototype_atom();
         let candidate = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.object_data(candidate).is_some() {
+        let prototype = if self.heap.object(candidate).is_some() {
             candidate
         } else {
             let realm = self
@@ -255,7 +255,7 @@ impl Vm {
             });
             let realm_constructor = self.get_property(p, realm, constructor_atom)?;
             let realm_prototype = self.get_property(p, realm_constructor, prototype_atom)?;
-            if self.object_data(realm_prototype).is_some() {
+            if self.heap.object(realm_prototype).is_some() {
                 realm_prototype
             } else {
                 self.own_property(constructor, prototype_atom)

@@ -101,7 +101,7 @@ impl Vm {
             if let Some(attributes) = self.property_attributes(holder, key) {
                 return (!attributes.accessor).then(|| self.own_property(holder, atom)).flatten();
             }
-            holder = match self.object_data(holder) {
+            holder = match self.heap.object(holder) {
                 Some(object) => object.proto(),
                 None => return Some(Value::UNDEFINED),
             };

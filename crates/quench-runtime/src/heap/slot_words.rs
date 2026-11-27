@@ -23,7 +23,7 @@ impl Heap {
     /// owners hold the same types (`encodings_match`). `false`, before any effect, for a source
     /// whose values are not one compact wide run.
     pub(crate) fn copy_slot_words(&mut self, target: Value, source: Value, shape: u32) -> bool {
-        let Some(source_vector) = self.object_ref(source).map(|object| object.record().properties()) else {
+        let Some(source_vector) = self.object(source).map(|object| object.record().properties()) else {
             return false;
         };
         let len = self.properties.shape_length(shape);
@@ -31,14 +31,14 @@ impl Heap {
             || self.properties.len(source_vector) != len
             || !source_vector.has_compact_range()
             || source_vector.is_narrow()
-            || self.object_ref(target).is_none()
+            || self.object(target).is_none()
         {
             return false;
         }
         let Some(vector) = self.properties.copy_run(source_vector, len, shape) else {
             return false;
         };
-        let (mut object, arena) = self.object_and_arena_mut_ref(target).expect("property owner is an object");
+        let (mut object, arena) = self.object_and_arena_mut(target).expect("property owner is an object");
         let previous = object.record().replace_property_storage(vector, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], arena);
         arena.release(previous);
         true

@@ -31,7 +31,7 @@ fn staged_load_capture_walked(cx: *mut LaneContext, r: Registers, view: Carried,
 #[inline(always)]
 fn load_capture_with(cx: *mut LaneContext, r: Registers, view: Carried,
     (destination, (depth, slot), root): (u16, (u16, u16), bool), reads: Reads) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.capture_slots = Some(capture_reads(unsafe { (*cx).registers }.capture()));
     frame.reads = reads;

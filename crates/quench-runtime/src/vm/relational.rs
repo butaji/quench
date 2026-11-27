@@ -131,8 +131,8 @@ impl Vm {
                     }
                     if let Some(atom) = key_atom
                         && vm
-                            .object_data(current)
-                            .is_some_and(Object::is_module_namespace)
+                            .heap.object(current)
+                            .is_some_and(|object| object.is_module_namespace())
                     {
                         vm.evaluate_deferred_namespace_for_key(
                             p,
@@ -362,7 +362,7 @@ impl Vm {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
-        self.heap.object_ref(value).map(|object| object.record())
+        self.heap.object(value).map(|object| object.record())
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
@@ -385,7 +385,7 @@ impl Vm {
                 if !self.shape_is_dictionary(shape) {
                     self.instanceof_constructor_layouts[instanceof_layout_index(shape)] = Some((shape, slot));
                 }
-                self.heap.property_get(self.object_data(constructor)?, slot)?
+                self.heap.property_get_ref(self.heap.object(constructor)?, slot)?
             }
         };
         if !self.inherits_native_has_instance(holder) {
@@ -404,7 +404,7 @@ impl Vm {
                 Some(object) => object.proto(),
                 None => match self.heap.get(current) {
                     Some(Cell::Proxy { .. }) => return None,
-                    _ => self.heap.object_ref(current).map_or(Value::NULL, |object| object.proto()),
+                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
                 },
             };
             if next.is_null() {
@@ -536,7 +536,7 @@ impl Vm {
             {
                 return self.verify_has_instance_holder(current);
             }
-            let Some(object) = self.heap.object_ref(current) else {
+            let Some(object) = self.heap.object(current) else {
                 return false;
             };
             current = object.proto();
@@ -562,7 +562,7 @@ impl Vm {
         let mut current = holder;
         let mut depth = 0u8;
         while current != self.instanceof_has_instance_holder {
-            let Some(object) = self.heap.object_ref(current) else {
+            let Some(object) = self.heap.object(current) else {
                 return;
             };
             current = object.proto();

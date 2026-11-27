@@ -271,7 +271,7 @@ impl VectorRegion {
             Place::Bank(register) => unsafe { bank.get_unchecked(usize::from(register)).assume_init() },
             Place::I32(register) => u128::from(r.i32(register) as u32),
         };
-        let mut stage = staged::Concrete::new(std::ptr::null());
+        let mut stage = staged::Concrete::pure();
         loop {
             for step in &self.steps {
                 match *step {
