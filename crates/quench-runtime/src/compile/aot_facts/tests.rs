@@ -3,6 +3,7 @@
 use super::{analyze, AotFacts};
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
+use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
 use crate::ValueType;
 
@@ -369,4 +370,100 @@ fn a_computed_name_store_into_the_global_object_loses_a_layout_that_makes_an_arr
     let facts = analyze(&program);
     let p = function_named(&program, "P") as u32;
     assert_eq!(facts.class_layout(p), None, "the global object is reachable, so Array may be rebound before the store");
+}
+
+/// The pc, index register and array register of each element access (a read or a store) of function `id`.
+fn element_accesses(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<(u32, u16, u16)> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter_map(|pc| match Operation::<u64, ()>::of(function.instruction_at(pc))? {
+            Operation::ElementRead { base, key, .. } => Some((pc as u32, key.register_index()?, base)),
+            Operation::ElementWrite { base, key, .. } => Some((pc as u32, key, base)),
+            _ => None,
+        }).collect()
+    })
+}
+
+#[test]
+fn an_index_tested_against_an_arrays_length_is_below_it_in_the_loop_body() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the store at {pc} is below the length");
+    }
+}
+
+#[test]
+fn an_index_tested_against_a_constant_is_below_no_length() {
+    let program = program("function f(a) { for (var i = 0; i < 10; i++) { a[i] = i; } } f([0, 0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a constant bound proves no length");
+    }
+}
+
+#[test]
+fn a_push_in_the_loop_retires_the_bound_on_its_array() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a.push(i); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a push may resize the array before the store at {pc}");
+    }
+}
+
+#[test]
+fn a_store_to_the_length_retires_the_bound_on_its_array() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a.length = 0; a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a length store retires the bound before {pc}");
+    }
+}
+
+#[test]
+fn a_call_keeps_the_bound_on_a_string_whose_length_never_changes() {
+    let program = program("function f() { var s = 'abc'; var n = 0; for (var i = 0; i < s.length; i++) { n = s.charCodeAt(0); n = s[i]; } return n; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop reads the string");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the read at {pc} is below the string's length");
+    }
+}
+
+#[test]
+fn an_index_tested_past_a_constant_is_below_the_length_by_that_constant() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i + 1 < a.length; i++) { a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length_offset(pc, index, array, 1), "`i + 1 < length` puts `i + 1` below the length at {pc}");
+        assert!(!facts.function_facts(f as u32).below_length_offset(pc, index, array, 2), "and not two past it at {pc}");
+    }
+}
+
+#[test]
+fn an_index_plus_a_constant_below_the_length_is_below_it_through_its_sum() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i + 1 < a.length; i++) { a[i + 1] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the sum `i + 1` is below the length at {pc}");
+    }
 }
