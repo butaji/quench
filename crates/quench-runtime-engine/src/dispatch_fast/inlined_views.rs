@@ -4,6 +4,10 @@
 //! to it at any caller origin (`record_pc`). This registry maps an inlined record to its origin by
 //! the record's address, so a slow path's PC is the original's whichever view the run is in.
 
+#[allow(unused_imports)]
+use crate::ext_traits::*;
+#[allow(unused_imports)]
+use super::*;
 use crate::compiled::lane_unit::{InlinedCall, Origin};
 use quench_runtime::vm::engine_types::{Ip, LaneView};
 use std::cell::{Cell, RefCell};
@@ -96,9 +100,10 @@ fn leaf_callee(code: &quench_runtime::ResidualProgram, function: u32) -> bool {
 
 /// Makes and registers the inlined view of `function` of the running program, whose own view is
 /// `original` (N7a): its unit (`lane_unit::unit`) splicing in the leaf callees its call sites link,
-/// derived as the function's second record array. `None`, registering nothing, where it inlines no
-/// call or the function is one N7a leaves (handlers, generators, async, dynamic scopes).
-pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, original: *const LaneView) -> Option<*const LaneView> {
+/// derived as the function's second record array, its call markers made `inlined_call_marker`
+/// records. The view and its unit's register count; `None`, registering nothing, where it inlines
+/// no call or the function is one N7a leaves (handlers, generators, async, dynamic scopes).
+pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, original: *const LaneView) -> Option<(*const LaneView, u16)> {
     // SAFETY: the running lane's context; its program outlives the run.
     let (vm, code, program) = unsafe { (super::vm(cx), &*(*cx).code, (*cx).program) };
     let body = code.function_get(function as usize)?;
@@ -111,7 +116,7 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
             .collect()
     };
     let unit = crate::compiled::lane_unit::unit(code, function, body, &targets, &|callee| code.function_get(callee as usize))?;
-    if unit.frames.is_empty() { return None; }
+    if unit.frames.is_empty() || unit.registers > u16::from(u8::MAX) { return None; }
     let masks = unit.register_masks(code, function).map(|masks| std::rc::Rc::new(masks.into_owned()));
     let synthetic = body.with_unit_code(&unit.instructions, unit.registers)?;
     let proper_tail_calls = vm.host.proper_tail_calls();
@@ -122,11 +127,136 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     })?;
     // SAFETY: the program store keeps the view alive with its program.
     let derived = unsafe { &*view };
+    for (frame, &marker) in unit.frames.iter().zip(&unit.markers) {
+        // SAFETY: the marker is a record of the view, which no run has entered yet.
+        unsafe { mark_call(&mut *std::cell::UnsafeCell::raw_get(&derived.records[marker]), frame, code) };
+    }
+    // Its activations' facts: the function's, over the unit's registers, every one filled.
+    // SAFETY: the original view outlives the run.
+    let facts = quench_runtime::staged::call::CellFacts::of_word(unsafe { &*original }.entry.facts.get());
+    derived.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(unit.registers, facts.params, u16::MAX,
+        u64::from(facts.entry) == quench_runtime::staged::call::ENTRY_ACTIVATES));
     let start = derived.records().addr();
     let end = start + derived.records.len() * size_of::<quench_runtime::vm::engine_types::LaneInstruction>();
     register(InlinedView {
         start, end, origins: unit.origins.into_boxed_slice(), frames: unit.frames.into_boxed_slice(),
         caller_registers: unit.caller_registers, view, original,
     });
-    Some(view)
+    Some((view, unit.registers))
+}
+
+/// Makes `record`, the marker of inlined `frame`, its `inlined_call_marker`: the callee register in
+/// `a`, the call's window in `b`, the callee's first register in `c`; the values passed, the
+/// callee's registers and the receiver register in the immediate; the callee's identity in `mode`.
+/// A call whose values do not land in its callee's first registers in order, or that passes
+/// through `Function.prototype.call`, always leaves at its marker.
+fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, frame: &InlinedCall, code: &quench_runtime::ResidualProgram) {
+    let leave = || leave_inlined as Handler as *const ();
+    let Some(callee) = code.function_get(frame.target.function as usize) else { return record.handler = leave() };
+    let passed = usize::from(frame.arguments.min(callee.params));
+    let in_order = frame.passed_registers(callee).enumerate()
+        .all(|(k, (home, value))| usize::from(home) == usize::from(frame.base) + k && usize::from(value) == usize::from(frame.window) + k)
+        && frame.passed_registers(callee).count() == passed;
+    let identity = frame.target.identity();
+    match identity {
+        Some(identity) if in_order && frame.function_call.is_none() && frame.registers <= u16::from(u8::MAX) => {
+            record.handler = inlined_call_marker as Handler as *const ();
+            record.a = frame.callee_register;
+            record.b = frame.window;
+            record.c = frame.base;
+            record.operand.imm = passed as u32 | u32::from(frame.registers) << 8 | u32::from(frame.receiver) << 16;
+            record.mode = identity.to_bits();
+        }
+        _ => record.handler = leave(),
+    }
+}
+
+/// Where the run continues once it leaves the inlined record at `ip` with registers `r`: at a caller
+/// origin, the same PC of the function's own records; inside an inlined frame, the frames its
+/// calls make (`body_inlined_activation_in_lane`), at the callee's own record.
+pub(crate) fn leave(cx: *mut super::LaneContext, r: super::Registers, ip: Ip) -> (super::Registers, Ip, super::Carried) {
+    let (origin, original, frames, caller_registers) = with_inlined(ip, |view, index| (view.origins[index], view.original, view.frames.to_vec(), view.caller_registers))
+        .expect("a leave is of an inlined record");
+    // SAFETY: the function's own view outlives the run.
+    let records = unsafe { (*original).records() };
+    // SAFETY: the running lane's context.
+    unsafe { (*cx).base = records };
+    match origin {
+        // SAFETY: the original view holds a record for each of the function's PCs.
+        Origin::Caller(pc) => (r, unsafe { records.add(pc as usize) }, super::carried_at_in_lane(cx, original, r, pc)),
+        Origin::Inlined { frame, pc } => super::body_inlined_activation_in_lane(cx, r, records,
+            super::InlinedRun { frames: &frames, framed: true, caller_registers }, frame, pc),
+    }
+}
+
+/// Makes and installs the inlined view of the function running the leaf call at `ip`, once the
+/// call's link is proved (`script_call_leaf_prove_miss`): each proved leaf site makes it anew with
+/// every site linked so far. The interpreter only (no compiled tier claims the view's PCs), and
+/// only from the function's own records.
+#[cold]
+pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
+    // SAFETY: the running lane's context.
+    if unsafe { (*cx).tiers_run } || may_be_inlined(ip) || !unsafe { (*cx).leaf.call }.is_null() { return; }
+    let function = super::running_function_in_lane(cx);
+    // SAFETY: the program's views outlive the lane run.
+    let Some(original) = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return };
+    let start = original.records().addr();
+    let end = start + original.records.len() * size_of::<quench_runtime::vm::engine_types::LaneInstruction>();
+    if !(start..end).contains(&ip.addr()) || original.entry.facts.get() == 0 { return; }
+    let original: *const LaneView = original;
+    let Some((view, registers)) = make_inlined_view(cx, function, original) else { return };
+    install(cx, function, original, view, registers);
+}
+
+/// Points every cached call target of `function` at its inlined `view` of `registers` registers: the
+/// calls made from now on activate in it; running activations keep their records.
+fn install(cx: *mut super::LaneContext, function: u32, original: *const LaneView, view: *const LaneView, registers: u16) {
+    let ours = |candidate: *const LaneView| std::ptr::eq(candidate, original)
+        || INLINED.with(|views| views.borrow().iter().any(|inlined| std::ptr::eq(inlined.view, candidate) && std::ptr::eq(inlined.original, original)));
+    let Ok(room) = u16::try_from(super::fill_room::<{ super::SCRIPT_FILL_BLOCK }>(usize::from(registers))) else { return };
+    // SAFETY: the running lane's context.
+    let (vm, program) = unsafe { (super::vm(cx), (*cx).program) };
+    let stack = &mut vm.lane_stack;
+    for target in stack.script_targets.entries.iter_mut().chain(stack.function_targets.iter_mut()) {
+        if target.function == function && target.program() == program && !target.view.is_null() && ours(target.view) {
+            target.view = view;
+            target.registers = registers;
+            target.room = room;
+            target.fill = u8::try_from(registers).unwrap_or(u8::MAX);
+        }
+    }
+}
+
+script_handler! {
+    /// The call marker of an inlined frame (`mark_call`): where the callee register holds the frame's
+    /// callee and the receiver binds itself (a direct object), the values passed move to the callee's
+    /// first registers, its other registers start `undefined`, and the callee's records run next.
+    /// Any other call leaves at the call (`leave_inlined`), before any of its effects.
+    pub(crate) fn inlined_call_marker<>(cx, r, ip, i, view) {
+        let receiver = r.get((i.imm() >> 16) as u16);
+        if r.get(i.a).to_bits() != i.mode
+            || !quench_runtime::staged::value::is_direct_object(&mut quench_runtime::staged::Concrete::new(std::ptr::null()), receiver.to_bits())
+        {
+            sibling!(leave_inlined as Handler, r, ip, view)
+        }
+        let (passed, registers) = ((i.imm() & 0xff) as u16, ((i.imm() >> 8) & 0xff) as u16);
+        for k in 0..passed {
+            r.set(i.c + k, r.get(i.b + k));
+        }
+        for k in passed..registers {
+            r.set(i.c + k, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// Leaves the inlined record at `ip` for the function's own records (`leave`): a marker whose call
+    /// is another, and any miss of an inlined callee's record.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn leave_inlined<>(cx, r, ip, i, view) {
+        let (r, ip, carried) = leave(cx, r, ip);
+        next!(cx, r, ip, carried)
+    }
 }
