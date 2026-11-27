@@ -3089,6 +3089,8 @@ macro_rules! row_decode {
             Operation::decode_local(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Value)) } {
             Operation::decode_value(quench_runtime::staged::Fields::wide($fields))
+        } else if const { $op == quench_runtime::staged::COMPARE_JUMP_ROW } {
+            compare_fields($fields)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
             Operation::decode_generic(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
@@ -3253,6 +3255,36 @@ const fn compare_operands(flag: u8) -> Option<bool> {
         Some(offset) => Some(offset % 2 == 1),
         None => None,
     }
+}
+
+/// The `CompareJump` a comparison jump record decodes to, read from the record's own fields by its instance `FLAG`
+/// (`FLAG_UNREAD` for a record no instance fixes yet). The instance fixes the comparison and the operand forms, the
+/// record holds the operands (`b`, `c`) and the operator (`a`), and `negate` is the `JumpBinaryFalse` decode's
+/// (`decode_compare`, which reads those same fields). Each instance was chosen from that decode, so a run reads
+/// the fields and decodes nothing.
+#[inline(always)]
+fn compare_fields<W, P, const OP: u16, const FLAG: u8>(fields: LaneFields<'_, OP, FLAG>) -> Option<Operation<W, P>> {
+    let i = fields.0;
+    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
+    // The tag a constant operand carries, which a register-constant instance's right operand is given.
+    const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
+    let (comparison, left, right) = if let Some((strict, negated, null)) = const { nullish_flag(FLAG) } {
+        let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
+        (quench_runtime::staged::Comparison::Nullish { expected, strict, negated }, Operand(i.b & payload), Operand(i.c))
+    } else if let Some((expected, negated)) = const { boolean_flag(FLAG) } {
+        (quench_runtime::staged::Comparison::Boolean { expected, negated }, Operand(i.b & payload), Operand(i.c))
+    } else if let Some(operator) = const { compare_flag(FLAG) } {
+        // The operand form the instance fixes: the tags it fixes, so the operand reads test none.
+        let (left, right) = match const { compare_operands(FLAG) } {
+            Some(false) => (Operand(i.b & payload), Operand(i.c & payload)),
+            Some(true) => (Operand(i.b & payload), Operand((i.c & payload) | CONSTANT_TAG)),
+            None => (Operand(i.b), Operand(i.c)),
+        };
+        (quench_runtime::staged::Comparison::of_operator(operator), left, right)
+    } else {
+        (quench_runtime::staged::Comparison::of_operator(u32::from(i.a)), Operand(i.b), Operand(i.c))
+    };
+    Some(Operation::CompareJump { comparison, left, right, negate: true })
 }
 
 /// Whether a comparison jump's `flag` is a proven instance (`FLAG_COMPARE_PROVEN`), whose operands are int32s.
@@ -3430,11 +3462,9 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         // constant and its row folds to that operator's test rather than matching every comparison.
         if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
             && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
-            // The operator is the record's field A (`binary_operator_field`); the instance is taken only
-            // where that operator names the comparison the record decodes to.
+            // The operator is the record's field A (`binary_operator_field`), the field its decode (`decode_compare`)
+            // compares by, so the instance a record takes names the comparison the record decodes to.
             let operator = u32::from(i.a);
-            let decodes_so = matches!(Operation::<u64, ()>::decode_generic(quench_runtime::staged::Fields::wide(LaneFields::<OP>(i))),
-                Some(Operation::CompareJump { comparison, .. }) if comparison == quench_runtime::staged::Comparison::of_operator(operator));
             // A register-constant form's constant is a static fact of the record: it moves into the
             // record's `mode` (zero on an unfused record), which the formed instance reads it from.
             let right = Operand(i.c);
@@ -3442,18 +3472,18 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
                 .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
             let formable = right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) || constant.is_some();
             // A register tested against a constant `null` or `undefined`: its tag decides it (`Comparison::Nullish`).
-            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
                 && let Some(handler) = constant.and_then(|constant| nullish_jump_row::<BACKWARD>(operator, constant)) {
                 requicken(ip, handler);
                 sibling!(handler, r, ip, view)
             }
             // A register tested against a constant Boolean (`x === true`, `x !== false`): identity decides it (`Comparison::Boolean`).
-            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
                 && let Some(handler) = constant.and_then(|constant| boolean_jump_row::<BACKWARD>(operator, constant)) {
                 requicken(ip, handler);
                 sibling!(handler, r, ip, view)
             }
-            if decodes_so && formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
+            if formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
                 if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
                     // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
                     unsafe { (*ip.cast_mut()).mode = constant.to_bits() };
@@ -3470,48 +3500,10 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
             }
         }
         let fields = LaneFields::<OP>(i);
-        // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = if let Some((strict, negated, null)) = const { nullish_flag(FLAG) } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::Nullish { expected, strict, negated },
-                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
-                    })
-                }
-                other => other,
-            }
-        } else if let Some((expected, negated)) = const { boolean_flag(FLAG) } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::Boolean { expected, negated },
-                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
-                    })
-                }
-                other => other,
-            }
-        } else if const { compare_flag(FLAG).is_some() } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    // The instance's operand form: the tags it fixes, so the operand reads test none.
-                    const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    let (left, right) = match const { compare_operands(FLAG) } {
-                        Some(false) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand(right.0 & payload)),
-                        Some(true) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
-                        None => (left, right),
-                    };
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
-                        left, right, negate,
-                    })
-                }
-                other => other,
-            }
+        // A comparison jump decodes from its record's fields (`compare_fields`), a loop's exit by its names row
+        // (`ForInNext`), and any other jump by the flow decoder.
+        let decoded = if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW } {
+            compare_fields(LaneFields::<OP, FLAG>(i))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
             Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {

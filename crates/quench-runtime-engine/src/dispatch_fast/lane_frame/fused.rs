@@ -116,7 +116,9 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         let i = unsafe { &*ip };
         let fields = LaneFields::<B>(i);
         if const { jumps_by_row(LaneFields::<B>::OPCODE) } {
-            let decoded = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
+            let decoded = if const { B == quench_runtime::staged::COMPARE_JUMP_ROW } {
+                compare_fields(fields)
+            } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                 Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
             } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
                 Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
@@ -264,7 +266,9 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! last_link { ($ip:ident, $i:ident, $L:ident) => {{
         let fields = LaneFields::<$L>($i);
             if const { jumps_by_row(LaneFields::<$L>::OPCODE) } {
-                let decoded = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
+                let decoded = if const { $L == quench_runtime::staged::COMPARE_JUMP_ROW } {
+                    compare_fields(fields)
+                } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                     Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
                 } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
                     Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
