@@ -4,6 +4,9 @@
 //! module, written into the scratch directory by this step), and the peak resident set of the
 //! first two: `wait4`'s `ru_maxrss` of the child (Linux, in kilobytes).
 //!
+//! It also holds the peak resident set of each V8-v7 fixture in `--no-jit` and the default mode, the
+//! median of three runs (`V8_SUITE`).
+//!
 //! Each measurement is held to `crates/quench-tier-corpus/startup_budgets.txt`, one row per
 //! `<case> <mode> <metric> <ceiling>`. More than 2% over its ceiling fails. More than 10% under it
 //! fails too, with the value to lower the ceiling to, so the ceilings only shrink. A run with
@@ -38,6 +41,14 @@ const DEFAULT: &str = "default";
 /// The cases measured under callgrind, and the cases whose peak resident set is measured.
 const CASES: [&str; 3] = ["empty", "hello", "module"];
 const RSS_CASES: [&str; 2] = ["empty", "hello"];
+/// The V8-v7 suite (the `quench-bench/js-engine-benchmark` submodule), whose peak resident set per
+/// fixture is held in the bars' two modes: each fixture is `base.js`, the fixture and a runner that
+/// throws on a failed validation. The median of `V8_RUNS` runs, as file pages make one run noisy.
+const V8_SUITE: &str = "quench-bench/js-engine-benchmark/v8-v7";
+const V8_FIXTURES: [&str; 8] = ["richards", "deltablue", "crypto", "raytrace", "earley-boyer", "regexp", "splay", "navier-stokes"];
+const V8_MODES: [&str; 2] = [INTERPRETER, DEFAULT];
+const V8_RUNS: usize = 3;
+const V8_RUNNER: &str = "BenchmarkSuite.RunSuites({ NotifyError(name, error) { throw error; } });\n";
 const IR: &str = "ir";
 const RSS: &str = "rss_kb";
 /// Functions in the generated module the `module` case requires.
@@ -188,6 +199,19 @@ fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, Stri
     Ok(BTreeMap::from([("empty", empty), ("hello", hello), ("module", main)]))
 }
 
+/// The V8-v7 fixtures as runnable scripts in `scratch`, by case name (`v8-<fixture>`).
+fn write_v8_scripts(root: &Path, scratch: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let suite = root.join(V8_SUITE);
+    let read = |name: &str| fs::read_to_string(suite.join(name))
+        .map_err(|error| format!("{}: {error} (git submodule update --init {V8_SUITE})", suite.join(name).display()));
+    let base = read("base.js")?;
+    V8_FIXTURES.iter().map(|fixture| {
+        let path = scratch.join("scripts").join(format!("v8-{fixture}.js"));
+        write_file(&path, &format!("{base}\n{}\n{V8_RUNNER}", read(&format!("{fixture}.js"))?))?;
+        Ok((format!("v8-{fixture}"), path))
+    }).collect()
+}
+
 /// The environment every measured run starts with: the mode's JIT flags, no caches, a fresh
 /// cache directory.
 fn environment(command: &mut Command, mode: &str, scratch: &Path) {
@@ -282,6 +306,13 @@ pub fn run(config: &Config) -> Verdict {
         for case in RSS_CASES {
             let kilobytes = peak_rss_kb(config, &host, mode, &scripts[case], &scratch)?;
             measured.insert(key(case, mode, RSS), kilobytes);
+        }
+    }
+    for (case, script) in write_v8_scripts(&config.root, &scratch)? {
+        for mode in V8_MODES {
+            let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &host, mode, &script, &scratch)).collect::<Result<Vec<_>, _>>()?;
+            runs.sort_unstable();
+            measured.insert(key(&case, mode, RSS), runs[V8_RUNS / 2]);
         }
     }
     let _ = fs::remove_dir_all(&scratch);
