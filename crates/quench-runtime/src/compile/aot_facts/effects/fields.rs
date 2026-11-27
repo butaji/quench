@@ -71,8 +71,10 @@ pub(in super::super) fn this_fact(ctx: &Ctx<'_>) -> Word {
 /// What a register of fact `base` names whose `prototype` a read takes: a closure (its class, `ClassIds::of_word`), or a binding.
 pub(super) fn prototype_base(classes: &super::super::class_ids::ClassIds, base: Word) -> Option<PrototypeBase> {
     if let Some(class) = classes.of_word(base) { return Some(PrototypeBase::Closure(class)); }
+    // A binding, or a named property read off some object (`Origin::Member`, `Key::Member`): the census resolves the key to the
+    // one closure it holds (`single`), so a `Flog.Class` read the same way as a global one is a class too.
     match base.origin? {
-        Origin::Binding(key) => Some(PrototypeBase::Binding(key)),
+        Origin::Binding(key) | Origin::Member(_) => base.origin?.key().map(PrototypeBase::Binding),
         _ => None,
     }
 }
@@ -138,8 +140,15 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
-            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`).
-            let key = match owner.class_site() { Some((class, true, _)) => Key::MemberOn { class, instance: true, atom }, _ => Key::MemberAny(atom) };
+            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`). A store of `prototype`
+            // into a constructor the solve knows is that constructor's own static property (`Key::MemberOn` with `instance: false`):
+            // `copies::expand` reads the literal it stores and writes its keys as the class's prototype members.
+            let constructor = if Some(atom) == ctx.scope.prototype && owner.cell.ty.body_index().is_some() { ctx.classes.of_word(owner) } else { None };
+            let key = match (constructor, owner.class_site()) {
+                (Some(class), _) => Key::MemberOn { class, instance: false, atom },
+                (None, Some((class, true, _))) => Key::MemberOn { class, instance: true, atom },
+                _ => Key::MemberAny(atom),
+            };
             // A store of an accessor's name may run its setter instead of storing the value (`accessor_call`): no class's field holds it.
             let stored = if ctx.accessors.contains(&atom) { Word::UNKNOWN } else { state[usize::from(value)] };
             events.writes.push((key, stored));

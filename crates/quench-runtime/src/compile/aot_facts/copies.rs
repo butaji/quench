@@ -118,10 +118,29 @@ fn copied_from(call: &Call, sealed: &Sealed, assign: Option<u32>) -> Option<Vec<
 /// Accounts the copies the program makes (see the module docs): each named store a copy of a literal makes, into the caller
 /// that makes it, and `member_wild` for each copy from anything but a literal. The sealed helpers' own `member_wild` is cleared,
 /// as their stores are the copies' stores. `assign` is the atom `Object.assign` interns to, if the program names it.
-pub(super) fn expand(flows: &mut [FunctionFlow], assign: Option<u32>) {
+///
+/// A constructor's `prototype` stored from an object literal (`C.prototype = {...}`, `Key::MemberOn` with `instance: false`) is the
+/// same kind of copy: each literal key is a prototype member of `C`, written as `Key::MemberOn { class, instance: true }`, the
+/// convention of `C.prototype.m = f`. A value that is no literal names no member the solve can see, so it writes none.
+pub(super) fn expand(flows: &mut [FunctionFlow], assign: Option<u32>, prototype: Option<u32>) {
     let sealed = sealed(flows);
     let mut writes: Vec<(usize, u32, Key, Word)> = Vec::new();
     let mut wild: Vec<usize> = Vec::new();
+    if let Some(prototype) = prototype {
+        for caller in 0..flows.len() {
+            let stores: Vec<(u32, u32, Word)> = flows[caller].writes.iter()
+                .filter_map(|&(pc, key, word)| match key {
+                    Key::MemberOn { class, instance: false, atom } if atom == prototype => Some((pc, class, word)),
+                    _ => None,
+                })
+                .collect();
+            for (pc, class, word) in stores {
+                for (atom, value) in literal_fields(flows, word.cell.sites).unwrap_or_default() {
+                    writes.push((caller, pc, Key::MemberOn { class, instance: true, atom }, value));
+                }
+            }
+        }
+    }
     for (caller, flow) in flows.iter().enumerate() {
         for call in &flow.calls {
             let Some(sources) = copied_from(call, &sealed, assign) else { continue };

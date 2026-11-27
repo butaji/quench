@@ -124,7 +124,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
                 (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, classes, names, types, feedback)))
             .collect();
-        copies::expand(&mut flows, scope.assign);
+        copies::expand(&mut flows, scope.assign, scope.prototype);
         flows
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
@@ -257,6 +257,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
         field_readers.accessor_names(&accessor_names);
+        field_readers.protocol_names(program);
         field_readers.finish(&facts.cells, &open_escapes);
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
