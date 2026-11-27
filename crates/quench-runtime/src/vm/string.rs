@@ -296,8 +296,9 @@ impl Vm {
         let prototype = self
             .heap
             .alloc_object(Self::empty_object(object_proto));
-        self.object_data_mut(prototype)
+        self.heap.object_mut(prototype)
             .expect("primitive prototype")
+            .record_mut_departing()
             .set_boxed_primitive(empty);
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -393,7 +394,7 @@ impl Vm {
 
     fn set_builtin_named_for_realm(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

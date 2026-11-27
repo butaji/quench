@@ -15,6 +15,8 @@
 //! edges as the facts they read (`AotFacts`), so a dependency that retires a fact retires the
 //! signature composed over it.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, InvocationFormsExt};
 use crate::bytecode::{Constant, FieldBase, FieldLookup, Operand, OperandKind, ResidualProgram, Traits, WideInstruction};
 use crate::staged::effects::{call_form, CallForm, Effects, Signature, Step};
 use crate::staged::{Callee, DecodeContext, Invocation, NumberOperation, Operation};

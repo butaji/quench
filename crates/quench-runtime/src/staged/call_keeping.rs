@@ -94,7 +94,7 @@ pub(crate) fn admit_keeping<S: Stage>(stage: &mut S, depth: S::Word, depth_limit
 /// `admit_keeping` on machine words, for the interpreter's own admission.
 #[inline(always)]
 pub fn concrete_admits_keeping(depth: usize, depth_limit: usize, room: usize, needed: usize) -> bool {
-    admit_keeping(&mut super::Concrete::new(core::ptr::null()), depth as u64, depth_limit as u64, room as u64, needed as u64, ())
+    admit_keeping(&mut super::Concrete::pure(), depth as u64, depth_limit as u64, room as u64, needed as u64, ())
         .is_some()
 }
 
@@ -151,7 +151,7 @@ mod tests {
 
     fn fill(window: KeepingWindow, passed: &[u64], rest: u64) -> [u64; 8] {
         let mut words = [0_u64; 8];
-        fill_keeping(&mut Concrete::new(core::ptr::null()), words.as_mut_ptr() as u64, passed.as_ptr() as u64,
+        fill_keeping(&mut Concrete::pure(), words.as_mut_ptr() as u64, passed.as_ptr() as u64,
             passed.len() as u16, window, rest);
         words
     }

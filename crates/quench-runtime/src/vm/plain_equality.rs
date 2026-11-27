@@ -48,7 +48,7 @@ impl Vm {
     /// Whether `object` owns `key` as a data property its shape records. `%Array.prototype%`
     /// is an array, whose non-index string keys are ordinary.
     fn own_data_property(&self, object: Value, key: PropertyKey) -> bool {
-        let Some(data) = self.heap.object_ref(object).map(|view| view.record()) else {
+        let Some(data) = self.heap.object(object).map(|view| view.record()) else {
             return false;
         };
         let shape = data.shape();

@@ -11,6 +11,12 @@
 //! identity and environment (`process.argv`, `process.env`, ...), which stay lazy and are
 //! host operations too; and the clock, the local time zone and `Math.random`, which the
 //! runtime notes (`quench_runtime::clock::note_input`).
+//!
+//! One gate serves both hosts. The first input a watched run reads ends that run
+//! (`quench_runtime::clock::watch_inputs`), and nothing past it is kept: the Node gate's `refuse`
+//! and `stop` end a run at a host operation before it runs, and a core probe (`Probe`,
+//! `core_rest::probe`) ends its run at the input the runtime notes, and makes no output of its own.
+//! What a build keeps is the state before its first input, and `finish` names that input.
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -191,7 +197,7 @@ pub(crate) fn arm(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
             refuse(format!("process.{name}.isTTY (read during start-up)"));
         }
     }
-    quench_runtime::clock::watch_inputs();
+    quench_runtime::clock::watch_inputs(context.execution_interrupt_handle());
     ARMED.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -286,5 +292,22 @@ pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>,
             refuse(format!("a wait for input whose state cannot be saved ({error})"));
             error
         }
+    }
+}
+
+/// The core half of the gate: the host a core build-time probe runs its entry on
+/// (`core_rest::probe`). An output is an input the runtime notes before it is made
+/// (`HostContext::invoke`), and the gate's handler ends the run there, so the probe makes no
+/// output: `write_line` and `write_err` discard what they are given. A clock read is the
+/// same kind of input, and the run ends at it too.
+pub(crate) struct Probe;
+
+impl quench_runtime::Host for Probe {
+    fn write_line(&mut self, _: &str) {}
+
+    fn write_err(&mut self, _: &str) {}
+
+    fn clock_millis(&mut self) -> f64 {
+        quench_runtime::clock::unix_millis()
     }
 }

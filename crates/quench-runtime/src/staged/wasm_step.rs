@@ -2,14 +2,14 @@
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
 use super::wasm_atomic::Atomic;
-use super::wasm_call::Call;
+use super::wasm_call::{Call, CallWasmCallExt};
 use super::wasm_exception::Exception;
 use super::wasm_flow::Flow;
 use super::wasm_gc::GcOp;
 use super::wasm_instance::{Instance, local_register};
 use super::wasm_memory::Memory;
-use super::wasm_operation::WasmOperation;
-use super::wasm_simd::Simd;
+use super::wasm_operation::{WasmOperation, wasm_operation_of};
+use super::wasm_simd::{Simd, SimdWasmSimdExt};
 use super::wasm_table_ops::TableOp;
 use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
 
@@ -41,7 +41,7 @@ pub enum Step {
 impl Step {
     /// The step `op` is, with `tag` its operator selector where the opcode takes one.
     pub const fn of(op: Op, tag: u32) -> Option<Self> {
-        if let Some(step) = WasmOperation::of(op, tag) {
+        if let Some(step) = wasm_operation_of(op, tag) {
             return Some(Self::Numeric(step));
         }
         if let Some(step) = Instance::of(op) {

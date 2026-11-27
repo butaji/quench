@@ -8,6 +8,8 @@
 //! Only the operation is stored. Its binding times (`Operation::operand_times`) and effect row
 //! (`Operation::effects`) are functions of it, read where a tier asks.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::decode::DecodeContext;
 use super::{Allocation, Operation};
 use crate::bytecode::{GenericStep, JsDenotation, Register, WideInstruction};

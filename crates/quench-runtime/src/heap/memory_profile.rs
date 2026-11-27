@@ -414,7 +414,7 @@ impl MemoryProfile {
             let Some(index) = self.identity_slots.get(&identity).copied() else {
                 return;
             };
-            let Some(object) = heap.object_ref(identity).map(|object| object.record()) else {
+            let Some(object) = heap.object(identity).map(|object| object.record()) else {
                 return;
             };
             let kind = if identity.direct_object_index().is_some() {
@@ -595,7 +595,7 @@ impl Heap {
     pub(crate) fn live_property_stats(&self) -> (usize, usize) {
         let mut stats = (0, 0);
         self.for_each_live_value(|identity| {
-            let Some(object) = self.object_ref(identity).map(|object| object.record()) else {
+            let Some(object) = self.object(identity).map(|object| object.record()) else {
                 return;
             };
             let vector = self.properties.vector_stats(object.properties());
@@ -611,7 +611,7 @@ impl Heap {
     pub(crate) fn live_property_narrow_stats(&self) -> (usize, usize, usize, usize) {
         let mut stats = (0, 0, 0, 0);
         self.for_each_live_value(|identity| {
-            let Some(object) = self.object_ref(identity).map(|object| object.record()) else {
+            let Some(object) = self.object(identity).map(|object| object.record()) else {
                 return;
             };
             let properties = object.properties();

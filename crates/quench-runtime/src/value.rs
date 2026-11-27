@@ -591,11 +591,11 @@ impl Value {
 
     #[inline(always)] pub fn direct_object_index(self) -> Option<ObjectRef32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
-        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(ObjectRef32(self.0 as u32))
+        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::pure(), self.0).then_some(ObjectRef32(self.0 as u32))
     }
 
     #[inline(always)] pub(crate) fn direct_array_index(self) -> Option<u32> {
-        crate::staged::value::is_direct_array(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_array(&mut crate::staged::Concrete::pure(), self.0).then_some(self.0 as u32)
     }
 
     #[inline(always)] pub(crate) fn direct_iterator_index(self) -> Option<u32> {
@@ -619,7 +619,7 @@ impl Value {
     }
 
     #[inline(always)] pub(crate) fn direct_function_index(self) -> Option<u32> {
-        crate::staged::value::is_direct_function(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_function(&mut crate::staged::Concrete::pure(), self.0).then_some(self.0 as u32)
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,
@@ -668,7 +668,7 @@ impl Value {
         if self.0 == Self::FALSE.0 { return Some(false); }
         if (self.0 & TAG_MASK) == TAG_INT { return Some(self.0 as u32 != 0); }
         let (undecided, truthy) = crate::staged::value::tagged_truthiness(
-            &mut crate::staged::Concrete::new(std::ptr::null()),
+            &mut crate::staged::Concrete::pure(),
             self.0,
         );
         (!undecided).then_some(truthy)

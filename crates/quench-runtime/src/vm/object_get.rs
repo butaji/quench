@@ -51,7 +51,7 @@ impl Vm {
     /// the constructor's shape (`SpeciesSlotProof`) names the slot holding the getter, so a
     /// repeated check reads that slot alone.
     pub(super) fn has_intrinsic_species_getter(&self, constructor: Value) -> bool {
-        let Some(data) = self.object_data(constructor) else {
+        let Some(data) = self.heap.object(constructor) else {
             return false;
         };
         // The proof is of the constructor's own non-dictionary shape alone, which fixes the
@@ -59,7 +59,7 @@ impl Vm {
         let shape = data.shape();
         let getter = match self.species_slot_proof.get() {
             Some(proof) if proof.shape == shape => {
-                self.heap.property_get(data, proof.slot)
+                self.heap.property_get_ref(data, proof.slot)
             }
             _ => self.prove_species_slot(constructor, shape),
         };
@@ -116,7 +116,7 @@ impl Vm {
         key: PropertyKey,
     ) -> Option<Value> {
         loop {
-            let data = self.object_data(object)?;
+            let data = self.heap.object(object)?;
             match self.diagnostic_own_property(object, key) {
                 DiagnosticProperty::Data(value) => return Some(value),
                 DiagnosticProperty::Blocked => return None,
@@ -148,7 +148,8 @@ impl Vm {
     }
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
-        let (program, slot) = self.object_data(object)?.module_binding(atom)?;
+        // record-only: module bindings are record state
+        let (program, slot) = self.heap.object(object)?.record().module_binding(atom)?;
         if let Some(value) =
             self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot))
         {
@@ -297,7 +298,7 @@ impl Vm {
                 }
                 return Ok(value);
             }
-            let Some(data) = self.object_data(owner) else {
+            let Some(data) = self.heap.object(owner) else {
                 return Ok(Value::UNDEFINED);
             };
             owner = data.proto();
@@ -492,7 +493,7 @@ impl Vm {
                 return Some(data);
             }
             if self.heap.array(object).is_some() {
-                return self.heap.object_ref(object).map(|o| o.record());
+                return self.heap.object(object).map(|o| o.record());
             }
         }
         if !matches!(key, PropertyKey::Symbol(_))
@@ -501,7 +502,7 @@ impl Vm {
         {
             return None;
         }
-        self.heap.object_ref(object).map(|o| o.record())
+        self.heap.object(object).map(|o| o.record())
     }
 
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
@@ -509,7 +510,7 @@ impl Vm {
     /// the key is none of its exotic ones.
     #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
         self.proved_read_receiver(object, key)
-            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object_ref(object).map(|o| o.record())).flatten())
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object).map(|o| o.record())).flatten())
     }
 
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
@@ -707,7 +708,7 @@ impl Vm {
         let mut subjects = smallvec::SmallVec::<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
         let mut link = prototype;
         for _ in 0..depth {
-            let object = self.heap.object_ref(link)?;
+            let object = self.heap.object(link)?;
             if !object.was_used_as_prototype() {
                 return None;
             }
@@ -730,7 +731,7 @@ impl Vm {
         let mut depth = 0u8;
         let mut link = prototype;
         while !link.is_null() {
-            link = self.heap.object_ref(link)?.proto();
+            link = self.heap.object(link)?.proto();
             depth = depth.checked_add(1)?;
         }
         Some(depth)
@@ -758,7 +759,7 @@ impl Vm {
     /// The rewrite takes the same entry, which the chain's subjects already hold.
     fn refine_getter_fact(&self, layout: u32, key: PropertyKey, depth: u8, slot: u32, holder: Value) {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
-        let (Some(key32), Some(data)) = (key.key32(), self.heap.object_ref(holder)) else {
+        let (Some(key32), Some(data)) = (key.key32(), self.heap.object(holder)) else {
             return;
         };
         let kind = match self.slot_accessor(data.shape(), slot as usize) {
@@ -925,8 +926,8 @@ impl Vm {
                 };
             }
             if self
-                .object_data(object)
-                .is_some_and(Object::is_module_namespace)
+                .heap.object(object)
+                .is_some_and(|object| object.is_module_namespace())
             {
                 return Ok(self
                     .module_namespace_value(p, object, atom)?
@@ -966,7 +967,7 @@ impl Vm {
             } else if object.direct_array_index().is_some() {
                 object = self
                     .heap
-                    .object_ref(object)
+                    .object(object)
                     .expect("live direct array retains its object header")
                     .proto();
             } else if let Some(symbol) = self.heap.symbol_data(object) {
@@ -1028,7 +1029,7 @@ impl Vm {
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
-                    _ => match self.heap.object_ref(object) {
+                    _ => match self.heap.object(object) {
                         Some(x) => object = x.proto(),
                         None => return Ok(Value::UNDEFINED),
                     },
@@ -1121,7 +1122,7 @@ impl Vm {
                     PrivateElement::Method(self.own_property(link, brand.name)?)
                 };
             }
-            link = self.object_data(link)?.proto();
+            link = self.heap.object(link)?.proto();
             if link.is_null() {
                 return None;
             }
@@ -1158,7 +1159,8 @@ impl Vm {
     }
 
     pub fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
+        // record: private_element_addable takes the record
+        let Some(addable) = self.heap.object(target).map(|object| self.private_element_addable(object.record())) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
         if !addable {
@@ -1177,7 +1179,8 @@ impl Vm {
     pub fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
-            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.has_private_name(object, brand))) else {
+            // record: private_element_addable takes the record
+            let Some((addable, branded)) = self.heap.object(object).map(|data| (self.private_element_addable(data.record()), self.has_private_name(object, brand))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {

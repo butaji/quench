@@ -28,6 +28,7 @@
 //! Collection debt exits with live values restored before the VM can collect. Other effect
 //! boundaries exit before their effects.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::{inlined_returning, renamed};

@@ -1,3 +1,4 @@
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 // The body of `generated_row`, included once per shard module (`lane_frame::generated_rows_*`,
 // `generated_row_handler`): each module is its own codegen unit.
 view_handler! {
@@ -154,19 +155,8 @@ view_handler! {
         })
         .map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
         let Some(operation) = decoded else { sibling!(general_step_in_lane, r, ip, view) };
-        // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
-        let property_values = if property && !store {
-            // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
-            unsafe { vm(view.memory.bytes.cast::<LaneContext>()) }.heap_reads().arena_values_base()
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names))
-            && !quench_runtime::staged::wasm_gc::gc_value_op(LaneFields::<OP, FLAG>::OPCODE) } {
-            // A Wasm GC value row reads the Wasm heap through its call-out, no property arena slot.
-            unsafe { vm(cx) }.heap_reads().arena_values_base()
-        } else { std::ptr::null() };
-        let mut stage = if store {
-            // A store's gate reads the heap's barrier state (`Stage::store_gate`).
-            Concrete::storing_in(unsafe { vm(view.memory.bytes.cast::<LaneContext>()) })
-        } else { Concrete::new(property_values) };
+        // The row's stage reads the heap's tables (the property arena, the class space) and the store gate.
+        let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
         let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
         frame.trust_this = TRUSTS_THIS;
         // A numeric local target: the frame's slot the value moves to, and the register of that number the

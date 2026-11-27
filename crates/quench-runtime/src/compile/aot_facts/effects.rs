@@ -1,5 +1,7 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::scope::Scope;
 use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};

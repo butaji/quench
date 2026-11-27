@@ -53,6 +53,25 @@ impl Object {
         }
     }
 
+    /// The object a live class cell presents to its readers: a record whose layout is the cell's class and
+    /// whose payload is zero. A live cell holds no extras and no arena run (both take the departure edge),
+    /// so every class fact it has is in its class word.
+    #[inline(always)]
+    pub(crate) fn of_class(class: u32) -> Self {
+        Self { head: crate::staged::record_heads::ObjectHead { payload: 0, layout: class } }
+    }
+
+    /// Makes `class` (a class id of `heap::layouts`) this object's class: its header word, with the
+    /// prototype link, shape and flags the class holds. The storage form stays the object's own
+    /// (`STORAGE_FORM`), which a class word does not record. This is the one writer of a record's
+    /// class id outside construction.
+    #[inline(always)]
+    pub(crate) fn set_class(&mut self, class: u32) {
+        let word = super::layouts::word(class);
+        let storage = self.aux() & crate::value_vec::STORAGE_FORM;
+        self.set_header((word >> u32::BITS) as u32, (word as u32 & !crate::value_vec::STORAGE_FORM) | storage);
+    }
+
     #[inline(always)]
     pub(super) fn set_meta(&mut self, meta: u32) {
         let auxiliary = self.aux();

@@ -2,6 +2,7 @@
 //! writes exactly once, with an immediate, before anything can observe them. Atoms are dense
 //! ids, so each table is a flat vector indexed by atom.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

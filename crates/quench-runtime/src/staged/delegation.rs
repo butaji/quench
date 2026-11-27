@@ -39,12 +39,12 @@ pub enum DelegationStep<W> {
 /// register the activation resumes into and the instruction's value goes to (`destination`), and
 /// the registers the delegation keeps across its steps.
 #[derive(Clone, Copy)]
-pub(super) struct Delegation {
-    pub(super) source: Register,
-    pub(super) destination: Register,
-    pub(super) iterator: Register,
-    pub(super) state: Register,
-    pub(super) next: Register,
+pub struct Delegation {
+    pub source: Register,
+    pub destination: Register,
+    pub iterator: Register,
+    pub state: Register,
+    pub next: Register,
 }
 
 /// How a delegation step ends: the delegate's completion, which falls through, a suspension, or
@@ -58,7 +58,7 @@ enum Outcome<W, C> {
 /// One step of `yield*` (`Delegation`): the delegate's completion as the instruction's value, the
 /// suspension the frame makes, or its in-place step; unresolved where a call-out left or raised.
 #[inline(always)]
-pub(super) fn delegate<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation) -> Step<S::Word, F::Control> {
+pub fn delegate<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation) -> Step<S::Word, F::Control> {
     match delegation_step(stage, frame, delegation) {
         Some(Outcome::Completed(value)) => Step::Value(value),
         Some(Outcome::Suspends(suspended)) => settle(stage, frame, Some(suspended)),

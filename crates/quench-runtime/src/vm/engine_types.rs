@@ -1,6 +1,8 @@
 //! The types the VM core holds for its engine layer (`quench-runtime-engine`: lane handlers
 //! and compiled tiers). Their behaviour stays in the engine, as extension traits on them.
 #![allow(unused_imports)]
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::InstructionField;
 use crate::staged::effects::CallForm;
@@ -4525,7 +4527,7 @@ impl LaneStack {
         object: Value,
         slot: usize,
     ) -> Option<ParameterHome> {
-        let (body, entries) = self.window_at(code, heap.object_ref(object)?.record().window_depth()?)?;
+        let (body, entries) = self.window_at(code, heap.object(object)?.record().window_depth()?)?;
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
         let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(crate::vm::tier_queries::HeapReads::of(heap));
         (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })

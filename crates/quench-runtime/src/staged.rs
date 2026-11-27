@@ -84,7 +84,12 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
-pub use operation::{HandlerEdge, Operation};
+pub use operation::{HandlerEdge, Operation, OperationOperationExt, OperationOperationRecordsExt, operation_is_call_index};
+pub use names::OperationNamesExt;
+pub use generic::OperationGenericExt;
+pub use compare::{ComparisonCompareExt, OperationCompareExt};
+pub use element_rows::OperationElementRowsExt;
+pub use forms::{CallRecordFormsExt, InvocationFormsExt};
 pub mod c_twins;
 pub use c_twins::{CKernel, CTwin};
 pub use operation::kind as op_kind;
@@ -111,7 +116,7 @@ pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
 pub use compare::{nullish_of, Comparison}; pub use generic::{decide as equality_decided, number_strict_equal};
-pub use concrete::Concrete;
+pub use concrete::{Concrete, concrete_over_arena, concrete_over_vm};
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub mod builtins;

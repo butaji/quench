@@ -12,11 +12,19 @@
 //! decrements the copied ones. A full collection recounts from scratch.
 use super::*;
 
+/// The granule of `value` when it names a live class cell, which counts in its own region
+/// (`ClassSpace::rc_increment` and its siblings). A departed object is a record, as `locate` says.
+#[inline(always)]
+fn live_cell(heap: &Heap, value: Value) -> Option<u32> {
+    let granule = value.direct_object_index()?.granule();
+    heap.class_space.live_class(granule).map(|_| granule)
+}
+
 /// The record space of a counted value and its id there (`RecordSpaceId`, the family numbering
-/// `Heap::record_families` shares).
+/// `Heap::record_families` shares). A live class cell is no record here: `live_cell` names it.
 #[inline(always)]
 fn locate(heap: &Heap, value: Value) -> Option<(RecordSpaceId, RecordId)> {
-    if !value.is_heap() {
+    if !value.is_heap() || live_cell(heap, value).is_some() {
         None
     } else if let Some(object) = value.direct_object_index() {
         Some((RecordSpaceId::Object, heap.record_id(object)))
@@ -102,6 +110,11 @@ macro_rules! for_each_space_mut {
         { let $space = &mut $heap.small_strings; $body }
         { let $space = &mut $heap.v128_records; $body }
         { let $space = &mut $heap.wasm_gc_records; $body }
+        { let $space = &mut $heap.class_space.regions.1; $body }
+        { let $space = &mut $heap.class_space.regions.2; $body }
+        { let $space = &mut $heap.class_space.regions.3; $body }
+        { let $space = &mut $heap.class_space.regions.4; $body }
+        { let $space = &mut $heap.class_space.regions.5; $body }
     }};
 }
 
@@ -144,7 +157,9 @@ impl Heap {
         }
         for_each_space_mut!(self, |space| space.rc_ensure());
         for &value in values {
-            if let Some((family, id)) = locate(self, value) {
+            if let Some(granule) = live_cell(self, value) {
+                self.class_space.rc_pin(granule);
+            } else if let Some((family, id)) = locate(self, value) {
                 with_space!(self, family, |space| space.rc_pin(id));
             }
         }
@@ -177,13 +192,18 @@ impl Heap {
     /// Increments the count of `value` if it is a record.
     #[inline(always)]
     pub(super) fn rc_increment(&self, value: Value) {
-        if let Some((family, id)) = locate(self, value) {
+        if let Some(granule) = live_cell(self, value) {
+            self.class_space.rc_increment(granule);
+        } else if let Some((family, id)) = locate(self, value) {
             with_space!(self, family, |space| space.rc_increment(id));
         }
     }
 
     /// Decrements the count of `value` if it is a record; whether it reached 0.
     fn rc_decrement(&self, value: Value) -> bool {
+        if let Some(granule) = live_cell(self, value) {
+            return self.class_space.rc_decrement(granule);
+        }
         match locate(self, value) {
             Some((family, id)) => with_space!(self, family, |space| space.rc_decrement(id)),
             None => false,
@@ -192,11 +212,17 @@ impl Heap {
 
     /// The count of record `value`, if it is one.
     fn rc_count_of(&self, value: Value) -> Option<u8> {
+        if let Some(granule) = live_cell(self, value) {
+            return Some(self.class_space.rc_count(granule));
+        }
         locate(self, value).map(|(family, id)| with_space!(self, family, |space| space.rc_count(id)))
     }
 
     /// Whether record `value` is old: marked between collections.
     fn rc_is_old(&self, value: Value) -> bool {
+        if let Some(granule) = live_cell(self, value) {
+            return self.class_space.is_marked(granule);
+        }
         locate(self, value).is_some_and(|(family, id)| with_space!(self, family, |space| space.is_marked(id)))
     }
 
@@ -302,7 +328,7 @@ impl Heap {
     /// young cell or one the barrier logged, which the mark traces anyway. So each record
     /// child left unmarked is pushed, with no set of the candidates to test.
     fn rc_pin_cell_references(&self, work: &mut Vec<Value>) {
-        let unmarked = |value: &Value| locate(self, *value).is_some() && !self.rc_is_old(*value);
+        let unmarked = |value: &Value| (live_cell(self, *value).is_some() || locate(self, *value).is_some()) && !self.rc_is_old(*value);
         let mut held = Vec::new();
         let mut last_proto = PushedProtos::default();
         for (index, slot) in self.slots.iter().enumerate() {
@@ -536,7 +562,7 @@ impl Heap {
             family.for_each_live_id(&mut |id| {
                 self.rc_children(family.value_of(id), &mut children);
                 for child in children.drain(..) {
-                    if locate(self, child).is_some() {
+                    if live_cell(self, child).is_some() || locate(self, child).is_some() {
                         *references.entry(child).or_default() += 1;
                     }
                 }
@@ -546,8 +572,13 @@ impl Heap {
         for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
                 let value = family.value_of(id);
-                let (family, id) = locate(self, value).expect("a record");
-                let count = with_space!(self, family, |space| space.rc_exact_count(id));
+                let count = match live_cell(self, value) {
+                    Some(granule) => self.class_space.rc_exact_count(granule),
+                    None => {
+                        let (family, id) = locate(self, value).expect("a record");
+                        with_space!(self, family, |space| space.rc_exact_count(id))
+                    }
+                };
                 let held = references.get(&value).copied().unwrap_or(0);
                 if count != u32::MAX && count as usize != held {
                     mismatches.push((value, count, held));

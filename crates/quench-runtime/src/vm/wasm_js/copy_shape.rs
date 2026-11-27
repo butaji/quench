@@ -3,6 +3,8 @@
 //! binding, proved on its bytecode, so any spelling of the helper is recognized and no source
 //! text or name decides it.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::{Atom, FieldBase, FieldLookup, Operand, OperandKind, Register, RETURN_REGISTER};
 use crate::staged::{Arguments, CallOperation, Callee, DecodeContext, Invocation, NumberOperation, Operation, Receiver};

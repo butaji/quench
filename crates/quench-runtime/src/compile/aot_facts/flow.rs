@@ -1,6 +1,8 @@
 //! The register dataflow of one function (`dataflow::solve` over its basic blocks): each
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
 use super::blocks::Blocks;
 use super::effects::{Before, Ctx, settled, step};
 use super::lengths::{self, Lengths};

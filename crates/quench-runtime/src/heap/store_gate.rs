@@ -13,21 +13,26 @@ impl Heap {
         if !self.store_watched && value.heap_index().is_none() {
             return true;
         }
-        let logs = match space {
+        let logs = self.space_store_logs(space, record_id, value);
+        !self.tracks_slot_values() && !logs
+    }
+
+    /// Whether a store of `value` into `space`'s record `record_id` needs the barrier's log (`RecordSpace::store_logs`).
+    /// A class cell's `record_id` is its granule, which its region and local cell name (`ClassSpace::store_logs`).
+    #[inline(always)]
+    fn space_store_logs(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
+        match space {
             StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
             StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
-        };
-        !self.tracks_slot_values() && !logs
+            StagedRecordSpace::Class => self.class_space.store_logs(record_id, value),
+        }
     }
 
     /// `store_unlogged` of a store whose value the slot's type already holds: slot observation
     /// sees nothing of it, so only the barrier's log is asked.
     #[inline(always)]
     pub(crate) fn held_store_unlogged(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
-        !match space {
-            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
-            StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
-        }
+        !self.space_store_logs(space, record_id, value)
     }
 
     /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
@@ -66,10 +71,11 @@ impl Heap {
         }
     }
 
-    /// Notes an object's move from shape `previous` to `next` (`ValueArena::note_shape_transition`),
-    /// which retires the code that holds `previous` stable past a call.
+    /// The class edge's retirement (R4-C4): an object's class moved from shape `previous` to `next`,
+    /// its header already written (by a staged add row, or `ObjectMut::set_class`). Retires the code
+    /// that holds `previous` stable past a call (`ValueArena::note_shape_transition`).
     #[inline(always)]
-    pub(crate) fn note_shape_departure(&mut self, previous: u32, next: u32) {
+    pub(crate) fn set_class(&mut self, previous: u32, next: u32) {
         self.properties.note_shape_transition(previous, next);
     }
 

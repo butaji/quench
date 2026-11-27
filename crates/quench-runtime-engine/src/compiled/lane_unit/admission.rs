@@ -1,5 +1,6 @@
 //! Which instructions of a callee the unit inlines, and which callees may restart at a miss.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

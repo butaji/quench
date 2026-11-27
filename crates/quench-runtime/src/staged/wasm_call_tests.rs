@@ -3,7 +3,7 @@
 
 use super::machine::MachineStage;
 use super::wasm::Width;
-use super::wasm_call::{Call, WasmTable, indirect_target};
+use super::wasm_call::{Call, CallWasmCallExt, WasmTable, indirect_target};
 use super::wasm_flow::Flow;
 use super::wasm_machine::ConcreteTable;
 use super::wasm_step::Step;

@@ -137,6 +137,35 @@ pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Con
     Some(Shaped::of_guard(at.record))
 }
 
+/// `IcOp::GuardClass`: continues where the reached class cell's class is `class`. The cell's header is the
+/// one word read; a departed cell holds `DEPARTED_CLASS`, which `class` never is, so it leaves at `miss`.
+#[inline(always)]
+pub(super) fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, class: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+    let loaded = super::object::cell_class(stage, at.record);
+    let same = { let class = stage.site(u64::from(class)); stage.eq_imm(loaded, class) };
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
+}
+
+/// `IcOp::GuardImageClass`: continues where the reached cell's class is the one an ahead image's loader
+/// resolves for field guard key `key` (`ImageWord::Layout`, the class id).
+#[inline(always)]
+pub(super) fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+    let loaded = super::object::cell_class(stage, at.record);
+    let same = { let class = stage.image_word(super::stage::ImageWord::Layout, key); stage.eq_imm(loaded, class) };
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
+}
+
+/// `IcOp::LoadField`: the tagged value at `slot` of the class cell the reached word names, which the class
+/// guard before it proved holds the slot (`object::cell_fields`).
+#[inline(always)]
+pub(super) fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation)) -> S::Word {
+    debug_assert!(at.shaped.is_some(), "a field load follows the guard of its class");
+    let layout = super::object::cell_fields(stage, at.record, usize::from(slot) + 1);
+    read_slot_value(stage, layout, slot, rep)
+}
+
 /// `IcOp::GuardImageLayout`: continues where the reached record's layout id is the one an ahead
 /// image's loader resolves for field guard key `key` (`ImageWord::Layout`).
 #[inline(always)]
