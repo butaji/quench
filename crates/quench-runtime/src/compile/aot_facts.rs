@@ -26,6 +26,7 @@ mod flow;
 mod frozen;
 mod function;
 mod gate;
+mod identity;
 mod length_settle;
 mod lengths;
 mod phase;
@@ -48,12 +49,14 @@ use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
 use super::signatures::{CallSite, Signatures};
 use class_layout::ClassLayouts;
+use quiet::{Proofs, Quiet};
 use readers::Readers;
 use record::ElementStore;
 pub use class_layout::{FieldDefault, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
+pub use identity::BuiltinPath;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
 pub use scope::constant_type;
@@ -154,6 +157,14 @@ pub struct AotFacts {
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
+    /// The builtins the closed world proves are the realm's initial ones (`identity::builtin_proofs`), read by
+    /// `AotFacts::builtin_identity`. None where the solve is not closed or a reflective writer may change a builtin.
+    builtins: Option<Proofs>,
+    /// The bodies whose closure is created at most once per run (`identity::closures_once`), read by `AotFacts::closure_identity`.
+    closures_once: std::collections::BTreeSet<u32>,
+    /// The functions every call of which passes an undefined receiver (`identity::this_undefined`), read by
+    /// `FunctionFacts::this_undefined_at_entry`.
+    this_undefined: std::collections::BTreeSet<u32>,
 }
 
 impl AotFacts {
@@ -189,7 +200,37 @@ impl AotFacts {
             unions: BTreeMap::new(),
             root_stores: BTreeMap::new(),
             readers: None,
+            builtins: None,
+            closures_once: std::collections::BTreeSet::new(),
+            this_undefined: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Whether the builtin `binding` is the realm's initial one in every run of the closed program: a global binding the program
+    /// never writes (`Math`), or a member of one (`Math.sqrt`) that no store, deletion or definition of the program may change.
+    /// An edge fact: the settled solve proves it once (`identity::builtin_proofs`), so a lane body need not compare the callee
+    /// with the builtin in execution. False in an open world.
+    pub fn builtin_identity(&self, binding: BuiltinPath) -> bool {
+        let Some(proofs) = self.builtins.as_ref() else { return false };
+        proofs.proves(match binding.member {
+            None => Quiet::Intrinsic { object: None, name: binding.global },
+            Some(member) => Quiet::Intrinsic { object: Some(binding.global), name: member },
+        })
+    }
+
+    /// Whether every value of the closure of `function` is one object in every run (`identity::closures_once`): its closure is
+    /// made by one site, which the root's code runs at most once, outside every loop. An edge fact: a lane body compares no
+    /// closure identity of `function` in execution. False in an open world.
+    pub fn closure_identity(&self, function: u32) -> bool {
+        self.closures_once.contains(&function)
+    }
+
+    /// Whether a self-recursive call of `function`, whose callee is its own closure, runs in the environment of the entry: the
+    /// closure is one object (`closure_identity`, so the callee is the entry's closure), or the function captures nothing, so
+    /// no environment is read. The callee being the function's own closure read from its own binding is implied by a proven
+    /// target. False where the solve does not settle the captures.
+    pub fn self_callee_env(&self, function: u32) -> bool {
+        self.closure_identity(function) || self.captures.get(&function).is_some_and(|captures| captures.is_empty())
     }
 
     /// The composed effect signatures the solve settled (`signatures`), none where the type solve did not settle.

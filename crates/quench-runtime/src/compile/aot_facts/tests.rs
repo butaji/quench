@@ -1,6 +1,6 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, world, AotFacts, FieldDefault};
+use super::{analyze, world, AotFacts, BuiltinPath, FieldDefault};
 use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
@@ -1012,4 +1012,41 @@ fn a_global_stored_twice_is_not_frozen() {
     let program = program("var K = 3; K = 4; function f() { return K; } f();");
     let facts = analyze(&program);
     assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "two stores write the key");
+}
+
+#[test]
+/// The atom of the name `text` in `program`.
+fn atom_of(program: &ResidualProgram, text: &str) -> u32 {
+    program.atoms.iter().position(|atom| {
+        let atom: &str = atom.as_ref();
+        atom == text
+    }).expect("an atom with that name") as u32
+}
+
+#[test]
+fn an_unwritten_builtin_member_is_its_realm_builtin() {
+    let program = program("Math.sqrt(4);");
+    let binding = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(analyze(&program).builtin_identity(binding), "no store of the program writes Math.sqrt");
+}
+
+#[test]
+fn a_stored_builtin_member_is_not_its_realm_builtin() {
+    let program = program("function f(x) { return x; } Math.sqrt = f; Math.sqrt(4);");
+    let binding = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(!analyze(&program).builtin_identity(binding), "a store of the program writes Math.sqrt");
+}
+
+#[test]
+fn a_top_level_function_is_one_closure() {
+    let program = program("function f(x) { return x; } f(1);");
+    let f = function_named(&program, "f") as u32;
+    assert!(analyze(&program).closure_identity(f), "the root creates f once");
+}
+
+#[test]
+fn a_closure_created_in_a_loop_is_not_one_closure() {
+    let program = program("var fs = []; for (var i = 0; i < 3; i++) { fs.push(function () { return i; }); } fs.length;");
+    let inner = (0..program.function_count()).find(|&id| program.with_record(id, |function| function.parent.is_some())).expect("a nested function") as u32;
+    assert!(!analyze(&program).closure_identity(inner), "the loop creates a closure per iteration");
 }

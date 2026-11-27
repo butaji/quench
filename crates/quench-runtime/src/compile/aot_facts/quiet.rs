@@ -6,8 +6,9 @@
 
 use super::flow::{Call, FunctionFlow, Target};
 use super::scope::Scope;
-use super::shape::Change;
+use super::shape::{Change, Owner};
 use super::value::{Key, Origin, Word};
+use crate::typed_ir::{Classes, Sites};
 use std::collections::BTreeSet;
 
 /// The argument types a builtin runs no guest code for: a conversion of an object runs `valueOf`, of a Number none.
@@ -143,13 +144,24 @@ impl Proofs {
                 Key::Global(atom) => Some(*atom),
                 _ => None,
             }));
+            // A wild holder that may be any object (`Classes::Many` or unknown sites) may be a builtin's object.
+            if flow.wild.classes == Classes::Many || flow.wild.sites == Sites::Many {
+                proofs.any_change = true;
+            }
             for shape in &flow.shapes {
+                // A store or delete reaches a builtin's own property only through an object that may be one: any object
+                // (`Classes::Many`) or a prototype object. An instance of a program class (`Classes::Set`) is none.
+                let builtin = match shape.owner {
+                    Owner::Prototype(_) => true,
+                    owner => owner.classes() == Some(Classes::Many),
+                };
                 match shape.change {
-                    Change::Field(atom) => {
+                    Change::Field(atom) if builtin => {
                         proofs.stored.insert(atom);
                     }
-                    Change::Any => proofs.any_change = true,
+                    Change::Any if builtin => proofs.any_change = true,
                     Change::Define => proofs.defined = true,
+                    Change::Field(_) | Change::Any => {}
                 }
             }
         }
