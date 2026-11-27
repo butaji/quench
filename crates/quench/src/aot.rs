@@ -14,7 +14,6 @@ mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
-mod builtin_families;
 pub(crate) mod prefix;
 mod strict;
 pub(crate) mod image_dump;
