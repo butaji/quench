@@ -261,17 +261,26 @@ fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word
     })
 }
 
-/// The read of the direct object `object` through `entry`: an own entry reads the live cell's class key
-/// (`direct_own_value`); a prototype-held entry reads its holder through the object's record, which
-/// leaves at `miss` for a live cell (`holder_entry_value`).
+/// The read of the direct object `object` through `entry`, routed by the entry's key: a class key reads
+/// the live cell (`direct_class_read`); a shape key reads the object's record, which leaves at `miss`
+/// for a live cell (`object_record_of`), as `record_read_in` does for a record.
 #[inline(always)]
 fn direct_read_in<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let own = own_entry(stage, entry);
-    stage.choose_leaving(own, #[inline(always)] |stage| direct_own_value(stage, object, entry, miss),
+    let keyed = entry_keys_class(stage, entry);
+    stage.choose_leaving(keyed, #[inline(always)] |stage| direct_class_read(stage, object, entry, miss),
         #[inline(always)] |stage| {
             let record = super::object::object_record_of(stage, records, object, miss)?;
-            holder_entry_value(stage, records, record, entry, miss)
+            record_read_in(stage, records, record, entry, miss)
         })
+}
+
+/// The read of the live cell `object` through the class-keyed `entry`: its own value (`direct_own_value`)
+/// or its held value (`class_held_value`).
+#[inline(always)]
+fn direct_class_read<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let own = own_entry(stage, entry);
+    stage.choose_leaving(own, #[inline(always)] |stage| direct_own_value(stage, object, entry, miss),
+        #[inline(always)] |stage| class_held_value(stage, object, entry, miss))
 }
 
 /// The read of the record `record` (a function's object) through `entry`: its own value (`own_entry_value`)
@@ -310,17 +319,49 @@ fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S
     stage.guard(same, miss)
 }
 
+/// The field at `slot` of the live class cell `cell`: its fields are one flat run at `fields_offset`,
+/// so the value is one load.
+#[inline(always)]
+fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
+    let fields = stage.add_imm(cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
+    let offset = stage.mul_imm(slot, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
+    let address = stage.add(fields, offset);
+    stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
+}
+
 /// The value at `slot` of the live class cell `cell` that the own entry `entry` names. The class key
-/// guards the cell, and its fields are one flat run at `fields_offset`, so the value is one load: no
-/// record, no payload test and no shape guard.
+/// guards the cell, so the value is one load: no record, no payload test and no shape guard.
 #[inline(always)]
 fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     class_matches(stage, cell, entry, miss)?;
     let slot = entry_slot(stage, entry);
-    let fields = stage.add_imm(cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
-    let offset = stage.mul_imm(slot, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
-    let address = stage.add(fields, offset);
-    Some(stage.load_u64(Region::ObjectSlots.mutable(), address, 0))
+    Some(cell_field(stage, cell, slot))
+}
+
+/// The value a class-keyed held entry at `entry` names for the live cell `object` (`direct_read_in`):
+/// the class key of the receiver matches (`class_matches`), and the holder is the live cell whose
+/// granule the entry stores in `holder_cell`, whose field at `slot` is the value. The class fixes the
+/// prototype link, so there is no link guard, and a departed holder resets the field caches
+/// (`Vm::drop_departed_holder_entries`), so there is no holder guard.
+#[inline(always)]
+fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let granule = super::value::direct_object_id(stage, object);
+    let cell = super::object::cell_at_granule(stage, granule);
+    class_matches(stage, cell, entry, miss)?;
+    let holder_granule = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_cell_offset as i32);
+    let holder = super::object::cell_at_granule(stage, holder_granule);
+    let slot = entry_slot(stage, entry);
+    Some(cell_field(stage, holder, slot))
+}
+
+/// Whether the entry at `entry` names a class key. The receiver word is stored complemented, so the
+/// key's `CLASS_KEY` bit is clear in the stored word. It is a fact of the entry, never a test of the
+/// object: a class key's read goes to the class cell, a shape key's to the record (`object_record_of`).
+#[inline(always)]
+fn entry_keys_class<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
+    let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
+    let bit = stage.and_imm(stored, u64::from(CLASS_KEY));
+    stage.eq_imm(bit, 0u32)
 }
 
 /// The object of the function `object` names, in the function record table `functions`
