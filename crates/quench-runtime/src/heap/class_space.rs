@@ -125,6 +125,23 @@ impl ClassSpace {
         Some(granule(0, local))
     }
 
+    /// Whether region 0's cursor has a stub left, which `claim_stub_quick` would claim.
+    #[inline(always)]
+    pub(super) fn stub_cursor_open(&self) -> bool {
+        self.regions.0.cursor_open()
+    }
+
+    /// `claim_stub` where it calls nothing out of line: the next stub of region 0's cursor, with the
+    /// header `departed_header(record)`. `None`, with nothing claimed, where the run is spent (the
+    /// caller then takes `claim_stub`'s slow path, which refills it).
+    #[inline(always)]
+    pub(super) fn claim_stub_quick(&mut self, record: u32) -> Option<u32> {
+        let local = self.regions.0.cursor_take()?;
+        // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
+        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
+        Some(granule(0, local))
+    }
+
     /// Frees region 0's stub `g` with its dead record (the record sweep's dispose). Region 0 is never
     /// swept on its own: its stubs die only here.
     pub(super) fn release_stub(&mut self, g: u32) {
