@@ -1378,6 +1378,9 @@ pub struct StableFacts {
     /// Whether it holds the typed views it proved past a call (`staged::HeldViews`): the first
     /// change of a live view retires it (`heap::subscribe_typed_views`).
     pub views: bool,
+    /// Whether it takes every activation's `this` as a direct object under the lane's `this` trust
+    /// (`Vm::this_trust`): retiring the trust retires it (`heap::subscribe_this_trust`).
+    pub this_trust: bool,
 }
 
 /// A loop analysis failure attributed to the function PC whose requirement blocked it.

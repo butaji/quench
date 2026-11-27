@@ -942,6 +942,7 @@ fn note_frame_this(cx: *mut LaneContext, vm: &Vm, frame: usize, this: Value) {
 #[inline(never)]
 fn retire_this_trust(vm: &Vm) {
     vm.this_trust.set(THIS_RETIRED);
+    quench_runtime::tier_surface::retire_this_holders();
     vm.programs.rewrite_lane_handlers(&|handler| {
         TRUSTED_THIS_ROWS.iter().find(|(_, trusted)| *trusted as *const () == handler).map(|(plain, _)| *plain as *const ())
     });
