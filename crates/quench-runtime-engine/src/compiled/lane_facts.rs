@@ -55,13 +55,6 @@ pub(crate) fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Op
     unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
 }
 
-/// Whether a callee bound by its definition restarts its call on a leave, as a pure numeric
-/// function does.
-pub(crate) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
-    program.function_get(function as usize).is_some_and(|body|
-        lane_region::restartable_numeric_function(program, body, body.instructions()))
-}
-
 
 /// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
 pub(crate) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) -> bool {

@@ -330,7 +330,7 @@ use crate::compiled::tier_policy::LANE_BACKTRACKING_MAX_INSTS;
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
-use lane_facts::{unit_closed, bind_callees, Census, plan_key, amortizes_entry, entry_pc, numeric_restartable, unit_direct_calls, unit_leaves};
+use lane_facts::{unit_closed, bind_callees, Census, plan_key, amortizes_entry, entry_pc, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
 /// instruction is a wrong entry speculation: the next body drops its entry contract
@@ -368,10 +368,10 @@ impl Vm {
         let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
         let unit = lane_unit::unit(program, graph, function, body, targets, &|caller, pc| plans.at(caller, pc),
             &|callee| program.function_get(callee as usize)).or_else(|| { refuse(self, Refusal::NoUnit); None })?;
-        // Every planned callee binds by its function (`CalleeBinding::Function`), which a frame admits only where its
-        // body restarts its call (`numeric_restartable`).
-        unit.frames.iter().all(|frame| frame.target.callee == CalleeBinding::Function
-            && frame.recovery == lane_unit::CallRecovery::RestartCall && numeric_restartable(program, frame.target.function))
+        // Every planned callee binds by its function (`CalleeBinding::Function`). Any such frame is admitted, whatever
+        // its body: a frame that leaves mid-body leaves through the frame-materialization exit (`leave_at`,
+        // `materialize_inlined`), or restarts its call where its recovery says so (`CallRecovery`).
+        unit.frames.iter().all(|frame| frame.target.callee == CalleeBinding::Function)
             .then_some(unit).or_else(|| { refuse(self, Refusal::FrameNotAdmitted); None })
     }
 
