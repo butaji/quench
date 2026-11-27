@@ -157,6 +157,8 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
             RegisterFact::definition(Type::ANY, Representation::Tagged));
         let (index, entry) = (usize::from(destination), self.state.values.len());
         self.state.proofs.headers[index] = self.state.proofs.headers[entry];
+        let record = self.state.proofs.records.get(entry).copied().flatten();
+        if let Some(slot) = self.state.proofs.records.get_mut(index) { *slot = record; }
         let readable = self.state.proofs.readable.contains(entry);
         self.state.proofs.set_readable(index, readable);
         self.state.proofs.receivers.insert(destination);
@@ -429,6 +431,7 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     state.values[index] = fact;
     state.proofs.homed.remove(index);
     state.proofs.headers[index] = None;
+    if let Some(record) = state.proofs.records.get_mut(index) { *record = None; }
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
     state.proofs.kept_shapes.remove(&register);
@@ -446,6 +449,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
         .then(|| register_tagged(builder, registers, state, source));
     let header = state.proofs.headers[source_index];
+    let record = state.proofs.records.get(source_index).copied().flatten();
     let receiver = state.proofs.receivers.contains(&source);
     let kept = state.proofs.kept_shapes.get(&source).copied();
     let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
@@ -461,6 +465,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
     }
     state.proofs.headers[usize::from(destination)] = header;
+    if let Some(slot) = state.proofs.records.get_mut(usize::from(destination)) { *slot = record; }
     state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
     for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }

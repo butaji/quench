@@ -250,6 +250,12 @@ struct LocalProofs {
     /// Direct-object proofs by owner, until an effect that may change the object retires
     /// them: a register's, and in the final entry fixed `this`'s.
     headers: Vec<Option<ObjectHeader>>,
+    /// The record each owner's value names (`ObjectRecord`), once a proof of its object made it: a fact of
+    /// the value, which no effect changes (records stay put in a run, and the reservation's base is the
+    /// run's), so it outlives the header's shape proof across calls and is retired only where the register
+    /// is defined again. A later header of the owner reads its shape through it, with no family test and
+    /// no record lookup: the untagged view of a proven object.
+    records: Vec<Option<ObjectRecord>>,
     /// The owners of `headers` whose proof a read made, which may name a function's record
     /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
     readable: BitSet,
@@ -341,7 +347,7 @@ impl State {
 
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
-            headers: vec![None; registers + 1], readable: BitSet::with_capacity(registers + 1),
+            headers: vec![None; registers + 1], records: vec![None; registers + 1], readable: BitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
@@ -1086,6 +1092,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
         for (index, header) in state.proofs.headers.iter_mut().enumerate() {
             *header = first.headers[index].filter(|proof| rest.iter()
                 .all(|other| other.headers[index] == Some(*proof)));
+        }
+        for (index, record) in state.proofs.records.iter_mut().enumerate() {
+            *record = first.records.get(index).copied().flatten().filter(|kept| rest.iter()
+                .all(|other| other.records.get(index) == Some(&Some(*kept))));
         }
         state.proofs.readable.clear();
         for arrived in &arrived {
@@ -2601,6 +2611,10 @@ impl Lowering<'_, '_> {
         state.proofs.typed.retain_mut(|view| incoming.proofs.typed.iter().find(|other| TypedProof { kept: view.kept, ..**other } == *view)
             .map(|other| view.kept |= other.kept).is_some());
         state.proofs.meet_homed(&incoming.proofs.homed);
+        // A record both arrivals name as the same value is the join's (`LocalProofs::records`).
+        for (index, record) in state.proofs.records.iter_mut().enumerate() {
+            if incoming.proofs.records.get(index) != Some(record) { *record = None; }
+        }
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {

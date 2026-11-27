@@ -250,6 +250,7 @@ impl Lowering<'_, '_> {
             state.values[index] = fact;
             state.proofs.homed.remove(index);
             if let Some(header) = state.proofs.headers.get_mut(index) { *header = None; }
+            if let Some(record) = state.proofs.records.get_mut(index) { *record = None; }
         }
     }
 

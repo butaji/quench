@@ -3672,6 +3672,8 @@ impl Vm {
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
+        // Default's first bodies are the program's AOT units, built now (`stage_images_at_load`).
+        crate::vm::engine_calls::EngineVm::stage_images_at_load(self, id, &residual);
         Some(id)
     }
     /// Primes every looping function of an installed `program` to expand on first entry.

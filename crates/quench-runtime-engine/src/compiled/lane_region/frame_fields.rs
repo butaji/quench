@@ -111,6 +111,7 @@ impl<'a> EmitFrame<'a> {
     /// held before the read does.
     fn retire_fast_proofs(&mut self, owner: Owner, before: &State) {
         self.state.proofs.headers.clone_from(&before.proofs.headers);
+        self.state.proofs.records.clone_from(&before.proofs.records);
         self.state.proofs.readable.clone_from(&before.proofs.readable);
         self.state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
         if self.state.proofs.global != before.proofs.global { self.state.proofs.global = None; }

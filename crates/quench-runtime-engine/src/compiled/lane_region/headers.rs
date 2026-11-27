@@ -63,11 +63,14 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             emit_js_guard(builder, object, exit);
             state.proofs.readable.remove(index);
             refine_owner(state, index, fact);
+            if let Some(slot) = state.proofs.records.get_mut(index) { *slot = Some(header.record); }
         }
         return header;
     }
     let mut readable = false;
-    let header = if let Some(record) = entry.records[index] {
+    // The record the owner's value names, proved before a call that retired the header's shape
+    // (`LocalProofs::records`): the shape is read again through it, with no family test or lookup.
+    let header = if let Some(record) = entry.records[index].or(state.proofs.records.get(index).copied().flatten()) {
         record.header(builder, fact)
     } else {
         let bits = owner_bits(builder, registers, state, entry, owner);
@@ -83,7 +86,10 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
     };
     state.proofs.headers[index] = Some(header);
     state.proofs.set_readable(index, readable);
-    if !readable { refine_owner(state, index, fact); }
+    if !readable {
+        refine_owner(state, index, fact);
+        if let Some(slot) = state.proofs.records.get_mut(index) { *slot = Some(header.record); }
+    }
     header
 }
 
