@@ -8,36 +8,36 @@ use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register
 use crate::bytecode::{FieldLookup, Operand};
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
-pub(crate) const TAG_EQUALITY: u8 = 0;
-pub(crate) const TAG_BINARY: u8 = 1;
-pub(crate) const TAG_PROPERTY_KEY: u8 = 2;
-pub(crate) const TAG_PROTOCOL: u8 = 3;
-pub(crate) const TAG_FOR_IN_NEXT: u8 = 4;
-pub(crate) const TAG_LOAD_ENV_LOCAL: u8 = 5;
-pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
-pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
-pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
-pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
-pub(crate) const TAG_SPREAD: u8 = 10;
-pub(crate) const TAG_DELETE: u8 = 11;
-pub(crate) const TAG_LOAD_NAME: u8 = 12;
-pub(crate) const TAG_SUPER_CALL: u8 = 13;
-pub(crate) const TAG_DECIDE: u8 = 14;
-pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
-pub(crate) const TAG_CLONE_ENV: u8 = 16;
-pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
+pub const TAG_EQUALITY: u8 = 0;
+pub const TAG_BINARY: u8 = 1;
+pub const TAG_PROPERTY_KEY: u8 = 2;
+pub const TAG_PROTOCOL: u8 = 3;
+pub const TAG_FOR_IN_NEXT: u8 = 4;
+pub const TAG_LOAD_ENV_LOCAL: u8 = 5;
+pub const TAG_STORE_ENV_LOCAL: u8 = 6;
+pub const TAG_ARGUMENTS_LENGTH: u8 = 7;
+pub const TAG_GLOBAL_WRITE: u8 = 8;
+pub const TAG_GLOBAL_TYPEOF: u8 = 9;
+pub const TAG_SPREAD: u8 = 10;
+pub const TAG_DELETE: u8 = 11;
+pub const TAG_LOAD_NAME: u8 = 12;
+pub const TAG_SUPER_CALL: u8 = 13;
+pub const TAG_DECIDE: u8 = 14;
+pub const TAG_ENUMERATED_GET: u8 = 15;
+pub const TAG_CLONE_ENV: u8 = 16;
+pub const TAG_ARGUMENT_GET: u8 = 17;
 // merge: HEAD's Accessor keeps its variant (used by vm/call_out.rs) under a fresh tag, since theirs took 16 and 17.
-pub(crate) const TAG_ACCESSOR: u8 = 18;
-pub(crate) const TAG_TO_NUMERIC: u8 = 19;
-pub(crate) const TAG_INC_DEC: u8 = 20;
-pub(crate) const TAG_UNARY: u8 = 21;
-pub(crate) const TAG_STORE_FIELD: u8 = 22;
-pub(crate) const TAG_STORE_ELEMENT: u8 = 23;
-pub(crate) const TAG_LOAD_FIELD: u8 = 24;
-pub(crate) const TAG_LOAD_ELEMENT: u8 = 25;
-pub(crate) const TAG_DECIDE_OPERAND: u8 = 26;
-pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 27;
-pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 28;
+pub const TAG_ACCESSOR: u8 = 18;
+pub const TAG_TO_NUMERIC: u8 = 19;
+pub const TAG_INC_DEC: u8 = 20;
+pub const TAG_UNARY: u8 = 21;
+pub const TAG_STORE_FIELD: u8 = 22;
+pub const TAG_STORE_ELEMENT: u8 = 23;
+pub const TAG_LOAD_FIELD: u8 = 24;
+pub const TAG_LOAD_ELEMENT: u8 = 25;
+pub const TAG_DECIDE_OPERAND: u8 = 26;
+pub const TAG_GLOBAL_LEXICAL_LOAD: u8 = 27;
+pub const TAG_GLOBAL_LEXICAL_STORE: u8 = 28;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -136,14 +136,14 @@ pub enum CallOut {
 pub struct Operands {
     /// The fixed operands: a register or a program constant (`Operand`).
     pub fixed: [Option<Operand>; 2],
-    pub(crate) list: Option<Arguments>,
+    pub list: Option<Arguments>,
 }
 
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub struct OperandValues<V> {
-    pub(crate) fixed: [Option<V>; 2],
+    pub fixed: [Option<V>; 2],
     #[cfg(not(stencil_build))]
-    pub(crate) list: Vec<V>,
+    pub list: Vec<V>,
 }
 
 impl Operands {
@@ -194,7 +194,7 @@ impl CallOut {
     /// through its bindings (`Vm::load_name` searches its scope): its owner is the activation's
     /// (`Vm::running_owner`), not the innermost frame's, which beside the lane's frameless
     /// activations is their caller's.
-    pub(crate) fn names_activation(self) -> bool {
+    pub fn names_activation(self) -> bool {
         matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::LoadName { .. }
             | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. } | Self::GlobalLexicalLoad { .. } | Self::GlobalLexicalStore { .. })
             || self.owns_activation_variable()
@@ -301,7 +301,7 @@ impl<W, P> Operation<W, P> {
 /// A store row's VM call-out where the frame takes the general operations in place
 /// (`NumericFrame::general_stores`): the word the store answers, else `None`, where the row leaves.
 #[inline(always)]
-pub(super) fn storing<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut) -> Option<S::Word> {
+pub fn storing<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut) -> Option<S::Word> {
     if !frame.general_stores() { return None; }
     frame.vm_step(stage, call, None).map(|(word, _)| word)
 }
@@ -309,7 +309,7 @@ pub(super) fn storing<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame:
 /// A load row's VM call-out, defining `destination`, where the frame takes the general reads in place
 /// (`NumericFrame::general_loads`); otherwise the row leaves.
 #[inline(always)]
-pub(super) fn loading<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
+pub fn loading<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
     destination: Register) -> Step<S::Word, F::Control> {
     if !frame.general_loads() { return Step::Unresolved; }
     calling(stage, frame, call, Some(destination))
@@ -318,7 +318,7 @@ pub(super) fn loading<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame:
 /// A row whose operation is the VM's: the frame makes it, and the word it defines, if any, is
 /// `destination`'s; a frame with no host leaves it to the interpreter.
 #[inline(always)]
-pub(super) fn calling<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
+pub fn calling<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
     destination: Option<Register>) -> Step<S::Word, F::Control> {
     match frame.vm_step(stage, call, destination) {
         Some((value, fact)) => {

@@ -162,24 +162,24 @@ impl ElementWrites {
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct RegionSet(pub(crate) u16);
+pub struct RegionSet(pub u16);
 
 impl RegionSet {
-    pub(crate) const NONE: Self = Self(0);
+    pub const NONE: Self = Self(0);
 
-    pub(crate) const fn of(region: Region) -> Self {
+    pub const fn of(region: Region) -> Self {
         Self(1 << region as u16)
     }
 
-    pub(crate) const fn with(self, region: Region) -> Self {
+    pub const fn with(self, region: Region) -> Self {
         Self(self.0 | 1 << region as u16)
     }
 
-    pub(crate) const fn contains(self, region: Region) -> bool {
+    pub const fn contains(self, region: Region) -> bool {
         self.0 & 1 << region as u16 != 0
     }
 
-    pub(crate) const fn intersects(self, other: Self) -> bool {
+    pub const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
     }
 }
@@ -188,27 +188,27 @@ impl RegionSet {
 /// fast path is inline does not collect; only a slow helper and a safepoint do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Effects {
-    pub(crate) reads: RegionSet,
-    pub(crate) writes: RegionSet,
+    pub reads: RegionSet,
+    pub writes: RegionSet,
     /// The elements of which arrays the row writes (`ElementWrites`). A row that writes the `Elements` region names its
     /// arrays here: `Any` where the kind row cannot name them, narrowed by the settled facts where they can.
-    pub(crate) elements: ElementWrites,
-    pub(crate) may_alloc: bool,
-    pub(crate) may_collect: bool,
-    pub(crate) may_call_js: bool,
-    pub(crate) may_throw: bool,
+    pub elements: ElementWrites,
+    pub may_alloc: bool,
+    pub may_collect: bool,
+    pub may_call_js: bool,
+    pub may_throw: bool,
 }
 
 impl Effects {
-    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE, elements: ElementWrites::Nothing,
+    pub const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE, elements: ElementWrites::Nothing,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
-    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+    pub const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
-    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+    pub const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region. The top of every grade.
-    pub(crate) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: true,
+    pub const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 
     /// A row that touches every region and runs nothing: no guest code, throw, collection or allocation. The settled
@@ -219,7 +219,7 @@ impl Effects {
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
-    pub(crate) fn join(self, other: Self) -> Self {
+    pub const fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
             elements: self.elements.join(other.elements),
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
@@ -429,7 +429,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The effect row of the operation, from its variant alone.
-    pub(crate) const fn effects(&self) -> Effects {
+    pub const fn effects(&self) -> Effects {
         match self.memory_effects() {
             Some(effects) => effects,
             None => self.control_effects(),
