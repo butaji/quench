@@ -71,7 +71,7 @@ pub(crate) struct Types {
     wild_elements: bool,
     /// The stores that may shadow a named property of an instance (`accessors::Shadows`), which bound `holder`.
     shadows: Shadows,
-    /// Per class, the parent its prototype chain links it to (`accessors::parents_of`): the `extends` chain `holder` walks.
+    /// Per class, the parent its prototype chain links it to (`Accessors::parents`): the `extends` chain `holder` walks.
     parents: BTreeMap<u32, u32>,
     /// The world the program is solved in: a key new code can move is no fold (`World::live`).
     world: World,
@@ -101,7 +101,7 @@ impl Types {
             wild_elements: flows.iter().any(|flow| flow.wild_elements),
             thresholds: BTreeMap::new(),
             shadows: census.accessors.shadows.clone(),
-            parents: super::accessors::parents_of(flows),
+            parents: census.accessors.parents().clone(),
             world: facts.world,
             strings: scope.string_builtins(&Proofs::of(flows)),
         };
@@ -419,7 +419,7 @@ pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts,
         }
         Target::Known(callee) => vec![callee],
         Target::Method(atom) => census.method_closures(atom).map(|set| set.iter().copied().collect()).unwrap_or_default(),
-        Target::Accessor { atom, setter } => super::accessors::accessor_targets(call, atom, setter, census),
+        Target::Accessor { atom, setter } => super::accessors::accessor_arms(call, atom, setter, census).into_iter().map(|arm| arm.function).collect(),
     }
 }
 

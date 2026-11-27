@@ -678,3 +678,22 @@ fn an_index_accessor_the_program_defines_keeps_an_element_read_open() {
         assert!(facts.function_facts(f as u32).site_effects(pc).may_call_js, "an index accessor may run at {pc}");
     }
 }
+
+#[test]
+fn a_constructor_store_of_an_inherited_setters_name_makes_no_field_of_it() {
+    let program = program("(function () { class P { set x(v) { this.last = v; } } function C() { this.x = 7; this.y = 1; } Object.setPrototypeOf(C.prototype, P.prototype); new C(); })();");
+    let facts = analyze(&program);
+    let (c, x) = (function_named(&program, "C") as u32, atom_named(&program, "x"));
+    match facts.class_layout(c) {
+        None => {}
+        Some(layout) => assert!(!layout.contains(&x), "the store runs the inherited setter, which makes no field of x"),
+    }
+}
+
+#[test]
+fn a_getter_read_through_a_subclass_instance_takes_the_superclass_getters_return() {
+    let program = program("(function () { class P { get x() { return 3; } } class C extends P {} function f(o) { return o.x; } f(new C()); })();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the read of x on a C instance is P's getter");
+}

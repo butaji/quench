@@ -60,6 +60,10 @@ pub struct AotFacts {
     /// `(function, pc)` of a plain call → the function it always calls, or, for a method read
     /// (`guessed_calls`), the one closure every store of its name writes.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
+    /// `(function, pc)` of a field access that runs an accessor the census proves (`accessors::accessor_arms`) → the arms
+    /// of its call: the getter (a read) or the setter (a store) per class of the receiver. The access's callees
+    /// (`FunctionFacts::call_targets`) and its call plan (`call_plan::call_plans`) are these arms.
+    pub(crate) accessor_arms: BTreeMap<(u32, u32), accessors::AccessorArms>,
     /// The `call_targets` that are guesses, not proofs: a method read (the receiver may hold another
     /// value of that name: a builtin's, a closure made again, a store through a computed key), or a
     /// target read from a live key (`World::live`: new code may store another closure there). Only a
@@ -131,6 +135,7 @@ impl AotFacts {
         Self {
             world,
             call_targets: BTreeMap::new(),
+            accessor_arms: BTreeMap::new(),
             guessed_calls: std::collections::BTreeSet::new(),
             call_candidates: BTreeMap::new(),
             construct_targets: BTreeMap::new(),
@@ -286,7 +291,9 @@ fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSe
                 _ => {}
             }
         }
-        for (&(caller, pc), _) in facts.call_targets.range((function, 0)..=(function, u32::MAX)) {
+        let range = (function, 0)..=(function, u32::MAX);
+        let calls = facts.call_targets.range(range.clone()).map(|(&call, _)| call).chain(facts.accessor_arms.range(range).map(|(&call, _)| call));
+        for (caller, pc) in calls {
             set.extend(facts.function_facts(caller).call_targets(pc).into_iter().map(FactKey::Return));
         }
         for (_, set_of) in facts.call_candidates.range((function, 0)..=(function, u32::MAX)) {
@@ -327,10 +334,22 @@ impl<'a> FunctionFacts<'a> {
 
     /// The functions the call at `pc` may call: its one target, or the closed set of a method read (`call_candidates`).
     pub fn call_targets(&self, pc: u32) -> Vec<u32> {
+        if let Some(site) = self.accessor_arms(pc) { return site.arms.iter().map(|arm| arm.function).collect(); }
         match self.facts.call_candidates.get(&(self.function, pc)) {
             Some(set) => set.to_vec(),
             None => self.call_target(pc).into_iter().collect(),
         }
+    }
+
+    /// The accessor the field access at `pc` runs, where the census proves one (`accessors::accessor_arms`).
+    pub(crate) fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
+        self.facts.accessor_arms.get(&(self.function, pc))
+    }
+
+    /// Every field access of this function that runs an accessor, by pc (`accessor_arms`).
+    pub(crate) fn accessor_sites(&self) -> impl Iterator<Item = (u32, &'a accessors::AccessorArms)> + 'a {
+        let facts: &'a AotFacts = self.facts;
+        facts.accessor_arms.range((self.function, 0)..=(self.function, u32::MAX)).map(|(&(_, pc), site)| (pc, site))
     }
 
     /// The function the plain call at `pc` always calls, proven (not a guess under `guessed_calls`): a row may
@@ -547,6 +566,12 @@ impl<'a> FunctionFacts<'a> {
         self.facts.signatures.as_ref().map_or(Effects::ANY, |signatures| signatures.site_effects(self.function, pc))
     }
 
+    /// Whether the step at `pc` may allocate, and so may collect (`Effects::allocates` of `site_effects`). Top where the
+    /// type solve did not settle.
+    pub fn may_allocate(&self, pc: u32) -> bool {
+        self.site_effects(pc).allocates
+    }
+
     /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless
     /// where the callees the facts name cannot leave, collect or run guest code, else framed. The same settled facts
     /// decide it, and the same edges retire it. Framed where the type solve did not settle.
@@ -574,19 +599,21 @@ pub fn world(program: &ResidualProgram) -> World {
 /// can move (`AotFacts::live`), whose facts the census keeps as guesses (`Census::guessed`).
 pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let scope = Scope::of(program);
-    let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, types: Option<&types::Types>| -> Vec<FunctionFlow> {
+    let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, names: &std::collections::BTreeSet<u32>,
+        types: Option<&types::Types>| -> Vec<FunctionFlow> {
         (0..program.function_count())
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, types)))
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, names, types)))
             .collect()
     };
-    let analyze = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>| analyze_typed(resolved, None);
     // The first pass finds the bindings that hold one closure; the second reads their loads as
     // that closure, so a class object or prototype reached through a binding keeps its identity
-    // and its methods prove per class, not per property name.
-    let first = analyze(&std::collections::BTreeMap::new());
+    // and its methods prove per class, not per property name. The first pass names no accessor: the names it finds
+    // (`accessors::names_of`) are the ones the later passes read.
+    let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None);
+    let accessor_names = accessors::names_of(&first);
     let resolved = Census::of(&first, world).singles();
-    let flows = analyze(&resolved);
+    let flows = analyze_typed(&resolved, &accessor_names, None);
     let census = Census::of(&flows, world);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
@@ -617,7 +644,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let mut settled = false;
     let mut grown = BTreeMap::new();
     for _ in 0..types::TYPE_PASSES {
-        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census, &scope).widen(&found, &mut grown);
+        let next = types::Types::of(&analyze_typed(&resolved, &accessor_names, Some(&found)), &facts, &census, &scope).widen(&found, &mut grown);
         settled = next == found;
         found = next;
         if settled { break; }
@@ -637,12 +664,16 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let mut field_readers = Readers::new(program);
     let mut open_escapes = None;
     if settled {
-        let mut settled_flows = analyze_typed(&resolved, Some(&found));
+        let mut settled_flows = analyze_typed(&resolved, &accessor_names, Some(&found));
         for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
             reads.insert(id, std::mem::take(&mut flow.reads));
             for call in &flow.calls {
                 facts.call_sites.insert((id, call.pc), call_site(id, call));
+                if let flow::Target::Accessor { atom, setter } = call.target {
+                    let arms = accessors::accessor_arms(call, atom, setter, &census);
+                    if !arms.is_empty() { facts.accessor_arms.insert((id, call.pc), accessors::AccessorArms { setter, arms: arms.into_boxed_slice() }); }
+                }
             }
             facts.element_stores.extend(flow.element_stores.iter().map(|(&pc, &store)| ((id, pc), store)));
             for call in &flow.calls {
@@ -697,7 +728,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
         let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
             let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &found, &facts.function_facts(id as u32)));
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &accessor_names, &found, &facts.function_facts(id as u32)));
             (id as u32, settled)
         }).collect();
         facts.lengths = settled_lengths;
