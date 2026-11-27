@@ -215,6 +215,16 @@ pub fn call_form(callee: Signature, inlinable: bool) -> CallForm {
     }
 }
 
+/// Whether a call site is a tail site, by one rule in every tier: the call's completion is its activation's
+/// (`returns`: the record carries the return flag, so the callee's value is the caller's result), and the caller
+/// has nothing to do after the callee returns (`caller_done`: no handler covers the call, and the caller is
+/// strict, which leaves no `with` scope open and no `arguments` object mapped to its parameters). A tier that
+/// takes a tail site replaces the caller's frame with the callee's (`CallPlan::tail`), so a chain of tail calls
+/// does not grow the stack. The callee's own kind (async or generator) is a separate fact of the callee.
+pub const fn tail_site(returns: bool, caller_done: bool) -> bool {
+    returns && caller_done
+}
+
 impl<W> CallOperation<W> {
     /// The effect row of a call-protocol step: the guards leave and write nothing, the window
     /// writes the callee's registers, and a site names a call, which may run anything.
@@ -346,5 +356,12 @@ mod tests {
         let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2, strict: false }, Operation::IndexWrite { index: 0, value: 0, proof: () },
             Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
+    }
+
+    #[test]
+    fn a_returning_call_with_nothing_after_it_is_a_tail_site() {
+        assert!(tail_site(true, true));
+        assert!(!tail_site(false, true), "a call whose value the caller keeps working on is not a tail site");
+        assert!(!tail_site(true, false), "a handler or a sloppy caller must still see the call's completion");
     }
 }
