@@ -1133,29 +1133,6 @@ impl Vm {
             | Native::DateToPrimitive
             | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
-            Native::RegExpCompile => self.regexp_compile_native(p, this, args),
-            Native::RegExpExec => self.regexp_builtin_exec(p, this, args),
-            Native::RegExpTest => self.regexp_test(p, this, args),
-            Native::RegExpEscape => self.regexp_escape_native(p, args),
-            Native::RegExpSymbolMatch => self.regexp_symbol_match(p, this, args),
-            Native::RegExpSymbolSearch => self.regexp_symbol_search(p, this, args),
-            Native::RegExpSymbolReplace => self.regexp_symbol_replace(p, this, args),
-            Native::RegExpSymbolMatchAll => self.regexp_symbol_match_all(p, this, args),
-            Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
-            Native::RegExpToString => self.regexp_to_string_native(p, this),
-            Native::RegExpSpecies => Ok(this),
-            Native::RegExpLegacyGetter => self.regexp_legacy_getter_native(p, this),
-            Native::RegExpLegacySetter => self.regexp_legacy_setter_native(p, this, args),
-            Native::RegExpGlobal
-            | Native::RegExpIgnoreCase
-            | Native::RegExpMultiline
-            | Native::RegExpDotAll
-            | Native::RegExpUnicode
-            | Native::RegExpUnicodeSets
-            | Native::RegExpSticky
-            | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
-            Native::RegExpSource => self.regexp_slot_native(p, native, this),
-            Native::RegExpFlags => self.regexp_flags_native(p, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -1436,7 +1413,6 @@ impl Vm {
             | Native::WeakRef
             | Native::DisposableStack
             | Native::AsyncDisposableStack => self.construct_native(p, native, args),
-            Native::RegExp => self.construct_regexp_native(p, args, None),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
             }
@@ -2113,8 +2089,8 @@ pub fn exponentiate(base: f64, exponent: f64) -> f64 {
 }
 
 /// The entry that runs `native`'s call. The families' membership tests keep their precedence: the
-/// first group that claims a native decides it, and the string, RegExp and Math methods belong to
-/// no family after them. The natives' table (`native_table::NativeTable::all`) holds each entry,
+/// first group that claims a native decides it, and the string and Math methods belong to no
+/// family after them. The natives' table (`native_table::NativeTable::all`) holds each entry,
 /// built once from here.
 pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
     head_entry(native)
@@ -2135,6 +2111,9 @@ fn head_entry(native: Native) -> Option<native_table::NativeFn> {
 
 /// The method families: string, array callbacks, HTML, the collections and the other keyed families.
 fn method_entry(native: Native) -> Option<native_table::NativeFn> {
+    if let Some(entry) = super::regexp::natives::entry(native) {
+        return Some(entry);
+    }
     if native.is_string_regexp_or_math() {
         return Some(enter_table);
     }
