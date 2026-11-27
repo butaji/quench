@@ -55,6 +55,13 @@ pub const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
     object_offset: cell::NATIVE_FUNCTION_OBJECT_OFFSET,
 };
 
+/// A Map or Set record (`CollectionRecord`): its ordinary object part at `object_offset`, whose
+/// shape and prototype link a method read by name of it tests (`staged::elements::plain_collection_link`).
+pub const NATIVE_COLLECTION_LAYOUT: crate::staged::elements::CollectionLayout = crate::staged::elements::CollectionLayout {
+    record_size: cell::NATIVE_COLLECTION_RECORD_SIZE,
+    object_offset: cell::NATIVE_COLLECTION_OBJECT_OFFSET,
+};
+
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
 pub const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: records::ARRAY_RECORD_CAPACITY,

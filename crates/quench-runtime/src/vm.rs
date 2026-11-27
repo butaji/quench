@@ -224,6 +224,7 @@ pub mod private_site_home;
 pub mod private_slots;
 pub mod enumerable_key_memo;
 pub mod name_atom_memo;
+mod byte_census;
 pub mod object_assignment;
 pub mod object_array;
 pub mod object_builtins;
@@ -3341,6 +3342,8 @@ impl Vm {
             if vm.programs.js_jit_diagnostics_enabled() {
                 eprintln!("{}", vm.field_site_report());
             }
+            crate::fact_stats::report();
+            vm.report_byte_census();
             if vm.programs.reports_on_drop() {
                 drop(std::ptr::read(&vm.programs));
             }
