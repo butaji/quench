@@ -8,25 +8,25 @@ impl Vm {
     /// A VM that runs only code its image archived: it installs no JIT routes and no source
     /// routes, so a static executable links neither compiler.
     pub(crate) fn new_static<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), &ExecutionTable::ALL)
     }
 
     /// `new_static` for an image that proved some intrinsic families unreachable: the realm
     /// installs only `builtins`' families, and a family whose installer is `None` keeps its
-    /// code out of the image.
-    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
-        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>());
+    /// code out of the image. `execution` is the image's engine entries (`ExecutionTable`).
+    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable) -> Self {
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), execution);
         vm.builtins = builtins;
         vm
     }
 
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
     pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>(), &ExecutionTable::ALL)
     }
 
     pub(crate) fn new_restored<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>(), &ExecutionTable::ALL)
     }
 
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
@@ -41,13 +41,14 @@ impl Vm {
         // A static image's support (no `source`) links no parser: its routes never install.
         #[cfg(feature = "source")]
         crate::compile::source_routes::enable();
-        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
+        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>(), &ExecutionTable::ALL)
     }
 
     fn with_statics<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
         host_statics: crate::host::HostStatics,
+        execution: &'static ExecutionTable,
     ) -> Self {
         let runs_lane = host.runs_lane();
         let mut vm = Self {
@@ -55,6 +56,7 @@ impl Vm {
             host_statics,
             runs_lane,
             builtins: &BuiltinTable::ALL,
+            execution,
             typed_views: Default::default(),
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,
