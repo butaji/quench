@@ -230,7 +230,7 @@ impl Effects {
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
-    pub(crate) fn join(self, other: Self) -> Self {
+    pub fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
             elements: self.elements.join(other.elements),
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
