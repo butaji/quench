@@ -57,8 +57,8 @@ pub(super) fn audit(inputs: &NativeImageInputs, executable: &Path, support: Nati
 }
 
 /// Refuse an execution-only image that still names the compiler or the interpreter. The
-/// mechanism's first line names its retention root; `QUENCH_AUDIT_WARN` publishes the image
-/// anyway, so its footprint can be measured while the roots are being cut.
+/// mechanism's first line names its retention root. There is no override: a closed image that
+/// retains any of these does not link.
 fn audit_retained_execution(symbols: &str, support: NativeImageSupport) -> Result<(), String> {
     if support.allows_dynamic_source() {
         return Ok(());
@@ -71,11 +71,7 @@ fn audit_retained_execution(symbols: &str, support: NativeImageSupport) -> Resul
     }
     let examples = retained.into_iter().map(|(mechanism, line)| format!("{mechanism}: {line}"))
         .collect::<Vec<_>>().join("\n");
-    if std::env::var_os("QUENCH_AUDIT_WARN").is_none() {
-        return Err(format!("native image retained compilation or interpretation support:\n{examples}"));
-    }
-    eprintln!("warning: native image retained compilation or interpretation support:\n{examples}");
-    Ok(())
+    Err(format!("native image retained compilation or interpretation support:\n{examples}"))
 }
 
 /// The exported semantic operations must be exactly the object's imports.
