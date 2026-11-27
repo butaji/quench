@@ -177,12 +177,14 @@ fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, fra
         && frame.passed_registers(callee).count() == passed;
     let identity = frame.target.identity();
     match identity {
+        // Registers past the callee's entry fill are written before any read (`entry_fill`).
         Some(identity) if in_order && frame.function_call.is_none() && frame.registers <= u16::from(u8::MAX) => {
+            let fill = code.entry_fill(callee).clamp(passed as u16, frame.registers);
             record.handler = inlined_call_marker as Handler as *const ();
             record.a = frame.callee_register;
             record.b = frame.window;
             record.c = frame.base;
-            record.operand.imm = passed as u32 | u32::from(frame.registers) << 8 | u32::from(frame.receiver) << 16;
+            record.operand.imm = passed as u32 | u32::from(fill) << 8 | u32::from(frame.receiver) << 16;
             record.mode = identity.to_bits();
         }
         _ => record.handler = leave(),
@@ -279,6 +281,10 @@ pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
     if !(start..end).contains(&ip.addr()) || original.entry.facts.get() == 0 { return; }
     let original: *const LaneView = original;
     let Some((view, registers)) = make_inlined_view(cx, function, original) else { return };
+    if std::env::var_os("QUENCH_N7_TRACE").is_some() {
+        let frames = INLINED.with(|views| views.borrow().iter().find(|inlined| std::ptr::eq(inlined.view, view)).map(|inlined| inlined.frames.iter().map(|frame| frame.target.function).collect::<Vec<_>>()));
+        eprintln!("n7 install f{function} registers {registers} inlines {frames:?}");
+    }
     install(cx, function, original, view, registers);
 }
 
@@ -304,7 +310,8 @@ fn install(cx: *mut super::LaneContext, function: u32, original: *const LaneView
 script_handler! {
     /// The call marker of an inlined frame (`mark_call`): where the callee register holds the frame's
     /// callee and the receiver binds itself (a direct object), the values passed move to the callee's
-    /// first registers, its other registers start `undefined`, and the callee's records run next.
+    /// first registers, its other registers live at entry start `undefined`, and the callee's records
+    /// run next.
     /// Any other call leaves at the call (`leave_inlined`), before any of its effects.
     pub(crate) fn inlined_call_marker<>(cx, r, ip, i, view) {
         let receiver = r.get((i.imm() >> 16) as u16);
@@ -313,11 +320,11 @@ script_handler! {
         {
             sibling!(leave_inlined as Handler, r, ip, view)
         }
-        let (passed, registers) = ((i.imm() & 0xff) as u16, ((i.imm() >> 8) & 0xff) as u16);
+        let (passed, fill) = ((i.imm() & 0xff) as u16, ((i.imm() >> 8) & 0xff) as u16);
         for k in 0..passed {
             r.set(i.c + k, r.get(i.b + k));
         }
-        for k in passed..registers {
+        for k in passed..fill {
             r.set(i.c + k, Value::UNDEFINED);
         }
         next!(cx, r, following(ip), view)
