@@ -43,6 +43,8 @@ pub(crate) struct IntRanges {
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
     zero_free: quench_runtime::dataflow::BitSet,
+    /// The arithmetic whose exact result lies within `IntRange::PRODUCT_EXACT` (`Point::product_exact`), by PC.
+    product_exact: quench_runtime::dataflow::BitSet,
     /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
     non_negative_dividend: quench_runtime::dataflow::BitSet,
     /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
@@ -56,6 +58,7 @@ impl IntRanges {
         Self { overflow_free: quench_runtime::dataflow::BitSet::with_capacity(instructions), in_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             string_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            product_exact: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             non_negative_dividend: quench_runtime::dataflow::BitSet::with_capacity(instructions), nonzero_divisor: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             numeric_stores: quench_runtime::dataflow::BitSet::with_capacity(instructions) }
     }
@@ -85,6 +88,10 @@ impl IntRanges {
     /// Whether the int32 addition, subtraction, product or step at `pc` has an exact int32
     /// result, whatever int32 operands reach it.
     pub(crate) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
+
+    /// Whether the arithmetic at `pc` has an exact result within `IntRange::PRODUCT_EXACT`, so the
+    /// ToInt32 of its product needs no exactness test (`Lowering::truncated_product`).
+    pub(crate) fn product_exact(&self, pc: usize) -> bool { self.product_exact.contains(pc) }
 
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
@@ -176,6 +183,7 @@ impl Lowering<'_, '_> {
         pc: usize, point: &Point) {
         let instruction = instructions[pc];
         if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
+        if point.product_exact(&self.program.constants, instruction) { proved.product_exact.insert(pc); } else { proved.product_exact.remove(pc); }
         let below = |index: Register, array: Register| self.proven_below_length(pc, index, array);
         let bound_of = |index: Register| self.bound_below(pc, index);
         match point.index_proof(model, pc, instruction, &below, &bound_of) {

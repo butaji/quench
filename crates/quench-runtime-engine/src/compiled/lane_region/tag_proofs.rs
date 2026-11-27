@@ -15,3 +15,10 @@ pub(crate) fn register_proves(state: &State, register: Register, tag: Type) -> b
 pub(crate) fn proves_object(ty: Type) -> bool {
     ty.is_direct_object_family()
 }
+
+/// Whether every string of solver type `ty` has a length int32 holds (`StringFact::length`), so a flat string of that
+/// type needs no test that its length fits: its record's length lies in the type's range. A type with no string fact
+/// (or the full length range) proves nothing.
+pub(crate) fn length_fits_int32(ty: Type) -> bool {
+    ty.string_fact().is_some_and(|fact| fact.length().max <= i32::MAX as u32)
+}

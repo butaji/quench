@@ -179,7 +179,7 @@ impl Lowering<'_, '_> {
             NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
             NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) || self.truncated_through_int32_sum(state, pc, operands.0) => {
                 if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
-                    self.truncated_product(state, operands, exit);
+                    self.truncated_product(state, self.ranges.product_exact(pc), operands, exit);
                     return;
                 }
                 true
@@ -196,12 +196,17 @@ impl Lowering<'_, '_> {
     /// A product of int32 operands only whose ToInt32 is read (`truncated_through_sums`), neither
     /// factor known small: the exact 64-bit product, whose low 32 bits are that ToInt32 while the
     /// product's magnitude is under 2^52 (its double is then exact, and so are the chain's sums
-    /// of int32 constants). A larger product rounds as a double, and leaves.
-    fn truncated_product(&mut self, state: &mut State, (destination, [left, right]): Operands, exit: ir::Block) {
+    /// of int32 constants). A larger product rounds as a double, and leaves. Where the unit's
+    /// ranges prove the exact product within that bound (`product_exact`), no test is made.
+    fn truncated_product(&mut self, state: &mut State, exact_proven: bool, (destination, [left, right]): Operands, exit: ir::Block) {
         let left = self.operand_int(state, left, exit).expect("proved int32 operand");
         let right = self.operand_int(state, right, exit).expect("proved int32 operand");
-        let (low, exact) = number_machine::truncated_int32_product(&mut emit(&mut self.builder), left, right);
-        emit_js_guard(&mut self.builder, exact, exit);
+        let product = number_machine::int32_product(&mut emit(&mut self.builder), left, right);
+        if !exact_proven {
+            let exact = number_machine::product_exact(&mut emit(&mut self.builder), product);
+            emit_js_guard(&mut self.builder, exact, exit);
+        }
+        let low = number_machine::product_low_int32(&mut emit(&mut self.builder), product);
         self.set_int(state, destination, low);
     }
 
