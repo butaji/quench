@@ -666,6 +666,13 @@ impl ArrayElements {
         self.header().others == 0 && !self.is_double()
     }
 
+    /// Whether no value is a hole: the exact count of other values (holes included) is zero. `OTHERS_UNKNOWN`
+    /// is never zero, so an unknown count answers no.
+    #[inline(always)]
+    pub(crate) fn holds_no_hole(&self) -> bool {
+        self.header().others == 0
+    }
+
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]
     fn is_unique(&self) -> bool {
@@ -1169,10 +1176,9 @@ impl UniqueElements {
     /// changes and this returns `false`. The count of other values is unchanged. A hole counts as
     /// other, so an exact count of zero proves there is none and the scan is skipped.
     pub(crate) fn reverse_unless_holed(&mut self) -> bool {
-        let counted_none = self.0.header().others == 0;
         // SAFETY: a unique backing is wide; its first `len` values are initialized.
         let values = unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) };
-        if !counted_none && values.iter().any(|value| value.is_deleted()) {
+        if !self.0.holds_no_hole() && values.iter().any(|value| value.is_deleted()) {
             return false;
         }
         values.reverse();

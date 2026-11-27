@@ -81,6 +81,19 @@ pub(crate) unsafe extern "C" fn scalar_native_in_lane(vm: u64, residual: u64, pa
     value.to_bits()
 }
 
+/// A lane body's collection lookup (`native_calls::Inline::Lookup`): the lookup `callee` is (`native_calls::LOOKUPS`)
+/// of the collection `receiver` at `key` (`Vm::pure_collection_lookup`), which allocates nothing and moves no base;
+/// `DELETED` where the callee is no such native or `receiver` no collection of its kind.
+pub(crate) unsafe extern "C" fn collection_lookup_in_lane(vm: u64, _residual: u64, callee: Value, receiver: Value, key: Value) -> u64 {
+    // SAFETY: as `scalar_native_in_lane`; the lookup only reads the heap.
+    let vm = unsafe { &*(vm as *const Vm) };
+    match vm.function_record(callee) {
+        Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. })
+            if super::lane_region::LOOKUPS.contains(native) => vm.pure_collection_lookup(*native, receiver, key),
+        _ => None,
+    }.map_or(Value::DELETED.to_bits(), Value::to_bits)
+}
+
 /// A lane body's array literal of the `count` program constants from `constant`, as the lane's
 /// own (the `MakeConstArray` row, `Allocation::ConstArray`); `DELETED` where a collection is due or the
 /// range is outside the constants.

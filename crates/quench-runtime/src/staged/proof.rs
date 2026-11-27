@@ -334,3 +334,38 @@ impl<W: Copy> Linked<W> {
     #[inline]
     pub fn shaped(self) -> Shaped<W> { Shaped(self.0) }
 }
+
+/// A direct array's record, proved once (`guard`): the value's tag names a direct array and the
+/// record table it indexes is present. Every array row (`elements::flagged_backing`,
+/// `elements::array_length`, `builtins::is_plain_array`, ...) starts from one, so the two tests
+/// live here alone. The field is private: a record is addressed only past this proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ArrayRecord<W>(W);
+
+impl<W: Copy> ArrayRecord<W> {
+    /// The single direct-array proof: `base` is a direct array among the records at
+    /// `record_base` (which is present), else leave at `miss`; its record.
+    #[inline(always)]
+    pub fn guard<S: Stage<Word = W>>(stage: &mut S, record_base: W, base: W, miss: S::Miss) -> Option<Self> {
+        let is_array = super::value::is_direct_array(stage, base);
+        stage.guard(is_array, miss)?;
+        let present = stage.ne_imm(record_base, 0u32);
+        stage.guard(present, miss)?;
+        Some(ArrayRecord(super::elements::array_record(stage, record_base, base)))
+    }
+    /// The proved record.
+    #[inline(always)]
+    pub fn record(self) -> W { self.0 }
+    /// The backing's header of the proved array where its record holds no extras (the plain
+    /// payload word is the header, `elements::array_header`), else leave at `miss`: one load
+    /// gives the plain test and the header.
+    #[inline(always)]
+    pub fn plain_header<S: Stage<Word = W>>(self, stage: &mut S, miss: S::Miss) -> Option<W> {
+        use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        let header = stage.load_u64(super::region::Region::Payload.mutable(), self.0, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+        let plain = super::object::plain_payload(stage, header);
+        stage.guard(plain, miss)?;
+        Some(header)
+    }
+}
