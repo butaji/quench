@@ -689,7 +689,7 @@ impl Vm {
 
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
-    fn call_native_dispatch(
+    pub(super) fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -1040,7 +1040,6 @@ impl Vm {
             | Native::TemporalNowTimeZoneId
             | Native::TemporalNowZonedDateTimeISO => super::layer_hooks::intl_temporal_call(self, p, native, this, args),
             Native::IsHTMLDDA => Ok(Value::NULL),
-            Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
             Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
@@ -1065,7 +1064,6 @@ impl Vm {
                 self.collect_now(p);
                 Ok(Value::UNDEFINED)
             }
-            Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
@@ -1427,8 +1425,7 @@ impl Vm {
             | Native::TemporalPlainYearMonthToLocaleString => {
                 layer_hooks::intl_temporal_call(self, p, native, this, args)
             }
-            Native::Object
-            | Native::Array
+            Native::Array
             | Native::Map
             | Native::Set
             | Native::WeakMap
@@ -2195,9 +2192,9 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
         | Native::AsyncGeneratorReturnFulfilled
         | Native::AsyncGeneratorReturnRejected
         | Native::AsyncGeneratorDelegateReturnStart => return Some(enter_async_reaction),
-        _ if native.is_object_static() => return Some(enter_object_static),
-        Native::LazyDataProperty => return Some(enter_lazy_data_property),
-        Native::ProxyRevoke => return Some(enter_proxy_revoke),
+        _ if let Some(entry) = super::object_static::entry(native) => return Some(entry),
+        _ if let Some(entry) = super::lazy_data_property::entry(native) => return Some(entry),
+        _ if let Some(entry) = super::proxy::entry(native) => return Some(entry),
         _ if native.is_data_view_native() => return Some(enter_data_view),
         _ => None,
     }
@@ -2281,21 +2278,6 @@ fn enter_promise(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, 
 
 fn enter_async_reaction(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_async_reaction_native(p, native, args)
-}
-
-fn enter_object_static(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_object_native(p, native, args)
-}
-
-fn enter_lazy_data_property(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.lazy_data_property_access(p, this, args)
-}
-
-fn enter_proxy_revoke(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    let callee = vm
-        .active_native_callable()
-        .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-    vm.proxy_revoke(callee)
 }
 
 fn enter_data_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {

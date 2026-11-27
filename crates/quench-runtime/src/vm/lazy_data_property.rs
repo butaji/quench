@@ -620,3 +620,15 @@ impl Vm {
         }
     }
 }
+
+/// The entry of the lazy data property accessor.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::LazyDataProperty => Some(lazy_data_property_native),
+        _ => None,
+    }
+}
+
+fn lazy_data_property_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.lazy_data_property_access(p, this, args)
+}
