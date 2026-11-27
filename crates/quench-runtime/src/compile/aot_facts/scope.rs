@@ -40,7 +40,7 @@ pub(super) struct Scope {
     /// The atoms of `ARRAY_MUTATORS` the program names.
     mutators: Vec<u32>,
     /// The atoms of `ARRAY_BUILTINS` the program names.
-    builtins: Vec<u32>,
+    array_builtins: Vec<u32>,
     /// The atom `Array` interns to, if the program names it: `new Array(n)` and `Array(n)` construct an array.
     array: Option<u32>,
     /// Each String constant's atom, by constant index.
@@ -88,7 +88,7 @@ impl Scope {
                 .filter(|(_, name)| ARRAY_MUTATORS.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
-            builtins: program
+            array_builtins: program
                 .atoms
                 .iter()
                 .enumerate()
@@ -129,7 +129,7 @@ impl Scope {
 
     /// Whether `atom` names an array builtin that runs no callback and no program code (`ARRAY_BUILTINS`).
     pub(super) fn is_array_builtin(&self, atom: u32) -> bool {
-        self.builtins.contains(&atom)
+        self.array_builtins.contains(&atom)
     }
 
     /// Whether `origin` is the global `Array`, whose call allocates an array (`effects::array_constructed`).

@@ -16,6 +16,10 @@ doctest = false
 # The staged handler language. The stencil build compiles its sources; the library re-exports them after the move.
 quench-staged = { path = "../quench-staged" }
 
+[features]
+# Named so the runtime sources the stencil build includes may gate test-only items on it.
+test-support = []
+
 [lints]
 workspace = true
 
