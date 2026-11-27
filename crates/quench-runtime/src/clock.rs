@@ -1,25 +1,8 @@
-//! The clocks the engine and its host read, in one place (M6, P6 work clock).
-//!
-//! By default every reader gets the operating system's clocks. Under `QUENCH_DEV=virtual-clock`
-//! the JavaScript-visible clocks (`Date.now`, `performance.now`, `process.hrtime`, timers) read
-//! one virtual clock instead: it starts at a fixed instant, moves forward a fixed step on each
-//! read, and jumps to the next timer when the event loop would otherwise wait. `Math.random`
-//! then starts from a fixed seed. A run's instruction count no longer depends on how fast the
-//! host is, so A/B comparisons can trust small deltas. Scores printed in this mode measure
-//! virtual time and must not be used.
-use std::sync::OnceLock;
+//! The clocks the engine and its host read, in one place (M6, P6 work clock): the operating
+//! system's clocks for the JavaScript-visible reads, and the engine work clock (`now_work`) that
+//! the policies read in place of wall time.
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-/// How far the virtual clock moves on each read: enough that two reads differ, as
-/// benchmark harnesses divide by elapsed time.
-const VIRTUAL_STEP_NS: u64 = 100_000;
-/// Where virtual wall time starts: 2026-01-01T00:00:00Z.
-const VIRTUAL_EPOCH_SECS: u64 = 1_767_225_600;
-/// The `Math.random` seed under the virtual clock (any odd value).
-const VIRTUAL_RANDOM_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
-
-static VIRTUAL_NS: AtomicU64 = AtomicU64::new(0);
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Whether a build-time evaluation watches the program's inputs from its environment
 /// (`watch_inputs`): strict AOT runs an entry at build time, and a run that read the clock
@@ -78,46 +61,21 @@ fn note_watched_input() {
     request_watched_termination();
 }
 
-/// Whether the JavaScript-visible clocks are virtual (`QUENCH_DEV=virtual-clock`), read once.
-pub fn is_virtual() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::VirtualClock.on())
-}
-
-/// The instant the virtual clock counts from, taken on first use.
-fn virtual_base() -> Instant {
-    static BASE: OnceLock<Instant> = OnceLock::new();
-    *BASE.get_or_init(Instant::now)
-}
-
-/// Nanoseconds of virtual time after a read, which moves the clock one step.
-fn virtual_tick() -> u64 {
-    VIRTUAL_NS.fetch_add(VIRTUAL_STEP_NS, Ordering::Relaxed) + VIRTUAL_STEP_NS
-}
-
 /// The monotonic instant now.
 pub fn instant_now() -> Instant {
-    if is_virtual() {
-        virtual_base() + Duration::from_nanos(virtual_tick())
-    } else {
-        Instant::now()
-    }
+    Instant::now()
 }
 
 /// The wall-clock time now.
 pub fn system_now() -> SystemTime {
-    if is_virtual() {
-        UNIX_EPOCH + Duration::from_secs(VIRTUAL_EPOCH_SECS) + Duration::from_nanos(virtual_tick())
-    } else {
-        SystemTime::now()
-    }
+    SystemTime::now()
 }
 
 /// Milliseconds since the Unix epoch, as `Date.now` reads them.
 pub fn unix_millis() -> f64 {
     // One `CLOCK_REALTIME` read, as `SystemTime::now` makes, without its `Duration` steps.
     #[cfg(unix)]
-    if !is_virtual() {
+    {
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
         // SAFETY: `time` is a valid out-pointer for the call.
         if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut time) } == 0 && time.tv_sec >= 0 {
@@ -129,10 +87,6 @@ pub fn unix_millis() -> f64 {
 
 /// A monotonic clock in nanoseconds (`CLOCK_MONOTONIC` by default); `None` where unavailable.
 pub fn monotonic_ns() -> Option<f64> {
-    if is_virtual() {
-        // Offset by a day so that origins taken from it are never zero.
-        return Some(86_400.0 * 1e9 + virtual_tick() as f64);
-    }
     #[cfg(unix)]
     {
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
@@ -214,20 +168,4 @@ pub fn note_lane_run() {
 /// Adds `units` of work to the work clock (`now_work`); heaps call it once per collection.
 pub fn charge_work(units: u64) {
     WORK.fetch_add(units, Ordering::Relaxed);
-}
-
-/// Under the virtual clock, moves virtual time forward to `due` (a waiting event loop's next
-/// timer) and returns true, so the loop runs the timer without sleeping; false otherwise.
-pub fn skip_to(due: Instant) -> bool {
-    if !is_virtual() {
-        return false;
-    }
-    let target = due.saturating_duration_since(virtual_base()).as_nanos() as u64;
-    VIRTUAL_NS.fetch_max(target, Ordering::Relaxed);
-    true
-}
-
-/// The fixed `Math.random` seed under the virtual clock.
-pub fn fixed_random_seed() -> Option<u64> {
-    is_virtual().then_some(VIRTUAL_RANDOM_SEED)
 }

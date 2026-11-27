@@ -179,8 +179,6 @@ impl Vm {
             megamorphic_fields: _,
             field_stubs: _,
             holder_hints: _,
-            rc_pinned_shapes: _,
-            rc_pin_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,

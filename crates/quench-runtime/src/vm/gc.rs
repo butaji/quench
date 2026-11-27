@@ -605,16 +605,7 @@ impl Vm {
         // costs each root a step through every nesting level. They go into the previous
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
-        // Under counts, a minor collection may free any old record nothing counted names. The
-        // edges the VM writes once (program constants, kept atom strings, startup roots, shape
-        // edges) are taken as a minor would take them, where they may name young records, and
-        // their records are pinned (`Heap::rc_pin`) so no epoch frees them; when counts
-        // restarted, which drops pins, every one is taken and pinned again.
-        let rc = self.heap.rc_active();
-        let repin = rc && self.rc_pin_epoch != self.heap.rc_pin_epoch();
-        let all_roots = full || repin;
-        let mut pins = Vec::new();
-        self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
+        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend(self.native_roots.live().iter().copied());
@@ -871,8 +862,8 @@ impl Vm {
             roots.truncate(kept);
         }
         roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
-        let kept_atoms = self.heap.kept_atom_roots(all_roots);
-        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
+        let kept_atoms = self.heap.kept_atom_roots(full);
+        roots.extend(kept_atoms);
         roots.extend(self.test262_agent.roots());
         roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
         self.host_frame_roots(&mut roots);
@@ -941,11 +932,10 @@ impl Vm {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        // Old startup roots stay marked until a full collection, which takes them all. Under
-        // counts they are pinned when taken, as a minor collection may free old records too.
-        if all_roots || !self.startup_roots_old() {
+        // Old startup roots stay marked until a full collection, which takes them all.
+        if full || !self.startup_roots_old() {
             let startup = self.startup_intrinsic_roots();
-            if rc { pins.extend(startup) } else { roots.extend(startup) }
+            roots.extend(startup);
         }
         for frame in &self.frames {
             // A missing map means the function uses a register form the liveness pass cannot
@@ -1008,39 +998,6 @@ impl Vm {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
-        // A minor collection under counts (which re-marks the zero-count old records anything
-        // uncounted names, `Heap::rc_pre_mark`) takes every edge the VM holds outside the heap
-        // as a root; the edges of the shapes made since the last minor collection are pinned
-        // instead, being written once, but an owned dictionary's change in place, so they are
-        // roots every time.
-        if !full && rc {
-            let pinned = if repin { 0 } else { self.rc_pinned_shapes.min(shape_count) };
-            for shape in 0..pinned {
-                if shape_lookup::is_owned_dictionary(&self.shapes[shape]) {
-                    shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut roots);
-                }
-            }
-            for shape in pinned..shape_count {
-                shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut pins);
-            }
-            self.rc_pinned_shapes = shape_count;
-        }
-        if !full && rc {
-            roots.extend(owned_roots.values().flatten().copied());
-            if let Some(strings) = &self.dynamic_strings {
-                roots.extend(strings.values().copied());
-            }
-            roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
-            roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
-            roots.extend(self.holder_hints.own.iter().flat_map(|hint| [hint.holder, hint.value]));
-            roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
-            self.private_site_homes.for_each_value(|value| roots.push(value));
-        }
-        if rc {
-            self.heap.rc_pin(&pins);
-            self.rc_pin_epoch = self.heap.rc_pin_epoch();
-        }
-        roots.append(&mut pins);
         let parallel_trace =
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
@@ -1091,8 +1048,7 @@ impl Vm {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        // Under reference counts a minor collection frees old closures too.
-        self.prune_function_values(full || self.heap.rc_active());
+        self.prune_function_values(full);
         self.prune_module_functions();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -1118,9 +1074,6 @@ impl Vm {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
-            // Compaction renumbers the shapes: pins taken stay, but which shapes they cover is
-            // not known by index any more.
-            self.rc_pinned_shapes = 0;
         } else {
             self.retain_live_method_caches();
         }

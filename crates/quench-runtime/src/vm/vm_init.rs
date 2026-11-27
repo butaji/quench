@@ -224,8 +224,6 @@ impl Vm {
             megamorphic_fields: vec![],
             field_stubs: Default::default(),
             holder_hints: Default::default(),
-            rc_pinned_shapes: 0,
-            rc_pin_epoch: u64::MAX,
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
@@ -287,9 +285,6 @@ impl Vm {
         let layouts = vm.shape_layouts();
         vm.heap.track_slot_representations(&layouts);
 
-        if crate::trace::Dev::RcGc.on() {
-            vm.heap.set_rc(true);
-        }
         vm
     }
 }

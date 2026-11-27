@@ -224,8 +224,6 @@ mod prototypes;
 mod promise_record;
 pub use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
-pub mod rc;
-mod record_children;
 mod records;
 mod class_space;
 mod departure;
@@ -809,33 +807,10 @@ pub struct Heap {
     /// eight fulls went by. The low, not the pass's own length, so that an arena that shrank
     /// and grows again narrows on the way back up.
     narrow_pass: (usize, u32),
-    /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
-    rc_active: bool,
     /// Whether any store gate input is on: a concurrent cycle's snapshot barrier, reference
     /// counts, or the arena's slot observation (`Heap::refresh_store_watch`). Off, a store of a
     /// value naming no heap record passes the gate on this byte and the value's tag alone.
     store_watched: bool,
-    /// Old records whose count is 0, to try freeing at the next minor collection, and the
-    /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
-    rc_zero: Vec<Value>,
-    rc_candidates: Vec<Value>,
-    /// Whether the running mark is a minor collection's under counts: the aged object and
-    /// array records it marks count their children as it pushes them (`Heap::mark_value`),
-    /// and are counted in `rc_counted`.
-    rc_marking: bool,
-    rc_counted: usize,
-    /// The records old as the running full collection started, per family
-    /// (`Heap::rc_full_start`).
-    rc_old: Vec<Vec<u64>>,
-    /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
-    /// until a full collection's trace checks that none is reachable.
-    rc_suspects: Vec<Value>,
-    /// The last minor collection's counting (`QUENCH_TRACE=gc`): the microseconds before
-    /// and after its mark, its candidates, the zero-count records it carried, its young
-    /// survivors, and the candidates it freed.
-    rc_trace: [u64; 9],
-    /// Bumped when counts restart (`set_rc`), which drops every pin (`rc_pin`).
-    rc_pin_epoch: u64,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1080,10 +1055,6 @@ impl Heap {
         if let Some(age) = self.promotion_age_for_test {
             return age;
         }
-        if self.rc_active {
-            // Under counts every survivor of a minor collection is old, and counted, at once.
-            return PromotionAge::First;
-        }
         self.pacing_state.promotion_age(&self.pacing())
     }
     #[cfg(test)]
@@ -1133,8 +1104,7 @@ impl Heap {
         &self,
         object_roots: Option<&'a ParallelObjectRootTrace<'a>>,
     ) -> Option<parallel_mark::ParallelMark<'a>> {
-        let traces_records_in_parallel = !self.rc_marking
-            && (self.collection_state == CollectionState::FullMarking || !self.has_direct_records());
+        let traces_records_in_parallel = self.collection_state == CollectionState::FullMarking || !self.has_direct_records();
         let forced = self.parallel_mark_forced();
         if !traces_records_in_parallel || !forced && self.live_slots() < PARALLEL_MARK_MINIMUM_CELLS {
             return None;
@@ -1731,7 +1701,7 @@ impl Heap {
         };
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
         if !data.properties().has_inline_property_storage() || !data.store_inline_narrow(slot, value) {
             return self.property_set(object, slot, value);
         }
@@ -2556,13 +2526,6 @@ impl Heap {
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
-        self.rc_zero.clear();
-        self.rc_candidates.clear();
-        self.rc_suspects.clear();
-        // The fresh record spaces keep counts as the old ones did.
-        if self.rc_active {
-            self.set_rc(true);
-        }
         self.old_live = 0;
         self.collections = 0;
         self.layout_id = Self::next_layout_id();
@@ -2674,10 +2637,8 @@ impl Heap {
         std::mem::take(&mut self.abandoned_contexts)
     }
     pub(crate) fn should_full_collect(&self) -> bool {
-        // Under counts, minor collections free old garbage: the backup trace runs when
-        // `Heap::rc_plan` finds the live records grown, not at an allocation cap.
         self.full_due
-            || !self.rc_active && self.pacing().allocation_cap_reached(
+            || self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocated_since_full(),
             )
@@ -2919,9 +2880,6 @@ impl Heap {
                 self.gc_profile.young_cells_swept += self.young.count() as u64;
             }
         }
-        if full && self.rc_active {
-            self.rc_full_start();
-        }
         if full {
             Self::clear_marks(&self.marks);
             self.remembered.clear();
@@ -2989,12 +2947,6 @@ impl Heap {
                     remembered_owners.extend_from_slice(&work[first..first + written]);
                 }
             }
-            if self.rc_active {
-                let started = std::time::Instant::now();
-                self.rc_marking = true;
-                self.rc_pre_mark(&mut work);
-                self.rc_trace[0] = started.elapsed().as_micros() as u64;
-            }
         }
         #[cfg(debug_assertions)]
         let verify_remembered_records: Vec<Value> = if full {
@@ -3059,8 +3011,6 @@ impl Heap {
         }
         #[cfg(debug_assertions)]
         {
-            // The verifying marks count nothing.
-            let rc_marking = std::mem::replace(&mut self.rc_marking, false);
             if full {
                 self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
@@ -3068,30 +3018,10 @@ impl Heap {
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
-            self.rc_marking = rc_marking;
         }
-        if self.rc_active && crate::trace::Dev::RcVerify.on() {
-            if full {
-                self.rc_check_suspects();
-            } else {
-                // The candidates the mark left are kept, and marked through, for the next
-                // full collection to judge.
-                let suspects = self.rc_unmarked_candidates();
-                work.extend(suspects.iter().copied());
-                self.rc_suspects.extend(suspects);
-                let mut ephemerons = weak::EphemeronWork::default();
-                self.mark_work(&mut work, &mut object_roots, None, &mut ephemerons, GcTraceKind::Collection, &mut environments);
-            }
-        }
-        self.rc_marking = false;
         self.clear_unread_environment_slots(environments);
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
-        if self.rc_active {
-            let started = std::time::Instant::now();
-            if full { self.rc_full_end() } else { self.rc_epoch() }
-            self.rc_trace[1] = started.elapsed().as_micros() as u64;
-        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             let mark_nanos = mark_started.elapsed().as_nanos() as u64;
@@ -3567,7 +3497,7 @@ impl Heap {
         for family in self.record_families_mut() {
             aged.add(family.take_aged_fates());
         }
-        let mut next = self.pacing().plan(
+        let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
                 full,
@@ -3581,9 +3511,6 @@ impl Heap {
                 aged,
             },
         );
-        if self.rc_active {
-            next = self.rc_plan(live);
-        }
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
             // Resident set size at this collection's end, so a pacing change can be judged
@@ -3592,7 +3519,7 @@ impl Heap {
                 .ok()
                 .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
                 .map_or(0, |pages| pages * 4);
-            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
         }
         if full && crate::trace::Channel::StorageCensus.on() {
             self.trace_storage_census();
@@ -4083,21 +4010,17 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
             }
-            if self.rc_marking && self.object_records.is_aged(record_id) {
-                self.push_aged_object_children(value, record_id, ctx.work, ctx.trace_kind);
-            } else {
-                // SAFETY: the direct handle is live and its mark bit was newly set.
-                let record = unsafe { self.object_records.get_live(record_id) };
-                Self::object_children(
-                    value,
-                    &record.object,
-                    &self.properties,
-                    ctx.work,
-                    ctx.object_roots,
-                    ctx.trace_kind,
-                    &mut ctx.last_proto,
-                );
-            }
+            // SAFETY: the direct handle is live and its mark bit was newly set.
+            let record = unsafe { self.object_records.get_live(record_id) };
+            Self::object_children(
+                value,
+                &record.object,
+                &self.properties,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
+            );
             self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
         } else if let Some(record_id) = value.direct_array_index() {
             if !self.array_records.mark(record_id) {
@@ -4108,23 +4031,19 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[CellKind::Array as usize] += 1;
             }
-            if self.rc_marking && self.array_records.is_aged(record_id) {
-                self.push_aged_array_children(value, record_id, ctx.work, ctx.trace_kind);
-            } else {
-                // SAFETY: a direct Array Value names an initialized record.
-                let array = unsafe { self.array_records.get_live(record_id) };
-                let string_records = &mut self.string_records;
-                Self::array_children(
-                    value,
-                    array,
-                    &self.properties,
-                    |string| string_parts::mark_flat(string_records, string),
-                    ctx.work,
-                    ctx.object_roots,
-                    ctx.trace_kind,
-                    &mut ctx.last_proto,
-                );
-            }
+            // SAFETY: a direct Array Value names an initialized record.
+            let array = unsafe { self.array_records.get_live(record_id) };
+            let string_records = &mut self.string_records;
+            Self::array_children(
+                value,
+                array,
+                &self.properties,
+                |string| string_parts::mark_flat(string_records, string),
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
+            );
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
@@ -4161,9 +4080,6 @@ impl Heap {
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
                 string_parts::trace_parts(&mut self.string_records, record_id, ctx.work);
-                if self.rc_marking && self.string_records.is_aged(record_id) {
-                    self.count_flat_string_parts(record_id);
-                }
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -4175,8 +4091,7 @@ impl Heap {
         }
     }
 
-    /// Marks live class cell `granule` (of class `class`) once, and traces its edges. An aged cell under
-    /// counting pushes its children and counts them, as an aged object record does.
+    /// Marks live class cell `granule` (of class `class`) once, and traces its edges.
     #[inline(never)]
     fn mark_class_cell<R>(&mut self, value: Value, granule: u32, class: u32, ctx: &mut MarkCtx<'_, '_, R>)
     where
@@ -4190,18 +4105,8 @@ impl Heap {
             self.gc_profile.marked += 1;
             self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
         }
-        if self.rc_marking && self.class_space.is_aged(granule) {
-            let first = ctx.work.len();
-            let fields = self.class_space.cell_fields(granule);
-            Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
-            for &child in &ctx.work[first..] {
-                self.rc_increment(child);
-            }
-            self.rc_counted += 1;
-        } else {
-            let fields = self.class_space.cell_fields(granule);
-            Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
-        }
+        let fields = self.class_space.cell_fields(granule);
+        Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
         self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
 
@@ -4382,57 +4287,12 @@ impl Heap {
     fn mark_small_string(&mut self, local: RecordId, work: &mut Vec<Value>) {
         if self.small_strings.mark(local) {
             small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
-            if self.rc_marking && self.small_strings.is_aged(local) {
-                // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
-                // SAFETY: just marked, so occupied.
-                unsafe { self.small_strings.get_live(local) }
-                    .for_each_text(|part| self.rc_increment(Value::direct_string(part)));
-                self.rc_counted += 1;
-            }
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
             }
         }
-    }
-
-    /// Pushes the children of an aged object (a survivor or re-marked candidate) and counts each.
-    #[inline(never)]
-    fn push_aged_object_children(&mut self, value: Value, record_id: RecordId, work: &mut Vec<Value>, trace_kind: GcTraceKind) {
-        // A survivor's snapshot names its children (`SatbSnapshot`); its shape's edges are pinned
-        // or this collection's roots, and its owned roots are roots (`Vm::collect_inner`).
-        // SAFETY: the direct handle is live and its mark bit was newly set.
-        let record = unsafe { self.object_records.get_live(record_id) };
-        let first = work.len();
-        Self::object_children(value, &record.object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-        for &child in &work[first..] {
-            self.rc_increment(child);
-        }
-        self.rc_counted += 1;
-    }
-
-    /// Pushes the children of an aged array and counts each (as `push_aged_object_children`).
-    #[inline(never)]
-    fn push_aged_array_children(&mut self, value: Value, record_id: RecordId, work: &mut Vec<Value>, trace_kind: GcTraceKind) {
-        // SAFETY: a direct Array Value names an initialized record.
-        let array = unsafe { self.array_records.get_live(record_id) };
-        let first = work.len();
-        Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-        for &child in &work[first..] {
-            self.rc_increment(child);
-        }
-        self.rc_counted += 1;
-    }
-
-    /// Counts the parts of a surviving flat string (`mark_value`'s string arm).
-    #[inline(never)]
-    fn count_flat_string_parts(&mut self, record_id: RecordId) {
-        // SAFETY: just marked, so occupied.
-        if let Some(parts) = unsafe { self.string_records.get_live(record_id) }.parts() {
-            parts.for_each_text(|part| self.rc_increment(Value::direct_string(part)));
-        }
-        self.rc_counted += 1;
     }
 
     /// Tells the weak map values waiting on a newly marked `value` (`EphemeronWork::newly_marked`).
@@ -4506,26 +4366,26 @@ impl Heap {
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
             Some(HeapReference::ObjectRecord(granule)) => match self.class_space.live_class(granule) {
-                Some(_) => self.class_space.barrier(granule, &self.properties),
+                Some(_) => self.class_space.barrier(granule),
                 None => {
                     let record_id = self.stub_record(granule);
-                    self.object_records.barrier(record_id, &self.properties)
+                    self.object_records.barrier(record_id)
                 }
             },
-            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id, &self.properties),
+            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id),
             Some(HeapReference::FunctionRecord(record_id)) => {
-                self.function_records.barrier(record_id, &self.properties)
+                self.function_records.barrier(record_id)
             }
-            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.barrier(record_id, &self.properties),
-            Some(HeapReference::AwaitRecord(record_id)) => self.await_records.barrier(record_id, &self.properties),
-            Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.barrier(record_id, &self.properties),
+            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.barrier(record_id),
+            Some(HeapReference::AwaitRecord(record_id)) => self.await_records.barrier(record_id),
+            Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.barrier(record_id),
             Some(HeapReference::IteratorRecord(record_id)) => {
-                self.iterator_records.barrier(record_id, &self.properties)
+                self.iterator_records.barrier(record_id)
             }
             Some(HeapReference::CollectionRecord(record_id)) => {
-                self.collection_records.barrier(record_id, &self.properties)
+                self.collection_records.barrier(record_id)
             }
-            Some(HeapReference::WasmGcRecord(record_id)) => self.wasm_gc_records.barrier(record_id, &self.properties),
+            Some(HeapReference::WasmGcRecord(record_id)) => self.wasm_gc_records.barrier(record_id),
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // Strings and vectors are immutable and hold no edges, so nothing is ever stored
             // into them.
@@ -4932,7 +4792,7 @@ impl Heap {
             return unsafe { self.record_property_set_unlogged(record_id, slot, value, layout) };
         }
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
         self.rewrite_widened_numbers();
         stored
@@ -5110,7 +4970,7 @@ impl Heap {
                 ..
             } = &mut *self;
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
+            let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
             let slot = properties.len(data.properties());
             append_property(data, properties, slot, value, shape, 0);
             slot
@@ -5146,7 +5006,7 @@ impl Heap {
         let record_id = self.stub_record(object_ref.granule());
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
         debug_assert_eq!(slot, properties.len(data.properties()));
         append_property(data, properties, slot, value, shape, want);
         self.rewrite_widened_numbers();

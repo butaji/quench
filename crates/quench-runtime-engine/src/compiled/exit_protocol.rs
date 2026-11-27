@@ -224,11 +224,6 @@ impl ExitTable {
         self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
     }
 
-    /// The fact whose guard failed at the leave `exit`, which only a leave at a PC has.
-    pub(crate) fn fact_name(&self, exit: LaneExit) -> Option<&'static str> {
-        self.site(exit).map(|site| ExitFact::NAMES[site.fact as usize])
-    }
-
     /// The diagnostic name of the leave `exit` (`QUENCH_LANE_BODY`): its site id and, for an
     /// inlined leave, where its sig stores each live value (`slot>scratch`).
     pub(crate) fn describe(&self, exit: LaneExit) -> String {

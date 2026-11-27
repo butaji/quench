@@ -1,5 +1,4 @@
 use crate::Value;
-use crate::fact_stats::{self, FactKind};
 use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
@@ -529,9 +528,7 @@ impl ValueArena {
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
-        if self.shape_readers.retire(shape) {
-            fact_stats::retired(FactKind::Shape, u64::from(shape));
-        }
+        self.shape_readers.retire(shape);
         assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
@@ -569,9 +566,7 @@ impl ValueArena {
             self.shape_chains.resize(index + 1, 0);
             self.owner_types.resize(index + 1, SlotType::None);
         }
-        if self.slot_readers.retire(shape) {
-            fact_stats::retired(FactKind::Slot, u64::from(shape));
-        }
+        self.slot_readers.retire(shape);
         self.owner_types[index] = SlotType::None;
         self.owner_epoch += 1;
         // A parent's chain covers its length once registered; one that does not (a parent the
@@ -685,17 +680,15 @@ impl ValueArena {
     }
 
     #[inline(always)] pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
-        if previous != next && self.shape_readers.retire(previous) {
-            fact_stats::retired(FactKind::Shape, u64::from(previous));
+        if previous != next {
+            self.shape_readers.retire(previous);
         }
     }
 
     /// Retires the readers of `shape`, the class an object leaves when it departs its class cell
     /// (`Heap::depart_class_object`): `note_shape_transition` retires them on any other change.
     #[inline(always)] pub(crate) fn note_class_departure(&mut self, shape: u32) {
-        if self.shape_readers.retire(shape) {
-            fact_stats::retired(FactKind::Shape, u64::from(shape));
-        }
+        self.shape_readers.retire(shape);
     }
 
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. Only a
@@ -707,9 +700,7 @@ impl ValueArena {
     #[inline(never)]
     fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
         self.owner_epoch += 1;
-        if self.slot_readers.retire(owner) {
-            fact_stats::retired(FactKind::Slot, u64::from(owner));
-        }
+        self.slot_readers.retire(owner);
         // The words its slots hold are int-tagged: the heap rewrites them as raw doubles (decision 4.1).
         if self.owner_types[owner as usize] == SlotType::Int32 && class == SlotType::Number {
             self.int_to_number.push(owner);
