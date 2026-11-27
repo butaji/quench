@@ -20,13 +20,13 @@
 //!   `stepped`, `remainder`.
 //! - `facts/ranges.rs` `Edge::of`, `relation_ranges`, `effective_relation`: `aot_facts/numeric.rs` `relation_edge` over
 //!   `typed_ir::IntRange`'s `ordered_edge` and `without`, applied on the jump's edges by `aot_facts/flow.rs` `refine_ranges`.
-//! - `facts/immediates.rs` `constant_type`, `immediate`: `aot_facts/scope.rs` `constant_type` (an int32 constant is its
-//!   singleton range, `null`, `undefined` and Booleans their exact types).
+//! - `facts/immediates.rs` `constant_type`: `aot_facts/scope.rs` `constant_type`, re-exported here (an int32 constant is its
+//!   singleton range, `null`, `undefined` and Booleans their exact types). `immediate` stays: it denotes a `Value`, not a type.
 //! - Not portable to a non-relational cell: `facts/lengths.rs` (register-to-register length relations, `i < a.length`:
 //!   they belong to the typed residual graph's check deletion); `facts/written.rs` and `facts/widen.rs` (a lane body's
 //!   entry state); `facts/run.rs` relation tracking and the int32 inductions (`inductive`, `loop_int32`, lane contracts).
-//!   `ranges.rs` `index_range`, `signless_range`, `zero_free`, `overflow_free` are consumer queries: a reader derives them
-//!   from the cell's range, except the sign-of-zero case of `signless_range`, which the cell does not carry.
+//!   `ranges.rs` `index_range`, `signless_range`, `zero_free` and `arithmetic_type` decode the operator and read its operands'
+//!   ranges; the rules over those ranges are `typed_ir::arithmetic`. `overflow_free` (run.rs) reads `ranges::exact`.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -572,7 +572,8 @@ pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/ranges.rs"] pub(crate) mod ranges;
 #[path = "facts/lengths.rs"] pub(crate) mod lengths;
 #[path = "facts/run.rs"] pub(crate) mod run;
-pub(crate) use immediates::{constant_number, constant_type, immediate, is_int32};
+pub(crate) use immediates::{constant_number, immediate, is_int32};
+pub(crate) use quench_runtime::compile::aot_facts::constant_type;
 pub(crate) use binary::{heap_operator, heap_primitive_binary};
 pub(crate) use lengths::IndexProof;
 pub(crate) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
