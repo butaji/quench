@@ -21,22 +21,26 @@ impl Type {
     pub fn is_int32(self) -> bool { self.int_range().is_some_and(|range| range.fits_int32()) }
 
     /// What a machine view of a value of this type proves of it: an integer type is int32 where
-    /// its range fits and a Number where it does not. The range itself is the analysis's: no
-    /// load or edge checks it, so a representation conforms to this type, not to the range.
+    /// its range fits and a Number where it does not, and a NaN-free Number is a Number. The range and
+    /// the NaN bit are the analysis's: no load or edge checks them, so a representation conforms to
+    /// this type, not to either refinement (a Float64 word is a Number whether or not it is NaN).
     pub fn machine(self) -> Self {
         match self.int_range() {
             Some(_) if self.is_int32() => Self::INT32,
             Some(_) => Self::NUMBER,
+            None if self == Self::NOT_NAN_NUMBER => Self::NUMBER,
             None => self,
         }
     }
 
-    /// The join where it needs no case analysis: equal types, `NEVER`, or two integer ranges.
+    /// The join where it needs no case analysis: equal types, `NEVER`, two integer ranges, or any mix of
+    /// integers and NaN-free Numbers, which is NaN-free (`NOT_NAN_NUMBER`).
     pub(super) fn trivial_join(self, other: Self) -> Option<Self> {
         if self == other || other == Self::NEVER { return Some(self); }
         if self == Self::NEVER { return Some(other); }
         match (self.0, other.0) {
             (TypeKind::Int(known), TypeKind::Int(incoming)) => Some(Self::int(known.join(incoming))),
+            (TypeKind::Int(_) | TypeKind::NotNaN, TypeKind::Int(_) | TypeKind::NotNaN) => Some(Self::NOT_NAN_NUMBER),
             _ => None,
         }
     }

@@ -7,10 +7,11 @@
 //! The rules take and return `typed_ir` values only. What a value is bound to (its origin), the keys a step writes and
 //! the walk over the instructions stay with the caller, which reads a rule's cell and keeps its own bookkeeping.
 
+use super::math::FloatUnary;
 use super::{NumberOperation, Operation};
 use crate::bytecode::{Operand, OperandKind, Register};
-use crate::typed_ir::{Cell, Elements, IntRange, Length, Type};
-use crate::vm::operations::{binary_operator as op, NumberArithmetic, NumberBitwise, NumberRelation};
+use crate::typed_ir::{Cell, Elements, IntRange, Length, Type, language_bit};
+use crate::vm::operations::{binary_operator as op, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use crate::ValueType;
 
 /// The cells an operation's operands read: a register's, a program constant's, and the elements no field names.
@@ -87,10 +88,11 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
     match number {
         NumberOperation::Arithmetic { left, right, operation, .. } if both(left, right) => Cell::of(arithmetic(operation, ty(left), ty(right))),
         NumberOperation::Remainder { left, right, .. } if both(left, right) => Cell::of(remainder(ty(left), ty(right))),
-        NumberOperation::Extreme { left, right, .. } if both(left, right) => Cell::of(Type::NUMBER),
+        NumberOperation::Extreme { left, right, maximum, .. } if both(left, right) => Cell::of(extreme(maximum, ty(left), ty(right))),
         NumberOperation::Bitwise { left, right, operation, .. } if both(left, right) => Cell::of(bitwise(operation, ty(left), ty(right))),
         NumberOperation::Imul { left, right, .. } if both(left, right) => Cell::of(Type::INT32),
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Cell::of(Type::NUMBER),
+        NumberOperation::Unary { source, operation, .. } if one(source) => Cell::of(unary(operation, ty(source))),
+        NumberOperation::Math { source, operation, .. } if one(source) => Cell::of(math(operation, ty(source))),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Cell::of(Type::INT32),
         NumberOperation::IncDec { source, decrement, .. } if numeric(register(source)) => Cell::of(step(register(source).ty, decrement)),
         NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
@@ -153,18 +155,84 @@ fn bigint_operator(operator: u32) -> bool {
         && operator != op::ShiftRightZeroFill
 }
 
-/// The type of an arithmetic operator over two Numbers: the integer range of two integer ranges (`typed_ir::arithmetic::number_range`),
-/// else a Number.
+/// The type of an arithmetic operator over two Numbers. Two integer ranges give the operator's integer range
+/// (`typed_ir::arithmetic::number_range`) where it has one. Otherwise the result is an integer or a NaN-free Number
+/// (`NOT_NAN_NUMBER`), except where NaN is possible:
+/// - an operand that may be NaN, or an infinity of a NaN-free non-integer (`Infinity - Infinity`, `0 * Infinity`):
+///   no float range is kept, so any operand that is not an integer may be infinite, and `+`, `-`, `*` of such operands
+///   is `NUMBER`;
+/// - `0 / 0`: a division whose dividend and divisor both may be zero. A dividend or a divisor that excludes zero gives
+///   an infinity or a finite quotient, never NaN.
 pub fn arithmetic(operation: NumberArithmetic, left: Type, right: Type) -> Type {
     match (left.int_range(), right.int_range()) {
-        (Some(left), Some(right)) => crate::typed_ir::arithmetic::number_range(operation, left, right).map_or(Type::NUMBER, Type::int),
+        (Some(left), Some(right)) => {
+            if operation == NumberArithmetic::Divide && left.contains(IntRange::ZERO) && right.contains(IntRange::ZERO) {
+                return Type::NUMBER;
+            }
+            // An integer result is never NaN; `number_range` is `None` for a quotient (not an integer) and a product that
+            // leaves the word span, which are NaN-free Numbers all the same.
+            crate::typed_ir::arithmetic::number_range(operation, left, right).map_or(Type::NOT_NAN_NUMBER, Type::int)
+        }
         _ => Type::NUMBER,
     }
 }
 
+/// The type of `Math.max` (`maximum`) or `Math.min` of two Numbers. Two integer ranges give the integer range of their
+/// extremes. Otherwise the result is NaN wherever either operand is (`Math.max(NaN, 1)` is NaN), so a NaN-free Number
+/// only where neither may be.
+pub fn extreme(maximum: bool, left: Type, right: Type) -> Type {
+    match (left.int_range(), right.int_range()) {
+        (Some(left), Some(right)) => {
+            let (min, max) = if maximum {
+                (left.min.max(right.min), left.max.max(right.max))
+            } else {
+                (left.min.min(right.min), left.max.min(right.max))
+            };
+            IntRange::bounds(min, max).map_or(Type::NOT_NAN_NUMBER, Type::int)
+        }
+        _ if left.may_be_nan() || right.may_be_nan() => Type::NUMBER,
+        _ => Type::NOT_NAN_NUMBER,
+    }
+}
 
-/// The type of a bitwise operator over Numbers. An operand reads as its int32, so every operator but `>>>` defines an
-/// int32 whatever its operands; `>>>` defines an int32 only by a shift of nonzero count.
+/// The type of `+source` (`Plus`) or `-source` (`Negate`) over a Number of type `source`. A unary keeps a Number's NaN
+/// bit, since NaN is its own negation. Negating an integer range gives an integer range only where it excludes zero:
+/// `-0` is a Number no integer type holds.
+pub fn unary(operation: NumberUnary, source: Type) -> Type {
+    match (operation, source.int_range()) {
+        (NumberUnary::Plus, _) => source,
+        (NumberUnary::Negate, Some(range)) if !range.contains(IntRange::ZERO) =>
+            IntRange::bounds(-range.max, -range.min).map_or(Type::NOT_NAN_NUMBER, Type::int),
+        (NumberUnary::Negate, _) if source.may_be_nan() => Type::NUMBER,
+        (NumberUnary::Negate, _) => Type::NOT_NAN_NUMBER,
+    }
+}
+
+/// The type of the Math function `operation` over a Number of type `source`. Every function returns NaN for a NaN
+/// argument, so a source that may be NaN gives `NUMBER`. `Math.sqrt` of a negative is NaN, and a Number of unknown sign
+/// may be negative (no float range is kept), so `Math.sqrt` is NaN-free only over an integer range with no negative
+/// bound. Every other function of a NaN-free source (rounding, absolute value, sign, `fround`) is NaN-free.
+pub fn math(operation: FloatUnary, source: Type) -> Type {
+    if source.may_be_nan() { return Type::NUMBER; }
+    match operation {
+        FloatUnary::Sqrt if !source.int_range().is_some_and(|range| range.min >= 0) => Type::NUMBER,
+        _ => Type::NOT_NAN_NUMBER,
+    }
+}
+
+/// The type `ToNumber` of a value of type `ty` defines. A Number is its own `ToNumber`, a Boolean or `null` converts to
+/// 0 or 1, and neither is NaN. `undefined` converts to NaN, a string may hold no numeral, and an object's `valueOf` may
+/// return NaN, so any other type defines a Number that may be NaN.
+pub fn to_number(ty: Type) -> Type {
+    if ty == Type::NEVER || ty.is_subtype(Type::NUMBER) { return ty; }
+    let nan_free = Type::languages(language_bit(ValueType::Boolean) | language_bit(ValueType::Null));
+    if ty.is_subtype(nan_free) { Type::NOT_NAN_NUMBER } else { Type::NUMBER }
+}
+
+
+/// The type of a bitwise operator over Numbers. An operand reads as its int32 (`ToInt32` maps NaN to 0), so every
+/// operator defines an integer: an int32 for all but `>>>`, which defines an int32 only by a shift of nonzero count and
+/// otherwise an integer beyond int32's span (a NaN-free Number).
 pub fn bitwise(operation: NumberBitwise, left: Type, right: Type) -> Type {
     let operand = |ty: Type| ty.int_range().unwrap_or(IntRange::FULL).int32_operand();
     let (left, right) = (operand(left), operand(right));
@@ -175,28 +243,33 @@ pub fn bitwise(operation: NumberBitwise, left: Type, right: Type) -> Type {
         // A left shift's word is ToInt32 of its result, which lies in int32 whatever its operands.
         NumberBitwise::ShiftLeft => Type::INT32,
         NumberBitwise::ShiftRight => Type::int(left.shift_right(right).unwrap_or(IntRange::FULL)),
-        NumberBitwise::ShiftRightUnsigned => left.shift_right_unsigned(right).map_or(Type::NUMBER, Type::int),
+        NumberBitwise::ShiftRightUnsigned => left.shift_right_unsigned(right).map_or(Type::NOT_NAN_NUMBER, Type::int),
     }
 }
 
-/// The type of `left % right` over Numbers: the remainder's range of two integer ranges (`IntRange::remainder`), else a
-/// Number.
+/// The type of `left % right` over Numbers. A zero divisor gives NaN (`x % 0`), so a divisor that may be zero leaves
+/// a Number that may be NaN. Otherwise the remainder's integer range (`IntRange::remainder`), or a NaN-free Number where
+/// the dividend may be a negative zero.
 pub fn remainder(left: Type, right: Type) -> Type {
     match (left.int_range(), right.int_range()) {
-        (Some(left), Some(right)) => left.remainder(right).map_or(Type::NUMBER, Type::int),
+        (Some(left), Some(right)) if !right.contains(IntRange::ZERO) => left.remainder(right).map_or(Type::NOT_NAN_NUMBER, Type::int),
         _ => Type::NUMBER,
     }
 }
 
 /// The type `++` (or `--`, where `decrement`, and also its local-slot form, which defines the same value) defines over an
-/// operand of type `source`: the stepped range of an integer where it stays in int32 (an int32 then), else a Number,
-/// or a Number or BigInt where the operand may be a BigInt.
+/// operand of type `source`: the stepped range of an integer where it stays in int32 (an int32 then), else the integer
+/// beyond int32 (a NaN-free Number). A Number keeps its NaN bit, and a BigInt operand may be a BigInt.
 pub fn step(source: Type, decrement: bool) -> Type {
     if source == Type::NEVER { return Type::NEVER; }
     if let Some(range) = source.int_range() {
-        return range.stepped(decrement).filter(IntRange::fits_int32).map_or(Type::NUMBER, Type::int);
+        return range.stepped(decrement).filter(IntRange::fits_int32).map_or(Type::NOT_NAN_NUMBER, Type::int);
     }
-    if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(ValueType::BigInt)) }
+    if source.is_subtype(Type::NUMBER) {
+        if source.may_be_nan() { Type::NUMBER } else { Type::NOT_NAN_NUMBER }
+    } else {
+        Type::NUMBER.join(Type::language(ValueType::BigInt))
+    }
 }
 
 /// The integer bounds a loop header widens its ranges to (`widen`): int32's two bounds, and each constant a relational
@@ -295,10 +368,86 @@ mod tests {
     }
 
     #[test]
-    fn increment_past_int32_widens_to_a_number() {
-        assert_eq!(step(Type::INT32, false), Type::NUMBER);
-        assert_eq!(step(Type::INT32, true), Type::NUMBER);
-        assert_eq!(step(range(i64::from(i32::MAX), i64::from(i32::MAX)), false), Type::NUMBER);
+    fn increment_past_int32_widens_to_an_integer_that_is_not_nan() {
+        assert_eq!(step(Type::INT32, false), Type::NOT_NAN_NUMBER);
+        assert_eq!(step(Type::INT32, true), Type::NOT_NAN_NUMBER);
+        assert_eq!(step(range(i64::from(i32::MAX), i64::from(i32::MAX)), false), Type::NOT_NAN_NUMBER);
+    }
+
+    #[test]
+    fn integer_arithmetic_is_never_nan_and_a_non_integer_operand_may_be() {
+        let integers = range(0, 10);
+        assert!(!arithmetic(NumberArithmetic::Add, integers, integers).may_be_nan());
+        let huge = Type::int(IntRange::singleton(1 << 40));
+        assert_eq!(arithmetic(NumberArithmetic::Multiply, huge, huge), Type::NOT_NAN_NUMBER, "an integer product beyond the word");
+        assert_eq!(arithmetic(NumberArithmetic::Add, Type::NUMBER, integers), Type::NUMBER);
+        assert_eq!(arithmetic(NumberArithmetic::Add, Type::NOT_NAN_NUMBER, integers), Type::NUMBER, "an infinity may be a non-integer operand");
+        assert_eq!(arithmetic(NumberArithmetic::Multiply, Type::NOT_NAN_NUMBER, Type::NOT_NAN_NUMBER), Type::NUMBER, "0 * Infinity");
+        assert_eq!(arithmetic(NumberArithmetic::Subtract, Type::NOT_NAN_NUMBER, Type::NOT_NAN_NUMBER), Type::NUMBER, "Infinity - Infinity");
+    }
+
+    #[test]
+    fn division_is_nan_only_where_zero_over_zero_is_possible() {
+        assert_eq!(arithmetic(NumberArithmetic::Divide, range(0, 0), range(0, 4)), Type::NUMBER, "0 / 0");
+        assert_eq!(arithmetic(NumberArithmetic::Divide, range(1, 9), range(0, 4)), Type::NOT_NAN_NUMBER, "x / 0 is an infinity");
+        assert_eq!(arithmetic(NumberArithmetic::Divide, range(0, 9), range(1, 4)), Type::NOT_NAN_NUMBER, "0 / x is zero");
+        assert_eq!(arithmetic(NumberArithmetic::Divide, Type::NUMBER, range(1, 4)), Type::NUMBER);
+    }
+
+    #[test]
+    fn remainder_by_a_divisor_that_may_be_zero_may_be_nan() {
+        assert_eq!(remainder(range(0, 9), range(0, 4)), Type::NUMBER, "x % 0 is NaN");
+        assert_eq!(remainder(range(0, 9), range(3, 4)), range(0, 3));
+        assert_eq!(remainder(range(-9, 9), range(3, 4)), Type::NOT_NAN_NUMBER, "a negative dividend may be -0");
+    }
+
+    #[test]
+    fn math_functions_are_nan_for_a_nan_argument_and_sqrt_for_a_negative_one() {
+        assert_eq!(math(FloatUnary::Sqrt, range(0, 16)), Type::NOT_NAN_NUMBER);
+        assert_eq!(math(FloatUnary::Sqrt, range(-1, 4)), Type::NUMBER);
+        assert_eq!(math(FloatUnary::Sqrt, Type::NOT_NAN_NUMBER), Type::NUMBER, "a non-integer of unknown sign");
+        assert_eq!(math(FloatUnary::Floor, Type::NOT_NAN_NUMBER), Type::NOT_NAN_NUMBER);
+        assert_eq!(math(FloatUnary::Floor, Type::NUMBER), Type::NUMBER);
+        assert_eq!(math(FloatUnary::Sqrt, Type::NUMBER), Type::NUMBER);
+    }
+
+    #[test]
+    fn max_and_min_are_nan_only_where_an_operand_is() {
+        assert_eq!(extreme(true, Type::NOT_NAN_NUMBER, range(0, 3)), Type::NOT_NAN_NUMBER);
+        assert_eq!(extreme(true, Type::NUMBER, range(0, 3)), Type::NUMBER, "Math.max(NaN, 1)");
+        assert_eq!(extreme(false, range(0, 3), range(5, 9)), range(0, 3));
+        assert_eq!(extreme(true, range(0, 3), range(5, 9)), range(5, 9));
+    }
+
+    #[test]
+    fn unary_negation_keeps_the_nan_bit_and_negates_only_ranges_without_zero() {
+        assert_eq!(unary(NumberUnary::Negate, range(1, 5)), range(-5, -1));
+        assert_eq!(unary(NumberUnary::Negate, range(0, 5)), Type::NOT_NAN_NUMBER, "-0");
+        assert_eq!(unary(NumberUnary::Negate, Type::NUMBER), Type::NUMBER);
+        assert_eq!(unary(NumberUnary::Plus, Type::NUMBER), Type::NUMBER);
+        assert_eq!(step(Type::NOT_NAN_NUMBER, false), Type::NOT_NAN_NUMBER);
+        assert_eq!(step(Type::NUMBER, false), Type::NUMBER);
+    }
+
+    #[test]
+    fn to_number_is_nan_free_for_numbers_booleans_and_null_only() {
+        assert_eq!(to_number(Type::NUMBER), Type::NUMBER);
+        assert_eq!(to_number(range(0, 3)), range(0, 3));
+        assert_eq!(to_number(Type::language(ValueType::Boolean)), Type::NOT_NAN_NUMBER);
+        assert_eq!(to_number(Type::language(ValueType::Null)), Type::NOT_NAN_NUMBER);
+        assert_eq!(to_number(Type::language(ValueType::Undefined)), Type::NUMBER, "undefined converts to NaN");
+        assert_eq!(to_number(Type::language(ValueType::String)), Type::NUMBER);
+    }
+
+    #[test]
+    fn the_nan_bit_joins_by_or_and_integers_are_nan_free() {
+        assert_eq!(range(0, 3).join(Type::NOT_NAN_NUMBER), Type::NOT_NAN_NUMBER);
+        assert_eq!(Type::NOT_NAN_NUMBER.join(Type::NUMBER), Type::NUMBER);
+        assert!(range(0, 3).is_subtype(Type::NOT_NAN_NUMBER) && Type::NOT_NAN_NUMBER.is_subtype(Type::NUMBER));
+        assert!(!Type::NUMBER.is_subtype(Type::NOT_NAN_NUMBER));
+        assert!(!Type::NOT_NAN_NUMBER.may_be_nan() && Type::NUMBER.may_be_nan());
+        assert!(!Type::NEVER.may_be_nan() && !Type::language(ValueType::Boolean).may_be_nan());
+        assert_eq!(Type::NOT_NAN_NUMBER.machine(), Type::NUMBER);
     }
 
     #[test]
@@ -312,14 +461,40 @@ mod tests {
 
     /// One loop's solve over a single register: the header joins its backedge for `WIDENING_ROUNDS` rounds, then widens
     /// (as `flow::Solver::join` does), and one descending pass recomputes the header from its backedge without widening.
-    fn solve_header(entry: Type, mut step_body: impl FnMut(Type) -> Type) -> Type {
-        let thresholds = thresholds([]);
+    fn solve_header(entry: Type, step_body: impl FnMut(Type) -> Type) -> Type {
+        solve_with(&thresholds([]), entry, step_body)
+    }
+
+    /// `solve_header` widening to the given thresholds: a loop header's own (`thresholds([])`), or a field's, which the
+    /// solve widens to the constants stored to and compared against it (`aot_facts::types::Types::widen`).
+    fn solve_with(thresholds: &[i64], entry: Type, mut step_body: impl FnMut(Type) -> Type) -> Type {
         let mut header = entry;
         for round in 0..=u32::from(crate::typed_ir::WIDENING_ROUNDS) {
             let joined = header.join(step_body(header));
-            header = if round >= u32::from(crate::typed_ir::WIDENING_ROUNDS) { widen(&thresholds, header, joined) } else { joined };
+            header = if round >= u32::from(crate::typed_ir::WIDENING_ROUNDS) { widen(thresholds, header, joined) } else { joined };
         }
         entry.join(step_body(header))
+    }
+
+    #[test]
+    fn a_field_counter_incremented_under_a_bound_stays_within_its_constants() {
+        // `this.count` is stored 0 at construction and `this.count = this.count + 1` runs only where `this.count < 1000`:
+        // the field's cell is the join of the stores, so the solve's thresholds are the constants it stores and compares.
+        let bounds = thresholds([0, 1000]);
+        let field = solve_with(&bounds, Type::int(IntRange::singleton(0)), |field| {
+            let [counter, _] = relation_edge(NumberRelation::LessThan, true, field.int_range().unwrap(), span(1000, 1000)).unwrap();
+            step(Type::int(counter), false)
+        });
+        assert_eq!(field, range(0, 1000));
+    }
+
+    #[test]
+    fn a_grown_field_range_widens_to_the_nearest_constant_not_to_int32() {
+        // A counter stored 1000 and grown past 6 by one per round widens to 999 (the constant beside it), not int32's span.
+        let bounds = thresholds([1000]);
+        assert_eq!(widen(&bounds, range(0, 6), range(0, 7)), range(0, 999));
+        // Past every constant, the widening settles at int32's span (`thresholds` always holds it), not `WORD`.
+        assert_eq!(widen(&bounds, range(0, 6), range(0, 2000)), range(0, i64::from(i32::MAX)));
     }
 
     #[test]
