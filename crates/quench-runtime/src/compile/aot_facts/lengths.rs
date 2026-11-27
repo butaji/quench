@@ -39,6 +39,15 @@ pub(super) enum Relation {
     /// `sum < 2 * bound`, where `sum` holds the sum of two Numbers one of which is below the other: its half, a shift right by
     /// a count that moves a bit, is below the larger one (`Lengths::halve`).
     Twice { sum: Register, bound: Register },
+    /// `array` holds elements `[0, index)`, all written: a fill loop's index has passed each element before it. Holds
+    /// from `i = 0` (any array, the range is empty) until a write to `i` or `array` breaks it.
+    Filled { array: Register, index: Register },
+    /// `array` holds elements `[0, index]`, all written: the element at `index` was just stored over a `Filled` prefix.
+    FilledThrough { array: Register, index: Register },
+    /// `index >= bound`, both Numbers: the loop's test failed, so the index has reached the bound.
+    AtLeast { index: Register, bound: Register },
+    /// `array` holds elements `[0, length)`, all written: a fill loop ran to the length of `array` (`Length`).
+    Complete { array: Register },
 }
 
 impl Relation {
@@ -50,6 +59,9 @@ impl Relation {
             Self::Within { index, array, .. } => index == register || array == register,
             Self::Less { index, bound } => index == register || bound == register,
             Self::Twice { sum, bound } => sum == register || bound == register,
+            Self::Filled { array, index } | Self::FilledThrough { array, index } => array == register || index == register,
+            Self::AtLeast { index, bound } => index == register || bound == register,
+            Self::Complete { array } => array == register,
         }
     }
 
@@ -63,6 +75,11 @@ impl Relation {
             Self::Less { bound, .. } if bound == register && by >= 0 => Some(self),
             Self::Twice { sum, .. } if sum == register && by <= 0 => Some(self),
             Self::Twice { bound, .. } if bound == register && by >= 0 => Some(self),
+            // The index of `index >= bound` rises, and the bound falls, and the relation holds still.
+            Self::AtLeast { index, .. } if index == register && by >= 0 => Some(self),
+            Self::AtLeast { bound, .. } if bound == register && by <= 0 => Some(self),
+            // A fill prefix through `index` steps by one into the prefix through the new index: `[0, index]` is `[0, index')`.
+            Self::FilledThrough { array, index } if index == register && by == 1 => Some(Self::Filled { array, index }),
             _ => None,
         }
     }
@@ -80,6 +97,10 @@ impl Relation {
             Self::Within { index, array, reach } => Self::Within { index: swap(index), array: swap(array), reach },
             Self::Less { index, bound } => Self::Less { index: swap(index), bound: swap(bound) },
             Self::Twice { sum, bound } => Self::Twice { sum: swap(sum), bound: swap(bound) },
+            Self::Filled { array, index } => Self::Filled { array: swap(array), index: swap(index) },
+            Self::FilledThrough { array, index } => Self::FilledThrough { array: swap(array), index: swap(index) },
+            Self::AtLeast { index, bound } => Self::AtLeast { index: swap(index), bound: swap(bound) },
+            Self::Complete { array } => Self::Complete { array: swap(array) },
         })
     }
 }
@@ -118,6 +139,15 @@ impl Lengths {
     /// Retires every relation that names `register`.
     fn kill(&mut self, register: Register) {
         self.relations.retain(|relation| !relation.names(register));
+    }
+
+    /// Records that `index` holds 0: every array the registers hold has an empty prefix `[0, 0)` written (`Filled`).
+    fn zeroed(&mut self, words: &[Word], index: Register) {
+        for (array, word) in words.iter().enumerate() {
+            if array != usize::from(index) && holds_array(word) {
+                self.insert(Relation::Filled { array: array as Register, index });
+            }
+        }
     }
 
     /// Shifts `register` by `by`: the relations that name it move with it (`Relation::shifted`), and the ones that survive
@@ -250,10 +280,11 @@ impl Lengths {
         let every = events.wild_elements
             || (!stored_below && events.writes.iter().any(|(key, word)| matches!(key, Key::Element(_)) && word.cell.elements.length != Length::Never));
         self.relations.retain(|relation| match *relation {
-            Relation::Within { array, .. } | Relation::Length { array, .. } => {
+            Relation::Within { array, .. } | Relation::Length { array, .. } | Relation::Filled { array, .. }
+            | Relation::FilledThrough { array, .. } | Relation::Complete { array } => {
                 words.get(usize::from(array)).is_some_and(|word| is_string(word) || !(every || resize.touches(word)))
             }
-            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } => true,
+            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. } => true,
         });
         if !self.define(ctx, instruction, words) {
             for register in instruction.written_registers() {
@@ -343,7 +374,7 @@ fn below(relations: &[Relation], index: Register, array: Register, offset: i64, 
         Relation::Length { length, array: held_array } => length == index && held_array == array && offset < 0,
         Relation::Sum { sum, index: base, offset: by } => sum == index && depth > 0 && below(relations, base, array, by + offset, depth - 1),
         Relation::Less { index: held, bound } => held == index && depth > 0 && below(relations, bound, array, offset - 1, depth - 1),
-        Relation::Twice { .. } => false,
+        Relation::Twice { .. } | Relation::Filled { .. } | Relation::FilledThrough { .. } | Relation::AtLeast { .. } | Relation::Complete { .. } => false,
     })
 }
 
@@ -357,9 +388,39 @@ pub(super) fn advance(ctx: &Ctx<'_>, facts: &FunctionFacts<'_>, pc: usize, instr
         Some(Operation::ElementWrite { base, key, .. }) => proves_below(lengths.relations(), key, base, 0),
         _ => false,
     };
+    // An element store over a fill prefix extends it through the stored index (`FilledThrough`).
+    let filled_store = match Operation::<u64, ()>::of(instruction) {
+        Some(Operation::ElementWrite { base, key, .. }) if lengths.relations.contains(&Relation::Filled { array: base, index: key }) => Some((base, key)),
+        _ => None,
+    };
     let events = run(words);
     lengths.write(ctx, instruction, words, &events, resize, stored_below);
+    if let Some((array, index)) = filled_store {
+        lengths.insert(Relation::FilledThrough { array, index });
+    }
+    // A write that leaves an index at 0 has an empty prefix in every array (`Filled`, `[0, 0)`).
+    for register in instruction.written_registers() {
+        if words.get(usize::from(register)).is_some_and(|word| word.cell.ty.int_range().is_some_and(|range| range.min == 0 && range.max == 0)) {
+            lengths.zeroed(words, register);
+        }
+    }
+    if let Some(length) = allocated_length(ctx, pc, instruction, words) {
+        lengths.insert(length);
+    }
     events
+}
+
+/// The Length relation a `new Array(n)` at `pc` gives its array: `n` holds the array's length. Read from the words after the call;
+/// the callee must be the Array constructor, its one argument a Number, and the result the allocation at `pc`.
+fn allocated_length(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, words: &[Word]) -> Option<Relation> {
+    let invocation = Invocation::of(instruction, ctx.decode)?;
+    let Callee::Register(callee) = invocation.callee else { return None };
+    if !ctx.scope.is_array_constructor(words.get(usize::from(callee))?.origin) { return None; }
+    let arguments: Vec<Register> = invocation.arguments.registers(ctx.records).collect();
+    let [length] = arguments.as_slice() else { return None };
+    let array = instruction.result_register();
+    let allocated = words.get(usize::from(array))?.origin == Some(Origin::Alloc { function: ctx.id, pc: pc as u32 });
+    (allocated && words.get(usize::from(*length))?.is_number()).then_some(Relation::Length { length: *length, array })
 }
 
 /// The relations the edge of the conditional jump `instruction` carries, from the state `lengths` and `words` the jump
@@ -370,8 +431,23 @@ pub(super) fn refine(ctx: &Ctx<'_>, instruction: WideInstruction, to_target: boo
     let mut refined = lengths.clone();
     let Some(Operation::CompareJump { comparison: Comparison::Relation { relation, .. }, left, right, negate }) = Operation::<u64, ()>::of(instruction)
         else { return refined };
-    // The jump is taken where the comparison fails when `negate`, so the target's edge holds it false (`refine_ranges`).
-    if to_target == negate {
+    // The comparison holds on this edge when the jump's edge is not the one `negate` takes it on. A failing `<` proves
+    // `left >= right`, and a holding `>=` does too: the loop's exit edge of `index < bound` reaches the bound.
+    let holds = to_target != negate;
+    if let (Some(index), Some(bound)) = (left.register_index(), right.register_index()) {
+        let at_least = match relation {
+            NumberRelation::LessThan => !holds,
+            NumberRelation::GreaterEqual => holds,
+            _ => false,
+        };
+        if at_least && words.get(usize::from(index)).is_some_and(|word| word.is_number()) && words.get(usize::from(bound)).is_some_and(|word| word.is_number()) {
+            refined.insert(Relation::AtLeast { index, bound });
+            for array in complete_arrays(&refined.relations, index, bound) {
+                refined.insert(Relation::Complete { array });
+            }
+        }
+    }
+    if !holds {
         return refined;
     }
     // `index + slack <= bound`: a strict comparison adds one to the index.
@@ -398,6 +474,15 @@ pub(super) fn refine(ctx: &Ctx<'_>, instruction: WideInstruction, to_target: boo
         refined.insert(Relation::Less { index, bound: big });
     }
     refined
+}
+
+/// The arrays whose whole prefix `[0, bound)` is filled through `index` (`Filled { index }`) and whose length is `bound`: a fill
+/// loop that ran `index` to `bound` with the array's length as the bound has written every element.
+fn complete_arrays(relations: &[Relation], index: Register, bound: Register) -> Vec<Register> {
+    relations.iter().filter_map(|relation| match *relation {
+        Relation::Filled { array, index: filled } if filled == index && relations.contains(&Relation::Length { length: bound, array }) => Some(array),
+        _ => None,
+    }).collect()
 }
 
 /// The array a bound is at most the length of, and how far short of it the bound is: a length register holds the length (no
