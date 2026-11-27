@@ -568,9 +568,13 @@ impl Vm {
         let mut pick = None;
         // A function the u-jit gave up on takes the tier below's body (`LaneBodyHistory::base_fallback`).
         if caller.tier().history.get().base_fallback { pick = Some(super::tier_model::Pick::Base); }
+        // A function that calls itself back through other functions runs a call tree per entry,
+        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
+        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
+        let recursive = entry.is_none() && !cycle.is_empty();
         if let Some(entries) = observed && !optimize && pick.is_none() {
             let ir = estimated;
-            pick = Some(pays_compile(tiers, program, function, entries, ir, caller, true, false));
+            pick = Some(pays_compile(tiers, program, function, (entries, recursive), ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
                 level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
             }
@@ -594,10 +598,6 @@ impl Vm {
         let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
-        // A function that calls itself back through other functions runs a call tree per entry,
-        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
-        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
-        let recursive = entry.is_none() && !cycle.is_empty();
         // A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
