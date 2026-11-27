@@ -24,6 +24,9 @@ impl IntRange {
 
     pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: Self::FULL.max };
 
+    /// The range of the one integer zero: a divisor or a sign test's operand that may be zero is `contains(ZERO)`.
+    pub const ZERO: Self = Self { min: 0, max: 0 };
+
     /// The widest span integer arithmetic over int32s stays within without wrapping an i64,
     /// where widening settles a range that left int32: a result outside it has no range.
     pub const WORD: Self = Self { min: -(1 << WORD_BITS), max: 1 << WORD_BITS };

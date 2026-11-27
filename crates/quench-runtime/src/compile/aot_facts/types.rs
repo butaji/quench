@@ -19,6 +19,7 @@
 use super::census::{Census, ElementClasses, fact_key};
 use super::flow::FunctionFlow;
 use super::value::{Key, Origin, UNNAMED_ARRAYS};
+use crate::staged::typing;
 use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS, language_bit};
 use super::AotFacts;
 use crate::typed_ir::Type;
@@ -51,6 +52,11 @@ pub(crate) struct Types {
     unseen: Cell,
     /// The element classes the flows' links make (`ElementClasses`): which element keys name the same arrays.
     elements: ElementClasses,
+    /// Per key, the integer bounds its widening moves a grown range to (`typing::widen`): the thresholds of the
+    /// constants stored to the key (`typing::thresholds` of its singleton integer writes), and int32's span. Only
+    /// singleton writes count: a literal or a value of literals, which stays the same from pass to pass, so the
+    /// thresholds the passes widen to do not move under the solve.
+    thresholds: BTreeMap<Key, Vec<i64>>,
 }
 
 impl Types {
@@ -58,11 +64,16 @@ impl Types {
     /// guess for it, the parameters of each function, and the bindings.
     pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
         let elements = ElementClasses::of(flows.iter().flat_map(|flow| &flow.links));
-        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY, elements };
+        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY, elements, thresholds: BTreeMap::new() };
+        let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
             *joined = joined.join(fact.cell);
+            if let Some(stored) = fact.cell.ty.int_range().filter(|range| range.min == range.max) {
+                constants.entry(key).or_default().push(stored.min);
+            }
         }
+        types.thresholds = constants.into_iter().map(|(key, stored)| (key, typing::thresholds(stored))).collect();
         for (id, flow) in flows.iter().enumerate() {
             let id = id as u32;
             for call in flow.calls.iter().filter(|call| !call.construct) {
@@ -163,10 +174,12 @@ impl Types {
         self.elements.members(atom)
     }
 
-    /// Widens the integer ranges `self` found against the pass before (`previous`), so the solve settles
-    /// (`TYPE_PASSES`). A key whose range still grows after `WIDENING_ROUNDS` passes takes the widened range
-    /// (`Type::widen`: the int32 span, then `IntRange::WORD`); a range the widening does not cover drops to
-    /// `Type::NUMBER`, which holds every Number. `grown` counts, per key, the passes its range grew in.
+    /// Widens the integer ranges of the fields, elements, returns and bindings `self` found against the pass before
+    /// (`previous`), so the solve settles (`TYPE_PASSES`). A key whose range still grows after `WIDENING_ROUNDS` passes
+    /// widens to the nearest threshold beyond its new bound (`typing::widen`, over the key's `thresholds`), so a field
+    /// that counts up to a constant it is stored or compared against stays at that constant. Where no threshold lies
+    /// beyond, the widening settles at int32's span, then at `IntRange::WORD`. A range `WORD` does not cover is a join
+    /// of integers, a NaN-free Number. `grown` counts, per key, the passes its range grew in.
     /// A pass that changes nothing widens nothing, so the least fixpoint is unchanged.
     pub(super) fn widen(mut self, previous: &Types, grown: &mut BTreeMap<Key, u8>) -> Self {
         for (key, cell) in self.cells.iter_mut() {
@@ -176,10 +189,11 @@ impl Types {
             let rounds = grown.entry(*key).or_insert(0);
             *rounds = rounds.saturating_add(1);
             if *rounds < WIDENING_ROUNDS { continue; }
-            let widened = before.ty.widen(cell.ty);
+            let thresholds = self.thresholds.get(key).map_or(&[][..], Vec::as_slice);
+            let widened = typing::widen(thresholds, before.ty, cell.ty);
             cell.ty = match widened.int_range() {
                 Some(range) if range.contains(new) => widened,
-                _ => Type::NUMBER,
+                _ => Type::NOT_NAN_NUMBER,
             };
         }
         self
