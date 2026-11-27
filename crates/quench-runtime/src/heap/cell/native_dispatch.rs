@@ -243,34 +243,4 @@ impl Native {
                 | Self::DataViewByteOffsetGetter
         )
     }
-
-    pub(crate) fn is_promise_native(self) -> bool {
-        matches!(
-            self,
-            Self::Promise
-                | Self::PromiseSpeciesGetter
-                | Self::PromiseResolve
-                | Self::PromiseReject
-                | Self::PromiseTry
-                | Self::PromiseWithResolvers
-                | Self::PromiseCapabilityExecutor
-                | Self::PromiseThen
-                | Self::PromiseCatch
-                | Self::PromiseFinally
-                | Self::PromiseFinallyHandler
-                | Self::PromiseFinallyContinuationHandler
-                | Self::PromiseAll
-                | Self::PromiseAllKeyed
-                | Self::PromiseRace
-                | Self::PromiseAllSettled
-                | Self::PromiseAllSettledKeyed
-                | Self::PromiseAny
-                | Self::PromiseAggregateJob
-                | Self::ArrayFromAsyncFulfilled
-                | Self::ArrayFromAsyncRejected
-                | Self::DynamicImport
-                | Self::AsyncGeneratorDelegateFulfilled
-                | Self::AsyncGeneratorDelegateRejected
-        )
-    }
 }

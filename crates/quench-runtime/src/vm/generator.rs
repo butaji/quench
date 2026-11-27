@@ -5,6 +5,7 @@ use super::promise_async::StopOwner;
 use crate::heap::AwaitKind;
 use super::promise::{PromiseState, ThenCapability};
 use super::*;
+use super::native_table::NativeFn;
 mod job_windows;
 mod window_steps;
 #[cfg(test)]
@@ -115,13 +116,14 @@ impl Vm {
             record.complete();
         }
     }
-    pub(super) fn generator_prototype_method(
+    /// Throws unless `receiver` is a generator that is not running: the receiver check of
+    /// `Generator.prototype.{method}`.
+    pub(super) fn check_generator_receiver(
         &mut self,
         p: &ResidualProgram,
-        native: Native,
+        method: &str,
         receiver: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<(), JsError> {
         let is_running = match self.heap.iterator(receiver) {
             Some(IteratorRecord {
                 kind: IteratorKind::Generator,
@@ -131,26 +133,15 @@ impl Vm {
             _ => None,
         };
         let Some(is_running) = is_running else {
-            let name = match native {
-                Native::GeneratorNext => "next",
-                Native::GeneratorReturn => "return",
-                Native::GeneratorThrow => "throw",
-                _ => unreachable!(),
-            };
             return Err(self.type_error(
                 p,
-                format!("Generator.prototype.{name} called on incompatible receiver"),
+                format!("Generator.prototype.{method} called on incompatible receiver"),
             ));
         };
         if is_running {
             return Err(self.type_error(p, "Generator is already executing".into()));
         }
-        match native {
-            Native::GeneratorNext => self.generator_next(p, receiver, args),
-            Native::GeneratorReturn => self.generator_return(p, receiver, args),
-            Native::GeneratorThrow => self.generator_throw(p, receiver, args),
-            _ => unreachable!(),
-        }
+        Ok(())
     }
 
     pub fn call_generator(
@@ -1603,4 +1594,48 @@ mod call_completion_tests {
             assert!(matches!(completion, CallCompletion::Value));
         }
     }
+}
+
+/// The entry that runs a synchronous generator's `next`, `return` or `throw`, or `None` when the
+/// generator family does not claim `native`.
+pub(super) fn entry(native: Native) -> Option<NativeFn> {
+    match native {
+        Native::GeneratorNext => Some(generator_next_native),
+        Native::GeneratorReturn => Some(generator_return_native),
+        Native::GeneratorThrow => Some(generator_throw_native),
+        _ => None,
+    }
+}
+
+fn generator_next_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "next", this)?;
+    vm.generator_next(p, this, args)
+}
+
+fn generator_return_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "return", this)?;
+    vm.generator_return(p, this, args)
+}
+
+fn generator_throw_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "throw", this)?;
+    vm.generator_throw(p, this, args)
 }

@@ -702,17 +702,6 @@ impl Vm {
         }
     }
 
-    /// The reaction natives of async iteration (`native_entry`'s async reaction entry), by kind.
-    fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
-        match native {
-            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
-            Native::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
-            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
-            _ => self.async_generator_delegate_return_start(p, args),
-        }
-    }
-
     /// The natives no family above claims, by kind.
     fn call_native_table(
         &mut self,
@@ -2118,17 +2107,18 @@ pub fn exponentiate(base: f64, exponent: f64) -> f64 {
 /// built once from here.
 pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
     head_entry(native)
+        .or_else(|| super::generator::entry(native))
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
+        .or_else(|| super::promise::entry(native))
         .or_else(|| value_entry(native))
         .unwrap_or(enter_table)
 }
 
-/// The natives that enter before every other family: wasm exports and generator methods.
+/// The natives that enter before every other family: wasm exports.
 fn head_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
         Native::WasmExportedFunction => Some(enter_wasm_export),
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => Some(enter_generator),
         _ => None,
     }
 }
@@ -2189,12 +2179,6 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
         Native::Test262Agent => return Some(enter_test262_agent),
         _ if native.is_bigint_native() => return Some(enter_bigint),
-        _ if native.is_promise_native() => return Some(enter_promise),
-        Native::AsyncFromSyncValue
-        | Native::AsyncFromSyncValueRejected
-        | Native::AsyncGeneratorReturnFulfilled
-        | Native::AsyncGeneratorReturnRejected
-        | Native::AsyncGeneratorDelegateReturnStart => return Some(enter_async_reaction),
         _ if native.is_object_static() => return Some(enter_object_static),
         Native::LazyDataProperty => return Some(enter_lazy_data_property),
         Native::ProxyRevoke => return Some(enter_proxy_revoke),
@@ -2207,10 +2191,6 @@ fn value_entry(native: Native) -> Option<native_table::NativeFn> {
 
 fn enter_wasm_export(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.call_wasm_exported_function(p, args)
-}
-
-fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.generator_prototype_method(p, native, this, args)
 }
 
 fn enter_array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
@@ -2273,14 +2253,6 @@ fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this:
 
 fn enter_bigint(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     vm.bigint_native(p, native, this, args)
-}
-
-fn enter_promise(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_promise_native(p, native, this, args)
-}
-
-fn enter_async_reaction(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.call_async_reaction_native(p, native, args)
 }
 
 fn enter_object_static(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
