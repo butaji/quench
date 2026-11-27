@@ -277,9 +277,14 @@ fn placed_heap_values(image: &AotImage, out: &[u8], at: usize) -> Box<[u64]> {
 }
 
 /// Fails where `code` names a value `unresolved` (`(namespace, key)`) could not fill.
+/// A guard of a recipe the program has not made yet is unresolved too: linked now, it would name
+/// no shape and refuse every object the program makes later; linked when it is published, it
+/// names the shape the program made (`symbols::guarded_shape`).
 pub(crate) fn require_placed(code: &RelocatableCode, unresolved: &[(u32, u32)]) -> Result<(), String> {
-    match unresolved.iter().copied().find(|&(namespace, key)| code.relocations.iter()
-        .any(|relocation| relocation.namespace == namespace && relocation.key == key))
+    use super::super::compiled::RelocKind;
+    let names = |relocation: &quench_runtime::vm::jit_backend::relocatable_code::Relocation, (namespace, key): (u32, u32)| (relocation.namespace == namespace && relocation.key == key)
+        || (namespace == RelocKind::Shape as u32 && relocation.namespace == RelocKind::GuardShape as u32 && symbols::guard_recipe(relocation.key) == key);
+    match unresolved.iter().copied().find(|&site| code.relocations.iter().any(|relocation| names(relocation, site)))
     {
         Some((namespace, key)) if namespace == super::super::compiled::RelocKind::Shape as u32 => {
             Err(format!("an AOT image shape {key} does not resolve"))

@@ -358,7 +358,7 @@ impl Tiers {
         if self.admits_all { return 0; }
         match tier {
             Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
-            Tier::Quick | Tier::Ultra => self.priors.repaying_length(self.priors.body_share),
+            Tier::Quick | Tier::Ultra | Tier::Ahead => self.priors.repaying_length(self.priors.body_share),
         }
     }
 }

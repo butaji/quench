@@ -2986,7 +2986,7 @@ pub struct BoundCalls {
     /// The records the direct rows read in place.
     pub records: BoundRecords,
     /// Each record's key by its site, sorted: the VM's call of a site finds its record here.
-    pub sites: Box<[((u32, u32), usize)]>,
+    pub sites: Box<[((u32, u32, u32), usize)]>,
     pub held: Rc<Held>,
     /// Whether the heap roots `held` (`Heap::hold_folded_roots`), which the first binding asks.
     pub rooted: std::cell::Cell<bool>,

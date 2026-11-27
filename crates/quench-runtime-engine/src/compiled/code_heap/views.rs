@@ -38,13 +38,20 @@ impl Views {
         if write == libc::MAP_FAILED {
             return Err("code region reservation failed".into());
         }
-        // SAFETY: an old size of zero on a shared mapping maps the same pages a second time.
-        let mut exec = unsafe { libc::mremap(write, 0, bytes, libc::MREMAP_MAYMOVE) };
+        // The executable view sits within a rel32 displacement of the executable's own code, so a
+        // body's PC-relative call or load of a helper or static (an image's REL32 hole, a stencil's
+        // call) reaches it: a non-PIE executable's text is near address zero, an anonymous mapping near the top.
+        let near = Self::near_text(bytes);
+        // SAFETY: an old size of zero on a shared mapping maps the same pages a second time, over the placeholder if any.
+        let mut exec = unsafe { match near {
+            Some(at) => libc::mremap(write, 0, bytes, libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED, at),
+            None => libc::mremap(write, 0, bytes, libc::MREMAP_MAYMOVE),
+        } };
         if exec == libc::MAP_FAILED {
             // Valgrind rejects an old size of zero (EINVAL), which left every body without
             // code memory: alias through a memfd instead, from which both views map.
             // SAFETY: a fresh memfd sized to the region; the result is checked.
-            exec = unsafe { Self::alias_through_memfd(write, bytes) };
+            exec = unsafe { Self::alias_through_memfd(write, bytes, near) };
         }
         // SAFETY: the alias just created, `bytes` long.
         if exec == libc::MAP_FAILED
@@ -60,12 +67,36 @@ impl Views {
         })
     }
 
+    /// A free span of `bytes` within a rel32 displacement of this executable's code, reserved
+    /// inaccessible for the executable view to replace (`MREMAP_FIXED`); `None` where the system
+    /// grants none there, and the view goes wherever the system places it.
+    fn near_text(bytes: usize) -> Option<*mut libc::c_void> {
+        const REACH: usize = 1 << 31;
+        const START: usize = 512 << 20;
+        const ALIGN: usize = 2 << 20;
+        let anchor = Self::reserve as fn(usize) -> Result<Self, String> as usize;
+        let span = bytes.next_multiple_of(ALIGN);
+        (0..16).find_map(|step| {
+            let hint = (anchor + START + step * span).next_multiple_of(ALIGN);
+            // SAFETY: a fresh private inaccessible mapping at a hint, not fixed: it never replaces one; the result is checked.
+            let at = unsafe { libc::mmap(hint as *mut libc::c_void, bytes, libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE, -1, 0) };
+            if at == libc::MAP_FAILED { return None; }
+            let end = at as usize + bytes;
+            if end.abs_diff(anchor) < REACH && (at as usize).abs_diff(anchor) < REACH { return Some(at); }
+            // SAFETY: the mapping just made, out of reach.
+            unsafe { libc::munmap(at, bytes) };
+            None
+        })
+    }
+
     /// Replaces the anonymous writable mapping at `write` with a memfd-backed one and maps the
     /// same file a second time for execution. `MAP_FAILED` on any failure.
     ///
     /// # Safety
-    /// `write` is a mapping of `bytes` bytes owned by the caller and not yet shared.
-    unsafe fn alias_through_memfd(write: *mut libc::c_void, bytes: usize) -> *mut libc::c_void {
+    /// `write` is a mapping of `bytes` bytes owned by the caller and not yet shared; `near`, if any, the
+    /// caller's placeholder of `bytes` bytes (`near_text`), which the executable view replaces.
+    unsafe fn alias_through_memfd(write: *mut libc::c_void, bytes: usize, near: Option<*mut libc::c_void>) -> *mut libc::c_void {
         // SAFETY: plain system calls on the descriptor created here, which is closed on exit.
         unsafe {
             let fd = libc::memfd_create(c"quench-code".as_ptr(), libc::MFD_CLOEXEC);
@@ -74,8 +105,8 @@ impl Views {
                 && libc::mmap(write, bytes, libc::PROT_READ | libc::PROT_WRITE,
                     libc::MAP_SHARED | libc::MAP_FIXED | libc::MAP_NORESERVE, fd, 0) == write
             {
-                libc::mmap(std::ptr::null_mut(), bytes, libc::PROT_READ | libc::PROT_EXEC,
-                    libc::MAP_SHARED | libc::MAP_NORESERVE, fd, 0)
+                libc::mmap(near.unwrap_or(std::ptr::null_mut()), bytes, libc::PROT_READ | libc::PROT_EXEC,
+                    libc::MAP_SHARED | libc::MAP_NORESERVE | if near.is_some() { libc::MAP_FIXED } else { 0 }, fd, 0)
             } else {
                 libc::MAP_FAILED
             };

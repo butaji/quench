@@ -63,6 +63,7 @@ impl JitMode {
     /// Whether `tier` may run in this mode: the one table every tier question reads.
     pub fn allows(self, tier: Tier) -> bool {
         match (self, tier) {
+            (_, Tier::Ahead) => true,
             (Self::Interp, _) => false,
             // AArch64's stitched region starts an induction at 0 when it is entered mid-loop
             // (`Self::Full` leaves Base out for the same reason), so `--b-jit` runs no tier here:
@@ -121,6 +122,9 @@ pub enum Tier {
     Base,
     Quick,
     Ultra,
+    /// An AOT image's body: compiled before the run, so no mode's compile gate applies to it, and it publishes in
+    /// every mode, `--no-jit` included (the image is the program's specialization, not a run-time tier).
+    Ahead,
 }
 
 impl Tier {

@@ -77,7 +77,8 @@ fn value_of(
         if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::atom(atom); }
         return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::UNKNOWN, Fact::number);
     }
-    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() == 0 && !instruction.writes_current_this()
+    // A method read (`o.m(...)`) also writes `this`, which takes no fact (`step`): its value is the method all the same.
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0
         && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
         let owner = base.register_index().map(|register| state[usize::from(register)]);

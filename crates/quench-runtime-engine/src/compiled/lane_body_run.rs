@@ -139,6 +139,7 @@ impl Vm {
             // where they are, and its entry pays no spill of them (~800 Ir a richards body entry).
             let frames = run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS && (!run.method.direct.is_empty() || run.method.proven_calls);
             let entry = self.stack_entry_in_lane(if frames { SHADOW_FRAMES } else { 0 });
+            (*frame).admits_frames = run.direct_calls && (!run.method.direct.is_empty() || run.method.proven_calls);
             // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
             // only the shadow frames), so in a leaf's window they refuse to the helper row.
             crate::dispatch_fast::refuse_direct_calls_in_leaf(run.lane_context, run.registers);

@@ -155,6 +155,10 @@ pub(crate) unsafe fn body_call_status(context: u64, call_pc: u64) -> (u64, bool)
     };
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases(context) };
+    let vm = unsafe { self::vm(cx) };
+    // A completed call leaves the running body's frames as it found them: its run's direct calls are bound again,
+    // once its own activation stands (a body entered through its cell is a leaf until its first helper call).
+    if status == LANE_CALL_COMPLETED && unsafe { (*cx).leaf.call }.is_null() { vm.rearm_direct_calls(); }
     note_call_status(cx, "call", call_pc, status);
     (status, in_place)
 }
@@ -589,8 +593,13 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
         return Resumed::At(r, base, Carried::script_in(cx, view));
     }
     // A function of a program with a loaded AOT image takes the image's body at its first entry, no warm-up.
-    if own.cell_body().is_none() && own.body_view_in_lane().is_none() && vm.programs.ahead_images(program, code).is_some() {
-        specialize_in_lane(cx, own, function, true, &[], None);
+    // One the image holds no lane body for gives its prologue back, once: its entries run its records,
+    // not this path and the image lookup again (as `tier_enter_in_lane` releases a declined body).
+    if own.cell_body().is_none() && own.body_view_in_lane().is_none() && !own.declined_in_lane() && vm.programs.ahead_images(program, code).is_some()
+        && !specialize_in_lane(cx, own, function, true, &[], None)
+    {
+        own.release_from_tier();
+        return Resumed::At(r, base, Carried::script_in(cx, view));
     }
     // A body a lifecycle edge retired gives its prologue back and warms again.
     let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else { own.settle_retired_body(); return Resumed::At(r, base, Carried::script_in(cx, view)) };

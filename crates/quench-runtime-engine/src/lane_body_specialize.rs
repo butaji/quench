@@ -5,12 +5,17 @@
 use crate::ext_traits::*;
 use super::*;
 
+/// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
+fn mode_compiles_bodies() -> bool {
+    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).compiled().is_some()
+}
+
 #[quench_macros::ext(LaneViewSpecializeOps)]
 impl LaneView {
     /// A mode with neither Cranelift function tiers nor `--b-jit`'s stencil bodies compiles no
     /// function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
-        let declined = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).compiled().is_none();
+        let declined = !mode_compiles_bodies();
         if declined {
             // SAFETY: as `lane_body`.
             unsafe { *self.tier().tier_lane.get() = LaneBody::Declined };
@@ -87,7 +92,7 @@ impl LaneView {
                 (work(crate::compiled::LaneBodyWork::Poll(pending, self)), 0, recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, entry, entries, recompiles, stuck, looks);
+        *body = self.body_after(outcome, quench_runtime::vm::tier_policy::body_tier_in_lane(), entry, entries, recompiles, stuck, looks);
         // A state change moves the epoch; a body still warming (its entries counted) does not, so a refused loop backs off.
         if !matches!(body, LaneBody::Unspecialized { .. }) {
             let epochs = &self.tier().body_epoch;
@@ -110,8 +115,10 @@ impl LaneView {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
                 let published = matches!(outcome, crate::compiled::LaneBodyOutcome::Published(_));
-                *body = self.body_after(outcome, entry, 0, recompiles, stuck, 0);
-                if published { self.note_compile_level(true, quick_ir); }
+                *body = self.body_after(outcome, quench_runtime::jit_mode::Tier::Ahead, entry, 0, recompiles, stuck, 0);
+                // Priced as a quick body only where the mode can compile the optimizing one: under `--no-jit` an image
+                // body is the last body, and a due respecialization would only retire it to the interpreter.
+                if published && mode_compiles_bodies() { self.note_compile_level(true, quick_ir); }
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -122,7 +129,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: quench_runtime::jit_mode::Tier, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
@@ -138,7 +145,7 @@ impl LaneView {
             }
             crate::compiled::LaneBodyOutcome::Published(published) => {
                 self.respecialize_callers();
-                self.specialized(entry, published, recompiles, stuck)
+                self.specialized(entry, published, tier, recompiles, stuck)
             }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
             crate::compiled::LaneBodyOutcome::Stale => {
