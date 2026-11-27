@@ -137,6 +137,16 @@ pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Con
     Some(Shaped::of_guard(at.record))
 }
 
+/// `IcOp::GuardImageLayout`: continues where the reached record's layout id is the one an ahead
+/// image's loader resolves for field guard key `key` (`ImageWord::Layout`).
+#[inline(always)]
+pub(super) fn guard_image_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+    let loaded = at.word.unwrap_or_else(#[inline(always)] || layout_id(stage, at.record));
+    let same = { let id = stage.image_word(super::stage::ImageWord::Layout, key); stage.eq_imm(loaded, id) };
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
+}
+
 /// The record's layout id (`Object::layout_id`), the one header word it keeps.
 #[inline(always)]
 pub(crate) fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {

@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::HolderValue as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::GuardLayout as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -72,6 +72,9 @@ pub(crate) enum Symbol {
     HolderLink(u32),
     /// The value that holder's slot holds when the code links (`holder_constant`).
     HolderValue(u32),
+    /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
+    /// `NO_LAYOUT` where the guard does not resolve.
+    GuardLayout(u32),
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
@@ -183,7 +186,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 12] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 13] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -196,6 +199,7 @@ const KEYED: [(u32, fn(u32) -> Symbol); 12] = [
     (RelocKind::GuardShape as u32, Symbol::GuardShape),
     (RelocKind::HolderLink as u32, Symbol::HolderLink),
     (RelocKind::HolderValue as u32, Symbol::HolderValue),
+    (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -218,6 +222,7 @@ impl Symbol {
             Self::GuardShape(_) => RelocKind::GuardShape as u32,
             Self::HolderLink(_) => RelocKind::HolderLink as u32,
             Self::HolderValue(_) => RelocKind::HolderValue as u32,
+            Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -230,7 +235,7 @@ impl Symbol {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
-                | Self::HolderLink(key) | Self::HolderValue(key) => key,
+                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) => key,
             Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
@@ -250,6 +255,7 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
         Symbol::GuardShape(key) => Some(u64::from(guarded_shape(image, vm, key).map_or(NO_SHAPE, |(shape, _, _)| shape))),
         Symbol::HolderLink(key) => Some(holder_constant(image, vm, key).map_or(NO_LINK, |(_, link, _)| u64::from(link))),
         Symbol::HolderValue(key) => Some(holder_constant(image, vm, key).map_or(Value::UNDEFINED, |(_, _, value)| value).to_bits()),
+        Symbol::GuardLayout(key) => Some(u64::from(guarded_layout(image, vm, key).unwrap_or(NO_LAYOUT))),
         _ => None,
     }
 }
@@ -453,6 +459,24 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
     if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
     let ty = vm.tagged_slot_type(shape, slot)?;
     (access.stored().is_none_or(|stored| stored.is_subtype(ty)) && access.read().is_none_or(|read| ty.is_subtype(read))).then_some((shape, slot, ty))
+}
+
+/// The layout id no record has (`Symbol::GuardLayout`): past the layout table's capacity.
+const NO_LAYOUT: u32 = u32::MAX;
+const _: () = assert!(NO_LAYOUT as usize >= quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY);
+
+/// The layout id of the objects of field guard key `key`'s construction (`guarded_shape`): its
+/// exact shape, its values a plain arena run, under the link of its recipe's prototype
+/// (`ProtoLink::arena_layout`). A construction of more fields than inline storage holds keeps its
+/// values in that run, so the id is the class's one representation, and a compare of a record's
+/// own word with it proves the shape, the form and the link. `None` where the guard does not
+/// resolve, or the recipe is of a construction whose fields may stay inline.
+pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
+    let (shape, _, _) = guarded_shape(image, vm, key)?;
+    let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
+    if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
+    let prototype = heap_value(image, vm, recipe.prototype?)?;
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
 }
 
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its

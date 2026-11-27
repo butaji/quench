@@ -5037,7 +5037,8 @@ impl Lowering<'_, '_> {
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let arms = own.iter().filter(|load| load.valid())
             .filter_map(|load| StoreArm::of_rep((load.shape, load.slot), load.ty, ty,
-                (load.raw_double, quench_runtime::staged::Form::of(load.storage, load.storage_len))))
+                (load.raw_double, quench_runtime::staged::Form::of(load.storage, load.storage_len)))
+                .map(|arm| if load.image_layout() { arm.as_layout() } else { arm }))
             // An arm whose test no value of `ty` passes would take its shape's store and miss: a
             // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
             // class the value may be.
