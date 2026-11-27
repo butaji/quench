@@ -312,6 +312,8 @@ pub(crate) enum GuardAccess {
     StoreInt32,
     /// A store of a direct object or `null`.
     StoreReference,
+    /// A store of any tagged word: the slot is admitted to every value (`ahead_images::fields`).
+    StoreTagged,
     /// The receiver of a read its prototype answers: the recipe's shape, whatever its slots hold.
     Inherited,
     /// The holder of a prototype read: the shape the object the recipe's `prototype` names has
@@ -324,7 +326,7 @@ pub(crate) enum GuardAccess {
 impl GuardAccess {
     /// The bits of the access in a guard key.
     const BITS: u32 = 3;
-    const ALL: [Self; 5] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::Inherited, Self::Holder];
+    const ALL: [Self; 6] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::StoreTagged, Self::Inherited, Self::Holder];
 
     /// The type the slot's type must hold for the access: `None` for a read.
     pub(crate) fn stored(self) -> Option<quench_runtime::typed_ir::Type> {
@@ -333,6 +335,7 @@ impl GuardAccess {
             Self::Read | Self::Inherited | Self::Holder => None,
             Self::StoreInt32 => Some(Type::INT32),
             Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
+            Self::StoreTagged => Some(Type::ANY),
         }
     }
 }

@@ -47,6 +47,10 @@ pub(crate) struct HeldRead {
     /// The test that no method cache names the atom a store writes: the entry's where the run
     /// calls nothing, made at the store where it does.
     pub(crate) admitted: Option<ir::Value>,
+    /// `admitted` in its two parts where the store tests both: its run's stores specialize, and
+    /// no method cache names the atom; an in-place arm takes the second only for a store that
+    /// may call a cache's attention (`store::admit_named`).
+    pub(crate) split: Option<(ir::Value, ir::Value)>,
     /// Whether a store the in-place arms miss leaves instead of calling the VM's store
     /// (`Lowering::store_leaves`).
     pub(crate) leaves: bool,
@@ -256,6 +260,17 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let admitted = self.fields.as_ref()?.held.admitted?;
         emit_js_guard(stage.builder, admitted, miss);
         Some(())
+    }
+
+    /// `store_admitted` split where the store holds both parts (`HeldRead::split`): its run's
+    /// stores specialize, tested here; that no method cache names the atom, answered.
+    fn store_admission(&mut self, stage: &mut Emit<'b, 'c>, miss: ir::Block) -> Option<Option<ir::Value>> {
+        let Some((specialized, free)) = self.fields.as_ref()?.held.split else {
+            self.store_admitted(stage, miss)?;
+            return Some(None);
+        };
+        emit_js_guard(stage.builder, specialized, miss);
+        Some(Some(free))
     }
 
     fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, site: (u32, u16),

@@ -345,3 +345,50 @@ mod tests {
         assert_eq!(count(&ops(nullable), "any"), 3, "an object, null and undefined");
     }
 }
+
+/// Whether `value` can never be called: an immediate, or a direct object, array or string. Every
+/// callable (a function, a callable proxy) is another heap family.
+#[inline(always)]
+pub(crate) fn uncallable<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
+    let heap = super::value::is_heap(stage, value);
+    let immediate = stage.not(heap);
+    let object = super::value::is_direct_object(stage, value);
+    let array = super::value::is_direct_array(stage, value);
+    let string = super::value::is_direct_string(stage, value);
+    let plain = stage.any(object, array);
+    let plain = stage.any(plain, string);
+    stage.any(immediate, plain)
+}
+
+/// Whether the store of `value` into `slot` of the plain object at `record`, whose exact shape the
+/// caller proved, can change no method cache: a cache sees a callable written or overwritten
+/// (`Vm::cached_store_is_callable`), so neither `value` nor the slot's word may be one. A record
+/// that keeps its values inline is not answered (its slot is a narrow half).
+#[inline(always)]
+pub(crate) fn quiet_store<S: Stage>(stage: &mut S, record: S::Word, slot: u16, value: S::Word) -> S::Cond {
+    let fresh = uncallable(stage, value);
+    let inline = inline_storage(stage, record);
+    let kept = stage.choose(inline, #[inline(always)] |stage| stage.constant(0), #[inline(always)] |stage| {
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        let run = super::object::arena_run(stage, payload);
+        let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
+        let address = stage.add_imm(run, offset);
+        let old = stage.load_u64(Region::ObjectSlots.mutable(), address, 0);
+        let quiet = uncallable(stage, old);
+        let (one, zero) = (stage.constant(1), stage.constant(0));
+        stage.select(quiet, one, zero)
+    });
+    let kept = stage.ne_imm(kept, 0u32);
+    stage.all(fresh, kept)
+}
+
+/// The run's admission of a store into `slot` of the proved `record` where a method cache may
+/// name its atom (`named`, the test that none does): admitted where none does or the store is
+/// quiet (`quiet_store`), else it leaves at `miss`. `None` admits it as is.
+#[inline(always)]
+pub(crate) fn admit_named<S: Stage>(stage: &mut S, named: Option<S::Cond>, (record, slot): (S::Word, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    let Some(named) = named else { return Some(()) };
+    let quiet = quiet_store(stage, record, slot, value);
+    let admitted = stage.any(named, quiet);
+    stage.guard(admitted, miss)
+}
