@@ -961,7 +961,7 @@ fn element_reads(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u
 fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
     let program = program(
         "function advect(d0, width, u, j0, rowSize, Wdt0, n) { \
-           var Wp5 = width + 0.5; var row1 = j0 * rowSize; var s = 0; \
+           var Wp5 = width + 0.5; var row1 = (j0 * rowSize) | 0; var s = 0; \
            for (var i = 0; i < n; i++) { \
              var x = i - Wdt0 * u[i]; \
              if (x < 0.5) x = 0.5; else if (x > Wp5) x = Wp5; \
@@ -975,7 +975,10 @@ fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
     let advect = function_named(&program, "advect");
     let reads = element_reads(&program, advect);
     let function = facts.function_facts(advect as u32);
-    assert!(reads.iter().any(|&pc| function.index_ceiling(pc).is_some()), "a read of the clamped index has a range invariant in its loop");
+    assert!(
+        reads.iter().any(|&pc| function.index_ceiling(pc).is_some_and(|range| range.integral)),
+        "a read of the clamped, truncated index has an integral range invariant in its loop",
+    );
 }
 
 #[test]
