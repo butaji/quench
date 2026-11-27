@@ -12533,17 +12533,15 @@ fn activation_room_in_lane(vm: &Vm, target: &ScriptCallTarget) -> bool {
         && quench_runtime::staged::call::concrete_fits(vm.lane_stack.values.room() as u64, u64::from(target.room))
 }
 
-/// Whether `target`'s parameters take `argc` arguments and the lane stack holds its activation:
-/// the staged admission (`staged::call::admit_room`) that the native tiers emit, run on words.
+/// Whether `target` takes `argc` arguments and the lane stack holds it: `staged::call::admit_room` run on words.
 #[inline(always)]
 fn admits_window_in_lane(vm: &Vm, target: &ScriptCallTarget, argc: u16) -> bool {
     quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && activation_room_in_lane(vm, target)
 }
 
-/// Where the lane continues after a frameless activation's tier prologue (`tier_prologue_in_lane`): the
-/// JavaScript tier runs the function's compiled body where it can (`Vm::js_tier_activation_entry`), and the
-/// activation continues at the record the native result completes, with the result in its register; else at
-/// its first record. Shared by the prologue's staged row (`EntryHost`) and its hand body.
+/// Where the lane continues after a frameless activation's tier prologue (`tier_prologue_in_lane`): at the record
+/// a compiled body's result completes (`Vm::js_tier_activation_entry`), result in its register, else at its first
+/// record. Shared by the prologue's staged row (`EntryHost`) and its hand body.
 #[inline(always)]
 fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Carried, function: u32, params: usize) -> Resumed {
     let vm = unsafe { vm(cx) };
@@ -12551,6 +12549,8 @@ fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Carried, func
     let base = unsafe { (*cx).base };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
+    // A body warming between attempts has nothing to enter: the entry is counted and its first record runs.
+    if let Some(own) = own && vm.programs.js_jit_lane_methods_enabled() && own.counted_between_attempts(false) { return Resumed::At(r, base, Carried::script_in(cx, view)); }
     // A function of a program with a loaded AOT image enters the image's body at its first entry.
     // SAFETY: the prologue is this record, written when the tier claimed the function (`claim_for_tier`).
     if let Some(own) = own && vm.images_run_in_lane() && vm.programs.ahead_images(unsafe { (*cx).program }, unsafe { &*(*cx).code }).is_some() {
