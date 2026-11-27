@@ -16,11 +16,12 @@
 //! else, by any tier, widens the slot and retires the code: the fact is proven where the slot is
 //! written, never at the read.
 
-use super::census::{Census, ElementClasses, fact_key};
+use super::census::{Census, ElementClasses};
+use super::escapes::escapes;
 use super::flow::FunctionFlow;
-use super::value::{Key, Origin, UNNAMED_ARRAYS};
+use super::value::{Key, Origin, Word};
 use crate::staged::typing;
-use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS, language_bit};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, FactKey, WIDENING_ROUNDS};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -43,6 +44,9 @@ pub(crate) struct Types {
     cells: BTreeMap<Key, Cell>,
     /// Per call `(function, pc)`, the join of the returns of every function it may call.
     calls: BTreeMap<(u32, u32), Cell>,
+    /// Per call `(function, pc)` that may call a known function, the first of its callees: the array the call returns is
+    /// the array that callee's `Return` holds (`call`), the callees' return classes being one (`Types::of`).
+    call_returns: BTreeMap<(u32, u32), u32>,
     /// Per function, the join of the arguments each parameter takes (`parameters`).
     params: BTreeMap<u32, Vec<Cell>>,
     /// Per function, the join of the `this` its calls pass (`Call::receiver`).
@@ -50,21 +54,39 @@ pub(crate) struct Types {
     /// The cell of a key no write of has been seen yet: none (`Cell::NEVER`) in the solve's first pass
     /// (`bottom`), any value once the passes stop.
     unseen: Cell,
-    /// The element classes the flows' links make (`ElementClasses`): which element keys name the same arrays.
+    /// The element classes the flows' links, the escapes and the calls make (`ElementClasses`): which classes name the
+    /// same arrays.
     elements: ElementClasses,
     /// Per key, the integer bounds its widening moves a grown range to (`typing::widen`): the thresholds of the
     /// constants stored to the key (`typing::thresholds` of its singleton integer writes), and int32's span. Only
     /// singleton writes count: a literal or a value of literals, which stays the same from pass to pass, so the
     /// thresholds the passes widen to do not move under the solve.
     thresholds: BTreeMap<Key, Vec<i64>>,
+    /// Whether a flow writes elements of arrays it cannot name (`effects::Events::wild_elements`): every class's elements
+    /// are then any.
+    wild_elements: bool,
 }
 
 impl Types {
     /// The cells `flows` store and return, with each call typed by the callees `facts` prove or
     /// guess for it, the parameters of each function, and the bindings.
     pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
-        let elements = ElementClasses::of(flows.iter().flat_map(|flow| &flow.links));
-        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY, elements, thresholds: BTreeMap::new() };
+        // The arrays an escaped function returns or an unresolved call holds may reach code the solve does not follow, so
+        // their classes join the unnamed one (`escapes`); the flows' links join the rest.
+        let (escaped, escaped_classes) = escapes(flows, facts, census);
+        let mut links: Vec<(ElementClass, ElementClass)> = flows.iter().flat_map(|flow| &flow.links).copied().collect();
+        links.extend(escaped_classes.into_iter().map(|class| (class, ElementClass::Unnamed)));
+        let mut types = Self {
+            cells: BTreeMap::new(),
+            calls: BTreeMap::new(),
+            call_returns: BTreeMap::new(),
+            params: BTreeMap::new(),
+            receivers: BTreeMap::new(),
+            unseen: Cell::ANY,
+            elements: ElementClasses::default(),
+            wild_elements: flows.iter().any(|flow| flow.wild_elements),
+            thresholds: BTreeMap::new(),
+        };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
@@ -74,20 +96,11 @@ impl Types {
             }
         }
         types.thresholds = constants.into_iter().map(|(key, stored)| (key, typing::thresholds(stored))).collect();
-        for (id, flow) in flows.iter().enumerate() {
-            let id = id as u32;
-            for call in flow.calls.iter().filter(|call| !call.construct) {
-                let callees = targets(id, call, facts, census);
-                if callees.is_empty() { continue; }
-                // A callee no return of reaches never returns: it adds nothing to the join.
-                let cell = callees.iter().fold(Cell::NEVER, |cell, callee| cell.join(types.cells.get(&Key::Return(*callee)).copied().unwrap_or(Cell::NEVER)));
-                types.calls.insert((id, call.pc), cell);
-            }
-        }
+        (types.calls, types.call_returns) = call_results(flows, facts, census, &types.cells, &mut links);
+        types.elements = ElementClasses::of(links.iter());
         types.params = parameters(flows, facts, census);
         // An escaped function (`escapes`) may be called by code the solve cannot follow, with any `this` and arguments:
         // its parameters are any value, as are its `this` (below), whatever its recorded calls pass.
-        let escaped = escapes(flows, facts, census);
         for function in &escaped {
             if let Some(slots) = types.params.get_mut(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
         }
@@ -150,28 +163,39 @@ impl Types {
     /// `cell` with the elements of field `atom`'s class (`stored_elements`): a field's cell so names what its arrays
     /// hold, whichever store put the array there, and whichever key a store through an alias wrote.
     fn with_elements(&self, atom: u32, cell: Cell) -> Cell {
-        Cell { elements: cell.elements.join(self.stored_elements(atom)), ..cell }
+        Cell { elements: cell.elements.join(self.stored_elements(ElementClass::Field(atom))), ..cell }
     }
 
-    /// The elements the stores into the class of `atom`'s arrays write (`Key::Element` of every key of the class,
+    /// The elements the stores into the arrays of element class `class` write (`Key::Element` of every class of it,
     /// `ElementClasses::members`): the type and classes of the values stored, and the length they leave
-    /// (`Elements::length`). A store into any array of the class is a store into each of its keys, so the join is
-    /// over the class; `Elements::NEVER` where no store of the class is seen.
-    pub(super) fn stored_elements(&self, atom: u32) -> Elements {
-        self.elements.members(atom)
+    /// (`Elements::length`). A store into any array of the class is a store into each of its classes, so the join is
+    /// over the class; `Elements::NEVER` where no store of the class is seen, and any value where a store the analysis
+    /// cannot name may write an array of any class (`wild_elements`).
+    pub(super) fn stored_elements(&self, class: ElementClass) -> Elements {
+        if self.wild_elements { return Elements::ANY; }
+        self.elements.members(class)
             .filter_map(|member| self.cells.get(&Key::Element(member)))
             .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length }))
     }
 
-    /// The elements of the arrays of the unnamed class (`UNNAMED_ARRAYS`): an array no field names, and every array a
-    /// field holds that flowed from one. An element read of an array with no field origin joins them.
+    /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the
+    /// solve does not follow. An element read of an array with no origin joins them.
     pub(super) fn unnamed_elements(&self) -> Elements {
-        self.stored_elements(UNNAMED_ARRAYS)
+        self.stored_elements(ElementClass::Unnamed)
     }
 
-    /// The element keys of `atom`'s class (`ElementClasses::members`): a read of the class's elements depends on each.
-    pub(super) fn element_members(&self, atom: u32) -> impl Iterator<Item = u32> + '_ {
-        self.elements.members(atom)
+    /// The element classes of `class`'s class (`ElementClasses::members`): a read of the class's elements depends on each.
+    pub(super) fn element_members(&self, class: ElementClass) -> impl Iterator<Item = ElementClass> + '_ {
+        self.elements.members(class)
+    }
+
+    /// Per element class the solve names (each class a store writes, and the unnamed class), the keys of every class of
+    /// its class: a store through any array of the class moves all of them (`AotFacts::element_class_keys`).
+    pub(super) fn element_classes(&self) -> BTreeMap<FactKey, Box<[FactKey]>> {
+        let named = self.cells.keys().filter_map(|key| match key { Key::Element(class) => Some(*class), _ => None });
+        named.chain(std::iter::once(ElementClass::Unnamed))
+            .map(|class| (FactKey::Elements(class), self.elements.members(class).map(FactKey::Elements).collect::<Box<[FactKey]>>()))
+            .collect()
     }
 
     /// Widens the integer ranges of the fields, elements, returns and bindings `self` found against the pass before
@@ -202,20 +226,20 @@ impl Types {
     /// Every settled cell by its key in the one lattice's key space (`typed_ir::FactKey`): a class's own field
     /// joined with the stores into objects of no one class (`cell_on`), every other key as solved, each
     /// parameter and receiver. The name-wide `Key::Member` join is no key of its own: `fields` gives it.
-    pub(super) fn fact_cells(&self) -> impl Iterator<Item = (crate::typed_ir::FactKey, Cell)> + '_ {
-        use crate::typed_ir::FactKey;
+    pub(super) fn fact_cells(&self) -> impl Iterator<Item = (FactKey, Cell)> + '_ {
         let keyed = self.cells.keys().filter_map(|key| Some(match *key {
             Key::MemberOn { class, instance, atom } => (FactKey::Field { class, instance, atom }, self.cell_on(class, instance, atom)?),
             Key::MemberAny(atom) => (FactKey::AnyField(atom), self.cell(*key)),
             Key::Return(function) => (FactKey::Return(function), self.cell(*key)),
             Key::Global(atom) => (FactKey::Global(atom), self.cell(*key)),
             Key::Slot { owner, slot } => (FactKey::Slot { owner, slot }, self.cell(*key)),
-            Key::Element(UNNAMED_ARRAYS) => return None,
-            Key::Element(atom) => (FactKey::Elements(atom), elements_cell(self.stored_elements(atom))),
+            // The unnamed class is emitted below, whether or not a store wrote it.
+            Key::Element(ElementClass::Unnamed) => return None,
+            Key::Element(class) => (FactKey::Elements(class), elements_cell(self.stored_elements(class))),
             Key::Member(_) => return None,
         }));
         // The unnamed class is a key of its own whether or not a store wrote it, so a subscriber always has a cell.
-        let unnamed = std::iter::once((FactKey::UnnamedElements, elements_cell(self.unnamed_elements())));
+        let unnamed = std::iter::once((FactKey::Elements(ElementClass::Unnamed), elements_cell(self.unnamed_elements())));
         let params = self.params.iter().flat_map(|(function, cells)| cells.iter().enumerate()
             .map(move |(index, cell)| (FactKey::Parameter { function: *function, index: index as u16 }, cell.guessed())));
         let receivers = self.receivers.iter().map(|(function, cell)| (FactKey::Receiver(*function), cell.guessed()));
@@ -233,9 +257,13 @@ impl Types {
             .chain(self.receivers.iter().map(|(function, cell)| (Key::Slot { owner: *function, slot: u16::MAX }, cell.classes))).collect()
     }
 
-    /// The cell the call at `pc` of `function` returns: none where its callees are not known.
-    pub(super) fn call(&self, function: u32, pc: u32) -> Option<Cell> {
-        self.calls.get(&(function, pc)).map(|cell| cell.guessed())
+    /// The value the call at `pc` of `function` returns: the cell of the returns it may reach, read as the first
+    /// callee's `Return` (`call_returns`), so an array it returns is in that callee's element class. None where its
+    /// callees are not known.
+    pub(super) fn call(&self, function: u32, pc: u32) -> Option<Word> {
+        let cell = self.calls.get(&(function, pc))?.guessed();
+        let origin = self.call_returns.get(&(function, pc)).map(|&callee| Origin::Binding(Key::Return(callee)));
+        Some(Word { cell, origin })
     }
 
     /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
@@ -259,6 +287,31 @@ impl Types {
     pub(super) fn param(&self, function: u32, index: u16) -> Cell {
         self.params.get(&function).and_then(|cells| cells.get(usize::from(index))).copied().unwrap_or(Cell::ANY).guessed()
     }
+}
+
+/// Per call that may reach known callees: the join of the returns they may make (`calls`), and the first callee (`call_returns`).
+/// The callees' returns are one result, so their element classes join in `links`.
+fn call_results(
+    flows: &[FunctionFlow],
+    facts: &AotFacts,
+    census: &Census,
+    returns: &BTreeMap<Key, Cell>,
+    links: &mut Vec<(ElementClass, ElementClass)>,
+) -> (BTreeMap<(u32, u32), Cell>, BTreeMap<(u32, u32), u32>) {
+    let (mut cells, mut firsts) = (BTreeMap::new(), BTreeMap::new());
+    for (id, flow) in flows.iter().enumerate() {
+        let id = id as u32;
+        for call in flow.calls.iter().filter(|call| !call.construct) {
+            let callees = targets(id, call, facts, census);
+            let Some((&first, rest)) = callees.split_first() else { continue };
+            links.extend(rest.iter().map(|&callee| (ElementClass::Return(callee), ElementClass::Return(first))));
+            // A callee no return of reaches never returns: it adds nothing to the join.
+            let cell = callees.iter().fold(Cell::NEVER, |cell, callee| cell.join(returns.get(&Key::Return(*callee)).copied().unwrap_or(Cell::NEVER)));
+            cells.insert((id, call.pc), cell);
+            firsts.insert((id, call.pc), first);
+        }
+    }
+    (cells, firsts)
 }
 
 /// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
@@ -294,7 +347,7 @@ fn receiver_type(call: &super::flow::Call) -> Type {
 /// The functions call `call` of `function` may reach: a register callee's one target or closed set
 /// (`AotFacts::call_targets`) or construction target, a known function, or the closures stored under a
 /// method call's name (`Census::method_closures`). None where the closed world names none.
-fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &Census) -> Vec<u32> {
+pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &Census) -> Vec<u32> {
     use super::flow::Target;
     let target_facts = facts.function_facts(function);
     match call.target {
@@ -345,132 +398,4 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTre
         if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
     }
     params
-}
-
-/// The functions whose closure may reach a position the solve cannot follow, so that code it does not see may call
-/// them with any `this` and arguments (`Types::of` gives an escaped function `Cell::ANY` for its `this` and every
-/// parameter). A closure escapes when a sink may hold it:
-/// - the callee, `this` or an argument of a recorded call the solve does not resolve (`resolved`): the call may run a
-///   native or an unseen function, which the recorded arguments never reach. A callee read off a key (`reads`) holds
-///   only the closures written under that key, so only those escape, and a read of a key no write reaches (a host
-///   builtin such as `print` or `Math.abs`) holds no program closure at all. A callee of any other origin is its cell;
-/// - a value thrown, or a register live at a `yield` or `await` (`FunctionFlow::handed`): a consumer or a reaction runs it;
-/// - a store into an element (`Key::Element`): a host builtin reads an array's elements through the array, which may
-///   have been stored into through an alias the analysis does not name;
-/// - a store into a global that new code can read by name (`Census::live`: never in a closed world, where no code
-///   is added to call a global function by name, and no host builtin does);
-/// - a return of an escaped function, of the root, or of an async or generator function (`FunctionFlow::returns_out`),
-///   whose caller is a consumer the solve does not see;
-/// - a store under a named property (`Key::Member`, `MemberOn`, `MemberAny`) that new code can move (`Census::live`), or
-///   any store while an object reaches a sink (`object_reader`): unresolved code may read any named property of it.
-/// A sink holds a closure by its cell (`mark`): the function its type names, else, where its identity is lost, every
-/// materialized closure. A value passed on to a resolved callee reaches the callee's own cells, which its sinks read.
-/// The rule is a fixpoint: an escaped function's return is a sink, which may make an object reader, which escapes
-/// the named stores. A method call is resolved only where its receiver is a closed set of program classes whose own
-/// methods are the targets (`resolved`): a builtin of the same name, which a program's `map` does not shadow, gets
-/// the arguments as sinks.
-fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeSet<u32> {
-    use super::flow::Target;
-    let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
-    let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
-    let mut sinks: Vec<Cell> = Vec::new();
-    let mut read: Vec<Origin> = Vec::new();
-    for (id, flow) in flows.iter().enumerate() {
-        for call in &flow.calls {
-            if resolved(call, &targets(id as u32, call, facts, census), census) { continue; }
-            if call.target == Target::Register {
-                match call.callee.origin {
-                    Some(origin @ (Origin::Binding(_) | Origin::Member(_) | Origin::MemberOn { .. })) => {
-                        read.push(origin);
-                        if census.wild_read(origin) { sinks.push(Cell::ANY); }
-                    }
-                    _ => sinks.push(call.callee.cell),
-                }
-            }
-            sinks.push(call.receiver.cell);
-            sinks.extend(call.arguments.iter().map(|argument| argument.cell));
-        }
-        sinks.extend(flow.handed.iter().map(|word| word.cell));
-    }
-    let writes: Vec<(Key, Cell)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(key, word)| (key, word.cell)).collect();
-    // The closures an unresolved call's callee may be: the writes under the keys its reads may see (`reads`).
-    let reached: Vec<Cell> = writes.iter().filter(|(key, _)| read.iter().any(|&origin| reads(origin, *key))).map(|&(_, cell)| cell).collect();
-    let mut escaped = BTreeSet::new();
-    loop {
-        let mut held = sinks.clone();
-        held.extend(reached.iter().copied());
-        let mut object_reader = sinks.iter().chain(&reached).any(|cell| may_be_object(*cell));
-        let mut named = Vec::new();
-        for &(key, cell) in &writes {
-            match key {
-                Key::Element(_) => held.push(cell),
-                Key::Global(_) if census.live(fact_key(key)) => { object_reader |= may_be_object(cell); held.push(cell); }
-                Key::Global(_) => {}
-                Key::Return(function) if escaped.contains(&function) || roots.contains(&function) => { object_reader |= may_be_object(cell); held.push(cell); }
-                Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_) => named.push((key, cell)),
-                Key::Return(_) | Key::Slot { .. } => {}
-            }
-        }
-        held.extend(named.into_iter()
-            .filter(|(key, _)| object_reader || census.live(fact_key(*key)))
-            .map(|(_, cell)| cell));
-        let mut next = escaped.clone();
-        for cell in &held { mark(cell, &materialized, &mut next); }
-        if next == escaped { return escaped; }
-        escaped = next;
-    }
-}
-
-/// Whether a read off `origin` may take the value `key` stores (`escapes`): the binding itself; a named property of the
-/// read's name, whichever object holds it (`Key::Member`, `MemberAny`), or of a class's own method for a read off one
-/// class (`MemberOn` of that class and instance). A read off any object may see a class's own method of that name, so
-/// `Origin::Member` reaches every `MemberOn` of the name.
-fn reads(origin: Origin, key: Key) -> bool {
-    match (origin, key) {
-        (Origin::Binding(read), _) => read == key,
-        (Origin::MemberOn { class, instance, atom, .. }, Key::MemberOn { class: own, instance: own_instance, atom: name }) => own == class && own_instance == instance && name == atom,
-        (Origin::Member(atom), Key::Member(name) | Key::MemberAny(name) | Key::MemberOn { atom: name, .. }) => atom == name,
-        (Origin::MemberOn { atom, .. }, Key::Member(name) | Key::MemberAny(name)) => atom == name,
-        _ => false,
-    }
-}
-
-/// Whether a recorded call resolves: its targets are known functions (`targets` is not empty) and the program's own code
-/// runs (`resolved` below). A method call's arguments reach the callees' parameters (`parameters`) only then, so an
-/// unresolved call's arguments escape instead (`escapes`).
-///
-/// A callee read off a receiver (`Target::Method`, or a method read's `Origin::Member`/`MemberOn`) is a guess of which
-/// method runs: a builtin of the same name (`[1].map(g)` beside a program's `map`) may be the one that runs, and `g` is
-/// its argument. Only a receiver whose classes are a closed program set, each holding the targets as its own method
-/// (`Census::own_methods`), proves the program's method runs.
-fn resolved(call: &super::flow::Call, callees: &[u32], census: &Census) -> bool {
-    use super::flow::Target;
-    if callees.is_empty() { return false; }
-    match (call.target, call.callee.origin) {
-        (Target::Method(atom), _) => census.own_methods(call.receiver.cell.classes, atom, callees),
-        (Target::Register, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => {
-            !census.guessed(call.callee) && census.own_methods(call.receiver.cell.classes, atom, callees)
-        }
-        _ => !census.guessed(call.callee),
-    }
-}
-
-/// Adds to `escaped` the functions a cell may hold a closure of: its type's identity and its elements' type's identity. A
-/// type with a function alternative but no body (identity lost: a join of two closures, or `Type::ANY`) may hold any
-/// materialized closure, so each of them escapes.
-fn mark(cell: &Cell, materialized: &BTreeSet<u32>, escaped: &mut BTreeSet<u32>) {
-    for ty in [cell.ty, cell.elements.ty] {
-        if let Some(function) = ty.body_index() {
-            escaped.insert(function);
-        } else if ty.may_be_languages(Type::language(ValueType::Function)) {
-            escaped.extend(materialized.iter().copied());
-        }
-    }
-}
-
-/// Whether a cell may hold an object: an object, a function or an instance of a class. Code the solve does not see may read
-/// any named property of such a value, so a store under a named property escapes wherever one reaches a sink (`escapes`).
-fn may_be_object(cell: Cell) -> bool {
-    let objects = Type::languages(language_bit(ValueType::Object) | language_bit(ValueType::Function));
-    cell.ty.may_be_languages(objects) || cell.classes != Classes::Never
 }

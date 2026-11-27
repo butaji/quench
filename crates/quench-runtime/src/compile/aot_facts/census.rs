@@ -3,16 +3,16 @@
 
 use super::flow::FunctionFlow;
 use super::gate::World;
-use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
-use crate::typed_ir::{Classes, FactKey};
+use super::value::{Word, Key, Origin, PrototypeBase};
+use crate::typed_ir::{Classes, ElementClass, FactKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The most closures a method read's closed set may hold (`candidates`): a test per arm.
 pub(crate) const MAX_CANDIDATES: usize = 8;
 
 /// The fact key a binding's value is settled under (`AotFacts::cell`), so the world says whether new code can move it.
-/// A named property read off any object is the name-wide join, which the solve keeps as `AnyField`. The elements of
-/// the unnamed class are `UnnamedElements`; those of a field's class are `Elements` of the field.
+/// A named property read off any object is the name-wide join, which the solve keeps as `AnyField`. The elements of a
+/// key's element class are `Elements` of that class (`ElementClass`).
 pub(super) fn fact_key(key: Key) -> FactKey {
     match key {
         Key::Global(atom) => FactKey::Global(atom),
@@ -20,30 +20,30 @@ pub(super) fn fact_key(key: Key) -> FactKey {
         Key::Member(atom) | Key::MemberAny(atom) => FactKey::AnyField(atom),
         Key::MemberOn { class, instance, atom } => FactKey::Field { class, instance, atom },
         Key::Return(function) => FactKey::Return(function),
-        Key::Element(UNNAMED_ARRAYS) => FactKey::UnnamedElements,
-        Key::Element(atom) => FactKey::Elements(atom),
+        Key::Element(class) => FactKey::Elements(class),
     }
 }
 
-/// The element classes of the program's arrays (a Steensgaard union-find over element keys: a field's name, or
-/// `UNNAMED_ARRAYS`). Each link a flow makes (`FunctionFlow::links`) joins the classes of its two keys. An array's
-/// elements are whatever is stored into any key of its class, because an array reached through another register,
-/// a field or a closure is the same array, and a store through any of them must be seen through all of them.
+/// The element classes of the program's arrays: a Steensgaard union-find over `ElementClass`. Each link a flow makes
+/// (`FunctionFlow::links`), and each link the types add (a call's callees' returns, the classes escapes reach), joins
+/// the classes of its two keys. An array's elements are whatever is stored into any array of its class, because an
+/// array reached through another register, a binding or a field is the same array, and a store through any of them
+/// must be seen through all of them. A class no link joins is its own, so two arrays that never meet stay apart.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct ElementClasses {
-    /// Per key a link joined into another, the key it joined. A class's root has no entry.
-    parent: BTreeMap<u32, u32>,
-    /// Per class root, the keys of its class, the root among them: the keys a read of the class's elements joins.
-    class_keys: BTreeMap<u32, Vec<u32>>,
+    /// Per class a link joined into another, the class it joined. A class's root has no entry.
+    parent: BTreeMap<ElementClass, ElementClass>,
+    /// Per class root, the classes of its class, the root among them: the classes a read of the class's elements joins.
+    class_keys: BTreeMap<ElementClass, Vec<ElementClass>>,
 }
 
 impl ElementClasses {
-    /// The classes `links` make. Each class's keys are listed once the links are all joined, so a read of a class is
-    /// a walk over its keys, never a search over every key.
-    pub(super) fn of<'a>(links: impl Iterator<Item = &'a (u32, u32)>) -> Self {
+    /// The classes `links` make. Each class's members are listed once the links are all joined, so a read of a class is
+    /// a walk over its members, never a search over every class.
+    pub(super) fn of<'a>(links: impl Iterator<Item = &'a (ElementClass, ElementClass)>) -> Self {
         let mut classes = Self::default();
         for &(from, to) in links { classes.join(from, to); }
-        let keys: BTreeSet<u32> = classes.parent.iter().flat_map(|(&key, &parent)| [key, parent]).collect();
+        let keys: BTreeSet<ElementClass> = classes.parent.iter().flat_map(|(&key, &parent)| [key, parent]).collect();
         for key in keys {
             let root = classes.root(key);
             classes.class_keys.entry(root).or_default().push(key);
@@ -51,23 +51,23 @@ impl ElementClasses {
         classes
     }
 
-    /// The root of `key`'s class: the key every key of the class follows to.
-    fn root(&self, mut key: u32) -> u32 {
+    /// The root of `key`'s class: the class every class of it follows to.
+    fn root(&self, mut key: ElementClass) -> ElementClass {
         while let Some(&parent) = self.parent.get(&key) { key = parent; }
         key
     }
 
     /// Joins the classes of `from` and `to`. Roots only are linked, so the chains stay as short as the links make them.
-    fn join(&mut self, from: u32, to: u32) {
+    fn join(&mut self, from: ElementClass, to: ElementClass) {
         let (from, to) = (self.root(from), self.root(to));
         if from != to { self.parent.insert(from, to); }
     }
 
-    /// Every key of `key`'s class, `key` among them: the keys a store into any array of the class writes, so the keys
-    /// whose elements a read of the class's elements joins. A key no link names is its own class.
-    pub(super) fn members(&self, key: u32) -> impl Iterator<Item = u32> + '_ {
+    /// Every class of `key`'s class, `key` among them: the classes a store into any array of it writes, so the classes
+    /// whose elements a read of its elements joins. A class no link names is its own class.
+    pub(super) fn members(&self, key: ElementClass) -> impl Iterator<Item = ElementClass> + '_ {
         let root = self.root(key);
-        let listed: &[u32] = self.class_keys.get(&root).map_or(&[][..], Vec::as_slice);
+        let listed: &[ElementClass] = self.class_keys.get(&root).map_or(&[][..], Vec::as_slice);
         listed.iter().copied().chain(std::iter::once(root).filter(move |_| listed.is_empty()))
     }
 }

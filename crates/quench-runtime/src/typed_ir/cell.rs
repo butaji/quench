@@ -216,6 +216,29 @@ impl Cell {
     }
 }
 
+/// The element class of an array: the key whose arrays share one set of elements. An array's elements belong to its
+/// class, not to the register, field or binding it is read through: a store into any array of a class writes the
+/// elements of every array of it, so an array read through another key keeps what the class's stores leave. Each key
+/// an array is stored into joins its class with the destination's (`aot_facts::census::ElementClasses`), so two
+/// classes are one only where the program moves an array between them; a literal is its own class until then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ElementClass {
+    /// The arrays a named property holds: every store of the name, on any object or on one class's own.
+    Field(u32),
+    /// The arrays global binding `atom` holds.
+    Global(u32),
+    /// The arrays slot `slot` of the environment or frame of function `owner` holds.
+    Slot { owner: u32, slot: u16 },
+    /// The arrays function `0` returns. A call's result is read as its callee's return class.
+    Return(u32),
+    /// The array the literal or array constructor at `pc` of function `function` allocates: its own class until a
+    /// store or a call joins it to another.
+    Allocation { function: u32, pc: u32 },
+    /// The arrays no key names: an element of an array, a value read with no origin, a call's argument or receiver,
+    /// and every array that may reach code the solve does not follow (an escaped function's, an unresolved call's).
+    Unnamed,
+}
+
 /// The key of a cell the program's whole solve keeps, which code that trusts the cell subscribes to and
 /// an edge moving it retires (L3). Every key names a set of slots the run-time writes, so each edge (a
 /// store, a method slot write, a global write, a length change) names the key it moves.
@@ -231,13 +254,10 @@ pub enum FactKey {
     Global(u32),
     /// Slot `slot` of the environment or frame of function `owner`.
     Slot { owner: u32, slot: u16 },
-    /// The elements of the arrays field `atom` holds: the elements of `atom`'s element class (every store into an
-    /// array of that class writes them, `census::ElementClasses`), joined with the array's own cell.
-    Elements(u32),
-    /// The elements of the arrays of the unnamed class (`UNNAMED_ARRAYS`): the arrays no field names, and every array
-    /// that flowed between one and a field. A store through an alias of such an array writes this cell, so a
-    /// subscriber of it retires on that store. Joined with the array's own cell, as `Elements` is.
-    UnnamedElements,
+    /// The elements of the arrays of an element class: every store into an array of the class writes them, joined
+    /// with the array's own cell. A store through any array of the class moves this cell, so every key of the class
+    /// is retired together (`AotFacts::element_class_keys`).
+    Elements(ElementClass),
     /// Parameter `index` of function `function`.
     Parameter { function: u32, index: u16 },
     /// The `this` of function `0`.

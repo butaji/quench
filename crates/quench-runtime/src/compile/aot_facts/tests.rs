@@ -3,7 +3,7 @@
 use super::{analyze, AotFacts};
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
-use crate::typed_ir::{Cell, FactKey, Length, Representation, Type};
+use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
 use crate::ValueType;
 
 fn program(source: &str) -> ResidualProgram {
@@ -175,11 +175,53 @@ fn a_pop_of_a_literal_makes_its_length_any_in_every_register_holding_it() {
 }
 
 #[test]
-fn a_string_store_into_an_array_makes_the_unnamed_elements_include_string() {
+fn a_string_store_into_an_array_makes_its_slot_class_elements_include_string() {
+    // The literal is the slot `a`'s class (`ElementClass::Slot`), so its element store settles there.
     let program = program("function f() { var a = [1, 2]; a[0] = 'x'; return a; } f();");
     let facts = analyze(&program);
-    let cell = facts.cell(FactKey::UnnamedElements).expect("the unnamed elements are a settled cell");
+    let cell = facts.cells.iter()
+        .find(|(key, _)| matches!(key, FactKey::Elements(ElementClass::Slot { .. })))
+        .map(|(_, cell)| *cell)
+        .expect("the slot's element class is a settled cell");
     assert!(Type::language(ValueType::String).is_subtype(cell.ty), "{cell:?}");
+}
+
+/// The element classes other than the unnamed one that share its elements (`AotFacts::element_class_keys`).
+fn classes_sharing_unnamed(facts: &AotFacts) -> Vec<FactKey> {
+    let unnamed = FactKey::Elements(ElementClass::Unnamed);
+    facts.cells.keys().copied().filter(|key| *key != unnamed && facts.element_class_keys(*key).contains(&unnamed)).collect()
+}
+
+#[test]
+fn two_literals_keep_their_own_lengths_when_only_one_is_pushed() {
+    let program = program("function f() { var a = [1, 2]; var b = [3, 4]; a.push(5); return b; } f();");
+    let facts = analyze(&program);
+    let cells = cells_before_return(&facts, &program, "f");
+    assert!(cells.iter().any(|cell| cell.elements.length == Length::Fixed(2)), "{cells:?}");
+}
+
+#[test]
+fn an_array_passed_to_an_unresolved_call_is_in_the_unnamed_class() {
+    // `print` is a host function no program writes, so the call resolves to no program code and its argument escapes.
+    let program = program("function f() { var a = [1, 2]; print(a); a[0] = 3; return a; } f();");
+    let facts = analyze(&program);
+    assert!(!classes_sharing_unnamed(&facts).is_empty(), "the escaped array's class joins the unnamed class");
+}
+
+#[test]
+fn a_store_through_a_branch_join_is_seen_through_each_array_it_may_be() {
+    // `x` is `a` or the second literal, so the store through `x` (out of bounds, the join's length is any) changes `a` too.
+    let program = program("function f(c) { var a = [1]; var x = c ? a : [2, 3]; x[0] = 9; return a; } f(true);");
+    let facts = analyze(&program);
+    let cells = cells_before_return(&facts, &program, "f");
+    assert!(cells.iter().all(|cell| cell.elements.length != Length::Fixed(1)), "{cells:?}");
+}
+
+#[test]
+fn an_array_no_unresolved_code_reaches_keeps_its_own_class() {
+    let program = program("function f() { var a = [1, 2]; a[0] = 3; return a; } f();");
+    let facts = analyze(&program);
+    assert!(classes_sharing_unnamed(&facts).is_empty(), "{:?}", classes_sharing_unnamed(&facts));
 }
 
 #[test]
@@ -189,6 +231,8 @@ fn an_array_stored_in_a_field_is_mutated_through_the_field_in_the_original_regis
     let cells = cells_before_return(&facts, &program, "f");
     assert!(!cells.is_empty(), "the function's registers are settled");
     assert!(cells.iter().all(|cell| cell.elements.length != Length::Fixed(2)), "{cells:?}");
+}
+
 /// The atom of the property name `name`, which the program names.
 fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
     program.atoms.iter().position(|atom| atom.as_ref() == name).expect("a name the program stores") as u32

@@ -18,6 +18,7 @@ mod blocks;
 mod census;
 mod class_layout;
 mod effects;
+mod escapes;
 mod flow;
 mod gate;
 mod quiet;
@@ -73,9 +74,11 @@ pub struct AotFacts {
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
     /// The settled cell of every key of the program (`typed_ir::FactKey`): each class's own fields (joined
     /// with the stores into objects of no one class), returns, bindings, the elements of each element class
-    /// (`Elements`, `UnnamedElements`), parameters and receivers. The one store of the solve's facts: code that
+    /// (`Elements`), parameters and receivers. The one store of the solve's facts: code that
     /// trusts a cell subscribes to its key.
     pub(crate) cells: BTreeMap<crate::typed_ir::FactKey, crate::typed_ir::Cell>,
+    /// Per `FactKey::Elements`, the keys of every element class its class shares (`element_class_keys`).
+    pub(crate) element_classes: BTreeMap<crate::typed_ir::FactKey, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
     /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
     pub(crate) access_classes: BTreeMap<(u32, u32), crate::typed_ir::Classes>,
@@ -111,6 +114,7 @@ impl AotFacts {
             numbers: BTreeMap::new(),
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
+            element_classes: BTreeMap::new(),
             access_classes: BTreeMap::new(),
             registers: BTreeMap::new(),
             dependencies: BTreeMap::new(),
@@ -177,6 +181,12 @@ impl AotFacts {
         self.cells.get(&key).copied()
     }
 
+    /// The keys of every element class `key`'s class shares (`element_classes`): a store through any array of the class
+    /// moves all of them, so an edge retires them together. Empty where `key` is no element class.
+    pub fn element_class_keys(&self, key: crate::typed_ir::FactKey) -> Box<[crate::typed_ir::FactKey]> {
+        self.element_classes.get(&key).cloned().unwrap_or_default()
+    }
+
     /// The Any ratchet: how many field names the program stores whose type is `any`, and how many
     /// field names it stores at all (`field_types`). A proof that sharpens a field's type lowers the
     /// first count, so it can only fall as the solve and the lowerings sharpen the types.
@@ -228,7 +238,7 @@ fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSe
             match key {
                 value::Key::Member(atom) => set.extend(fields.get(&atom).into_iter().flatten().copied()),
                 // An element read depends on every key of its class: a store through any of them moves the class's elements.
-                value::Key::Element(atom) => set.extend(found.element_members(atom).map(|member| census::fact_key(value::Key::Element(member)))),
+                value::Key::Element(class) => set.extend(found.element_members(class).map(|member| census::fact_key(value::Key::Element(member)))),
                 _ => {}
             }
         }
@@ -495,6 +505,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
         field_readers.finish(&facts.cells);
         facts.readers = Some(field_readers);
+        facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
