@@ -26,7 +26,7 @@ impl LaneView {
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
     pub(crate) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
 
-    /// Specializes the frameless body at the function's entry: the attempt the static benefit admits (`lane_facts::body_pick`),
+    /// Specializes the frameless body at the function's entry: the attempt its predicted tier admits (`lane_facts::body_pick`),
     /// or none, where the interpreter runs the function. Whether the body is still compiling or specialized, so its
     /// prologue stays. A specialized body is a fact of the view from then on: its prologue record enters it with `entry`,
     /// which tests nothing the specialization proved (`lane_body_entry`).
@@ -106,7 +106,7 @@ impl LaneView {
                 LaneBody::Unspecialized { recompiles, stuck }
             }
             crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { recompiles, stuck },
-            // The static benefit refused it: no loop or call cycle reaches it, and its residue is small. The interpreter runs it.
+            // Its predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs it.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
                 LaneBody::Declined
@@ -123,7 +123,7 @@ impl LaneView {
         }
     }
 
-    /// Whether the static benefit refused a compile of its body (`LaneBodyOutcome::Unpaid`), which the loop tier reads
+    /// Whether the predicted tier refused a compile of its body (`LaneBodyOutcome::Unpaid`), which the loop tier reads
     /// before it waits for its own iterations.
     pub(crate) fn body_unpaid(&self) -> bool { self.tier().history.get().unpaid }
 }

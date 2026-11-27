@@ -1,97 +1,84 @@
-//! The program's call graph and the functions a loop or a call cycle reaches, solved once per program
+//! The program's call graph and the static frequency of each function, solved once per program
 //! (`ProgramStore::call_graph`). An edge is a callee the AOT facts name at a call or a construction
 //! (`FunctionFacts::call_targets`, `construct_target`); a site the facts name no callee of adds none.
-//! A function is in a loop or a cycle where it has a back edge, a loop body calls it, it is in a call
-//! cycle, or every caller of it is in a loop or a cycle (`CallGraph::in_loop_or_cycle`). Owner: AOT facts.
+//! A function's frequency is the number of its activations the static model expects per entry of the
+//! program: each call site weighs `LOOP_WEIGHT` per loop it sits in, a recursive call cycle weighs as a
+//! loop, and the weights propagate from callers to callees. Owner: AOT facts.
 
-use crate::bytecode::{may_repeat, ResidualProgram};
-use crate::dataflow::{self, Dataflow};
+use crate::bytecode::{loop_depth, Function, ResidualProgram};
 use crate::staged::meaning::{means, Meaning};
 use super::aot_facts::AotFacts;
 
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
 
-/// The call graph of one program, with its call cycles, its loop-or-cycle facts and its call sites.
+/// The weight of one loop, or of one recursive call cycle, on a function's static frequency (10^depth).
+pub const LOOP_WEIGHT: u64 = 10;
+
+/// The call graph of one program, with its call cycles, its static frequencies and its call sites.
 pub struct CallGraph {
     /// Per function, the index into `cycles` of its call cycle, `NO_CYCLE` where it is in none.
     cycle: Box<[u32]>,
     /// The members of each call cycle: a strongly connected component of several functions, or a function that calls itself.
     cycles: Box<[Box<[u32]>]>,
-    /// Per function, whether a loop or a call cycle reaches it.
-    loop_or_cycle: Box<[bool]>,
+    /// Per function, its static frequency: its expected activations per entry of the program, saturating.
+    frequency: Box<[u64]>,
+    /// Per function, its work per activation: each instruction weighs `LOOP_WEIGHT` per loop it is in, so a
+    /// loop's instructions count as the iterations they run.
+    work: Box<[u64]>,
     /// Per function, the calls and constructions that name it, each call site once; saturating.
     sites: Box<[u32]>,
     /// Whether the facts are closed (`AotFacts::closed`): only then does a site they do not name not exist.
     closed: bool,
 }
 
+/// What one scan of the program's bodies reads of its call sites.
+struct Scan {
+    /// Per function, each call site that names it: its caller and the loop depth of the site.
+    callers: Vec<Vec<(usize, u32)>>,
+    /// Per function, the call sites that name it, saturating.
+    named: Vec<u32>,
+    /// Per function, its work per activation.
+    work: Vec<u64>,
+}
+
 impl CallGraph {
-    /// The call graph of `program`, its edges the callees `facts` names, and its facts solved from it.
+    /// The call graph of `program`, its edges the callees `facts` names, and its frequencies solved from it.
     pub fn of(program: &ResidualProgram, facts: &AotFacts) -> Self {
         let count = program.function_count();
-        let mut callees: Vec<Box<[usize]>> = Vec::with_capacity(count);
-        let mut own_loop = vec![false; count];
-        let mut called_in_loop = vec![false; count];
-        let mut sites = vec![0u32; count];
-        for function in 0..count {
-            let mut out: Vec<usize> = Vec::new();
-            if let Some(body) = program.function_get(function) {
-                let backward: Vec<(usize, usize)> = body.back_edges().map(|(source, target)| (target, source)).collect();
-                own_loop[function] = !backward.is_empty();
-                let calls = facts.function_facts(function as u32);
-                for (pc, instruction) in body.instructions().enumerate() {
-                    let at = pc as u32;
-                    let mut targets: Vec<u32> = if means(instruction, Meaning::Construct) {
-                        calls.construct_target(at).into_iter().collect()
-                    } else if means(instruction, Meaning::Call) {
-                        calls.call_targets(at)
-                    } else {
-                        continue;
-                    };
-                    targets.sort_unstable();
-                    targets.dedup();
-                    let looped = may_repeat(&backward, pc);
-                    for callee in targets.into_iter().map(|callee| callee as usize).filter(|callee| *callee < count) {
-                        out.push(callee);
-                        sites[callee] = sites[callee].saturating_add(1);
-                        if looped { called_in_loop[callee] = true; }
-                    }
-                }
-            }
-            out.sort_unstable();
-            out.dedup();
-            callees.push(out.into_boxed_slice());
-        }
-        let members = cycles(&callees);
-        let mut cycle = vec![NO_CYCLE; count];
-        for (index, members) in members.iter().enumerate() {
-            for &function in members { cycle[function as usize] = index as u32; }
-        }
-        let local: Vec<bool> = (0..count).map(|function| own_loop[function] || called_in_loop[function] || cycle[function] != NO_CYCLE).collect();
-        let mut has_caller = vec![false; count];
-        for out in &callees { for &callee in out.iter() { has_caller[callee] = true; } }
-        let states = dataflow::solve(&mut ColdReach { local: &local, callees: &callees, has_caller: &has_caller });
-        let loop_or_cycle: Box<[bool]> = (0..count).map(|function| local[function] || states[function] != Some(true)).collect();
+        let mut scan = Scan { callers: vec![Vec::new(); count], named: vec![0; count], work: vec![0; count] };
+        let callees: Vec<Box<[usize]>> = (0..count)
+            .map(|function| program.function_get(function).map_or_else(Vec::new, |body| scan_body(&mut scan, function, body, facts)).into_boxed_slice())
+            .collect();
+        let components = strongly_connected(&callees);
+        let (cycle, cycles) = cycle_table(&callees, &components);
+        let frequency = frequencies(&callees, &components, &scan.callers);
         Self {
-            cycle: cycle.into_boxed_slice(),
-            cycles: members.into_iter().map(Vec::into_boxed_slice).collect(),
-            loop_or_cycle,
-            sites: sites.into_boxed_slice(),
+            cycle,
+            cycles,
+            frequency,
+            work: scan.work.into_boxed_slice(),
+            sites: scan.named.into_boxed_slice(),
             closed: facts.closed(),
         }
     }
 
     /// Whether `function` has exactly one call site in the closed world: one call or construction, of the one
-    /// program, names it. False where the facts are not closed, since a site they name no callee of may call it.
+    /// program, names it. False where the facts are not closed, since a site they do not name may call it.
     pub fn single_call_site(&self, function: u32) -> bool {
         self.closed && self.sites.get(function as usize) == Some(&1)
     }
 
-    /// Whether a loop or a call cycle reaches `function`: it has a back edge, a loop body calls it, it is in a call
-    /// cycle, or every caller of it is in a loop or a cycle.
-    pub fn in_loop_or_cycle(&self, function: u32) -> bool {
-        self.loop_or_cycle.get(function as usize).copied().unwrap_or(false)
+    /// The static frequency of `function`: its expected activations per entry of the program. A loop
+    /// multiplies a call inside it by `LOOP_WEIGHT`, a recursive call cycle weighs as a loop, and the
+    /// caller's frequency propagates through the call sites.
+    pub fn frequency(&self, function: u32) -> u64 {
+        self.frequency.get(function as usize).copied().unwrap_or(1)
+    }
+
+    /// The work of one activation of `function`: its instructions, each weighing `LOOP_WEIGHT` per loop it sits in.
+    pub fn loop_work(&self, function: u32) -> u64 {
+        self.work.get(function as usize).copied().unwrap_or(0)
     }
 
     /// Whether `function` is in a call cycle: it calls itself, directly or through other functions.
@@ -108,9 +95,78 @@ impl CallGraph {
     }
 }
 
-/// The call cycles of `callees`, by Tarjan's strongly connected components in one pass: each component of several
-/// functions, and each function that calls itself, as its members.
-fn cycles(callees: &[Box<[usize]>]) -> Vec<Vec<u32>> {
+/// Scans `body` (function `function`): its work per activation, its call sites into `scan`, and the distinct
+/// callees it names, sorted.
+fn scan_body(scan: &mut Scan, function: usize, body: &Function, facts: &AotFacts) -> Vec<usize> {
+    let backward: Vec<(usize, usize)> = body.back_edges().map(|(source, target)| (target, source)).collect();
+    let calls = facts.function_facts(function as u32);
+    let count = scan.named.len();
+    let mut out: Vec<usize> = Vec::new();
+    for (pc, instruction) in body.instructions().enumerate() {
+        let depth = loop_depth(&backward, pc);
+        scan.work[function] = scan.work[function].saturating_add(LOOP_WEIGHT.saturating_pow(depth));
+        let at = pc as u32;
+        let mut targets: Vec<u32> = if means(instruction, Meaning::Construct) {
+            calls.construct_target(at).into_iter().collect()
+        } else if means(instruction, Meaning::Call) {
+            calls.call_targets(at)
+        } else {
+            continue;
+        };
+        targets.sort_unstable();
+        targets.dedup();
+        for callee in targets.into_iter().map(|callee| callee as usize).filter(|callee| *callee < count) {
+            out.push(callee);
+            scan.named[callee] = scan.named[callee].saturating_add(1);
+            scan.callers[callee].push((function, depth));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// The call cycles of the components: each component that is one (`is_cycle`), as its members, and the index of
+/// its cycle per function.
+fn cycle_table(callees: &[Box<[usize]>], components: &[Vec<usize>]) -> (Box<[u32]>, Box<[Box<[u32]>]>) {
+    let mut cycle = vec![NO_CYCLE; callees.len()];
+    let mut cycles: Vec<Box<[u32]>> = Vec::new();
+    for members in components.iter().filter(|members| is_cycle(callees, members)) {
+        for &function in members { cycle[function] = cycles.len() as u32; }
+        cycles.push(members.iter().map(|&function| function as u32).collect());
+    }
+    (cycle.into_boxed_slice(), cycles.into_boxed_slice())
+}
+
+/// Each function's static frequency. Components come callees first, so the reverse visits every caller before the
+/// functions it calls; a call from within its own component adds nothing, and a recursive component weighs as a loop.
+fn frequencies(callees: &[Box<[usize]>], components: &[Vec<usize>], callers: &[Vec<(usize, u32)>]) -> Box<[u64]> {
+    let mut component = vec![0usize; callees.len()];
+    for (index, members) in components.iter().enumerate() {
+        for &function in members { component[function] = index; }
+    }
+    let mut frequency = vec![0u64; callees.len()];
+    for (index, members) in components.iter().enumerate().rev() {
+        let recursive = is_cycle(callees, members);
+        for &function in members {
+            let weight = callers[function]
+                .iter()
+                .filter(|&&(caller, _)| component[caller] != index)
+                .fold(1u64, |weight, &(caller, depth)| weight.saturating_add(frequency[caller].saturating_mul(LOOP_WEIGHT.saturating_pow(depth))));
+            frequency[function] = if recursive { weight.saturating_mul(LOOP_WEIGHT) } else { weight };
+        }
+    }
+    frequency.into_boxed_slice()
+}
+
+/// Whether a component of the call graph is a call cycle: several functions, or one that calls itself.
+fn is_cycle(callees: &[Box<[usize]>], members: &[usize]) -> bool {
+    members.len() > 1 || callees[members[0]].contains(&members[0])
+}
+
+/// The strongly connected components of `callees` by Tarjan's algorithm in one pass, each as its members. A
+/// component is emitted after every component its members call, so the list runs callees first.
+fn strongly_connected(callees: &[Box<[usize]>]) -> Vec<Vec<usize>> {
     const UNVISITED: u32 = u32::MAX;
     let count = callees.len();
     let mut index = vec![UNVISITED; count];
@@ -148,48 +204,13 @@ fn cycles(callees: &[Box<[usize]>]) -> Vec<Vec<u32>> {
                     let mut members = Vec::new();
                     while let Some(w) = stack.pop() {
                         on_stack[w] = false;
-                        members.push(w as u32);
+                        members.push(w);
                         if w == v { break; }
                     }
-                    if members.len() > 1 || callees[v].contains(&v) { found.push(members); }
+                    found.push(members);
                 }
             }
         }
     }
     found
-}
-
-/// Where "cold" reaches: a function that no loop or cycle reaches on its own, and that a cold caller calls, or that
-/// no function calls (entered from outside the program). A function a loop or a cycle reaches on its own is never cold,
-/// so a function is cold exactly when every caller it has is outside a loop or a cycle.
-struct ColdReach<'a> {
-    local: &'a [bool],
-    callees: &'a [Box<[usize]>],
-    has_caller: &'a [bool],
-}
-
-impl Dataflow for ColdReach<'_> {
-    type State = bool;
-
-    fn blocks(&self) -> usize {
-        self.callees.len()
-    }
-
-    fn edges(&self, block: usize) -> &[usize] {
-        &self.callees[block]
-    }
-
-    fn entry_state(&self, block: usize) -> Option<bool> {
-        (!self.local[block] && !self.has_caller[block]).then_some(true)
-    }
-
-    fn join(&self, into: &mut bool, incoming: &bool) -> bool {
-        let changed = *incoming && !*into;
-        *into |= *incoming;
-        changed
-    }
-
-    fn transfer(&mut self, block: usize, state: &bool) -> bool {
-        *state && !self.local[block]
-    }
 }

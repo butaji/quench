@@ -629,22 +629,6 @@ impl Vm {
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.
-    /// Default runs the units AOT builds (R7, TOD-2445): a program stored in a mode that compiles lane
-    /// bodies gets the image `quench compile` would write for it, lowered from the same closed-world facts
-    /// and loaded as a staged image is, so each function's first body is its image body (`LaneRoute::Ahead`)
-    /// with no warm-up. A program with an image already (a staged `.qimg`), or one a recording lowers
-    /// itself, gets no second one; a program that lowers no image runs as before.
-    pub(crate) fn stage_images_at_load(&mut self, id: quench_runtime::vm::ProgramId, program: &ResidualProgram) {
-        if self.execution_mode != quench_runtime::vm::engine_types::ExecutionMode::Compiled || !crate::compiled::admission::lane_bodies_enrolled(self)
-            || recorded().is_some() || self.programs.ahead_images(id, program).is_some() { return; }
-        #[cfg(feature = "jit")]
-        match AheadImages::compile(program) {
-            Ok(images) if !images.is_empty() => self.load_ahead_images(images),
-            Ok(_) => {}
-            Err(why) => if quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: {} builds no image at load: {why}", program.source_name); },
-        }
-    }
-
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
         let linked = live::install(&images.image, self);
         if let Err(why) = &linked && quench_runtime::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: image did not link: {why}"); }

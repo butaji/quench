@@ -37,8 +37,6 @@ pub type JsJitCompiledCallFn = entry::quench_engine_vm_js_jit_compiled_call;
 pub type TierMayRunFn = entry::quench_engine_vm_tier_may_run;
 /// Compiles a native source program for `eval` or `Function` (`quench_engine_vm_prepare_native_script`).
 pub type PrepareNativeScriptFn = entry::quench_engine_vm_prepare_native_script;
-/// Stages a program's AOT units at load (`quench_engine_vm_stage_images_at_load`).
-pub type StageImagesAtLoadFn = entry::quench_engine_vm_stage_images_at_load;
 /// Attaches native JS code to a program (`quench_engine_vm_attach_native_js`).
 pub type AttachNativeJsFn = entry::quench_engine_vm_attach_native_js;
 /// Installs a Wasm instance record (`quench_engine_vm_install_wasm_instance`).
@@ -89,7 +87,6 @@ pub struct ExecutionTable {
     pub store_native_module_program: Option<StoreNativeModuleProgramFn>,
     pub kept_native_module_program: Option<KeptNativeModuleProgramFn>,
     /// `link_live` group.
-    pub stage_images_at_load: Option<StageImagesAtLoadFn>,
     pub attach_native_js: Option<AttachNativeJsFn>,
     pub load_ahead_images: Option<LoadAheadImagesFn>,
     /// `wasm` group.
@@ -117,7 +114,6 @@ impl ExecutionTable {
         prepare_native_script: Some(super::engine_calls::quench_engine_vm_prepare_native_script),
         store_native_module_program: Some(super::engine_calls::quench_engine_vm_store_native_module_program),
         kept_native_module_program: Some(super::engine_calls::quench_engine_vm_kept_native_module_program),
-        stage_images_at_load: Some(super::engine_calls::quench_engine_vm_stage_images_at_load),
         attach_native_js: Some(super::engine_calls::quench_engine_vm_attach_native_js),
         load_ahead_images: Some(super::engine_calls::quench_engine_vm_load_ahead_images),
         install_wasm_instance: Some(super::engine_calls::quench_engine_vm_install_wasm_instance),

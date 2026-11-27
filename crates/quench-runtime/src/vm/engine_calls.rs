@@ -64,7 +64,6 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_deferred_callback_in_lane(this: &mut Vm, callee: Value, receiver: Value, args: &[Value]) -> Option<Result<Value, JsError>>;
     safe fn quench_engine_vm_execution_mode(this: &Vm) -> ExecutionMode;
     pub(super) safe fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> ();
-    pub(super) safe fn quench_engine_vm_stage_images_at_load(this: &mut Vm, id: ProgramId, program: &ResidualProgram) -> ();
     safe fn quench_engine_vm_set_execution_mode(this: &mut Vm, mode: ExecutionMode) -> ();
     safe fn quench_engine_vm_enable_lane_methods(this: &mut Vm) -> ();
     pub(super) safe fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> ();
@@ -143,7 +142,6 @@ pub trait EngineVm {
     fn deferred_callback_in_lane(&mut self, callee: Value, receiver: Value, args: &[Value]) -> Option<Result<Value, JsError>>;
     fn execution_mode(&self) -> ExecutionMode;
     fn load_ahead_images(&mut self, images: AheadImages) -> ();
-    fn stage_images_at_load(&mut self, id: ProgramId, program: &ResidualProgram) -> ();
     fn set_execution_mode(&mut self, mode: ExecutionMode) -> ();
     fn enable_lane_methods(&mut self) -> ();
     fn compile_wasm_eagerly(&mut self) -> ();
@@ -289,8 +287,6 @@ impl EngineVm for Vm {
     fn execution_mode(&self) -> ExecutionMode { quench_engine_vm_execution_mode(self) }
     #[inline(always)]
     fn load_ahead_images(&mut self, images: AheadImages) -> () { if let Some(load) = self.execution.load_ahead_images { load(self, images) } }
-    #[inline(always)]
-    fn stage_images_at_load(&mut self, id: ProgramId, program: &ResidualProgram) -> () { if let Some(stage) = self.execution.stage_images_at_load { stage(self, id, program) } }
     #[inline(always)]
     fn set_execution_mode(&mut self, mode: ExecutionMode) -> () { quench_engine_vm_set_execution_mode(self, mode) }
     #[inline(always)]
@@ -440,7 +436,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_deferred_callback_in_lane = fn(&mut Vm, Value, Value, &[Value]) -> Option<Result<Value, JsError>>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_execution_mode = fn(&Vm) -> ExecutionMode;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_load_ahead_images = fn(&mut Vm, AheadImages) -> ();
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_stage_images_at_load = fn(&mut Vm, ProgramId, &ResidualProgram) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_set_execution_mode = fn(&mut Vm, ExecutionMode) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_enable_lane_methods = fn(&mut Vm) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_compile_wasm_eagerly = fn(&mut Vm) -> ();

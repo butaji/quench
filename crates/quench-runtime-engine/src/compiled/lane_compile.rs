@@ -349,7 +349,7 @@ pub(crate) enum LaneBodyOutcome {
     /// Its function has not run long enough to pay for the compile, or callees it would call
     /// directly still warm toward their bodies: it counts on.
     Deferred,
-    /// The static benefit declined the compile (`lane_facts::body_pick`): the interpreter runs the function.
+    /// The predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs the function.
     Unpaid,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
     /// compile meets a call to it (`LaneView::demand_body`).
@@ -573,8 +573,8 @@ impl Vm {
         // A function the loaded image gave a body was paid for ahead of time: a plan after that body
         // left (a fact it took weakened) respecializes at once, as the image's install did.
         let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
-        // The static benefit (`lane_facts::body_pick`) decides the pick and the level (`admission::compile_level`).
-        let mut level = super::jit_backend::CompileLevel::run_default();
+        // The predicted tier (`lane_facts::body_pick`) decides the pick; the level is the run's own.
+        let level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
         let Some(graph) = self.call_graph_of(program) else { refuse(self, Refusal::NoUnit); return Err(Unstarted::Declined) };
         // A function that calls itself back through other functions runs a call tree per entry,
@@ -582,9 +582,6 @@ impl Vm {
         let recursive = entry.is_none() && graph.in_cycle(function);
         if !ahead {
             pick = Some(super::lane_facts::body_pick(tiers, program, &graph, function, caller.called_by_regions()));
-            if level == super::jit_backend::CompileLevel::Optimized {
-                level = super::admission::compile_level(tiers, program, function);
-            }
         }
         let looped_taken = ahead || looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
         // Phase A: the compile bound, the pick and the looped iterations, in that order (`admission::LanePlan`).

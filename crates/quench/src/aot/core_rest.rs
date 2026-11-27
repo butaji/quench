@@ -117,7 +117,6 @@ fn execution_table(spec: &ExecutionTableSpec) -> (ExecutionTable, String) {
         prepare_native_script: linked(spec.compile_source, all.prepare_native_script, "prepare_native_script", &mut unlinked),
         store_native_module_program: linked(spec.compile_source, all.store_native_module_program, "store_native_module_program", &mut unlinked),
         kept_native_module_program: linked(spec.compile_source, all.kept_native_module_program, "kept_native_module_program", &mut unlinked),
-        stage_images_at_load: linked(spec.link_live, all.stage_images_at_load, "stage_images_at_load", &mut unlinked),
         attach_native_js: linked(spec.link_live, all.attach_native_js, "attach_native_js", &mut unlinked),
         load_ahead_images: linked(spec.link_live, all.load_ahead_images, "load_ahead_images", &mut unlinked),
         install_wasm_instance: linked(spec.wasm, all.install_wasm_instance, "install_wasm_instance", &mut unlinked),
