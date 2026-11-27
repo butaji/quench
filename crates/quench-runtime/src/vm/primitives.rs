@@ -142,53 +142,28 @@ impl Vm {
     ) -> Result<Value, JsError> {
         match native {
             Native::StringRaw => self.string_raw(p, args),
-            Native::StringIsWellFormed => {
+            // A narrow string holds no surrogate; a wide one is scanned in place for a lone one
+            // (`strings::lone_surrogate_row`), and a well-formed one is its own `toWellFormed`.
+            Native::StringIsWellFormed | Native::StringToWellFormed => {
                 let text = self.string_receiver_text(this)?;
-                let wide = text.units().wide();
-                let units: &[u16] = &wide;
-                let mut index = 0;
-                while index < units.len() {
-                    let unit = units[index];
-                    if (0xD800..=0xDBFF).contains(&unit) {
-                        if !units
-                            .get(index + 1)
-                            .is_some_and(|low| (0xDC00..=0xDFFF).contains(low))
-                        {
-                            return Ok(Value::FALSE);
-                        }
-                        index += 1;
-                    } else if (0xDC00..=0xDFFF).contains(&unit) {
-                        return Ok(Value::FALSE);
-                    }
-                    index += 1;
+                let span = crate::staged::spans::concrete_span(text.units());
+                let mut stage = crate::staged::Concrete::new(std::ptr::null());
+                let lone = if span.form.wide() {
+                    crate::staged::strings::lone_surrogate_row(&mut stage, span.units, span.length, 0)
+                } else {
+                    span.length
+                };
+                if native == Native::StringIsWellFormed {
+                    return Ok(Value::boolean(lone == span.length));
                 }
-                Ok(Value::TRUE)
-            }
-            Native::StringToWellFormed => {
-                let text = self.string_receiver_text(this)?;
-                let wide = text.units().wide();
-                let units: &[u16] = &wide;
-                let mut well_formed = Vec::with_capacity(units.len());
-                let mut index = 0;
-                while index < units.len() {
-                    let unit = units[index];
-                    if (0xD800..=0xDBFF).contains(&unit) {
-                        if let Some(low) = units
-                            .get(index + 1)
-                            .filter(|low| (0xDC00..=0xDFFF).contains(*low))
-                        {
-                            well_formed.extend([unit, *low]);
-                            index += 1;
-                        } else {
-                            well_formed.push(0xFFFD);
-                        }
-                    } else if (0xDC00..=0xDFFF).contains(&unit) {
-                        well_formed.push(0xFFFD);
-                    } else {
-                        well_formed.push(unit);
-                    }
-                    index += 1;
+                if lone == span.length {
+                    return Ok(this);
                 }
+                let mut well_formed = Vec::<u16>::with_capacity(span.length as usize);
+                crate::staged::strings::to_well_formed_row(&mut stage, span.units, span.length, well_formed.as_mut_ptr() as u64);
+                // SAFETY: the row writes every one of the `length` units: each run is copied and
+                // each lone surrogate replaced.
+                unsafe { well_formed.set_len(span.length as usize) };
                 self.string_from_units(&well_formed)
             }
             Native::BigIntValueOf => self.bigint_value_of(p, this),
@@ -413,24 +388,7 @@ impl Vm {
                     {
                         return Err(self.range_error(p, "invalid code point".into()));
                     }
-                    let code_point = number as u32;
-                    if crate::unicode::is_surrogate(code_point)
-                        || code_point <= crate::unicode::UTF16_MAX_CODE_UNIT
-                    {
-                        units.push(code_point as u16);
-                    } else {
-                        let payload = code_point - crate::unicode::SUPPLEMENTARY_CODE_POINT_START;
-                        units.push(
-                            (crate::unicode::SURROGATE_START
-                                + (payload >> crate::unicode::SURROGATE_PAYLOAD_SHIFT))
-                                as u16,
-                        );
-                        units.push(
-                            (crate::unicode::LOW_SURROGATE_START as u32
-                                + (payload & crate::unicode::SURROGATE_PAYLOAD_MASK))
-                                as u16,
-                        );
-                    }
+                    crate::staged::strings::push_code_point_units(&mut units, number as u32);
                 }
                 self.string_from_units(&units)
             }
@@ -445,7 +403,10 @@ impl Vm {
                 // Radix 10 (or absent): the shared int32 form of the text (`staged::parse_int`), which the b-jit's row answers too.
                 let decimal = if radix == 0 || radix == 10 {
                     match (&text, self.heap.string(value)) {
-                        (None, Some(string)) => string.read_units(|units| crate::staged::parse_int::decimal_int32(units.iter())),
+                        (None, Some(string)) => string.read_units(|units| {
+                            let span = crate::staged::spans::concrete_span(units);
+                            crate::staged::parse_int::decimal_int32_at(span.form.wide(), span.units, span.length)
+                        }),
                         _ => text.as_deref().and_then(|text| crate::staged::parse_int::decimal_int32(text.encode_utf16())),
                     }
                 } else {

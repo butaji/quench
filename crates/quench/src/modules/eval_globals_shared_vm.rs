@@ -155,6 +155,8 @@ pub(crate) fn print(c: &mut Context<'_>, source: &str, name: &str) -> Result<(),
     let result = c.evaluate_script_rooted(source, name)?;
     let log = c.with_startup_intrinsics(|c| {
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("consoleGlobalInitialize");
         let console = get(c, global, "console")?;
         get(c, console, "log")
     })?;

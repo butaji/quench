@@ -53,7 +53,7 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
 
 /// A loop's array source at `pc`: a register the loop does not redefine, or a hoisted capture
 /// read (`captured`) of a typed array when compiled (`typed_capture`).
-fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, written: &BTreeSet<Register>,
+fn array_source(unit: &super::super::lane_unit::Unit, leaders: &quench_runtime::dataflow::BitSet, written: &BTreeSet<Register>,
     (captured, held): (impl Fn(usize) -> bool, impl Fn(usize) -> bool), typed_capture: impl Fn(u16) -> bool, pc: usize, base: Register) -> Option<ArraySource> {
     // The loop's sole entering edge proves the view of any base its body does not
     // redefine, an inlined frame's argument as well as the caller's own register.
@@ -72,8 +72,9 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
 /// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
 /// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
-pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
-    captured: impl Fn(usize, usize) -> bool, held: impl Fn(usize) -> bool, views: ElementViews, typed_captures: &[u16],
+pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &quench_runtime::dataflow::BitSet,
+    captured: impl Fn(usize, usize) -> bool, held: impl Fn(usize) -> bool, views: ElementViews,
+    typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)], typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {
@@ -88,8 +89,16 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
                 _ if super::native_calls::searches(intrinsics, pc) => (Some(instruction.register_c()), false),
                 _ => continue,
             };
-            let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, (|at| captured(header, at), &held),
-                |slot| typed_captures.contains(&slot), pc, base)) else { continue };
+            // The kind the array held at entry is keyed by the instruction's operand register and,
+            // where the access reads a copy, by the register it resolves to.
+            let resolved = base.and_then(|base| array_source(unit, leaders, &written, (|at| captured(header, at), &held),
+                |slot| typed_captures.contains(&slot), pc, base));
+            let Some(source) = resolved else { continue };
+            let kind_of = |register: Register| typed_kinds.iter().find(|(own, _)| *own == register).map(|(_, kind)| *kind);
+            let kind = match source {
+                ArraySource::Register(register) => base.filter(|base| !written.contains(base)).and_then(kind_of).or_else(|| kind_of(register)),
+                ArraySource::Capture(_) | ArraySource::Field(_) => None,
+            };
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
             if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
@@ -100,7 +109,12 @@ pub(crate) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {
-                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed(None) } else { views };
+                    // The kind the array held at entry is the arm its accesses keep; an array the
+                    // observation saw no kind for takes the region's view.
+                    let views = match source {
+                        ArraySource::Capture(_) => ElementViews::Typed(None),
+                        ArraySource::Register(_) | ArraySource::Field(_) => kind.map_or(views, |kind| ElementViews::Typed(Some(kind))),
+                    };
                     arrays.push(LoopArray { header, back, source, views, writable: stores });
                 }
             }

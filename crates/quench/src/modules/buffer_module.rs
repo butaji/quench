@@ -1166,7 +1166,6 @@ pub(crate) fn slow_buffer(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
 /// Defines the `Buffer` class: a constructor inheriting from `Uint8Array`, its statics and
 /// its prototype.
 pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation;
     let buffer = c.host_constructor_named(crate::host::shared_vm::operation!("bufferClassConstructor"), "Buffer")?;
     let prototype = get(c, buffer, "prototype")?;
     let global = c.global_root()?;
@@ -1174,10 +1173,10 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let uint8_prototype = get(c, uint8, "prototype")?;
     c.set_prototype_rooted(buffer, uint8)?;
     c.set_prototype_rooted(prototype, uint8_prototype)?;
-    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, data: Option<RootId>| -> Result<RootId, RootedError> {
+    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, data: Option<RootId>| -> Result<RootId, RootedError> {
         let function = match data {
-            Some(data) => c.host_function_named_with_data(operation(operation_name), name, data)?,
-            None => c.host_function_named(operation(operation_name), name)?,
+            Some(data) => c.host_function_named_with_data(operation, name, data)?,
+            None => c.host_function_named(operation, name)?,
         };
         // Node assigns its Buffer methods, so they are ordinary enumerable data properties.
         let key = c.string_rooted(name);
@@ -1185,53 +1184,53 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         Ok(function)
     };
     for (name, operation_name) in [
-        ("from", "bufferFrom"),
-        ("of", "bufferOf"),
-        ("alloc", "bufferAlloc"),
-        ("allocUnsafe", "bufferAllocUnsafe"),
-        ("allocUnsafeSlow", "bufferAllocUnsafe"),
-        ("isBuffer", "bufferIsBuffer"),
-        ("isEncoding", "bufferIsEncoding"),
-        ("byteLength", "bufferByteLength"),
-        ("compare", "bufferStaticCompare"),
-        ("concat", "bufferConcat"),
-        ("copyBytesFrom", "bufferCopyBytesFrom"),
+        ("from", crate::host::shared_vm::marked_operation!("bufferFrom")),
+        ("of", crate::host::shared_vm::marked_operation!("bufferOf")),
+        ("alloc", crate::host::shared_vm::marked_operation!("bufferAlloc")),
+        ("allocUnsafe", crate::host::shared_vm::marked_operation!("bufferAllocUnsafe")),
+        ("allocUnsafeSlow", crate::host::shared_vm::marked_operation!("bufferAllocUnsafe")),
+        ("isBuffer", crate::host::shared_vm::marked_operation!("bufferIsBuffer")),
+        ("isEncoding", crate::host::shared_vm::marked_operation!("bufferIsEncoding")),
+        ("byteLength", crate::host::shared_vm::marked_operation!("bufferByteLength")),
+        ("compare", crate::host::shared_vm::marked_operation!("bufferStaticCompare")),
+        ("concat", crate::host::shared_vm::marked_operation!("bufferConcat")),
+        ("copyBytesFrom", crate::host::shared_vm::marked_operation!("bufferCopyBytesFrom")),
     ] {
-        method(c, buffer, name, operation_name, None)?;
+        method(c, buffer, name, operation_name.id(), None)?;
     }
     let pool = c.number(POOL_SIZE);
     c.assign_named_property_rooted(buffer, "poolSize", pool)?;
     for (name, operation_name) in [
-        ("toString", "bufferToString"),
-        ("equals", "bufferEquals"),
-        ("compare", "bufferCompare"),
-        ("copy", "bufferCopy"),
-        ("fill", "bufferFill"),
-        ("write", "bufferWrite"),
-        ("toJSON", "bufferToJson"),
-        ("subarray", "bufferSlice"),
-        ("slice", "bufferSlice"),
-        ("inspect", "bufferInspect"),
+        ("toString", crate::host::shared_vm::marked_operation!("bufferToString")),
+        ("equals", crate::host::shared_vm::marked_operation!("bufferEquals")),
+        ("compare", crate::host::shared_vm::marked_operation!("bufferCompare")),
+        ("copy", crate::host::shared_vm::marked_operation!("bufferCopy")),
+        ("fill", crate::host::shared_vm::marked_operation!("bufferFill")),
+        ("write", crate::host::shared_vm::marked_operation!("bufferWrite")),
+        ("toJSON", crate::host::shared_vm::marked_operation!("bufferToJson")),
+        ("subarray", crate::host::shared_vm::marked_operation!("bufferSlice")),
+        ("slice", crate::host::shared_vm::marked_operation!("bufferSlice")),
+        ("inspect", crate::host::shared_vm::marked_operation!("bufferInspect")),
     ] {
-        method(c, prototype, name, operation_name, None)?;
+        method(c, prototype, name, operation_name.id(), None)?;
     }
     let to_string = get(c, prototype, "toString")?; c.assign_named_property_rooted(prototype, "toLocaleString", to_string)?; // one function, as Node assigns it
     for (name, mode) in [("indexOf", SEARCH_FIRST), ("lastIndexOf", SEARCH_LAST), ("includes", SEARCH_INCLUDES)] {
         let data = c.number(f64::from(mode));
-        method(c, prototype, name, "bufferIndexOf", Some(data))?;
+        method(c, prototype, name, crate::host::shared_vm::operation!("bufferIndexOf"), Some(data))?;
     }
     for (name, width) in [("swap16", 2.0), ("swap32", 4.0), ("swap64", 8.0)] {
         let data = c.number(width);
-        method(c, prototype, name, "bufferSwap", Some(data))?;
+        method(c, prototype, name, crate::host::shared_vm::operation!("bufferSwap"), Some(data))?;
     }
     for encoding in ["ascii", "base64", "base64url", "latin1", "hex", "ucs2", "utf8"] {
         let data = c.string_rooted(encoding);
-        method(c, prototype, &format!("{encoding}Slice"), "bufferEncodingSlice", Some(data))?;
-        method(c, prototype, &format!("{encoding}Write"), "bufferEncodingWrite", Some(data))?;
+        method(c, prototype, &format!("{encoding}Slice"), crate::host::shared_vm::operation!("bufferEncodingSlice"), Some(data))?;
+        method(c, prototype, &format!("{encoding}Write"), crate::host::shared_vm::operation!("bufferEncodingWrite"), Some(data))?;
     }
     for (index, accessor) in ACCESSORS.iter().enumerate() {
         let data = c.number(index as f64);
-        let function = method(c, prototype, accessor.name, "bufferNumeric", Some(data))?;
+        let function = method(c, prototype, accessor.name, crate::host::shared_vm::operation!("bufferNumeric"), Some(data))?;
         // Node aliases each `UInt` accessor as `Uint`: the same function under a second name.
         if accessor.name.contains("UInt") {
             let alias = c.string_rooted(&accessor.name.replace("UInt", "Uint"));

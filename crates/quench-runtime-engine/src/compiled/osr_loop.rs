@@ -1478,21 +1478,21 @@ fn admit_region(
     method_calls: MethodCalls,
     native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
-    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
-    if !crate::compiled::admission::stencil_only()
-        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
-    {
+    // A loop whose every iteration leaves (at a call, a throw) is still a region where the stencil tier runs:
+    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop (`stencil_only`).
+    let leaves = (!crate::compiled::admission::stencil_only()).then(|| iteration::iterates_natively(&instructions, header, method_calls, native_call).err()).flatten();
+    if let Some(offset) = leaves && !crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
+    let stencil_only = leaves.is_some();
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
     ) {
-        Ok(region) => Ok(region),
+        Ok(region) => Ok(LoopRegion { stencil_only, ..region }),
         // A loop the register analysis rejects is admitted on value identities where it can be; a
         // call the renamed loop stops at is the inliner's (`is_call_boundary`).
         Err(failure) => match lifetime::admit_lifetime_roles(instructions, registers, constants, sites, live, header, objects, method_calls) {
-            Some(Ok(region)) => Ok(region),
+            Some(Ok(region)) => Ok(LoopRegion { stencil_only, ..region }),
             Some(Err(renamed)) if renamed.is_call_boundary() => Err(renamed),
             _ => Err(failure),
         },
@@ -1890,6 +1890,7 @@ fn admit_register_roles(
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
     Ok(LoopRegion {
+        stencil_only: false,
         header,
         backedge,
         numbers,
@@ -2148,10 +2149,14 @@ pub(crate) struct Observation<'a> {
     /// The typed array kind each instruction of the region, from its header, observed where its
     /// interpreter record is a typed element row (`dispatch_fast::is_typed_element_row`): an element
     /// row no loop entry proves then proves the view for that kind alone (`base_region::function::typed_rows`).
-    pub(crate) typed_kinds: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
+    pub(crate) typed_rows: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
+    /// The typed arrays the region's arrays hold at entry, by register (`Vm::typed_array_kind`):
+    /// an array read or written through one is viewed at that kind, one arm per access instead of
+    /// `typed_elements::by_word`'s walk over every kind (`LoopArray::views`).
+    pub(crate) typed_kinds: &'a [(Register, quench_runtime::tier_surface::TypedArrayKind)],
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
     /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its

@@ -218,6 +218,15 @@ pub(crate) fn initialize_globals(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
     Ok(c.undefined())
 }
 
+/// The `fetch` global's lazy initializer.
+pub(crate) fn initialize_fetch(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
+    let global = c.global_root()?;
+    let fetch = c.host_function_named(crate::host::shared_vm::operation!("fetch"), "fetch")?;
+    let key = c.string_rooted("fetch");
+    c.define_data_property_rooted(global, key, fetch, true, true, true)?;
+    Ok(c.undefined())
+}
+
 /// A plain object of the `fields` a caller lists at run time (inspection views), in order.
 pub(crate) fn literal_fields(c: &mut Context<'_>, fields: &[(&str, RootId)]) -> Outcome {
     let object = c.object_rooted()?;

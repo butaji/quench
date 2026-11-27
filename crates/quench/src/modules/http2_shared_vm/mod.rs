@@ -635,6 +635,8 @@ pub(crate) fn module_member(c: &mut Context<'_>, _this: RootId, args: &[RootId])
 /// `new URL(text)`.
 fn url(c: &mut Context<'_>, text: RootId) -> Outcome {
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("utilLazyPropertyInitialize");
     let class = get(c, global, "URL")?;
     c.construct_rooted(class, class, &[text])
 }
@@ -658,3 +660,4 @@ fn emit_warning(c: &mut Context<'_>, message: &str, kind: Option<&str>) -> Resul
     }
     call_method(c, process, "emitWarning", &values).map(drop)
 }
+

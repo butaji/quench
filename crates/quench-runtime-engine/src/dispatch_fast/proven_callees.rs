@@ -16,7 +16,7 @@ impl Vm {
     pub(crate) fn proven_callee(&self, program: &quench_runtime::bytecode::ResidualProgram, (function, pc): (u32, u32), callee: u32) -> Option<super::compiled::DirectCallee> {
         let views = self.programs.views_in_lane(self.active_program)?;
         let view = views.get(function as usize).and_then(super::program_store::derived_lane_view)?;
-        let argc = ImmediateLayout::argument_count(program.function_get(function as usize)?.instruction_at(pc as usize).imm());
+        let argc = crate::compiled::direct_callee::direct_argc(program, program.function_get(function as usize)?.instruction_at(pc as usize))?; // a method call's count is its site's (TOD-2350)
         let target = body_tier_in_lane::site_targets(self, view, pc as usize).find(|target| target.function == callee)?;
         let mut direct = direct_callee_in_lane(self, view, function, pc as usize, argc, target)?;
         (direct.method, direct.body) = (None, None);

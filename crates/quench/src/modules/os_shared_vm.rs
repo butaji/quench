@@ -17,11 +17,11 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
         set(context, module, name, function)?;
     }
     for (name, operation) in [
-        ("totalmem", "osTotalmem"),
-        ("uptime", "osUptime"),
-        ("networkInterfaces", "osNetworkInterfaces"),
+        ("totalmem", crate::host::shared_vm::marked_operation!("osTotalmem")),
+        ("uptime", crate::host::shared_vm::marked_operation!("osUptime")),
+        ("networkInterfaces", crate::host::shared_vm::marked_operation!("osNetworkInterfaces")),
     ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let function = context.host_function(operation.id())?;
         set(context, module, name, function)?;
     }
     set_string(
@@ -278,7 +278,7 @@ enum Fact {
 #[derive(Clone, Copy)]
 enum Export {
     Fact { name: &'static str, fact: Fact, primitive: bool },
-    Operation { operation: &'static str, length: u8 },
+    Operation { operation: crate::host::shared_vm::MarkedOperation, length: u8 },
 }
 
 /// The `os` function exports, in Node's order.
@@ -291,18 +291,18 @@ const EXPORTS: &[(&str, Export)] = {
         ("cpus", F { name: "cpus", fact: Fact::Cpus, primitive: false }),
         ("endianness", F { name: "endianness", fact: Fact::Endianness, primitive: true }),
         ("freemem", F { name: "", fact: Fact::FreeMem, primitive: true }),
-        ("getPriority", O { operation: "osGetPriority", length: 1 }),
+        ("getPriority", O { operation: crate::host::shared_vm::marked_operation!("osGetPriority"), length: 1 }),
         ("homedir", F { name: "wrappedFn", fact: Fact::HomeDir, primitive: true }),
         ("hostname", F { name: "wrappedFn", fact: Fact::Hostname, primitive: true }),
         ("loadavg", F { name: "loadavg", fact: Fact::LoadAvg, primitive: false }),
         ("networkInterfaces", F { name: "networkInterfaces", fact: Fact::NetworkInterfaces, primitive: false }),
         ("platform", F { name: "platform", fact: Fact::Platform, primitive: true }),
         ("release", F { name: "getOSRelease", fact: Fact::Release, primitive: true }),
-        ("setPriority", O { operation: "osSetPriority", length: 2 }),
+        ("setPriority", O { operation: crate::host::shared_vm::marked_operation!("osSetPriority"), length: 2 }),
         ("tmpdir", F { name: "tmpdir", fact: Fact::TmpDir, primitive: true }),
         ("totalmem", F { name: "", fact: Fact::TotalMem, primitive: true }),
         ("type", F { name: "getOSType", fact: Fact::Type, primitive: true }),
-        ("userInfo", O { operation: "osUserInfo", length: 1 }),
+        ("userInfo", O { operation: crate::host::shared_vm::marked_operation!("osUserInfo"), length: 1 }),
         ("uptime", F { name: "wrappedFn", fact: Fact::Uptime, primitive: true }),
         ("version", F { name: "getOSVersion", fact: Fact::Version, primitive: true }),
         ("machine", F { name: "getMachine", fact: Fact::Machine, primitive: true }),
@@ -328,7 +328,7 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
     for (index, &(export, kind)) in EXPORTS.iter().enumerate() {
         let function = match kind {
             Export::Operation { operation, length } => {
-                let function = context.host_function_named(crate::host::shared_vm::operation(operation), export)?;
+                let function = context.host_function_named(operation.id(), export)?;
                 let key = context.string_rooted("length");
                 let length = context.number(f64::from(length));
                 context.define_data_property_rooted(function, key, length, false, false, true)?;

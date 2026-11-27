@@ -143,6 +143,12 @@ mod platform {
             .borrow_mut()
             .stdin
             .requested = true;
+        // A build-time evaluation saves the run at its wait for this read (`aot::prefix`): the
+        // Buffer constructor every chunk is delivered through is built now, into the saved
+        // runtime, not on the image's first chunk.
+        if crate::aot::prefix::armed() {
+            crate::host::shared_vm::commonjs::buffer_module(context)?;
+        }
         Ok(context.undefined())
     }
 
@@ -231,11 +237,15 @@ mod platform {
         }
         // One queued read per readiness notification. Callbacks and errors are
         // routed by the same checkpoint authority as timers and network callbacks.
-        let mut bytes = vec![0; READ_CHUNK_BYTES];
+        // Read into spare capacity: zeroing the whole chunk first costs more than a typical read.
+        let mut bytes = Vec::<u8>::with_capacity(READ_CHUNK_BYTES);
         let pending = loop {
-            let length = unsafe { libc::read(STDIN_FD, bytes.as_mut_ptr().cast(), bytes.len()) };
+            // SAFETY: `read` writes at most `READ_CHUNK_BYTES` into the vector's spare capacity.
+            let length = unsafe { libc::read(STDIN_FD, bytes.as_mut_ptr().cast(), READ_CHUNK_BYTES) };
             if length >= 0 {
-                bytes.truncate(length as usize);
+                // SAFETY: `read` initialized the first `length` bytes.
+                unsafe { bytes.set_len(length as usize) };
+                bytes.shrink_to_fit();
                 break Ok(bytes);
             }
             let error = std::io::Error::last_os_error();
@@ -318,17 +328,17 @@ mod platform {
             context.host_as::<crate::host::NodeHost>().shared_state().borrow_mut().stdin.ended = true;
             context.null()
         } else {
+            // One copy of the bytes, in a Uint8Array's store, which `Buffer.from(arrayBuffer)`
+            // shares: no array of numbers, one element per byte.
+            let view = context.uint8_array_from_rooted(bytes)?;
+            let key = context.string_rooted("buffer");
+            let store = context.get_property_rooted(view, key)?;
             let buffer = crate::host::shared_vm::commonjs::buffer_module(context)?;
             let key = context.string_rooted("Buffer");
             let buffer = context.get_property_rooted(buffer, key)?;
             let key = context.string_rooted("from");
             let from = context.get_property_rooted(buffer, key)?;
-            let values = bytes
-                .iter()
-                .map(|byte| context.number(f64::from(*byte)))
-                .collect::<Vec<_>>();
-            let array = context.array_rooted(&values)?;
-            context.call_rooted(from, buffer, &[array])?
+            context.call_rooted(from, buffer, &[store])?
         };
         let key = context.string_rooted("push");
         let push = context.get_property_rooted(stream, key)?;

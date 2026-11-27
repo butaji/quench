@@ -118,6 +118,8 @@ fn begin(c: &mut Context<'_>, member: Member, stream: RootId, promise: RootId) -
     let state = record(c, &[PROMISE, ITERATOR, NEXT, SYNC, KIND, CHUNKS, TEXT], &[promise, iterator, next, sync, kind, chunks, text])?;
     if matches!(member, Member::Text | Member::Json) {
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("textDecoderInitialize");
         let decoder = get(c, global, "TextDecoder")?;
         let decoder = c.construct_rooted(decoder, decoder, &[])?;
         put(c, state, DECODER, decoder)?;

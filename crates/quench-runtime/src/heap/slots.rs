@@ -125,14 +125,7 @@ mod reservation {
                 let bytes = reserved * size_of::<Slot>();
                 // SAFETY: an anonymous private mapping with no access touches no existing memory.
                 let base = unsafe {
-                    libc::mmap(
-                        std::ptr::null_mut(),
-                        bytes,
-                        libc::PROT_NONE,
-                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                        -1,
-                        0,
-                    )
+                    quench_alloc::map_anonymous(bytes, libc::PROT_NONE, libc::MAP_NORESERVE)
                 };
                 if base != libc::MAP_FAILED {
                     return Self {

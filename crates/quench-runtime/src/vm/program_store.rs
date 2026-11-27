@@ -842,6 +842,10 @@ pub struct ProgramStore {
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
+    /// The warming-entry clock a lane body's `recurrent` reads: one tick per entry a warming
+    /// body counts, program-wide. A plain cell of the store the lane already reaches, where a
+    /// thread-local read costs a `tlv_get_addr` call on every entry.
+    warming_ticks: std::cell::Cell<u32>,
     #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
@@ -891,6 +895,7 @@ impl Default for ProgramStore {
             },
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: tiers.stress,
+            warming_ticks: std::cell::Cell::new(0),
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
             js_jit_dataview_float64_get_entries: 0,
@@ -1587,6 +1592,19 @@ impl ProgramStore {
         self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
 
+    /// The opcodes of every live program's lowered functions, which the lane's views run.
+    pub(crate) fn lowered_ops(&self) -> Vec<u16> {
+        let mut seen = vec![false; crate::bytecode::Op::COUNT];
+        for program in self.residuals() {
+            for index in 0..program.function_count() {
+                for instruction in program.function(index).instructions() {
+                    seen[instruction.op() as usize] = true;
+                }
+            }
+        }
+        (0..seen.len()).filter(|&op| seen[op]).map(|op| op as u16).collect()
+    }
+
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
         self.entry(id)?.module_environment
     }
@@ -1985,8 +2003,16 @@ impl ProgramStore {
     }
 
     pub fn enable_js_lane_methods(&mut self) {
-        self.js_jit_lane_methods_enabled = true;
+        // AArch64's lane-body tier is exact but slower than the interpreter on this corpus until
+        // its bodies stop leaving mid-body (`ty2`/`raytrace` leaves at At(5)/At(16)/At(23)), so it
+        // stays out of every mode there while the loop regions compile and run. Debt (TOD-1202).
+        #[cfg(target_arch = "aarch64")]
+        return;
+        #[cfg(not(target_arch = "aarch64"))]
+        { self.js_jit_lane_methods_enabled = true; }
     }
+
+    pub fn enable_ahead_lane_bodies(&mut self) { self.js_jit_lane_methods_enabled = true; }
 
     #[quench_macros::test_visible]
     /// Set before loading a test program; general/OSR coverage then owns entry.
@@ -2003,6 +2029,15 @@ impl ProgramStore {
 
     pub fn js_jit_lane_methods_enabled(&self) -> bool {
         self.js_jit_lane_methods_enabled
+    }
+
+    /// Takes the next warming-entry tick (`body_tier_in_lane`): one per entry a warming body
+    /// counts, which a function entered rarely but for long reads to specialize early.
+    #[inline]
+    pub(super) fn warming_tick(&self) -> u32 {
+        let tick = self.warming_ticks.get().wrapping_add(1);
+        self.warming_ticks.set(tick);
+        tick
     }
 
     #[inline]
@@ -2694,7 +2729,7 @@ impl ProgramStore {
         if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
             return None;
         }
-        Some(derive_lane_view(entry, function, code, view, derive))
+        Some(store_lane_view(entry, function, code, view, derive))
     }
 
     /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
@@ -2731,7 +2766,7 @@ impl ProgramStore {
         let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
-        Some(derive_lane_view(entry, function, code, view, derive))
+        Some(store_lane_view(entry, function, code, view, derive))
     }
 
     /// A view of `function` derived afresh from its bytecode and not stored, beside the view
@@ -3066,7 +3101,7 @@ pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<crate::vm::
 }
 
 /// `function`'s view in its cell `view`, which `derive` makes from `code` if it has none yet.
-fn derive_lane_view<'s>(
+fn store_lane_view<'s>(
     entry: &'s ProgramEntry,
     function: u32,
     code: &crate::bytecode::Function,

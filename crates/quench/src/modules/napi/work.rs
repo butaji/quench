@@ -739,5 +739,5 @@ pub(crate) fn poll(
     if ENVS.with(|envs| envs.borrow().is_empty()) {
         return Ok(false);
     }
-    crate::modules::process_shared_vm::deliver_each(runtime, program, "napiDrain")
+    crate::modules::process_shared_vm::deliver_each(runtime, program, crate::host::shared_vm::operation!("napiDrain"))
 }

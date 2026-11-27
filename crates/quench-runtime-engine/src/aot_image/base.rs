@@ -11,7 +11,6 @@
 use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
-use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
@@ -30,16 +29,23 @@ impl BaseImage {
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
-    facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
     // The body is the target CPU's stencils, not the compiling CPU's.
-    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id, facts))?;
+    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id))?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
-        Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }
+        // Apple AArch64 names a helper call as a branch hole; a guard's shape is a 32-bit immediate; a
+        // PC-relative field keeps its addend; every other site is a 64-bit word.
+        let (kind, addend) = match site.class {
+            quench_bjit::BRANCH26 => (Reloc::Arm64Call, 0),
+            quench_bjit::ABS32 => (Reloc::Abs4, 0),
+            quench_bjit::REL32 => (Reloc::X86PCRel4, site.addend),
+            _ => (Reloc::Abs8, 0),
+        };
+        Relocation { offset: site.offset, kind, namespace, key, addend }
     }).collect();
     let mut pc_offsets = vec![NO_ENTRY; program.function(id as usize).instructions().count()];
     for &(pc, offset) in built.entries.iter() {

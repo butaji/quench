@@ -775,7 +775,9 @@ impl Vm {
             return false;
         };
         if index < length {
-            super::index::mutable_array_elements(object.elements_mut()).set(index, value);
+            // In place where the backing takes it: a literal starts as `hole_array`'s double
+            // holes, which a copy would widen for good (`set_dense_element`).
+            super::index::set_dense_element(object.elements_mut(), index, value);
             return true;
         }
         self.heap.push_double_element(array, value) || self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
@@ -814,7 +816,7 @@ impl Vm {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        super::index::mutable_array_elements(object.elements_mut()).set(index, value);
+        super::index::set_dense_element(object.elements_mut(), index, value);
         true
     }
 

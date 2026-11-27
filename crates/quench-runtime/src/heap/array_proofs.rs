@@ -229,6 +229,12 @@ impl Heap {
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive; proving
         // writes nothing into the record, so no barrier applies.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        // A proof's element reads read `Value` words, which a double backing's are not: such
+        // an array keeps its kind and takes the interpreter's element rows, which decode it.
+        // Widening it here would lose the kind for good (`KEEP_WIDE`).
+        if array.elements().is_double() {
+            return false;
+        }
         // An array a lane proves is hot: its reads take the proof's wide values. Widening
         // copies the same values.
         array.widen_elements();
@@ -243,6 +249,24 @@ impl Heap {
 }
 
 impl Heap {
+    /// `array_storage_span` for an array whose backing holds raw doubles (`Elements::is_double`):
+    /// its first word, the words a read may reach, and those a store of a Number may replace in
+    /// place (zero where none may). A hole is `Value::DELETED`'s word (`decode_double`), which
+    /// the span's reader tests for. A tagged backing is no span here, and this widens none.
+    /// Valid until the next change that retires proofs, as `array_storage_span` is.
+    pub fn array_double_span(&mut self, base: Value) -> Option<(NonNull<u64>, usize, usize)> {
+        let record_id = base.direct_array_index()?;
+        // SAFETY: as in `prove_array_storage`.
+        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        let length = array.elements().len().min(i32::MAX as usize);
+        let values = array.elements().double_values()?;
+        let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
+            && !array.was_used_as_prototype() && array.elements().owns_double_words();
+        // SAFETY: a slice's pointer is never null.
+        let words = unsafe { NonNull::new_unchecked(values.as_ptr().cast_mut().cast::<u64>()) };
+        Some((words, length, if replaces { length } else { 0 }))
+    }
+
     /// The dense storage of the record array `base` names, as `ArrayStorageProofs::prove`
     /// would prove it: its first element, the elements a read may reach, and those a store
     /// of a Number may replace in place (zero where none may). `None` for any other value,
@@ -252,8 +276,11 @@ impl Heap {
         let record_id = base.direct_array_index()?;
         // SAFETY: as in `prove_array_storage`.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
-        // The span is read and written as wide values: a narrow backing widens once, as for
-        // a lane proof.
+        // The span is read and written as wide values: a double backing is no span (its words
+        // are Numbers), and taking one would widen it for good.
+        if array.elements().is_double() {
+            return None;
+        }
         array.widen_elements();
         let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
             && !array.was_used_as_prototype();

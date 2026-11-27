@@ -22,7 +22,6 @@ pub fn initialize_cli_process_signals() -> std::io::Result<()> {
 }
 
 const TYPESCRIPT_MODULE_ENTRY_NAME: &str = "<quench:typescript-module-entry>";
-const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
 
@@ -130,10 +129,15 @@ pub enum SharedCompletion {
 impl SharedCompletion {
     /// Process status shared by source and native executable entry points.
     pub fn exit_code(self) -> ExitCode {
+        ExitCode::from(self.exit_status())
+    }
+
+    /// The process's exit status (`exit_code`).
+    pub fn exit_status(self) -> u8 {
         match self {
-            Self::Completed => ExitCode::SUCCESS,
-            Self::PendingTopLevelAwait => ExitCode::from(UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
-            Self::GuestExit { code } => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Self::Completed => 0,
+            Self::PendingTopLevelAwait => quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT,
+            Self::GuestExit { code } => u8::try_from(code).unwrap_or(1),
         }
     }
 }
@@ -215,11 +219,11 @@ impl std::ops::DerefMut for EntryRuntime {
 
 impl Drop for EntryRuntime {
     fn drop(&mut self) {
-        // SAFETY: `runtime` is taken once, here, and never used again.
-        let runtime = unsafe { std::mem::ManuallyDrop::take(&mut self.runtime) };
         match self.teardown {
-            Teardown::Free => drop(runtime),
-            Teardown::ProcessExit => runtime.end_for_process_exit(),
+            // SAFETY: `runtime` is dropped once, here, and never used again.
+            Teardown::Free => unsafe { std::mem::ManuallyDrop::drop(&mut self.runtime) },
+            // SAFETY: `runtime` is ended once, here, and never used again.
+            Teardown::ProcessExit => unsafe { quench_runtime::Runtime::end_for_process_exit(&mut self.runtime) },
         }
     }
 }
@@ -230,14 +234,14 @@ fn execute_shared_with_teardown(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
-    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown, None))
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown, None, crate::host::HostCapabilities::all()))
 }
 
 /// Resumes `input`'s entry from `rest`, the runtime a build-time evaluation saved at its first
 /// wait for input (`aot::prefix::reach_wait`): the entry does not run again, and the event loop
 /// waits for that input as the evaluated run would have.
 pub(crate) fn resume_shared(input: SharedInput, argv: Vec<String>, rest: Vec<u8>) -> Result<SharedCompletion, String> {
-    run_node_worker(move || execute_shared_on_worker(input, argv, None, DEFAULT_MODE, Teardown::ProcessExit, Some(rest)))
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, DEFAULT_MODE, Teardown::ProcessExit, Some(rest), crate::host::HostCapabilities::all()))
 }
 
 /// Node entry worker lifecycle, including the platform signal-mask transition.
@@ -248,16 +252,40 @@ pub fn run_node_worker<T: Send + 'static>(
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
             .map_err(|error| format!("runtime worker signal mask: {error}"))?;
+    let work = move || {
+        #[cfg(target_os = "linux")]
+        worker_mask
+            .restore()
+            .map_err(|error| format!("runtime execution signal mask: {error}"))?;
+        execute()
+    };
+    // The worker's stack, and with it every thread-local the runtime keeps, lies at one fixed
+    // address, so a runtime saved from an earlier run that names them maps back valid
+    // (`quench_alloc::run_on_fixed_stack`); where that range is taken, an ordinary thread.
+    #[cfg(unix)]
+    let work = {
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = result.clone();
+        let body: Box<dyn FnOnce() + Send> = Box::new(move || {
+            let outcome = work();
+            *slot.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(outcome);
+        });
+        match quench_alloc::run_on_fixed_stack(c"quench-shared-exec", quench_runtime::WORKER_STACK_SIZE, body) {
+            Ok(_) => {
+                return result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()));
+            }
+            Err(body) => move || {
+                body();
+                result.lock().unwrap_or_else(|poison| poison.into_inner()).take()
+                    .unwrap_or_else(|| Err("runtime worker panicked".into()))
+            },
+        }
+    };
     std::thread::Builder::new()
         .name("quench-shared-exec".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
-        .spawn(move || {
-            #[cfg(target_os = "linux")]
-            worker_mask
-                .restore()
-                .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute()
-        })
+        .spawn(work)
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))
@@ -269,6 +297,7 @@ pub(crate) fn execute_worker(
     argv: Vec<String>,
     worker: crate::modules::worker_shared_vm::WorkerContext,
     mode: quench_runtime::ExecutionMode,
+    capabilities: crate::host::HostCapabilities,
 ) -> Result<SharedCompletion, String> {
     execute_shared_on_worker(
         input,
@@ -277,6 +306,7 @@ pub(crate) fn execute_worker(
         mode,
         Teardown::Free,
         None,
+        capabilities,
     )
 }
 
@@ -287,6 +317,7 @@ fn execute_shared_on_worker(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
     rest: Option<Vec<u8>>,
+    capabilities: crate::host::HostCapabilities,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty =
@@ -391,7 +422,14 @@ fn execute_shared_on_worker(
 
     let memory_policy = select_memory_policy();
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
-        let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
+        // The CLI compiles what it loads: the source and WebAssembly frontends. A static
+        // image's support has no source frontend, and enables Wasm only where its program
+        // reaches it (`aot::image_driver`), so these routes stay out of its executable.
+        #[cfg(feature = "source")]
+        crate::host::enable_dynamic_source();
+        #[cfg(feature = "source")]
+        crate::host::enable_wasm();
+        let mut host = NodeHost::with_capabilities(argv.clone(), capabilities).with_exec_argv(exec_argv.clone())?;
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
@@ -405,8 +443,13 @@ fn execute_shared_on_worker(
         // Workers' modules are not hot-replaced: their edits restart nothing.
         if worker.is_none() && crate::host::hmr::requested(&exec_argv) {
             if let Some(entry) = &entry_file {
-                shared_state.borrow_mut().hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                let mut state = shared_state.borrow_mut();
+                state.hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+                state.poll_on(crate::host::node_host::PollSlot::Hmr, |runtime, program, _| crate::host::hmr::poll(runtime, program));
             }
+        }
+        if worker.is_some() {
+            shared_state.borrow_mut().poll_on(crate::host::node_host::PollSlot::Worker, crate::modules::worker_shared_vm::poll);
         }
         shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();
@@ -468,7 +511,7 @@ fn execute_shared_on_worker(
         worker.control.set_online();
     }
     let execution = if resuming {
-        Ok(())
+        runtime.resume_restored()
     } else if restored {
         runtime.execute_restored(&program)
     } else {

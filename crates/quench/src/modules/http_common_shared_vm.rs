@@ -35,3 +35,4 @@ pub(crate) fn module(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
         Ok(module)
     })
 }
+

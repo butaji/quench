@@ -3,18 +3,21 @@ use quench_runtime::{NativeImageSupport, NativeTarget};
 use serde_json::{json, Value};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 const COMPILE_REPORT_VERSION: u64 = 1;
-const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
+pub(super) const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
+
+/// The compile worker option that runs a native entry's residual program at build time to its
+/// first wait for input and saves the run there (`build_rest`).
+pub(super) const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-compact] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -102,8 +105,8 @@ impl Options {
             }
         }
         let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if !matches!(profile.as_str(), "experiment" | "release" | "iteration") {
-            return Err("compile profile must be experiment, release or iteration".into());
+        if !matches!(profile.as_str(), "experiment" | "release" | "iteration" | "aot-compact") {
+            return Err("compile profile must be experiment, release, iteration or aot-compact".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,
@@ -126,12 +129,15 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
     enum Work {
         Application(Options),
         Bootstrap { program: PathBuf, output: PathBuf, builtins: Vec<String> },
+        Wait { program: PathBuf, output: PathBuf, assumptions: Vec<String> },
         Evaluation { entry: PathBuf, journal: PathBuf, assumptions: Vec<String> },
         Resumption { entry: PathBuf, rest: PathBuf, arguments: Vec<String> },
     }
     let work = match arguments.as_slice() {
         [option, program, output, builtins @ ..] if option == BOOTSTRAP_WORKER_OPTION =>
             Work::Bootstrap { program: program.into(), output: output.into(), builtins: builtins.to_vec() },
+        [option, program, output, assumptions @ ..] if option == WAIT_WORKER_OPTION =>
+            Work::Wait { program: program.into(), output: output.into(), assumptions: assumptions.to_vec() },
         [option, entry, journal, assumptions @ ..] if option == super::strict::EVALUATION_WORKER_OPTION =>
             Work::Evaluation { entry: entry.into(), journal: journal.into(), assumptions: assumptions.to_vec() },
         [option, entry, rest, arguments @ ..] if option == super::strict::RESUMPTION_WORKER_OPTION =>
@@ -144,6 +150,7 @@ pub fn run(arguments: Vec<String>) -> Result<ExitCode, String> {
         .spawn(move || match work {
             Work::Application(options) => compile(options),
             Work::Bootstrap { program, output, builtins } => build_bootstrap(&program, &output, builtins),
+            Work::Wait { program, output, assumptions } => super::image::build_rest(&program, &output, &assumptions),
             Work::Evaluation { entry, journal, assumptions } => super::strict::evaluate(&entry, &journal, &assumptions),
             Work::Resumption { entry, rest, arguments } => super::strict::resume(&entry, &rest, arguments),
         })
@@ -162,8 +169,28 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
     host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
     host.snapshot_builtins = builtins;
     let mut runtime = quench_runtime::Runtime::new(host);
-    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
+    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false))?;
+    // The host operations the startup heap holds, from which the image's table starts. No
+    // opcodes: the entry's functions lower as they run, to opcodes their bytecode does not name
+    // yet, so an image that runs its entry installs every lane row (`resumes_at_rest`).
+    let (operations, lazy) = runtime.held_host_operations();
+    let held: super::prefix::HeldOperations = (operations, lazy, Vec::new());
+    fs::write(output.with_extension("operations"), serde_json::to_vec(&held).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let (programs, functions, instructions) = runtime.held_code_size();
+    fs::write(output.with_extension("code"), json!({"programs": programs, "functions": functions, "instructions": instructions}).to_string())
+        .map_err(|error| error.to_string())?;
     fs::write(output, bytes).map_err(|error| error.to_string())
+}
+
+/// The features a static image's support is built with: `native-execution`, plus the intl layer
+/// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
+/// links the standard build's default features instead.
+fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport) -> String {
+    if support.allows_dynamic_source() { return "default".into(); }
+    let mut features = String::from("native-execution");
+    if graph.needs_intl() { features.push_str(",intl"); }
+    if graph.needs_wasm() { features.push_str(",wasm"); }
+    features
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -188,7 +215,9 @@ fn compile(options: Options) -> Result<(), String> {
     };
     // A strict compile that reads a dynamic input falls back to full support: static support
     // still retains the interpreter, which its link audit refuses (TOD-2196).
-    let support = if options.strict { quench_runtime::NativeImageSupport::DynamicSource } else { variant::select(explicit, &graph) };
+    let variant = if options.strict { variant::Variant::Full } else { variant::select(explicit, &graph) };
+    let core = variant == variant::Variant::Core;
+    let support = variant.image_support();
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -217,7 +246,8 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant::name(support),
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
+        "support_features": support_features(&graph, support),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -243,25 +273,33 @@ fn compile(options: Options) -> Result<(), String> {
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
     // A strict compile links no support when the program folds at build time; one that reads
     // a dynamic input links its support variant, and the report names the input.
+    let mut waits = Vec::new();
     if options.strict {
-        if let super::strict::Outcome::Image = super::strict::compile(&entry, &output, &work.0, &mut report)? {
-            report["status"] = json!("compiled");
-            report["support_variant"] = json!("strict");
-            report["execution_mode"] = json!("replay");
-            write_report(report_path.as_deref(), &report)?;
-            return Ok(());
+        match super::strict::compile(&entry, &output, &work.0, &mut report)? {
+            super::strict::Outcome::Image => {
+                report["status"] = json!("compiled");
+                report["support_variant"] = json!("strict");
+                report["execution_mode"] = json!("replay");
+                write_report(report_path.as_deref(), &report)?;
+                return Ok(());
+            }
+            super::strict::Outcome::Waits(runs) => waits = runs,
+            super::strict::Outcome::Dynamic => {}
         }
     }
-    manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
+    super::image::capture_bootstrap(core, &graph, &mut manifest)?;
     report["source_units"] = json!(manifest.units().len());
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
-    let compiled = manifest.compile()?;
+    let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
+    if core {
+        report["builtin_families"] = json!(compiled.builtin_families().bits());
+    }
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images, &options.target)?;
+    let inputs = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs
@@ -269,27 +307,8 @@ fn compile(options: Options) -> Result<(), String> {
         inputs.self_contained()
     };
     report["self_contained"] = json!(inputs.is_self_contained());
-    let bootstrap = work.0.join("bootstrap.bin");
-    let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
-        .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
-        .arg(&bootstrap)
-        .args(graph.snapshot_builtins());
-    crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut worker);
-    let inputs = match quench_runtime::native_link::checked_output(&mut worker, "native bootstrap preparation") {
-        Ok(_) => {
-            let mut catalog = fs::OpenOptions::new().append(true).open(inputs.catalog()).map_err(|error| error.to_string())?;
-            writeln!(catalog, "const _: () = assert!(quench::aot::BOOTSTRAP_ABI == {:#x}, \"native bootstrap host ABI mismatch\");", super::BOOTSTRAP_ABI)
-                .map_err(|error| error.to_string())?;
-            report["bootstrap"] = json!({"status": "prepared", "builtins": graph.snapshot_builtins(), "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
-                "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
-            inputs.with_bootstrap(bootstrap)
-        },
-        Err(error) => {
-            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
-            inputs
-        },
-    };
+    let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
+    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
@@ -303,7 +322,8 @@ fn compile(options: Options) -> Result<(), String> {
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                cargo.args(["--no-default-features", "--features", "native-execution"]);
+                let features = support_features(&graph, support);
+                cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);
             String::from_utf8(quench_runtime::native_link::checked_output(
@@ -316,13 +336,12 @@ fn compile(options: Options) -> Result<(), String> {
     let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
     support.check_build()?;
     report["support_artifacts"] = support.report();
-    let driver = work.0.join("driver.rs");
-    fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
     let staged = work.0.join("native-image");
-    let audit = support.link_audited(&inputs, &driver, &staged)?;
+    let audit = super::image::link_image(core, &support, &inputs, &work.0, &staged, &graph, held, &mut report)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
+    let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
@@ -330,7 +349,10 @@ fn compile(options: Options) -> Result<(), String> {
         report["binary_bytes"] = json!(payload.binary_bytes);
         report["payload_reduction"] = json!(payload);
     }
-    report["native_dependencies"] = json!(native_dependencies(&staged)?);
+    if !dumps.is_empty() {
+        super::image_dump::append(&staged, &dumps)?;
+    }
+    report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");
     // Publish only an audited executable. A failed compile leaves existing output intact.
     let report_build = report_path
@@ -357,26 +379,6 @@ fn compile(options: Options) -> Result<(), String> {
     }
     eprintln!("compiled {} -> {}", entry.display(), output.display());
     Ok(())
-}
-
-fn native_dependencies(executable: &Path) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    let output = quench_runtime::native_link::checked_output(
-        Command::new("otool").arg("-L").arg(executable),
-        "native dependency audit",
-    )?;
-    #[cfg(target_os = "linux")]
-    let output = quench_runtime::native_link::checked_output(
-        Command::new("readelf").arg("-d").arg(executable),
-        "native dependency audit",
-    )?;
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = executable;
-        return Err("native image dependency auditing supports macOS and Linux".into());
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    String::from_utf8(output).map_err(|error| error.to_string())
 }
 
 fn absolute_output(path: &Path) -> Result<PathBuf, String> {

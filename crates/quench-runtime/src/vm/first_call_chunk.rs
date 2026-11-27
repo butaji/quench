@@ -138,6 +138,18 @@ impl Vm {
     }
 
     fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32), run: Option<&crate::compile::statement_stream::StreamRun>) -> Result<FunctionKind, JsError> {
+        #[cfg(feature = "jit")]
+        { self.compile_first_chunk_anew_compiled(p, (program, function), run) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (p, program, function, run);
+            Err(JsError::validation("dynamic source compilation requires the jit feature".into()))
+        }
+    }
+
+    /// An execution-only build (no `jit`) compiles no source at run time.
+    #[cfg(feature = "jit")]
+    fn compile_first_chunk_anew_compiled(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32), run: Option<&crate::compile::statement_stream::StreamRun>) -> Result<FunctionKind, JsError> {
         if run.is_none()
             && let Some(appended) = self.append_first_chunk(p, (program, function))
         {

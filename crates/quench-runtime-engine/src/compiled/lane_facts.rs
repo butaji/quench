@@ -183,15 +183,21 @@ impl std::fmt::Write for Fnv {
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
 /// (`tier_model::admits`), its plan charged too where `unplanned`: the gate every lane-body
 /// compile request passes.
-pub(crate) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &crate::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
+pub(crate) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, (entries, recursive): (u32, bool), ir: usize, caller: &crate::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
+    super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive }, unplanned, diagnostics)
 }
 
 /// Whether `caller`'s body, compiled quick from a plan of `ir` instructions, moves to an
 /// optimizing compile now that it has run `entries` times (`tier_model::optimizes`).
 pub(crate) fn optimizes_quick_body(tiers: &Tiers, caller: &crate::dispatch_fast::LaneView, length: u64, entries: u32, ir: usize) -> bool {
-    super::tier_model::optimizes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir })
+    super::tier_model::optimizes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive: false })
+}
+
+/// Whether `caller`'s b-jit body, which the default mode started it on, moves to u-jit now that it has
+/// completed `entries` runs, its function `length` bytecodes long and of `ir` estimated IR (`tier_model::promotes`).
+pub(crate) fn promotes_base_body(tiers: &Tiers, caller: &crate::dispatch_fast::LaneView, length: u64, entries: u32, ir: usize) -> bool {
+    super::tier_model::promotes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive: false })
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
@@ -202,6 +208,37 @@ pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fas
         // SAFETY: a resolved target's view outlives its program.
         if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
     }
+}
+
+/// What a u-jit compile lowers: a lane body (its unit's bytecodes) or a loop region (its loop's span).
+#[derive(Clone, Copy)]
+pub(crate) enum Lowers { Body, Region }
+
+/// The IR instructions and bytecodes of the u-jit compiles so far, per `Lowers` (`note_lane_compile`).
+static COMPILED: [[std::sync::atomic::AtomicU64; 2]; 2] = [const { [const { std::sync::atomic::AtomicU64::new(0) }; 2] }; 2];
+
+/// The bytecodes of evidence the prior `Loops::ir_per_bytecode` counts as, against the compiles' measured ratio.
+const PRIOR_BYTECODES: u64 = 256;
+
+/// Notes a u-jit compile of `bytecodes` that lowered to `ir` IR instructions: what prices the next compile of its
+/// kind before its plan (`unplanned_ir`). Work, not time, so a run repeats under callgrind (TOD-2194).
+pub(crate) fn note_lane_compile(lowers: Lowers, bytecodes: usize, ir: usize) {
+    let [ir_seen, bytecodes_seen] = &COMPILED[lowers as usize];
+    ir_seen.fetch_add(ir as u64, std::sync::atomic::Ordering::Relaxed);
+    bytecodes_seen.fetch_add(bytecodes as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The IR a lane body of `bytecodes` unit instructions lowers to before its plan: the measured ratio of the
+/// compiles so far, the prior weighing `PRIOR_BYTECODES` (bodies lowered 85-108 IR per bytecode against the
+/// prior's 8 on the data-structure suite, so their compiles were priced at a tenth).
+pub(crate) fn unplanned_ir(loops: &tier_policy::Loops, bytecodes: u64) -> usize {
+    usize::try_from(bytecodes.saturating_mul(measured_ir_per_bytecode(loops, Lowers::Body))).unwrap_or(usize::MAX)
+}
+
+/// `unplanned_ir`'s IR per bytecode, for compiles of `lowers`.
+pub(crate) fn measured_ir_per_bytecode(loops: &tier_policy::Loops, lowers: Lowers) -> u64 {
+    let [ir, seen] = COMPILED[lowers as usize].each_ref().map(|count| count.load(std::sync::atomic::Ordering::Relaxed));
+    ((PRIOR_BYTECODES * loops.ir_per_bytecode + ir) / (PRIOR_BYTECODES + seen)).max(1)
 }
 
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).

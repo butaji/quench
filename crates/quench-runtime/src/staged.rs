@@ -136,8 +136,16 @@ pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
 pub mod strings;
+/// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
+pub mod native_row_table;
+pub mod native_row;
 pub mod string_length;
 pub(crate) mod code_units;
+/// The span primitives string rows call (find, rfind, equal at).
+pub mod spans;
+/// The rows host operations declare (`Host::function_row`).
+#[cfg(not(stencil_build))]
+pub mod host_rows;
 pub(crate) mod parse_int;
 /// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
 pub(crate) mod string_text;
@@ -617,6 +625,9 @@ pub const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
 /// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
 /// are the only rows a raw result (`MODE_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
 pub const BINARY_ROW: u16 = Op::Binary as u16;
+/// The truth jumps a `Binary` equality fuses with into one fixed-equality record (`FUSED_ROWS`' `Binary` pairs),
+/// false-jump first: the lane names their rows from here, never by opcode.
+pub const EQUALITY_JUMP_ROWS: [u16; 2] = [Op::JumpFalse as u16, Op::JumpTrue as u16];
 /// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
 pub const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
 /// The row of `NumericMultiply`, a Number binary operator (see `BINARY_ROW`).

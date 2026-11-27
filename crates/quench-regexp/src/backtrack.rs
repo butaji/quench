@@ -407,26 +407,36 @@ const CLASS_ESCAPES: [oxc::regular_expression::ast::CharacterClassEscapeKind; 6]
     [Escape::D, Escape::NegativeD, Escape::S, Escape::NegativeS, Escape::W, Escape::NegativeW]
 };
 
-/// The ASCII units a class escape admits under the flags (`escape_matches`). Each depends on
-/// the escape and the flags alone, and every class compiled with one tests all ASCII units,
-/// so the table is derived once per process.
+/// One mask per flag pair, indexed by `ignore_case` then `unicode`.
+type FlagMasks = [[u128; 2]; 2];
+
+/// The ASCII units each class escape admits under each flag pair (`escape_matches`), derived
+/// when the crate is compiled.
+const ESCAPE_ASCII_MASKS: [FlagMasks; CLASS_ESCAPES.len()] = {
+    let mut masks = [[[0u128; 2]; 2]; CLASS_ESCAPES.len()];
+    let mut escape = 0;
+    while escape < CLASS_ESCAPES.len() {
+        let mut flags = 0;
+        while flags < 4 {
+            let (ignore_case, unicode) = (flags & 2 != 0, flags & 1 != 0);
+            let mut unit = 0;
+            while unit < ASCII_UNITS {
+                if escape_matches(CLASS_ESCAPES[escape], unit, ignore_case, unicode) {
+                    masks[escape][ignore_case as usize][unicode as usize] |= 1 << unit;
+                }
+                unit += 1;
+            }
+            flags += 1;
+        }
+        escape += 1;
+    }
+    masks
+};
+
+/// The ASCII units a class escape admits under the flags (`ESCAPE_ASCII_MASKS`).
 fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeKind, ignore_case: bool, unicode: bool) -> u128 {
-    /// One mask per flag pair, indexed by `ignore_case` then `unicode`.
-    type FlagMasks = [[u128; 2]; 2];
-    static MASKS: std::sync::OnceLock<[FlagMasks; CLASS_ESCAPES.len()]> = std::sync::OnceLock::new();
-    let masks = MASKS.get_or_init(|| {
-        CLASS_ESCAPES.map(|escape| {
-            [false, true].map(|ignore_case| {
-                [false, true].map(|unicode| {
-                    (0..ASCII_UNITS)
-                        .filter(|unit| escape_matches(escape, *unit, ignore_case, unicode))
-                        .fold(0u128, |bits, unit| bits | 1 << unit)
-                })
-            })
-        })
-    });
     let index = CLASS_ESCAPES.iter().position(|known| *known == escape).expect("every class escape has a mask");
-    masks[index][usize::from(ignore_case)][usize::from(unicode)]
+    ESCAPE_ASCII_MASKS[index][usize::from(ignore_case)][usize::from(unicode)]
 }
 
 /// A backtracking stack entry.

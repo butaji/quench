@@ -105,6 +105,9 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     let index = stage.uextend32(index);
     match view {
         ElementView::Typed(view) if frame.typed_values() => typed_read_value(stage, view, index, miss),
+        // An integer element that fits int32 is the int itself (`typed_read_integer`: the load,
+        // with no Number made of it), so a consumer that wants an int -- a `switch`'s
+        // `IntCaseIndex`, which otherwise converts a double on every dispatch -- reads it as one.
         ElementView::Typed(view) => typed_read(stage, view, index, miss),
         ElementView::Dense(view) => frame.element_probed(stage, miss,
             #[inline(always)] |stage, _, absent| read_element(stage, view, index, absent),

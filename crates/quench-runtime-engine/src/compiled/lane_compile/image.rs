@@ -25,6 +25,15 @@ const LANE_BODY_CODE_CEILING: usize = 2 * crate::compiled::tier_policy::LANE_BOD
 
 /// The code of one function, compiled on the calling thread.
 fn function_code(function: ir::Function, level: super::super::jit_backend::CompileLevel) -> Result<Vec<u8>, super::super::jit_backend::NativeCompileRejection> {
+    // An execution-only build (no `jit`) publishes no run-time code: its images were lowered by
+    // the compiler, so a lane body that still asks for code here is refused and stays interpreted.
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = (function, level);
+        return Err(super::super::jit_backend::NativeCompileRejection::Publish);
+    }
+    #[cfg(feature = "jit")]
+    {
     let level = match level {
         super::super::jit_backend::CompileLevel::Optimized | super::super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > super::LANE_BACKTRACKING_MAX_INSTS =>
             super::super::jit_backend::CompileLevel::Large,
@@ -33,6 +42,7 @@ fn function_code(function: ir::Function, level: super::super::jit_backend::Compi
     let isa = super::super::jit_backend::target_isa_level(level)
         .ok_or(super::super::jit_backend::NativeCompileRejection::Publish)?;
     compile_native_function(function, &*isa, LANE_BODY_CODE_CEILING, |code| Some(code.to_vec()))
+    }
 }
 
 /// Appends the code of `function` to `code`, aligned as a function's code is, and returns where it starts.

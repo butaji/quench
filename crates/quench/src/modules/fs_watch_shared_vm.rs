@@ -292,7 +292,7 @@ fn ignore_matcher(
                 .api
                 .ok_or_else(|| RootedError::host("watch API missing"))?;
             let constructor = get(context, api, "regexpConstructor")?;
-            let source = super::path_shared_vm::glob_regex_source(&pattern);
+            let source = super::path_glob::Glob::new(&pattern).regex_source();
             let source = context.string_rooted(&source);
             let flags = context.string_rooted("u");
             let regexp = context.construct_rooted(constructor, constructor, &[source, flags])?;

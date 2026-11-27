@@ -5,9 +5,14 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::tier_policy::PERCENT;
-use crate::compiled::{LaneBodyOutcome, LaneBodyWork, LaneExit};
+use crate::compiled::{LaneBodyOutcome, LaneExit};
+#[cfg(feature = "jit")]
+use crate::compiled::LaneBodyWork;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
+pub(crate) use crate::compiled::loop_tier_up::{header_for_tier_up, left_for_tier_up};
+#[cfg(feature = "jit")]
+use crate::compiled::loop_tier_up::raise_tier_up;
 
 use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
 #[quench_macros::ext(LoopBodyOps1)]
@@ -132,7 +137,16 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
+/// An execution-only build (no `jit`) plans no run-time body: a loop runs the image's body
+/// where one published, and the interpreter otherwise.
 fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = (cx, r, own);
+        *site.body.borrow_mut() = LoopBody::Declined;
+    }
+    #[cfg(feature = "jit")]
+    {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -169,7 +183,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
         }
     }
     let work = match pending {
-        Some(pending) => LaneBodyWork::Poll(crate::compiled::pending_lane(pending), own),
+        Some(pending) => LaneBodyWork::Poll(pending, own),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
@@ -178,57 +192,15 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     if matches!(outcome, LaneBodyOutcome::Unpaid) { site.body_wait.set(body_due(vm, site).saturating_sub(site.body_iterations())); }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+    }
 }
 
 /// The iterations that pay for a body of `site`'s loop at its planned size, or at its span's before a plan.
+#[cfg(feature = "jit")]
 fn body_due(vm: &Vm, site: &LoopSite) -> u64 {
     let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), site.function, Some(site.header)))
-        .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
+        .unwrap_or_else(|| crate::compiled::lane_facts::unplanned_ir(&vm.programs.tiers().loops, site.span()));
     crate::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true)
-}
-
-/// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
-/// dispatch (`enter_loop_body`) takes the body that published.
-fn raise_tier_up(vm: &Vm, site: &LoopSite) {
-    vm.execution_interrupt.request_tier_up();
-    if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
-}
-
-/// Whether a region's exit at `pc` is its poll's tier-up leave: at the loop's unconditional
-/// backward jump (no guard of it can fail) while a tier-up is requested and no termination,
-/// which the jump's own safepoint ends. The lane resumes at the header, which dispatches.
-pub(crate) fn left_for_tier_up(cx: *mut LaneContext, site: &LoopSite, pc: u32) -> bool {
-    let vm = unsafe { vm(cx) };
-    if pc != site.backedge || !vm.execution_interrupt.tier_up_requested() || vm.execution_interrupt.is_termination_requested() {
-        return false;
-    }
-    vm.programs.get(vm.active_program).as_deref().is_some_and(|program| {
-        let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed| {
-            matches!(quench_runtime::staged::Operation::<u64, ()>::decode(body.widened(*packed), quench_runtime::staged::DecodeContext::EMPTY),
-                Some(quench_runtime::staged::Operation::Jump))
-        })
-    })
-}
-
-/// Where a body that left at `pc` resumes when a tier-up is pending: the header of the loop
-/// whose backward jump `pc` is, which dispatches the ready body, once that header runs the
-/// dispatch (`held`); otherwise the leave's own PC, whose jump record dispatches it.
-const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: bool) -> Option<u32> {
-    if pc == backedge && held && ready { Some(header) } else { None }
-}
-
-/// The leave of any body at a loop's backward jump (`LaneExit::At(backedge)`, whichever tier
-/// compiled it): while a tier-up is requested for a loop whose body has published, the lane
-/// resumes at that loop's header, as a region's leave does (`left_for_tier_up`). The leaving
-/// body stays published for its other entries.
-pub(crate) fn header_for_tier_up(cx: *mut LaneContext, own: &LaneView, pc: usize) -> Option<usize> {
-    let pc = u32::try_from(pc).ok()?;
-    let at = own.loop_at_backedge.binary_search_by_key(&pc, |&(backedge, _)| backedge).ok()?;
-    let site = &own.loops[own.loop_at_backedge[at].1 as usize];
-    if !left_for_tier_up(cx, site, pc) { return None; }
-    let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
-    tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null() && site.header_handler.get() != super::RETIRED_HEADER, ready).map(|header| header as usize)
 }
 
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body

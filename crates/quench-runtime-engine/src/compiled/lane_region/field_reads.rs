@@ -253,7 +253,7 @@ impl Lowering<'_, '_> {
     /// double: every read and store site names the one own slot of one shape, whose arena words
     /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
     /// through the slot the entry projected and its reads take the carried word, boxing nothing.
-    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &CompoundBitSet) -> bool {
+    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &quench_runtime::dataflow::BitSet) -> bool {
         let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
         let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
             Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),

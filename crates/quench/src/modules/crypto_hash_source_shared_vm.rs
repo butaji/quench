@@ -2,6 +2,7 @@
 use super::crypto_hash_input_shared_vm as input;
 use super::keys::HANDLE;
 use super::host_members::leading;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
 pub(super) type Context<'a> = NativeContext<'a>;
 
@@ -22,7 +23,7 @@ const INSTANCE_KEYS: [(&str, &str); 3] = [(HANDLE, "kHandle"), (STATE, "kState")
 /// Where a prototype's method comes from: its own operation, or Hash's prototype.
 #[derive(Clone, Copy)]
 enum Method {
-    Own(&'static str),
+    Own(MarkedOperation),
     FromHash,
 }
 
@@ -30,7 +31,7 @@ enum Method {
 /// methods in definition order.
 struct Class {
     name: &'static str,
-    operation: &'static str,
+    operation: MarkedOperation,
     deprecation: (&'static str, &'static str),
     methods: &'static [(&'static str, Method)],
 }
@@ -39,29 +40,29 @@ struct Class {
 const CLASSES: [Class; 2] = [
     Class {
         name: HASH,
-        operation: "cryptoPublicHash",
+        operation: marked_operation!("cryptoPublicHash"),
         deprecation: ("crypto.Hash constructor is deprecated.", "DEP0179"),
         methods: &[
-            ("copy", Method::Own("cryptoPublicHashCopy")),
-            ("_transform", Method::Own("cryptoPublicHashTransform")),
-            ("_flush", Method::Own("cryptoPublicHashFlush")),
-            ("update", Method::Own("cryptoPublicHashUpdate")),
-            ("digest", Method::Own("cryptoPublicHashDigest")),
+            ("copy", Method::Own(marked_operation!("cryptoPublicHashCopy"))),
+            ("_transform", Method::Own(marked_operation!("cryptoPublicHashTransform"))),
+            ("_flush", Method::Own(marked_operation!("cryptoPublicHashFlush"))),
+            ("update", Method::Own(marked_operation!("cryptoPublicHashUpdate"))),
+            ("digest", Method::Own(marked_operation!("cryptoPublicHashDigest"))),
         ],
     },
     Class {
         name: HMAC,
-        operation: "cryptoPublicHmac",
+        operation: marked_operation!("cryptoPublicHmac"),
         deprecation: ("crypto.Hmac constructor is deprecated.", "DEP0181"),
         methods: &[
             ("update", Method::FromHash),
-            ("digest", Method::Own("cryptoPublicHmacDigest")),
-            ("_flush", Method::Own("cryptoPublicHmacFlush")),
+            ("digest", Method::Own(marked_operation!("cryptoPublicHmacDigest"))),
+            ("_flush", Method::Own(marked_operation!("cryptoPublicHmacFlush"))),
             ("_transform", Method::FromHash),
         ],
     },
 ];
-const FACTORIES: [(&str, &str); 2] = [("createHash", "cryptoPublicCreateHash"), ("createHmac", "cryptoPublicCreateHmac")];
+const FACTORIES: [(&str, MarkedOperation); 2] = [("createHash", marked_operation!("cryptoPublicCreateHash")), ("createHmac", marked_operation!("cryptoPublicCreateHmac"))];
 
 fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     args.get(index).copied().unwrap_or_else(|| c.undefined())
@@ -153,8 +154,7 @@ fn warn_implicit_length(c: &mut Context<'_>, data: RootId, algorithm: RootId) ->
 /// Builds this policy with the module's canonical LazyTransform constructor.
 pub(crate) fn install(c: &mut Context<'_>, public: RootId, lazy: RootId) -> Result<(RootId, RootId), RootedError> {
     let data = policy_data(c, public, lazy)?;
-    let operation = crate::host::shared_vm::operation;
-    let one_shot = c.host_function_named_with_data(operation("cryptoPublicOneShot"), "hash", data)?;
+    let one_shot = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoPublicOneShot"), "hash", data)?;
     put(c, public, "hash", one_shot)?;
     let parent = (lazy, get(c, lazy, "prototype")?);
     let [hash, hmac] = &CLASSES;
@@ -163,7 +163,7 @@ pub(crate) fn install(c: &mut Context<'_>, public: RootId, lazy: RootId) -> Resu
     install_methods(c, data, hash_prototype, hash_prototype, hash.methods)?;
     install_methods(c, data, hmac_prototype, hash_prototype, hmac.methods)?;
     for (name, callback) in FACTORIES {
-        let function = c.host_function_named_with_data(operation(callback), name, data)?;
+        let function = c.host_function_named_with_data(callback.id(), name, data)?;
         put(c, public, name, function)?;
     }
     Ok((get(c, data, HASH)?, get(c, data, HMAC)?))
@@ -195,7 +195,7 @@ fn install_class(
     (lazy, lazy_prototype): (RootId, RootId),
     class: &Class,
 ) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation(class.operation);
+    let operation = class.operation.id();
     let constructor = c.host_constructor_named_with_data(operation, class.name, data)?;
     let prototype = get(c, constructor, "prototype")?;
     c.set_prototype_rooted(constructor, lazy)?;
@@ -218,7 +218,7 @@ fn install_methods(
 ) -> Result<(), RootedError> {
     for &(name, method) in methods {
         let function = match method {
-            Method::Own(callback) => c.host_function_named_with_data(crate::host::shared_vm::operation(callback), name, data)?,
+            Method::Own(callback) => c.host_function_named_with_data(callback.id(), name, data)?,
             Method::FromHash => get(c, hash_prototype, name)?,
         };
         put(c, prototype, name, function)?;

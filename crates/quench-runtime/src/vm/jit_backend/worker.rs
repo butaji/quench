@@ -106,6 +106,12 @@ impl<T: 'static> OffThread<T> {
     }
 }
 
+/// The stack the code generator's thread holds. The lane lowering's Cranelift pipeline used more
+/// than a spawned thread's default 2 MiB on this host (the lane tests overflowed there), and the
+/// generator's own scratch lives in its arena (`quench_alloc::adopt_scratch_thread`), so this is
+/// the lowering's frames, not its data.
+const CODEGEN_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 /// Runs `work` on the code generator's thread, started on the first call.
 pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
     static QUEUE: std::sync::OnceLock<Option<Sender<Work>>> = std::sync::OnceLock::new();
@@ -124,6 +130,7 @@ pub fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 's
         let (queue, jobs) = std::sync::mpsc::channel::<Work>();
         std::thread::Builder::new()
             .name("quench-codegen".into())
+            .stack_size(CODEGEN_STACK_BYTES)
             .spawn(move || serve(&jobs))
             .ok()
             .map(|_| queue)
@@ -166,6 +173,8 @@ fn serve(jobs: &Receiver<Work>) {
 fn release_compile_scratch() {
     super::release_compile_context();
     quench_alloc::release_empty_pages();
-    quench_alloc::release_scratch();
+    // Every free block of a page or more, not only those of 64 KiB: the small classes a kept code vector pins held
+    // ~38 MB between compiles on the data-structure suite (TOD-2292); this runs once per idle period.
+    quench_alloc::release_scratch_phase();
     crate::vm::engine_calls::flush_retired_writers();
 }

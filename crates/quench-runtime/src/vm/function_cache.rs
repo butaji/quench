@@ -24,6 +24,28 @@ impl Vm {
         })
     }
 
+    /// Records `value`, the closure of `program`'s function `function` a lane made, for an image's
+    /// `ClosureOf(function)` recipe (`cached_functions`).
+    pub fn record_closure(&mut self, program: ProgramId, function: u32, value: Value) {
+        self.record_closure_handle(program, function, value);
+    }
+
+    /// Records `value`, the closure of `p`'s function `function` that a lane made from a recorded
+    /// template, where `records_closure` says it must be findable: a closure nested deeper is never
+    /// looked up, and recording each one a loop makes grows its entry until a collection.
+    pub fn record_lane_closure(&mut self, p: &ResidualProgram, program: ProgramId, function: u32, value: Value) {
+        if let Some(slot) = p.functions.get(function as usize)
+            && self.records_closure_of(p, program, &slot.header(), function)
+        {
+            self.record_closure_handle(program, function, value);
+        }
+    }
+
+    fn record_closure_handle(&mut self, program: ProgramId, function: u32, value: Value) {
+        if self.heap.function(value).is_none() { return; }
+        if let Some(handle) = self.heap.weak_handle(value) { self.function_values.record((program, function), [handle]); }
+    }
+
     /// Drops the cache's handles a collection freed, before their slots are reused. A minor
     /// collection frees only young cells, so it visits only the entries that hold one.
     pub(super) fn prune_function_values(&mut self, full: bool) {
@@ -66,8 +88,13 @@ pub(super) struct FunctionValues {
 impl FunctionValues {
     /// Records `handles`, new closures of `key`, which are young until a collection promotes them.
     pub(super) fn record(&mut self, key: (ProgramId, u32), handles: impl IntoIterator<Item = WeakHandle>) {
-        self.entries.entry(key).or_default().extend(handles);
-        self.young.push(key);
+        let entry = self.entries.entry(key).or_default();
+        // Two paths can record the same closure, one right after the other (a lane's make-closure
+        // over `Vm::closure`), so only the last handle is checked: a loop that makes a closure each
+        // iteration must not scan every closure it made before (quadratic until a collection).
+        for handle in handles {
+            if entry.last() != Some(&handle) { entry.push(handle); self.young.push(key); }
+        }
     }
 }
 

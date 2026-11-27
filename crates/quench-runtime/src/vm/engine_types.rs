@@ -86,7 +86,7 @@ pub struct LaneStack {
     /// The headers the segments hold, which `activation_count` counts.
     pub sealed: std::cell::Cell<usize>,
     /// The admission bound emitted code checks native headers against (`JsStepDispatch::plain_depth_limit`):
-    /// the activation limit while the frames are bound (`native_frames_enabled`), else 0. Rust's frame
+    /// the activation limit while the frames are bound, else 0. Rust's frame
     /// changes void it (`frames_changed`), so emitted calls take the helper row until the next binding.
     pub plain_depth_limit: Box<std::cell::Cell<usize>>,
     /// The frames below the plain headers, records and sealed alike (`frames_below_plain`), as of the last
@@ -334,18 +334,18 @@ pub struct LaneView {
     pub accumulator_registers: Box<[u16]>,
     pub plain_backward_jump_sites: usize,
     pub osr_rejections: Option<Box<[(RegionRejection, usize)]>>,
-    /// The `GetField`, `SetField` and `LoadCapture` records past the loop headers its sites
-    /// hold, whose own-field hints a shape compaction clears.
+    /// The `GetField`, `SetField` and `LoadCapture` records past its sites' loop headers, whose own-field hints a shape compaction clears.
     pub field_records: Box<[u32]>,
-    /// The by-name load and store records past the loop headers its sites hold, whose
-    /// global-object hints (`name_row`, the `StoreName` row's `global_name_store`)
-    /// a shape compaction clears, and a change of the global
-    /// lexical names they answer past (`LaneView::clear_name_hints`).
+    /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
+    /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a speculative int32 register
-    /// (`Kind::Speculative`), each with that proven handler and its checked form:
-    /// what `retire_int_speculation` restores once an update overflowed one.
+    /// The operator records whose proven form reads a `Kind::Speculative` register, each with that proven handler and its
+    /// checked form: what `retire_int_speculation` restores once an update overflowed one.
     pub int_speculating: Box<[(u32, *const (), *const ())]>,
+    /// The held back edges' `IncDec` records whose counter the kinds prove, with it and whether it is speculative (`int_steps`).
+    pub proven_counters: Box<[(u32, u16, bool)]>,
+    /// The registers its records read as `Speculative` int32s (`int_steps::native_handed_doubles`).
+    pub speculative_registers: Box<[u16]>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -441,6 +441,13 @@ pub struct CompiledProgram {
 pub type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// A program's ahead-of-time image, and its link into this process once a VM loads it.
+impl AheadImages {
+    /// Whether the image's value table names the closure of `function` (`HeapValueRecipe::ClosureOf`).
+    pub fn names_closure(&self, function: u32) -> bool {
+        self.image.heap_values.iter().any(|recipe| matches!(recipe, HeapValueRecipe::ClosureOf(found) if *found == function))
+    }
+}
+
 pub struct AheadImages {
     pub image: AotImage,
     /// The programs (by number) checked against it, and whether each is it.
@@ -971,17 +978,16 @@ pub struct LaneMethod {
 
 /// The lane-body tier's per-function state (`LaneView::tier`).
 pub struct LaneTier {
-    /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`).
+    /// The frameless body the prologue runs once the JavaScript tier declined the function (`Vm::compile_lane_method`).
     pub tier_lane: std::cell::UnsafeCell<LaneBody>,
     /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     pub warm_since: std::cell::Cell<u32>,
-    /// Counts each specialization attempt (`LaneView::specialize_lane_body`): a loop site's refused
-    /// compile is retried once this moves (`LoopSite::refuse_warming`).
+    /// Counts specialization attempts (`specialize_lane_body`); a refused loop compile retries once it moves.
     pub body_epoch: std::cell::Cell<u32>,
-    /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through `Activation::body`.
+    /// (epoch, from, at): entries in `from..at` at that epoch skip the weighing (`counted_between_attempts`).
+    pub weigh_at: std::cell::Cell<(u32, u32, u32)>,
+    /// Every body it published, kept until the view drops: a retired body's frame leaves through `Activation::body`.
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     pub history: std::cell::Cell<LaneBodyHistory>,
@@ -1429,6 +1435,9 @@ pub struct LoopRegion {
     pub live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub inlining: Option<Box<Inlining>>,
+    /// Whether its iterations leave natively (at a call no row completes, a throw), so only the stencil tier
+    /// takes it, which lowers each instruction: Cranelift never compiles it (`osr_loop::admit_region`).
+    pub stencil_only: bool,
 }
 
 /// Storage and guest-call allowance proved before an inlined body runs.
@@ -1677,6 +1686,15 @@ pub struct LaneBodyHistory {
     /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
     /// (Lindy: a function that ran this long runs on), rather than starting again from none.
     pub runs: u32,
+    /// Whether a u-jit body of it gave up (no run completed, or its leaves outweighed its runs) where
+    /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
+    /// the default mode never runs it costlier than `--b-jit` would.
+    pub base_fallback: bool,
+    /// Whether its current body is the b-jit body the default mode starts every function with (the tier
+    /// below u-jit, by construction): its completions weigh the u-jit compile (`tier_model::promotes`).
+    pub base_first: bool,
+    /// Whether its b-jit body's completions repaid the u-jit compile over it: the next compile is u-jit.
+    pub promoted: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
@@ -1759,6 +1777,9 @@ pub struct LoopTier {
     /// bound misses every versioned entry.
     pub entry_misses: u16,
     pub unbounded: bool,
+    /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
+    /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
+    pub fruitless: u16,
     /// Whether the current code (or the compile under way) is a b-jit region the default mode
     /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
     /// compile (`promote`).
@@ -1772,6 +1793,87 @@ pub struct LoopTier {
     /// The entries up to which the site is known to repay its native code (`LoopSite::settle`):
     /// the iterations only add, so until the entries pass this count the check is not due.
     pub settle_at: u64,
+    /// The current code's native runs and those that left inside the loop: what the u-jit region a
+    /// promotion publishes is measured against (`LoopTier::weigh_run`).
+    pub tier_runs: u32,
+    pub tier_left: u32,
+    /// The b-jit region's share of runs that left, per mille, measured when the u-jit region took its
+    /// place; none before a promotion publishes.
+    pub base_left_permille: Option<u32>,
+    /// Whether the u-jit region left more often than the b-jit region it replaced: the site keeps the
+    /// b-jit region from then on (`loop_model::base_region` is not asked again).
+    pub demoted: bool,
+    /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
+    pub stencil_declined: bool,
+    /// The current code's timed runs, and the b-jit region's when a promotion replaced it (TOD-2295,
+    /// `LoopTier::weigh_time`).
+    pub native: RunStats,
+    pub base_runs: Option<RunStats>,
+}
+
+/// Timed runs of one tier's code at a loop site: their count, and the sum and sum of squares of each run's log ns per
+/// iteration (entry and exit included). Timing noise multiplies (caches, frequency, a collection), so the logs are
+/// near normal where the raw times are heavy-tailed; the tier's cost and its uncertainty are estimated on them.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RunStats {
+    pub runs: u32,
+    pub sum: f64,
+    pub squares: f64,
+    /// The sums of 1, iterations, ns, their product and the iterations squared: the least-squares line
+    /// ns = entry + iterations x cost of this site's code (`intercept`).
+    pub line: [f64; 5],
+}
+
+/// The fewest runs a sample variance is taken over.
+const MIN_VARIANCE_RUNS: u32 = 2;
+
+impl RunStats {
+    /// Adds a run of `iterations` that took `ns`.
+    pub fn add(&mut self, ns: u64, iterations: u64) {
+        let rate = (ns.max(1) as f64 / iterations.max(1) as f64).ln();
+        self.runs = self.runs.saturating_add(1);
+        self.sum += rate;
+        self.squares += rate * rate;
+        let (x, y) = (iterations as f64, ns as f64);
+        for (sum, add) in self.line.iter_mut().zip([1.0, x, y, x * y, x * x]) { *sum += add; }
+    }
+
+    /// What entering and leaving this site's code costs, in its own iterations, and the ns one iteration takes: the
+    /// intercept of its runs' line over its slope, and the slope, where their iterations vary enough to fit one. One
+    /// line per site, as every site's cost per iteration differs (pooled over sites, the slopes' spread lands in the
+    /// intercept); and a ratio of two times, so a slower clock (a profiler, a loaded machine) scales both alike.
+    pub fn entry_iterations(&self) -> Option<(f64, f64)> {
+        let [n, x, y, xy, xx] = self.line;
+        let spread = n * xx - x * x;
+        if spread <= n * n { return None; }
+        let slope = (n * xy - x * y) / spread;
+        (slope > 0.0).then(|| ((y * xx - x * xy) / spread / slope, slope))
+    }
+
+    /// The mean log ns per iteration.
+    fn mean(&self) -> f64 {
+        self.sum / f64::from(self.runs.max(1))
+    }
+
+    /// The typical ns per iteration (the geometric mean).
+    pub fn ns_per_iteration(&self) -> f64 {
+        self.mean().exp()
+    }
+
+    /// The variance of the mean log (the sample variance over the runs, divided by the runs).
+    pub fn mean_variance(&self) -> f64 {
+        let runs = self.runs.max(MIN_VARIANCE_RUNS);
+        let n = f64::from(runs);
+        ((self.squares - self.sum * self.sum / n) / f64::from(runs - 1)).max(0.0) / n
+    }
+
+    /// Welch's statistic for `self` being slower than `other`: the difference of the mean logs over its standard
+    /// error; past about 2 the difference is real at the 97.5% level.
+    pub fn slower_by(&self, other: &RunStats) -> f64 {
+        let error = (self.mean_variance() + other.mean_variance()).sqrt();
+        if error == 0.0 { return if self.mean() > other.mean() { f64::INFINITY } else { 0.0 }; }
+        (self.mean() - other.mean()) / error
+    }
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -2799,6 +2901,9 @@ pub struct AotImage {
     /// The program the image is valid for (`ahead_images::fingerprint`) and the build it came from.
     pub fingerprint: u64,
     pub build_id: u64,
+    /// How closed the program is (`aot_facts::world`) as its compile found: its facts derive
+    /// again from this (`aot_facts::analyze_as`).
+    pub world: crate::compile::aot_facts::World,
     /// By function id, ascending; every function of the program has one.
     pub functions: Vec<AotFunction>,
     /// The shapes the code folds, by `Symbol::Shape` key.
@@ -3268,8 +3373,12 @@ pub const CODE_GRANULE: usize = 64;
 /// The AOT image the system linker placed in this executable for a program (`aot_image::object`):
 /// a VM that runs the program loads it as its ahead images (`Vm::load_linked_image`), and its
 /// functions run their bodies on the lane runner (`Vm::install_ahead_body`).
-pub struct NativeJsCode {
-    pub table: LinkedTable,
+pub enum NativeJsCode {
+    /// Code the system linker placed in this executable (`NativeJsProgram::from_linked_image`).
+    Placed(LinkedTable),
+    /// An image compiled into this process (`NativeJsProgram::compile_eager`): its file, linked
+    /// into each VM that attaches it (`aot_image::live::install`).
+    Eager(Vec<u8>),
 }
 
 pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
@@ -4177,17 +4286,15 @@ impl AheadImages {
     /// Adds `program`'s image while recording; a program that does not lower adds none.
     #[inline]
     pub fn record(program: &ResidualProgram) {
-        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
-        if !cfg!(feature = "jit") || recorded().is_none() { return; }
-        Self::keep(program, Self::compile(program));
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower) else { return };
+        Self::keep(program, lower(program));
     }
 
     /// Adds Wasm program `id`'s image while recording, planned from its module's binding types.
     #[inline]
     pub fn record_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[crate::WasmBindingType]) {
-        // Only a build with the JIT lowers images (`quench compile`); a static image's support records none.
-        if !cfg!(feature = "jit") || recorded().is_none() { return; }
-        Self::keep(program, Self::compile_wasm(vm, id, program, bindings));
+        let Some(lower) = recorded().as_ref().map(|recording| recording.lower_wasm) else { return };
+        Self::keep(program, lower(vm, id, program, bindings));
     }
 
     /// Adds a lowering's image to the recording, or traces why `program` has none.
@@ -4199,7 +4306,7 @@ impl AheadImages {
                 return;
             }
         };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
+        if !images.is_empty() { if let Some(recording) = recorded().as_mut() { recording.images.push(images.image); } }
     }
 }
 
@@ -5530,9 +5637,17 @@ impl LoopSite {
 /// The images of each program stored while recording (`start_recording`); the entry may run
 /// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
 /// image belongs to the VM (and thread) that loaded it.
-pub static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new(None);
+pub static RECORDED: std::sync::Mutex<Option<Recording>> = std::sync::Mutex::new(None);
 
-pub fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+/// A recording: the lowering that started it, which only a build links, and its images.
+pub struct Recording {
+    pub lower: fn(&ResidualProgram) -> Result<AheadImages, String>,
+    /// The lowering of a Wasm program, from its module's binding types.
+    pub lower_wasm: fn(&Vm, ProgramId, &ResidualProgram, &[crate::WasmBindingType]) -> Result<AheadImages, String>,
+    pub images: Vec<AotImage>,
+}
+
+pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 
 
@@ -5542,6 +5657,7 @@ impl Default for LaneTier {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
             warm_since: std::cell::Cell::new(0),
             body_epoch: std::cell::Cell::new(0),
+            weigh_at: std::cell::Cell::new((0, 0, 0)),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             audit_epochs: Default::default(),
@@ -5975,6 +6091,8 @@ impl EntryCell {
         self.proven_body.set(0);
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);
+        // The stub's entry reads the receiver from the header as any body without row entries does (`publish`).
+        self.uses_this.set(1);
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -5989,7 +6107,9 @@ impl EntryCell {
         self.rows.set(0);
         self.proven.set(0);
         self.numbers.set(0);
-        self.uses_this.set(0);
+        // A body without row entries (a u-jit body) takes the receiver its caller writes, so a b-jit call row
+        // writes it always: a b-jit caller of a body promoted to u-jit read a stale receiver otherwise.
+        self.uses_this.set(1);
         if let Some(entries) = body.row_entries() {
             self.rows.set(entries.rows);
             method.on_retire(&self.rows, entries.rows, 0);

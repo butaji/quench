@@ -196,6 +196,12 @@ pub const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
     words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
     words
 };
+/// The symbol an AOT image names the narrow decode's upper-word table by
+/// (`aot_image::Symbol::NarrowUpperWords`).
+pub const NARROW_UPPER_WORDS_SYMBOL: &str = "QUENCH_NARROW_UPPER_WORDS";
+// Exported by name: an AOT executable's base bodies decode narrow values through it.
+#[unsafe(no_mangle)]
+pub static QUENCH_NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
 /// The position of `tag` in tag order from `FIRST_TAG`.
 const fn tag_index(tag: u64) -> usize {
     ((tag - FIRST_TAG) >> TAG_SHIFT) as usize

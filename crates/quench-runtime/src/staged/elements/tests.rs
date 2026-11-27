@@ -23,7 +23,7 @@ fn a_packed_view_reads_a_hole_as_the_value_its_consumer_rejects_and_still_leaves
 }
 
 #[test]
-fn a_double_view_reads_numbers_canonically_and_replaces_only_numbers_that_are_no_int32() {
+fn a_double_view_reads_numbers_canonically_and_replaces_numbers_as_binary64() {
     let mut words = [3.0f64.to_bits(), Value::DELETED.to_bits(), 0.5f64.to_bits()];
     let view = DenseView { values: words.as_mut_ptr() as u64, length: 3, packed: true, within: false,
         double: Some(u64::from(crate::heap::DOUBLE_LEN)), uncounted: false };
@@ -32,7 +32,8 @@ fn a_double_view_reads_numbers_canonically_and_replaces_only_numbers_that_are_no
     assert_eq!(read_element(&mut stage, view, 1, ()), None, "a hole leaves even through a packed view");
     assert_eq!(read_element(&mut stage, view, 2, ()), Some(Value::number(0.5).to_bits()));
     assert_eq!(read_element(&mut stage, view, 3, ()), None, "past the backing leaves");
-    assert!(replace_present(&mut stage, view, 2, Value::integer(1).to_bits(), ()).is_none(), "an int32 converts on the VM's path");
+    assert!(replace_present(&mut stage, view, 2, Value::integer(1).to_bits(), ()).is_some(), "an int32 writes its binary64");
+    assert_eq!(words[2], 1.0f64.to_bits());
     assert!(replace_present(&mut stage, view, 1, Value::number(2.5).to_bits(), ()).is_none(), "a hole is no present element");
     assert!(replace_present(&mut stage, view, 2, Value::number(2.5).to_bits(), ()).is_some());
     assert_eq!(words[2], 2.5f64.to_bits());

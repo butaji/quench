@@ -7,7 +7,7 @@ use quench_runtime::{RootId, RootedError};
 /// A family of host functions sharing one operation, which dispatches on the member index
 /// its function data leads with; the data's other entries are the function's captures.
 pub(crate) trait Members: Copy + 'static {
-    const OPERATION: &'static str;
+    const OPERATION: crate::host::shared_vm::MarkedOperation;
     const ALL: &'static [Self];
     fn index(self) -> usize;
 }
@@ -18,7 +18,7 @@ macro_rules! members {
         #[derive(Clone, Copy, PartialEq, Eq)]
         pub(crate) enum $name { $($(#[$meta])* $member),* }
         impl $crate::modules::host_members::Members for $name {
-            const OPERATION: &'static str = $operation;
+            const OPERATION: $crate::host::shared_vm::MarkedOperation = $crate::host::shared_vm::marked_operation!($operation);
             const ALL: &'static [Self] = &[$(Self::$member),*];
             fn index(self) -> usize { self as usize }
         }
@@ -29,13 +29,13 @@ pub(crate) use members;
 /// Member `member`'s function named `name`, closing over `captures`.
 pub(crate) fn function<M: Members>(c: &mut Context<'_>, member: M, name: &str, captures: &[RootId]) -> Outcome {
     let data = member_data(c, member, captures)?;
-    c.host_function_named_with_data(crate::host::shared_vm::operation(M::OPERATION), name, data)
+    c.host_function_named_with_data(M::OPERATION.id(), name, data)
 }
 
 /// Member `member` as a constructor named `name`, with a fresh `prototype`.
 pub(crate) fn constructor<M: Members>(c: &mut Context<'_>, member: M, name: &str) -> Outcome {
     let data = member_data(c, member, &[])?;
-    c.host_constructor_named_with_data(crate::host::shared_vm::operation(M::OPERATION), name, data)
+    c.host_constructor_named_with_data(M::OPERATION.id(), name, data)
 }
 
 fn member_data<M: Members>(c: &mut Context<'_>, member: M, captures: &[RootId]) -> Outcome {

@@ -4406,3 +4406,20 @@ diff -ruN -x Cargo.lock -x .cargo_vcs_info.json -x README.md -x QUENCH.patch -x 
  
      log::debug!(
          "Number of lowered vcode instructions: {}",
+
+diff -ruN -x Cargo.lock -x .cargo_vcs_info.json -x README.md -x QUENCH.patch -x Cargo.toml -x Cargo.toml.orig cranelift-codegen-0.137.1/src/context.rs b/src/context.rs
+--- cranelift-codegen-0.137.1/src/context.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/src/context.rs	2026-11-20 06:40:00.000000000 +0000
+@@ -192,7 +192,11 @@
+         self.func.dfg.resolve_all_aliases();
+ 
+-        if opt_level != OptLevel::None {
++        // Quench: Cranelift 0.137's AArch64 egraph elaboration leaves effectful
++        // instructions in the graph (`egraph/elaborate.rs`'s assert) and
++        // miscompiles them, so AArch64 skips the pass until the upstream fix is
++        // picked up.
++        let egraphs = !matches!(isa.triple().architecture, target_lexicon::Architecture::Aarch64(_));
++        if opt_level != OptLevel::None && egraphs {
+             self.egraph_pass(isa, ctrl_plane)?;
+         }
+ 

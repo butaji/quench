@@ -2,8 +2,10 @@
 //! `quench_runtime::vm::engine_calls2`.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+#[allow(unused_imports)]
 use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, LaneBody};
+#[cfg(feature = "jit")]
 use crate::aot_image::{self, ImageTarget};
 
 #[quench_macros::ext(AheadImagesLifted160)]
@@ -12,6 +14,7 @@ impl AheadImages {
 
     /// The image of `program`, lowered under its closed-world facts for this process's CPU, which
     /// runs it (`NativeTarget::host`).
+    #[cfg(feature = "jit")]
     #[inline]
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
         let facts = quench_runtime::compile::aot_facts::analyze(program);
@@ -22,7 +25,13 @@ impl AheadImages {
     /// The image of Wasm program `id` (`aot_image::lower_wasm`), planned from the module's binding types.
     #[inline]
     pub fn compile_wasm(vm: &Vm, id: ProgramId, program: &ResidualProgram, bindings: &[quench_runtime::WasmBindingType]) -> Result<Self, String> {
-        Ok(Self::of(aot_image::lower_wasm(vm, id, program, bindings)?))
+        #[cfg(feature = "jit")]
+        { Ok(Self::of(aot_image::lower_wasm(vm, id, program, bindings)?)) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (vm, id, program, bindings);
+            Err("ahead Wasm image lowering requires the jit feature".into())
+        }
     }
 }
 

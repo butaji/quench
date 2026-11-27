@@ -75,14 +75,11 @@ fn is_nullish(c: &Context<'_>, value: RootId) -> bool {
     kind(c, value).is_nullish()
 }
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use crate::modules::util_shared_vm::named_get as get;
 
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     c.assign_named_property_rooted(object, name, value)
-}
-
-fn operation(name: &str) -> quench_runtime::HostFunctionId {
-    crate::host::shared_vm::operation(name)
 }
 
 fn coded(c: &mut Context<'_>, type_error: bool, code: &'static str, message: &str) -> RootedError {
@@ -103,19 +100,19 @@ fn coded(c: &mut Context<'_>, type_error: bool, code: &'static str, message: &st
 
 /// Methods and accessors on `prototype`: `(name, operation, data)` methods are enumerable
 /// as V8 templates make them; accessors as `defineEventHandler` does.
-fn methods(c: &mut Context<'_>, prototype: RootId, list: &[(&str, &str)], enumerable: bool) -> Result<(), RootedError> {
+fn methods(c: &mut Context<'_>, prototype: RootId, list: &[(&str, MarkedOperation)], enumerable: bool) -> Result<(), RootedError> {
     for (name, op) in list {
-        let function = c.host_function_named(operation(op), name)?;
+        let function = c.host_function_named(op.id(), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, enumerable, true)?;
     }
     Ok(())
 }
 
-fn accessor(c: &mut Context<'_>, holder: RootId, name: &str, getter: &str, setter: Option<&str>, data: RootId) -> Result<(), RootedError> {
-    let get = c.host_function_named_with_data(operation(getter), &format!("get {name}"), data)?;
+fn accessor(c: &mut Context<'_>, holder: RootId, name: &str, getter: MarkedOperation, setter: Option<MarkedOperation>, data: RootId) -> Result<(), RootedError> {
+    let get = c.host_function_named_with_data(getter.id(), &format!("get {name}"), data)?;
     let set = match setter {
-        Some(setter) => c.host_function_named_with_data(operation(setter), &format!("set {name}"), data)?,
+        Some(setter) => c.host_function_named_with_data(setter.id(), &format!("set {name}"), data)?,
         None => c.undefined(),
     };
     let key = c.string_rooted(name);
@@ -153,14 +150,14 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let prototype = extend(c, port, node_target)?;
     let key = c.string_rooted("constructor");
     c.delete_property_rooted(prototype, key)?;
-    methods(c, prototype, &[("postMessage", "messagingPortPostMessage"), ("start", "messagingPortStart")], true)?;
+    methods(c, prototype, &[("postMessage", marked_operation!("messagingPortPostMessage")), ("start", marked_operation!("messagingPortStart"))], true)?;
     c.define_data_property_rooted(prototype, key, port, true, false, true)?;
-    methods(c, prototype, &[("ref", "messagingPortRef"), ("unref", "messagingPortUnref"), ("hasRef", "messagingPortHasRef")], true)?;
+    methods(c, prototype, &[("ref", marked_operation!("messagingPortRef")), ("unref", marked_operation!("messagingPortUnref")), ("hasRef", marked_operation!("messagingPortHasRef"))], true)?;
     for kind in ["message", "messageerror"] {
         let data = c.string_rooted(kind);
-        accessor(c, prototype, &format!("on{kind}"), "messagingHandlerGet", Some("messagingHandlerSet"), data)?;
+        accessor(c, prototype, &format!("on{kind}"), marked_operation!("messagingHandlerGet"), Some(marked_operation!("messagingHandlerSet")), data)?;
     }
-    methods(c, prototype, &[("close", "messagingPortClose")], true)?;
+    methods(c, prototype, &[("close", marked_operation!("messagingPortClose"))], true)?;
     put(c, api, member::MESSAGE_PORT, port)?;
 
     let channel = c.host_constructor_named(crate::host::shared_vm::operation!("messagingChannelConstructor"), member::MESSAGE_CHANNEL)?;
@@ -173,28 +170,28 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let prototype = extend(c, message_event, event)?;
     for (index, name) in MESSAGE_EVENT_FIELDS.iter().enumerate() {
         let data = c.number(index as f64);
-        accessor(c, prototype, name, "messagingMessageEventField", None, data)?;
+        accessor(c, prototype, name, marked_operation!("messagingMessageEventField"), None, data)?;
     }
     put(c, api, member::MESSAGE_EVENT, message_event)?;
 
     let channel = c.host_constructor_named(crate::host::shared_vm::operation!("messagingBroadcastConstructor"), member::BROADCAST_CHANNEL)?;
     let prototype = extend(c, channel, target)?;
     let undefined = c.undefined();
-    accessor(c, prototype, "name", "messagingBroadcastName", None, undefined)?;
+    accessor(c, prototype, "name", marked_operation!("messagingBroadcastName"), None, undefined)?;
     methods(
         c,
         prototype,
         &[
-            ("close", "messagingBroadcastClose"),
-            ("postMessage", "messagingBroadcastPostMessage"),
-            ("ref", "messagingBroadcastRef"),
-            ("unref", "messagingBroadcastUnref"),
+            ("close", marked_operation!("messagingBroadcastClose")),
+            ("postMessage", marked_operation!("messagingBroadcastPostMessage")),
+            ("ref", marked_operation!("messagingBroadcastRef")),
+            ("unref", marked_operation!("messagingBroadcastUnref")),
         ],
         false,
     )?;
     for kind in ["message", "messageerror"] {
         let data = c.string_rooted(kind);
-        accessor(c, prototype, &format!("on{kind}"), "messagingHandlerGet", Some("messagingHandlerSet"), data)?;
+        accessor(c, prototype, &format!("on{kind}"), marked_operation!("messagingHandlerGet"), Some(marked_operation!("messagingHandlerSet")), data)?;
     }
     let symbol = get(c, global, "Symbol")?;
     let registry = get(c, symbol, "for")?;
@@ -211,10 +208,10 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c,
         prototype,
         &[
-            ("postMessage", "workerPostMessage"),
-            ("terminate", "workerThreadTerminate"),
-            ("ref", "workerThreadRef"),
-            ("unref", "workerThreadUnref"),
+            ("postMessage", marked_operation!("workerPostMessage")),
+            ("terminate", marked_operation!("workerThreadTerminate")),
+            ("ref", marked_operation!("workerThreadRef")),
+            ("unref", marked_operation!("workerThreadUnref")),
         ],
         false,
     )?;
@@ -240,8 +237,10 @@ fn events_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::modules::events_shared_vm::event_family(c)
 }
 
+/// A member of the API, which every port, worker and API function comes from: code that reaches
+/// one finds the API built, so the event loop's deliveries link no building of it.
 fn member(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    let api = super::api(c)?;
+    let api = super::built_api(c)?;
     get(c, api, name)
 }
 
@@ -1022,18 +1021,22 @@ pub(super) fn module(c: &mut Context<'_>, facts: ThreadFacts) -> Result<RootId, 
         let class = get(c, api, name)?;
         put(c, module, name, class)?;
     }
-    let function = |c: &mut Context<'_>, module: RootId, name: &str, op: &str| -> Result<(), RootedError> {
-        let function = c.host_function_named(operation(op), name)?;
+    let function = |c: &mut Context<'_>, module: RootId, name: &str, op: quench_runtime::HostFunctionId| -> Result<(), RootedError> {
+        let function = c.host_function_named(op, name)?;
         put(c, module, name, function)
     };
-    for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
-        function(c, module, name, name)?;
+    for (name, op) in [
+        ("markAsUncloneable", marked_operation!("markAsUncloneable")),
+        ("markAsUntransferable", marked_operation!("markAsUntransferable")),
+        ("isMarkedAsUntransferable", marked_operation!("isMarkedAsUntransferable")),
+    ] {
+        function(c, module, name, op.id())?;
     }
-    function(c, module, "moveMessagePortToContext", "workerMoveMessagePortToContext")?;
-    function(c, module, "receiveMessageOnPort", "messagingReceiveMessageOnPort")?;
+    function(c, module, "moveMessagePortToContext", crate::host::shared_vm::operation!("workerMoveMessagePortToContext"))?;
+    function(c, module, "receiveMessageOnPort", crate::host::shared_vm::operation!("messagingReceiveMessageOnPort"))?;
     let limits = c.object_rooted()?;
     put(c, module, "resourceLimits", limits)?;
-    function(c, module, "postMessageToThread", "workerPostMessageToThread")?;
+    function(c, module, "postMessageToThread", crate::host::shared_vm::operation!("workerPostMessageToThread"))?;
     let thread_id = c.number(facts.thread_id as f64);
     put(c, module, "threadId", thread_id)?;
     let name = c.string_rooted(if facts.is_main { MAIN_THREAD_NAME } else { WORKER_THREAD_NAME });
@@ -1046,12 +1049,13 @@ pub(super) fn module(c: &mut Context<'_>, facts: ThreadFacts) -> Result<RootId, 
     put(c, module, "workerData", facts.data)?;
     let broadcast = get(c, api, member::BROADCAST_CHANNEL)?;
     put(c, module, "BroadcastChannel", broadcast)?;
-    function(c, module, "setEnvironmentData", "workerEnvironmentSet")?;
-    function(c, module, "getEnvironmentData", "workerEnvironmentGet")?;
+    function(c, module, "setEnvironmentData", crate::host::shared_vm::operation!("workerEnvironmentSet"))?;
+    function(c, module, "getEnvironmentData", crate::host::shared_vm::operation!("workerEnvironmentGet"))?;
     Ok(module)
 }
 
 /// The classes a global group installs (`MessagePort`, `MessageChannel`, `BroadcastChannel`).
 pub(super) fn global_class(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    member(c, name)
+    let api = super::api(c)?;
+    get(c, api, name)
 }

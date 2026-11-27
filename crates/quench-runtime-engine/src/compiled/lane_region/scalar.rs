@@ -60,7 +60,7 @@ impl ScalarAbi {
         let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.target.function == function_id);
         if !recurses || !numeric_unit(program, unit, true, direct)
             || !crate::js_compiled::function_candidate(function, program) { return None; }
-        let mut written = CompoundBitSet::with_capacity(usize::from(unit.registers));
+        let mut written = quench_runtime::dataflow::BitSet::with_capacity(usize::from(unit.registers));
         for register in unit.instructions.iter().flat_map(|instruction| writes(*instruction)).filter(|register| *register < unit.registers) {
             written.insert(usize::from(register));
         }
@@ -234,7 +234,7 @@ fn lane_check(check: EntryCheck) -> Option<Type> {
 /// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
 /// an annotation that lies costs an exit, never a wrong result. Which parameters and what each
 /// check is comes from the shared check; `lane_check` only maps it to this tier's fact.
-pub(crate) fn declared_entry_types(function: &quench_runtime::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
+pub(crate) fn declared_entry_types(function: &quench_runtime::bytecode::Function, written: &quench_runtime::dataflow::BitSet, initial: &mut [Type]) {
     for (index, check) in declared_checks::entry_checks(function) {
         let Some(ty) = lane_check(check) else { continue };
         let Some(register) = parameter_register(function, index) else { continue };
@@ -258,7 +258,7 @@ pub(crate) fn parameter_register(function: &quench_runtime::bytecode::Function, 
 /// The type `initial` gives each parameter the unit never writes (`written`) that its instructions
 /// (but those `skipped`) read as numbers: an int32 where any needs one, else a Number.
 pub(crate) fn require_entry_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function, instructions: &[WideInstruction],
-    skipped: impl Fn(usize) -> bool, written: &CompoundBitSet, initial: &mut [Type]) {
+    skipped: impl Fn(usize) -> bool, written: &quench_runtime::dataflow::BitSet, initial: &mut [Type]) {
     for (operands, required) in instructions.iter().enumerate().filter(|(pc, _)| !skipped(*pc))
         .filter_map(|(_, instruction)| requirement(program, *instruction)) {
         for register in operands.into_iter().filter_map(Operand::register_index)
@@ -442,7 +442,7 @@ mod tests {
         let program = quench_runtime::Engine::specialize("function mix(a, b) { return (a | 0) + b * 0.5; }", "scalar-abi.js").unwrap();
         let function = program.function(1);
         let instructions: Vec<_> = function.instructions().collect();
-        let written = CompoundBitSet::with_capacity(usize::from(function.registers));
+        let written = quench_runtime::dataflow::BitSet::with_capacity(usize::from(function.registers));
         let mut initial = vec![Type::ANY; usize::from(function.registers)];
         require_entry_types(&program, function, &instructions, |_| false, &written, &mut initial);
         assert_eq!(initial[..2], [Type::INT32, Type::NUMBER]);

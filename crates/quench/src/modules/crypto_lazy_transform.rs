@@ -3,8 +3,7 @@ use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 
 pub(crate) fn constructor(c: &mut Context<'_>, transform: RootId) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation;
-    let lazy = c.host_constructor_named(operation("cryptoLazyTransform"), "LazyTransform")?;
+    let lazy = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoLazyTransform"), "LazyTransform")?;
     c.set_prototype_rooted(lazy, transform)?;
     let prototype = c.get_named_property_rooted(lazy, "prototype")?;
     let transform_prototype = c.get_named_property_rooted(transform, "prototype")?;
@@ -12,8 +11,8 @@ pub(crate) fn constructor(c: &mut Context<'_>, transform: RootId) -> Result<Root
     for name in ["_readableState", "_writableState"] {
         let name = c.string_rooted(name);
         let data = c.record_rooted(false, &["transform", "name"], &[transform, name])?;
-        let getter = c.host_function_named_with_data(operation("cryptoLazyStateGet"), "", data)?;
-        let setter = c.host_function_named_with_data(operation("cryptoLazyStateSet"), "", data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyStateGet"), "", data)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyStateSet"), "", data)?;
         c.define_property_fields_rooted(
             prototype,
             name,

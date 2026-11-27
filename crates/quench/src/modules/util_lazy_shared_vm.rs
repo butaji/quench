@@ -58,6 +58,11 @@ pub(crate) fn lazy_global_names() -> impl Iterator<Item = &'static str> {
     LAZY_GLOBALS.iter().map(|&(property, _, _, _)| property)
 }
 
+/// The modules the lazy globals read their exports from.
+pub(crate) fn lazy_global_modules() -> impl Iterator<Item = &'static str> {
+    LAZY_GLOBALS.iter().map(|&(_, id, _, _)| id)
+}
+
 pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     for &(property, id, export, enumerable) in LAZY_GLOBALS {

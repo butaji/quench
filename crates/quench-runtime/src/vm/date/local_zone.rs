@@ -9,10 +9,12 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// The zone this thread parsed, with the generation it read `TZ` in.
+    #[cfg(feature = "tzdb")]
     static ZONE: Cell<Option<(u64, Option<chrono_tz::Tz>)>> = const { Cell::new(None) };
 }
 
 /// The zone `TZ` names, or without `TZ` the system's, if either names one.
+#[cfg(feature = "tzdb")]
 pub(super) fn local_timezone() -> Option<chrono_tz::Tz> {
     crate::clock::note_input("the local time zone");
     let generation = GENERATION.load(Ordering::Acquire);
@@ -31,6 +33,7 @@ pub(super) fn local_timezone() -> Option<chrono_tz::Tz> {
 
 /// The zone `/etc/localtime` links to, as a C library reads it without `TZ`. chrono's own
 /// `Local` checks the clock and the file on every conversion.
+#[cfg(feature = "tzdb")]
 fn system_timezone() -> Option<chrono_tz::Tz> {
     let target = std::fs::read_link("/etc/localtime").ok()?;
     let target = target.to_str()?;
@@ -40,6 +43,15 @@ fn system_timezone() -> Option<chrono_tz::Tz> {
 /// Tells every thread to read `TZ` again: the host changed it (`process.env.TZ`).
 pub fn local_timezone_changed() {
     GENERATION.fetch_add(1, Ordering::Release);
+    // Without the time zone database, `chrono::Local` reads the C library's zone: reset it so its
+    // next conversion observes the new `TZ` (`tzset` is what `localtime_r` requires after a change).
+    #[cfg(all(not(feature = "tzdb"), unix))]
+    unsafe {
+        unsafe extern "C" {
+            fn tzset();
+        }
+        tzset();
+    }
 }
 
 /// The longest gap between two lookups of one offset across which the offset is taken to
@@ -65,6 +77,8 @@ pub(super) fn cached_offset(timestamp: i64, lookup: fn(i64) -> Option<i32>) -> O
         return Some(offset);
     }
     let found = lookup(timestamp)?;
+    // Only a parsed zone's offsets are kept (chrono's `Local` rereads the system's each time).
+    #[cfg(feature = "tzdb")]
     if local_timezone().is_none() {
         return Some(found);
     }

@@ -9,6 +9,7 @@ use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
+pub(crate) use super::lane_method::{finish_lane_method, LaneMethodFacts};
 #[path = "lane_compile/image.rs"] pub(crate) mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
@@ -257,6 +258,7 @@ impl Lowered {
         let Some(mut lowered) = job.run().filter(|lowered| lowered.region.native != 0) else { return Self::Nothing };
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         let ir = native.dfg.num_insts();
+        super::lane_facts::note_lane_compile(super::lane_facts::Lowers::Body, job.unit.instructions.len(), ir);
         if replans && ir * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES {
             return Self::Oversized;
         }
@@ -317,7 +319,7 @@ pub(crate) enum LaneBodyWork<'a> {
         arrays: &'a [(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)] },
     /// Look for the code of the body compiling, for the view that started it (a plan again
     /// after its code was too large starts from it).
-    Poll(Box<PendingLaneMethod>, &'a crate::dispatch_fast::LaneView),
+    Poll(Box<dyn std::any::Any>, &'a crate::dispatch_fast::LaneView),
 }
 
 /// Why a body did not start compiling.
@@ -339,7 +341,7 @@ type PlanGate<'a> = dyn Fn(&Vm, &lane_unit::Unit, &dyn std::fmt::Debug, &[Direct
 
 /// What the VM did for it.
 pub(crate) enum LaneBodyOutcome {
-    Compiling(Box<PendingLaneMethod>),
+    Compiling(Box<dyn std::any::Any>),
     Published(Rc<PublishedLaneMethod>),
     /// A collection ran while its code compiled: its proofs no longer hold, and it warms again.
     Stale,
@@ -357,9 +359,11 @@ pub(crate) enum LaneBodyOutcome {
     Declined,
 }
 
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, Refusal};
+#[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
@@ -371,6 +375,10 @@ fn left_places(unit: &lane_unit::Unit, generic: &[LaneExit], first: usize) -> (V
     left_at.retain(|pc| *pc != first);
     (left_at, entry_left)
 }
+
+/// A lane body's work (`body_work_in_lane`), the route `jit_routes` installs.
+pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32, &dyn Fn(u32, u32) -> Vec<CallTarget>, &dyn Fn(u32, u32) -> Option<u64>,
+    &dyn Fn(Value) -> (usize, usize), &dyn Fn(&Vm) -> Vec<DirectCandidates>, LaneBodyWork<'_>, Option<u32>) -> LaneBodyOutcome;
 
 #[quench_macros::ext(CompiledLaneCompileVm)]
 impl Vm {
@@ -519,9 +527,26 @@ impl Vm {
     }
 
     /// Plans `function`'s lane body at `budget` and starts compiling its code on the code
-    /// generator's thread (`PendingLaneMethod`).
+    /// generator's thread (`PendingLaneMethod`). An execution-only build (no `jit`) starts no
+    /// run-time compile: the plan declines, and the function runs the image's body where one
+    /// published and the interpreter otherwise.
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
+        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        #[cfg(feature = "jit")]
+        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, (observed, looped), called, caller, arrays) }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, observed, looped, called, caller, arrays);
+            Err(Unstarted::Declined)
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[allow(clippy::too_many_arguments)]
+    fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
         arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
@@ -533,22 +558,31 @@ impl Vm {
         let tiers = self.programs.tiers();
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
-        let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
         let planned = self.programs.planned_lane_ir(&site);
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
         let optimize = entry.is_none() && caller.optimize_due();
+        // A function the loaded image gave a body was paid for ahead of time: a plan after that body
+        // left (a fact it took weakened) respecializes at once, as the image's install did.
+        let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
         // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
-        if let Some(entries) = observed && !optimize {
+        // A function the u-jit gave up on takes the tier below's body (`LaneBodyHistory::base_fallback`).
+        if caller.tier().history.get().base_fallback { pick = Some(super::tier_model::Pick::Base); }
+        // A function that calls itself back through other functions runs a call tree per entry,
+        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
+        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
+        let recursive = entry.is_none() && !cycle.is_empty();
+        if let Some(entries) = observed && !optimize && !ahead && pick.is_none() {
             let ir = estimated;
-            pick = Some(pays_compile(tiers, program, function, entries, ir, caller, true, false));
+            pick = Some(pays_compile(tiers, program, function, (entries, recursive), ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
                 level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
             }
         }
-        let looped_taken = looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
+        let looped_taken = ahead || looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
         // Phase A: the compile bound, the pick and the looped iterations, in that order (`admission::LanePlan`).
         let compiles_left = self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some()));
         let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,
@@ -564,12 +598,9 @@ impl Vm {
         if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
+        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
-        // A function that calls itself back through other functions runs a call tree per entry,
-        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
-        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
-        let recursive = entry.is_none() && !cycle.is_empty();
         // A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
@@ -637,7 +668,10 @@ impl Vm {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let code = super::jit_backend::OffThread::guarded((job, census, replans, level), |(job, census, replans, level)| Lowered::of(&job, census, replans, level));
+        let code = super::jit_backend::OffThread::guarded((job, census, replans, level, (function, entry.unwrap_or(0), plan.unit.instructions.len())), |(job, census, replans, level, (function, pc, bytecodes))| {
+            let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "body", function, pc, || bytecodes);
+            Lowered::of(&job, census, replans, level)
+        });
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
     }
@@ -658,11 +692,19 @@ impl Vm {
     pub(crate) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        // Without the JIT's routes (`jit_routes`) the body declines and the interpreter runs.
+        match crate::jit_routes::jit() {
+            Some(routes) => (routes.body)(self, program, function, targets, trips, captures, direct, work, entry),
+            None => LaneBodyOutcome::Declined,
+        }
+    }
+
+    /// `body_work_in_lane`'s route, which `jit_routes` installs.
+    fn compile_body_work(&mut self, program: &ResidualProgram, function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
+        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         self.keep_slot_representations();
-        if !cfg!(feature = "jit") {
-            return LaneBodyOutcome::Declined; // no run-time compile without the JIT: only image bodies run natively
-        }
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
         let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());
@@ -680,8 +722,14 @@ impl Vm {
         loop {
             let (generic, budget) = pending;
             // A function with an ahead-of-time body takes it where a first compile would.
+            // One the image's body repaid the optimizing compile for (`LaneView::optimize_due`) compiles instead.
             if let Some(unit) = super::admission::ahead_unit(function)
-                && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
+                && !caller.is_some_and(|view| view.optimize_due())
+                && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic)
+            {
+                if let Some(view) = caller { view.note_compile_level(true, super::ahead_images::ahead_quick_ir(self.programs.tiers(), program, function)); }
+                return LaneBodyOutcome::Published(published);
+            }
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, (observed, looped), called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
@@ -703,7 +751,8 @@ impl Vm {
 
     /// What a pending body's compile came to, or the feedback and budget to plan it again with
     /// where its code needed more memory than a body may take: half the inlining.
-    fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+    fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<dyn std::any::Any>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+        let pending = crate::compiled::pending_lane(pending);
         if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
@@ -827,33 +876,30 @@ impl LanePlan {
         LaneDependencies::of(self.fields.iter().flatten().flatten().copied(), &self.direct)
     }
 
+    /// As `finish`, over code already placed at the address it will run at: a linking lowering's
+    /// page and branch relocations are relative to that address (`live::link_lane_at`), so they
+    /// cannot be patched for a later copy.
+    pub(crate) fn finish_in(self, memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
+        self.finish_placed(memory, scalar, proven)
+    }
+
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(crate) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
-        let stable = std::mem::take(&mut self.lowered.region.stable);
-        let unit = &self.unit;
-        let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
-        let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
-        let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
-        let names_shapes = self.names_shapes();
+    pub(crate) fn finish(self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
         let memory = super::code_heap::publishing("u-jit-lane", self.function as usize, || CodeMemory::new(code))?;
-        if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
-            dump_native_code(directory, DumpSite::Body { function: self.function, scalar }, &memory, clif);
-        }
-        // SAFETY: the lane region lowers a body with the lane body ABI (`body_signature_in_lane`).
-        let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
-        let scalar = scalar.map(|at| memory.pointer().addr() + at);
-        let proven = proven.map(|(at, params)| (memory.pointer().addr() + at, params));
-        Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: Some(memory), entry, scalar, proven, rows: None, recovery_space,
-            fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            // A body that names a callee's body retires with it (`DirectCallee::method`).
-            names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
-            scratch_width, caller_registers, frame_reach: 0,
-            amortizes, direct: self.direct, proven_calls: false, closed: self.closed,
-            framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
-            summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
-        })
+        self.finish_placed(memory, scalar, proven)
+    }
+
+    /// The method `memory`'s code makes (`finish`, `finish_in`).
+    fn finish_placed(self, memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>) -> Option<LaneMethod> {
+        let mut lowered = self.lowered;
+        let facts = LaneMethodFacts {
+            unit: self.unit, stable: std::mem::take(&mut lowered.region.stable), fields: self.fields,
+            direct: self.direct, closed: self.closed, function: self.function, invalidation: self.invalidation,
+            tiers: self.tiers, fault_poll: lowered.region.fault_poll,
+            exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif, proven_calls: false,
+        };
+        finish_lane_method(memory, scalar, proven, facts)
     }
 }
 

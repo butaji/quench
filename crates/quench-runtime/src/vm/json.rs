@@ -13,7 +13,9 @@ mod error_message;
 mod plain_write;
 mod parse_stacks;
 mod byte_class;
-use byte_class::{byte_class, byte_class_of, exponent_mark, JsonByteClass, WHITESPACE_BYTES};
+use byte_class::{byte_class, byte_class_of, exponent_mark, JsonByteClass};
+#[cfg(target_arch = "x86_64")]
+use byte_class::WHITESPACE_BYTES;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     __m128i, _mm_and_si128, _mm_cmpeq_epi16, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8,

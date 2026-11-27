@@ -28,6 +28,13 @@ impl NativeJsProgram {
         crate::compiled::compile_eager_native(program, unit)
     }
 
+    /// Adopt an image compiled into this process (`AheadImages::compile`): its file, which each VM
+    /// that attaches it links (`aot_image::live::install`).
+    pub fn compile_eager_at(program: ResidualProgram, images: quench_runtime::vm::engine_types::AheadImages) -> Result<Self, String> {
+        let counts = NativeJsPublicationCounts { functions: program.function_count(), ..Default::default() };
+        Self::bind(program, NativeJsCode::Eager(images.to_bytes()), counts, None)
+    }
+
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
     ///
     /// # Safety
@@ -40,7 +47,7 @@ impl NativeJsProgram {
     ) -> Result<Self, String> {
         // SAFETY: the caller's contract is the table's.
         let table = unsafe { crate::aot_image::live::LinkedTable::read(image, program.function_count()) }?;
-        Self::bind(program, NativeJsCode { table }, NativeJsPublicationCounts::default(), None)
+        Self::bind(program, NativeJsCode::Placed(table), NativeJsPublicationCounts::default(), None)
     }
 
     /// What this publication lowered: the counters that make an AOT claim
@@ -105,7 +112,13 @@ impl Vm {
     /// images (`Vm::load_linked_image`).
     pub(crate) fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String> {
         let program = self.programs.get(id).ok_or("native JS program is missing")?;
-        self.load_linked_image(&program, &code.table)
+        match code {
+            NativeJsCode::Placed(table) => self.load_linked_image(&program, table),
+            NativeJsCode::Eager(file) => {
+                self.load_ahead_images(quench_runtime::vm::engine_types::AheadImages::from_bytes(file)?);
+                Ok(())
+            }
+        }
     }
 
     pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, quench_runtime::NativeSourceError> + 'static) {

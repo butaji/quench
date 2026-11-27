@@ -3,15 +3,16 @@
 
 use super::api::{Call, Reply};
 use crate::modules::path_algorithms::posix;
+use crate::modules::path_glob::Glob;
 use crate::modules::stream_shared_vm::{get, is_undefined, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
 use std::path::PathBuf;
 
 /// A compiled pattern: what a path relative to the walk's root must match.
 struct Pattern {
-    expression: regex::Regex,
+    expression: Glob,
     /// `a/**` also names `a` itself; `**` names the root.
-    prefix: Option<regex::Regex>,
+    prefix: Option<Glob>,
     /// A pattern ending in `/` matches only directories.
     directories_only: bool,
     /// Entries whose name starts with `.` match only a pattern naming one.
@@ -60,8 +61,9 @@ fn expand_braces(pattern: &str) -> Vec<String> {
         .collect()
 }
 
-fn compile(source: &str) -> Result<regex::Regex, RootedError> {
-    regex::Regex::new(&crate::modules::path_shared_vm::glob_regex_source(source)).map_err(|error| RootedError::host(error.to_string()))
+fn compile(source: &str) -> Result<Glob, RootedError> {
+    let glob = Glob::new(source);
+    glob.matches("").map(|_| glob).ok_or_else(|| RootedError::host(format!("invalid glob class in {source}")))
 }
 
 impl Pattern {
@@ -104,9 +106,9 @@ impl Pattern {
         if hidden && !self.dot {
             return false;
         }
-        let prefixed = self.prefix.as_ref().is_some_and(|prefix| prefix.is_match(path));
+        let prefixed = self.prefix.as_ref().is_some_and(|prefix| prefix.matches(path) == Some(true));
         // The walk's root is named only by a pattern that reaches zero segments below it.
-        prefixed || (!path.is_empty() && self.expression.is_match(path))
+        prefixed || (!path.is_empty() && self.expression.matches(path) == Some(true))
     }
 }
 

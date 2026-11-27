@@ -417,12 +417,15 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             " check={:?}",
             crate::wasm::reference::NonNullCheck::from_tag(instruction.imm())
         ),
+        #[cfg(feature = "wasm")]
         ImmediateRole::WasmReferenceTarget => write!(
             output,
             " target={:?}",
             crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                 .and_then(|target| target.reference_type())
         ),
+        #[cfg(not(feature = "wasm"))]
+        ImmediateRole::WasmReferenceTarget => write!(output, " target={}", instruction.imm()),
         ImmediateRole::WasmExternalConversion => write!(
             output,
             " conversion={:?}",

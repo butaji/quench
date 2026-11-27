@@ -330,16 +330,18 @@ impl Vm {
     /// or a restored snapshot), so a sampled receiver's record or a layout's string may now be
     /// free.
     pub(super) fn forget_learned_receivers(&mut self) {
-        self.learned_receivers.fill(LearnedReceiver::EMPTY);
-        self.preshaped_receivers.fill(PreshapedReceiver::EMPTY);
+        self.learned_receivers.clear();
+        self.preshaped_receivers.clear();
     }
 
     /// Restarts every learned receiver's sampling for the next young cycle: the receivers
     /// `last` names may be gone. Counts and templates stay as hints until resampled.
     pub(super) fn forget_learned_receiver_samples(&mut self) {
-        for entry in self.learned_receivers.iter_mut() {
-            entry.last = Value::UNDEFINED;
-            entry.samples = 0;
+        if let Some(entries) = self.learned_receivers.filled_mut() {
+            for entry in entries {
+                entry.last = Value::UNDEFINED;
+                entry.samples = 0;
+            }
         }
     }
 

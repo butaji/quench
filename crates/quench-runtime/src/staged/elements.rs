@@ -174,7 +174,7 @@ fn wide_read<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, 
 /// (`replace_double`); any other value leaves, for the VM's store to convert or make the
 /// backing generic (`ArrayElements::replace_in_place`).
 #[inline(always)]
-pub(crate) fn replace_present<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
+pub(crate) fn replace_present<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
     let Some(flag) = view.double else { return replace_wide(stage, view, index, value, miss) };
     let double = stage.ne_imm(flag, 0u32);
@@ -197,19 +197,25 @@ fn replace_wide<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Wor
 
 /// `replace_present` of a view whose backing is double (`heap::DOUBLE_LEN`): a Number that is
 /// no int32 (`value::is_double`) is its double's bits, NaN canonical, which is the very word the
-/// backing holds for it (`array_elements::double_word`), so the store writes the value's word.
-/// A present element is replaced, so the backing's count (of holes) stays. An int32 or any
-/// other value leaves at `miss`.
+/// backing holds for it (`array_elements::double_word`), so the store writes the value's word; an
+/// int32 writes its binary64, as the VM's store does (`ArrayElements::replace_encoded_in_place`),
+/// so a whole Number (`i * 0.5` at an even `i`) stays in the compiled store. A present element is
+/// replaced, so the backing's count (of holes) stays. Any other value leaves at `miss`.
 #[inline(always)]
-fn replace_double<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
+fn replace_double<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
-    let number = super::value::is_double(stage, value);
+    let (double, int) = super::value::number_classes(stage, value);
+    let number = stage.either(double, int);
     stage.guard(number, miss)?;
     bounded(stage, view.within, view.length, index, miss)?;
     let (address, old) = loaded_element(stage, view.values, index);
     let present = stage.ne_imm(old, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
-    stage.store_u64(Region::Elements.mutable(), address, 0, value);
+    stage.effect_if(int, #[inline(always)] |stage| {
+        let integer = stage.narrow(value);
+        let number = stage.i32_to_f64(integer);
+        stage.store_f64(Region::Elements.mutable(), address, 0, number);
+    }, #[inline(always)] |stage| stage.store_u64(Region::Elements.mutable(), address, 0, value));
     Some(())
 }
 
@@ -425,10 +431,9 @@ pub fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word
     // Only an array without extras takes this read (`ArrayRecord::plain_header`).
     let header = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?.plain_header(stage, miss)?;
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
-    // A narrow or double backing flags its length's top bits: it misses.
-    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
-    let wide = stage.not(encoded);
-    stage.guard(wide, miss)?;
+    // A narrow or double backing flags its length's top bits (capacities stay below them): the
+    // count is the word without them, as the interpreter reads it.
+    let length = stage.and_imm(length, u64::from(!crate::heap::ENCODED_LEN));
     super::value::length_value(stage, length, miss)
 }
 
@@ -490,19 +495,22 @@ pub fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S::Word,
 /// Fills the hole at the int32 `key` (a value word) of the direct array `base` among the array
 /// records at `record_base` with `value`, whose store the caller proved passes the write barrier
 /// unlogged: OrdinarySet then defines a plain data element in the hole, one write in place, where
-/// the backing is wide, the array's own, extensible and plain (`resizable_backing`) and its
+/// the backing is wide or double, the array's own, extensible and plain (`resizable_backing`) and its
 /// prototype's link is `chain`, the held index-free chain proof's (`heap::index_free_chain_link_address`,
-/// zero while none is held). The hole counted among the backing's others, so the count is
-/// `replace_element`'s. `None` (leaving at `miss`, before any write) for any other store.
+/// zero while none is held). The hole counted among a wide backing's others, so the count is
+/// `replace_element`'s; a double backing's hole takes a Number as `fill_double_hole` writes it. `None` (leaving at `miss`, before any write) for any other store.
 #[inline(always)]
-pub fn fill_hole<S: Stage>(stage: &mut S, record_base: S::Word, chain: S::Word, (base, key, value): (S::Word, S::Word, S::Word),
+pub fn fill_hole<S: super::NumericStage>(stage: &mut S, record_base: S::Word, chain: S::Word, (base, key, value): (S::Word, S::Word, S::Word),
     miss: S::Miss) -> Option<()> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let index = stage.add_imm(key, crate::value::ValueLayout::INT_TAG.wrapping_neg());
     let over = stage.ugt_imm(index, u64::from(i32::MAX as u32));
     let within_int = stage.not(over);
     stage.guard(within_int, miss)?;
-    let backing = array_backing(stage, record_base, base, miss)?;
+    // A wide or a double backing (`new Array(n)`'s holes start double); a narrow one leaves.
+    let flagged = flagged_backing(stage, record_base, base, miss)?;
+    let (length, double) = wide_or_double(stage, flagged.length, miss)?;
+    let backing = Backing { length, ..flagged };
     resizable_backing(stage, backing, miss)?;
     let held = stage.ne_imm(chain, 0u32);
     stage.guard(held, miss)?;
@@ -515,7 +523,38 @@ pub fn fill_hole<S: Stage>(stage: &mut S, record_base: S::Word, chain: S::Word, 
     let (address, old) = loaded_element(stage, backing.values, index);
     let hole = stage.eq_imm(old, crate::Value::DELETED.to_bits());
     stage.guard(hole, miss)?;
-    replace_element(stage, backing.values, address, old, value);
+    let is_double = stage.ne_imm(double, 0u32);
+    stage.choose_leaving(is_double,
+        #[inline(always)] |stage| fill_double_hole(stage, backing, address, value, miss).map(|()| value),
+        #[inline(always)] |stage| { replace_element(stage, backing.values, address, old, value); Some(value) })?;
+    Some(())
+}
+
+/// `fill_hole`'s write into the hole at `address` of a double backing (`heap::DOUBLE_LEN`), as the
+/// VM's store makes it (`ArrayElements::replace_encoded_in_place`): a Number's binary64 (an int32
+/// converted, any other Number its own word), the backing counting one hole fewer (a double
+/// backing's count is of its holes). Holes alone taking an int32 leave, for the VM to make them
+/// wide holes; so do any other value and a backing whose count is unknown.
+#[inline(always)]
+fn fill_double_hole<S: super::NumericStage>(stage: &mut S, backing: Backing<S::Word>, address: S::Word, value: S::Word,
+    miss: S::Miss) -> Option<()> {
+    let (double, int) = super::value::number_classes(stage, value);
+    let number = stage.either(double, int);
+    let holes = stage.load_u32(Region::Elements.mutable(), backing.values, crate::heap::OTHERS_FROM_VALUES);
+    let counted = stage.ne_imm(holes, u64::from(crate::heap::OTHERS_UNKNOWN));
+    let admitted = stage.both(number, counted);
+    stage.guard(admitted, miss)?;
+    let all_holes = stage.eq(holes, backing.length);
+    let widens = stage.both(int, all_holes);
+    stage.guard_false(widens, miss)?;
+    let fewer = stage.add_imm(holes, u64::from(u32::MAX));
+    let fewer = stage.and_imm(fewer, u64::from(u32::MAX));
+    stage.store_u32(Region::Elements.mutable(), backing.values, crate::heap::OTHERS_FROM_VALUES, fewer);
+    stage.effect_if(int, #[inline(always)] |stage| {
+        let integer = stage.narrow(value);
+        let number = stage.i32_to_f64(integer);
+        stage.store_f64(Region::Elements.mutable(), address, 0, number);
+    }, #[inline(always)] |stage| stage.store_u64(Region::Elements.mutable(), address, 0, value));
     Some(())
 }
 

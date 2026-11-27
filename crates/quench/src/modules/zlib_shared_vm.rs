@@ -59,18 +59,18 @@ impl Internal {
     }
 
     fn make(self, c: &mut Context<'_>) -> Outcome {
-        let function = |c: &mut Context<'_>, operation: &str, name: &str| {
-            c.host_function_named(crate::host::shared_vm::operation(operation), name)
+        let function = |c: &mut Context<'_>, operation: quench_runtime::HostFunctionId, name: &str| {
+            c.host_function_named(operation, name)
         };
         match self {
             Self::FlushFlag => Ok(c.symbol_rooted(Some("kFlushFlag"))),
             Self::Error => Ok(c.symbol_rooted(Some("kError"))),
             Self::FlushBuffers => flush_buffers(c),
-            Self::ProcessCallback => function(c, "zlibProcessCallback", "processCallback"),
-            Self::OnError => function(c, "zlibOnError", "zlibOnError"),
-            Self::BufferOnData => function(c, "zlibBufferOnData", "zlibBufferOnData"),
-            Self::BufferOnError => function(c, "zlibBufferOnError", "zlibBufferOnError"),
-            Self::BufferOnEnd => function(c, "zlibBufferOnEnd", "zlibBufferOnEnd"),
+            Self::ProcessCallback => function(c, crate::host::shared_vm::operation!("zlibProcessCallback"), "processCallback"),
+            Self::OnError => function(c, crate::host::shared_vm::operation!("zlibOnError"), "zlibOnError"),
+            Self::BufferOnData => function(c, crate::host::shared_vm::operation!("zlibBufferOnData"), "zlibBufferOnData"),
+            Self::BufferOnError => function(c, crate::host::shared_vm::operation!("zlibBufferOnError"), "zlibBufferOnError"),
+            Self::BufferOnEnd => function(c, crate::host::shared_vm::operation!("zlibBufferOnEnd"), "zlibBufferOnEnd"),
         }
     }
 }
@@ -849,7 +849,7 @@ pub(crate) fn process_callback(c: &mut Context<'_>, handle: RootId, _: &[RootId]
         put_number(c, handle, "availInBefore", in_after)?;
         if full {
             let old_read = get(c, engine, "_read")?;
-            let resume = closure(c, "zlibResumeOnRead", "", &[engine, handle, old_read])?;
+            let resume = closure(c, crate::host::shared_vm::operation!("zlibResumeOnRead"), "", &[engine, handle, old_read])?;
             put(c, engine, "_read", resume)?;
         } else {
             continue_write(c, handle, engine)?;
@@ -1017,7 +1017,7 @@ pub(crate) fn params(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
     let current_level = get(c, this, "_level")?;
     let current_strategy = get(c, this, "_strategy")?;
     if !c.strict_equal_rooted(current_level, level)? || !c.strict_equal_rooted(current_strategy, strategy)? {
-        let after = closure(c, "zlibParamsAfterFlush", "bound paramsAfterFlushCallback", &[this, level, strategy, callback])?;
+        let after = closure(c, crate::host::shared_vm::operation!("zlibParamsAfterFlush"), "bound paramsAfterFlushCallback", &[this, level, strategy, callback])?;
         let kind = c.number(constants::Z_SYNC_FLUSH);
         call_method(c, this, "flush", &[kind, after])?;
     } else {
@@ -1242,8 +1242,8 @@ pub(crate) fn crc32(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome 
 // The module
 // ---------------------------------------------------------------------------------------
 
-fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, function_name: &str) -> Result<(), RootedError> {
-    let function = c.host_function_named(crate::host::shared_vm::operation(operation), function_name)?;
+fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, function_name: &str) -> Result<(), RootedError> {
+    let function = c.host_function_named(operation, function_name)?;
     let key = c.string_rooted(name);
     c.define_data_property_rooted(target, key, function, true, true, true)?;
     Ok(())
@@ -1275,18 +1275,18 @@ fn base_class(c: &mut Context<'_>, transform: RootId) -> Outcome {
     let getter = c.host_function_named(crate::host::shared_vm::operation!("zlibClosed"), "get")?;
     accessor(c, prototype, "_closed", getter, None)?;
     let warned = c.boolean(false);
-    let getter = closure(c, "zlibBytesRead", "deprecated", &[warned])?;
-    let setter = closure(c, "zlibSetBytesRead", "deprecated", &[warned])?;
+    let getter = closure(c, crate::host::shared_vm::operation!("zlibBytesRead"), "deprecated", &[warned])?;
+    let setter = closure(c, crate::host::shared_vm::operation!("zlibSetBytesRead"), "deprecated", &[warned])?;
     accessor(c, prototype, "bytesRead", getter, Some(setter))?;
     for (name, operation) in [
-        ("reset", "zlibReset"),
-        ("_flush", "zlibFlushLast"),
-        ("_final", "zlibFinal"),
-        ("flush", "zlibFlush"),
-        ("close", "zlibClose"),
-        ("_destroy", "zlibDestroy"),
-        ("_transform", "zlibTransform"),
-        ("_processChunk", "zlibProcessChunk"),
+        ("reset", crate::host::shared_vm::operation!("zlibReset")),
+        ("_flush", crate::host::shared_vm::operation!("zlibFlushLast")),
+        ("_final", crate::host::shared_vm::operation!("zlibFinal")),
+        ("flush", crate::host::shared_vm::operation!("zlibFlush")),
+        ("close", crate::host::shared_vm::operation!("zlibClose")),
+        ("_destroy", crate::host::shared_vm::operation!("zlibDestroy")),
+        ("_transform", crate::host::shared_vm::operation!("zlibTransform")),
+        ("_processChunk", crate::host::shared_vm::operation!("zlibProcessChunk")),
     ] {
         method(c, prototype, name, operation, "")?;
     }
@@ -1315,11 +1315,11 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let base = base_class(c, transform)?;
     let zlib = abstract_class(c, "Zlib", base)?;
     let zlib_prototype = get(c, zlib, "prototype")?;
-    method(c, zlib_prototype, "params", "zlibParams", "params")?;
+    method(c, zlib_prototype, "params", crate::host::shared_vm::operation!("zlibParams"), "params")?;
     let brotli = abstract_class(c, "Brotli", zlib)?;
     let zstd = abstract_class(c, "Zstd", base)?;
     let module = c.object_rooted()?;
-    method(c, module, "crc32", "zlibCrc32", "crc32")?;
+    method(c, module, "crc32", crate::host::shared_vm::operation!("zlibCrc32"), "crc32")?;
     let mut classes = Vec::with_capacity(PUBLIC_CLASSES.len());
     for (name, mode) in PUBLIC_CLASSES {
         let mode_value = c.number(mode as i32 as f64);
@@ -1342,10 +1342,10 @@ fn build(c: &mut Context<'_>) -> Outcome {
     for (asynchronous, synchronous, class) in CONVENIENCE {
         let class = class_named(class).ok_or_else(|| RootedError::host("zlib convenience class missing"))?;
         for (name, operation, function_name) in
-            [(asynchronous, "zlibAsyncWrapper", "asyncBufferWrapper"), (synchronous, "zlibSyncWrapper", "syncBufferWrapper")]
+            [(asynchronous, crate::host::shared_vm::operation!("zlibAsyncWrapper"), "asyncBufferWrapper"), (synchronous, crate::host::shared_vm::operation!("zlibSyncWrapper"), "syncBufferWrapper")]
         {
             let function =
-                c.host_function_named_with_data(crate::host::shared_vm::operation(operation), function_name, class)?;
+                c.host_function_named_with_data(operation, function_name, class)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(module, key, function, true, true, true)?;
         }

@@ -115,29 +115,34 @@ const PAGE_SHIFT: u32 = crate::staged::layout_offsets::TYPED_PAGE_SHIFT;
 
 /// The view records of a heap's typed arrays, by legacy slot, in zeroed pages of `PAGE_ENTRIES`
 /// words behind a directory of page addresses: zero where the slot is no typed array. Its
-/// cost is one word per slot up to the highest slot a typed array has taken, in whole pages,
-/// and one directory word per page; both grow only where a typed array is allocated, which
-/// moves the directory (native code reads its base and length again after a callout) and never
-/// a page, so a record's entry stays where its `home` names it.
+/// cost is one word per slot up to the highest slot a typed array has taken, in whole pages.
+/// The directory is reserved whole at the first typed array (one word per page a `u32` slot can
+/// name, zeroed by the allocator's untouched pages), so it never moves: native code that read its
+/// base reads a live directory whatever ran since, and a stale page count only sends it out of line.
+/// Pages never move either, so a record's entry stays where its `home` names it.
 #[derive(Default)]
 pub(super) struct TypedViewTable {
     pages: Vec<Box<[usize]>>,
-    directory: Vec<usize>,
+    directory: Box<[usize]>,
 }
+
+/// The pages a `u32` slot can name: the directory's fixed length.
+const DIRECTORY_PAGES: usize = 1 << (u32::BITS - PAGE_SHIFT);
 
 impl TypedViewTable {
     /// The directory's base and its page count.
     #[inline]
     pub(super) fn directory(&self) -> (*const usize, usize) {
-        (self.directory.as_ptr(), self.directory.len())
+        (self.directory.as_ptr(), self.pages.len())
     }
 
     /// Names the record `view` of the typed array in legacy slot `slot`.
     pub(super) fn register(&mut self, slot: u32, view: &mut NativeView) {
         let page = slot as usize >> PAGE_SHIFT;
+        if self.directory.is_empty() { self.directory = vec![0_usize; DIRECTORY_PAGES].into_boxed_slice(); }
         while self.pages.len() <= page {
             let mut entries = vec![0_usize; PAGE_ENTRIES].into_boxed_slice();
-            self.directory.push(entries.as_mut_ptr().addr());
+            self.directory[self.pages.len()] = entries.as_mut_ptr().addr();
             self.pages.push(entries);
         }
         let entry = &mut self.pages[page][slot as usize & (PAGE_ENTRIES - 1)];

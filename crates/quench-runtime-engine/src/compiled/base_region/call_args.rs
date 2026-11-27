@@ -61,3 +61,36 @@ pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numb
     });
     Some(masks.into_boxed_slice())
 }
+
+/// The proven-argument masks of one compile (`proven_arguments`), made on the first direct call that reads them and
+/// kept on the function for its seeds (`FunctionCaches::proven_args`): a compile with no direct call runs no analysis,
+/// and a recompile from the same seeds reruns none. The analysis reads the bytecode and the seeds alone.
+pub(crate) struct ProvenArgs<'a> {
+    pub(crate) function: &'a Function,
+    pub(crate) constants: &'a [Constant],
+    pub(crate) numbers: Vec<Register>,
+    pub(crate) ints: Vec<Register>,
+    masks: std::cell::OnceCell<std::rc::Rc<[u64]>>,
+}
+
+impl<'a> ProvenArgs<'a> {
+    pub(crate) fn new(function: &'a Function, constants: &'a [Constant], mut numbers: Vec<Register>, mut ints: Vec<Register>) -> Self {
+        (numbers.sort_unstable(), ints.sort_unstable());
+        (numbers.dedup(), ints.dedup());
+        Self { function, constants, numbers, ints, masks: std::cell::OnceCell::new() }
+    }
+
+    /// The mask of the call at `pc`.
+    pub(crate) fn at(&self, pc: usize) -> u64 {
+        self.masks.get_or_init(|| {
+            let cache = &self.function.caches().proven_args;
+            let key = (self.numbers.as_slice(), self.ints.as_slice());
+            if let Some(hit) = cache.borrow().iter().find(|(n, i, _)| (&n[..], &i[..]) == key) { return hit.2.clone(); }
+            let masks: std::rc::Rc<[u64]> = proven_arguments(self.function, self.constants, &self.numbers, &self.ints).unwrap_or_default().into();
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= quench_runtime::bytecode::PROVEN_ARGS_SEEDS { cache.remove(0); }
+            cache.push((self.numbers.clone().into(), self.ints.clone().into(), masks.clone()));
+            masks
+        }).get(pc).copied().unwrap_or(0)
+    }
+}

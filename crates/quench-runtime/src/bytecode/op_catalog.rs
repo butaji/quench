@@ -4,6 +4,9 @@
 //! `GenericStep`: the interpreter's step a lane or a body makes in place) and its orthogonal
 //! tier traits (`Traits`). The table expands into `Op::class`, `Op::staged`,
 //! `Op::generic_step` and `Op::traits`.
+// Catalog helpers the derived-row design no longer asks for are kept beside the columns they
+// describe until the compiler path that named them is replaced.
+#![allow(dead_code)]
 use super::Op;
 pub use super::opcode_table::{OPCODE_COUNT, opcode_name};
 /// A tier's operation family, declared once by the catalog (`Op::class`).

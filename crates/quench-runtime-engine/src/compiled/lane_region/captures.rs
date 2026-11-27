@@ -22,8 +22,9 @@ pub(crate) enum Dense {
     /// The slots (values, count) the running activation holds (`Entry::capture_values`), or a
     /// published callee's, fixed by the identity its call guards (`Lowering::frame_captures`), or
     /// the bound callee's frameless admission, as its frameless activation would read them
-    /// (`Lowering::admitted_captures`).
-    Held(ir::Value, ir::Value),
+    /// (`Lowering::admitted_captures`); the third word is nonzero where every slot admits a direct
+    /// store (`CAPTURE_STORES_BIT`, the running activation's alone).
+    Held(ir::Value, ir::Value, ir::Value),
     /// No dense slots: the read takes its slow case.
     Absent,
 }
@@ -77,7 +78,7 @@ pub(crate) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
 /// The dense slots (values, length) the site names, `None` where it has none.
 fn dense_slots(site: &CaptureSite) -> Option<(ir::Value, ir::Value)> {
     match site.dense {
-        Dense::Held(values, len) => Some((values, len)),
+        Dense::Held(values, len, _) => Some((values, len)),
         Dense::Absent => None,
     }
 }
@@ -113,14 +114,30 @@ fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), 
     value
 }
 
-/// A capture's store by the lane's own store (`dispatch_fast::body_capture_store_in_lane`); a binding
-/// it does not take leaves at `exit`.
-pub(crate) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
+/// A capture's store: into the running activation's dense slot where they admit every direct
+/// store and the value is no heap reference, which needs no barrier (`dense_capture_store`), else
+/// the lane's own store (`dispatch_fast::body_capture_store_in_lane`); a binding it does not take
+/// leaves at `exit`.
+pub(crate) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureSite, at: (u16, u16), value: ir::Value,
     exit: ir::Block) {
+    let (slow, join) = (builder.create_block(), builder.create_block());
+    builder.set_cold_block(slow);
+    match site.dense {
+        Dense::Held(values, len, stores) if at.0 == 0 => {
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None, payload: None };
+            quench_runtime::staged::environment::dense_immediate_capture_store(&mut stage, (values, len, stores), at.1, value, slow)
+                .expect("the emit stage continues past its guards");
+            emit(builder).goto(join, &[]);
+        }
+        _ => { emit(builder).goto(slow, &[]); }
+    }
+    builder.switch_to_block(slow);
     let (context, packed) = capture_operands(builder, reach.0, at);
     let stored = call_helper(builder, reach, LaneHelper::CaptureSet, &[context, packed, value]);
     let stored = emit(builder).raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(builder, stored, exit);
+    emit(builder).goto(join, &[]);
+    builder.switch_to_block(join);
 }
 
 /// The lane context and the packed capture (depth in the high half, slot in the low) a capture
@@ -165,11 +182,11 @@ impl Lowering<'_, '_> {
         match frame {
             None => {
                 let entry = self.entry.as_ref().expect("entry facts");
-                Dense::Held(self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len))
+                Dense::Held(self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len), self.builder.use_var(entry.capture_stores))
             }
             Some(frame) if self.unit.frames[frame].target.identity().is_some() => {
                 let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
-                Dense::Held(self.raw_const(Lane::I64, values as i64), self.raw_const(Lane::I64, len as i64))
+                Dense::Held(self.raw_const(Lane::I64, values as i64), self.raw_const(Lane::I64, len as i64), self.raw_const(Lane::I64, 0))
             }
             Some(_) => callee.map_or(Dense::Absent, |callee| self.admitted_captures(state, callee)),
         }
@@ -181,13 +198,13 @@ impl Lowering<'_, '_> {
     /// arrival holds it.
     fn admitted_captures(&mut self, state: &mut State, callee: ir::Value) -> Dense {
         if let Some(&(_, (values, len))) = state.proofs.admitted_captures.iter().find(|(admitted, _)| *admitted == callee) {
-            return Dense::Held(values, len);
+            return Dense::Held(values, len, self.raw_const(Lane::I64, 0));
         }
         let cache = super::super::emit_js_payload_word(&mut self.builder, self.payload,
             std::mem::offset_of!(super::super::JsStepDispatch, call_cache));
         let (values, len) = super::super::frameless::emit_admitted_captures(&mut self.builder, self.payload, callee, cache);
         state.proofs.note_admitted_captures(callee, (values, len));
-        Dense::Held(values, len)
+        Dense::Held(values, len, self.raw_const(Lane::I64, 0))
     }
 
     /// Whether a read the dense slots miss may take the lane's own lookup of a root-held
@@ -273,8 +290,9 @@ impl Lowering<'_, '_> {
         let store = matches!(row, quench_runtime::staged::Operation::StoreCapture { .. });
         if store { state.proofs.fields.clear(); }
         let exit = self.guard_exit(state, pc as u32);
-        let site = if store { CaptureSite::OUTER } else {
-            self.capture_site(state, pc, instruction.capture_depth(), None, RootedRead::InBody)
+        // A store reaches only the running activation's own slots directly (`store_capture`).
+        let site = if store && instruction.capture_depth() != 0 { CaptureSite::OUTER } else {
+            self.capture_site(state, pc, instruction.capture_depth(), None, if store { RootedRead::No } else { RootedRead::InBody })
         };
         let sites = frame::Sites { capture: Some(&site), ..frame::Sites::default() };
         self.step_with(state, frame::Edges::ValueGuarded { miss: exit }, row, StepWith { sites, ..StepWith::default() });

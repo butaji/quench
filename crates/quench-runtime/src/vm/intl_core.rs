@@ -4,11 +4,21 @@
 use super::*;
 
 /// A collator's resolved collation, which each comparison reuses (`quench_intl::ResolvedCollator`).
+/// A build without `intl` compares nothing (`localeCompare` is refused before it reaches a
+/// collation), so the type is a zero-sized placeholder.
+#[cfg(feature = "intl")]
 pub struct Collation(pub quench_intl::ResolvedCollator);
+#[cfg(not(feature = "intl"))]
+pub struct Collation(());
 
 impl Collation {
+    #[cfg(feature = "intl")]
     pub fn compare(&self, left: &str, right: &str) -> f64 {
         self.0.compare(left, right)
+    }
+    #[cfg(not(feature = "intl"))]
+    pub fn compare(&self, _left: &str, _right: &str) -> f64 {
+        0.0
     }
 }
 

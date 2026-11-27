@@ -204,14 +204,12 @@ impl Vm {
     }
 
     pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
-        for index in 0..self.host.function_count() {
-            let Some(name) = self.host.function_descriptor(index)
+        for id in self.host.global_functions() {
+            let Some(name) = self.host.function_descriptor(id.0 as usize)
                 .ok_or_else(|| JsError("unknown host function index".into()))?.global else {
                 continue;
             };
-            let id = u32::try_from(index)
-                .map_err(|_| JsError("host function table exceeds index space".into()))?;
-            let function = self.create_host_function(HostFunctionId(id))?;
+            let function = self.create_host_function(id)?;
             // A host's globals are its platform's operations (timers, `fetch`,
             // `structuredClone`), enumerable as WebIDL makes a global's operations and as
             // Node defines them, unlike the language's own non-enumerable builtins.
@@ -290,11 +288,58 @@ impl Vm {
         self.host.function_descriptor(index as usize).map(|binding| binding.name)
     }
 
+    /// The host operations the heap's host functions run, ascending, each with the plain
+    /// operation its row may forward a call to (`run_host_function`); and, apart, per set of
+    /// globals no loaded program names, those only the global object holds for them, which run
+    /// only when code reads one of those names (`unnamed_global_functions`).
+    pub fn held_host_operations(&self) -> (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) {
+        let unnamed = self.unnamed_global_functions();
+        let mut held = Vec::new();
+        let mut lazy = vec![Vec::new(); unnamed.len()];
+        self.heap.for_each_live_function_record(|record_id, function| {
+            if matches!(function.kind, FunctionKind::Native(Native::HostFunction)) {
+                let only = unnamed.iter().position(|(_, functions)| {
+                    functions.iter().any(|function| function.direct_function_index() == Some(record_id))
+                });
+                only.map_or(&mut held, |only| &mut lazy[only]).push(function.env);
+            }
+        });
+        let operations = |environments: Vec<Value>| {
+            let mut operations = Vec::new();
+            for index in environments.into_iter().filter_map(|environment| self.host_operation_index(environment)) {
+                operations.push(index);
+                if let Some(crate::staged::host_rows::HostRow::PlainText { plain, .. }) = self.host.function_row(index as usize) {
+                    operations.push(plain);
+                }
+            }
+            operations.sort_unstable();
+            operations.dedup();
+            operations
+        };
+        let held = operations(held);
+        let lazy = unnamed.into_iter().zip(lazy).map(|((names, _), environments)| {
+            (names, operations(environments).into_iter().filter(|index| held.binary_search(index).is_err()).collect())
+        }).collect();
+        (held, lazy)
+    }
+
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let index = self
             .active_native_env()
             .and_then(|environment| self.host_operation_index(environment))
             .ok_or_else(|| JsError("invalid host function environment".into()))?;
+        if let Some(plain) = crate::staged::host_rows::concrete_plain(self.host.function_row(index as usize), args) {
+            // The declared operation answers `false` for a call it leaves to the operation's own steps.
+            let written = self.invoke_host_operation(plain, receiver, args)?;
+            if written != Value::FALSE {
+                return Ok(Value::UNDEFINED);
+            }
+        }
+        self.invoke_host_operation(index, receiver, args)
+    }
+
+    /// Runs host operation `index`'s callback for the active host function's call.
+    fn invoke_host_operation(&mut self, index: u32, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let callback = self
             .host
             .function_callback(index as usize)

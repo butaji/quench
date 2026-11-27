@@ -1,3 +1,5 @@
+#![no_main]
+
 use quench::NodeHost;
 
 #[cfg(quench_native_dynamic_source)]
@@ -8,7 +10,9 @@ const _: () = assert!(SUPPORT.is_available() && (SUPPORT.allows_dynamic_source()
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
-fn run() -> Result<std::process::ExitCode, String> {
+fn run() -> Result<u8, String> {
+    // The lane handlers this image's programs run.
+    install_lanes();
     quench::host::resident_pages::phase_peak("native worker entry");
     let assets = embedded_modules();
     let entry_path = assets
@@ -26,7 +30,7 @@ fn run() -> Result<std::process::ExitCode, String> {
     let entry = unsafe { bind_entry() }?;
     let namespace = quench_runtime::NativeProgramNamespace::from_entry(entry.residual())?;
     quench::host::resident_pages::phase_peak("native entry bound");
-    let host = NodeHost::new(argv)
+    let host = NodeHost::with_capabilities(argv, CAPABILITIES)
         .with_exec_argv(Vec::new())?
         .with_embedded_modules(assets)
         .with_native_programs(move |name, parts| {
@@ -34,28 +38,45 @@ fn run() -> Result<std::process::ExitCode, String> {
             unsafe { resolve(&namespace, name, parts) }
         });
     quench::host::resident_pages::phase_peak("native host ready");
-    #[cfg(quench_native_bootstrap)]
-    let result = quench::aot::execute_native_process_entry_with_bootstrap(
-        host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
-    );
-    #[cfg(not(quench_native_bootstrap))]
-    let result = quench::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
-    result.map(|completion| completion.exit_code())
+    // A run saved at its first wait for input, whose answers hold, resumes from there
+    // (`RESUMES_AT_REST`); else the entry runs, from the startup snapshot where there is one.
+    // An image with saved runs has one for every start (`RESUME_ONLY`) and links no entry run.
+    // A strict image's entry runs from its startup snapshot in a runtime that never installs
+    // its host (`RESTORED`), so it links no host installation, source frontend or JIT.
+    // The source frontend links only where the program can make code (`MAKES_CODE`) or the
+    // entry runs from its start, compiling what it loads.
+    if SUPPORT.allows_dynamic_source() && (MAKES_CODE || !(RESUME_ONLY || RESTORED)) {
+        quench::host::enable_dynamic_source();
+    }
+    // The Intl and Temporal layer links only where the program can reach it (`REACHES_INTL`).
+    if REACHES_INTL {
+        quench_runtime::install_intl();
+    }
+    // The WebAssembly frontend links only where the program can reach it (`RUNS_WASM`).
+    if RUNS_WASM {
+        quench::host::enable_wasm();
+    }
+    let result = match quench::aot::saved_wait(RESUMES_AT_REST) {
+        Some((index, wait)) => quench::aot::resume_native_process_entry(host, entry, SUPPORT, index, wait),
+        None if RESUME_ONLY => Err("no saved run answers this start".into()),
+        #[cfg(quench_native_bootstrap)]
+        None if RESTORED => quench::aot::execute_native_process_entry_restored(
+            host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
+        ),
+        #[cfg(quench_native_bootstrap)]
+        None => quench::aot::execute_native_process_entry_with_bootstrap(
+            host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
+        ),
+        #[cfg(not(quench_native_bootstrap))]
+        None => quench::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT),
+    };
+    result.map(|completion| completion.exit_status())
 }
 
 quench::install_process_start!();
 
-fn main() -> std::process::ExitCode {
-    if let Err(error) = quench::host::process_start::begin_main() {
-        eprintln!("quench: {error}");
-        return std::process::ExitCode::FAILURE;
-    }
-    let result = quench::shared_run::run_node_worker(run);
-    match result {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("quench: {error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
+/// The process's start: std's runtime start is left out (`quench::aot::run_image_process`).
+#[unsafe(no_mangle)]
+extern "C" fn main(_: std::ffi::c_int, _: *const *const std::ffi::c_char) -> std::ffi::c_int {
+    quench::aot::run_image_process(run)
 }

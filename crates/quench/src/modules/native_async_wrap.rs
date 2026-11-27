@@ -126,11 +126,11 @@ pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             )?;
             let prototype = get(c, constructor, "prototype")?;
             for (name, op) in [
-                ("getAsyncId", "nativeAsyncWrapId"),
-                ("getProviderType", "nativeAsyncWrapProvider"),
-                ("asyncReset", "nativeAsyncWrapReset"),
+                ("getAsyncId", crate::host::shared_vm::operation!("nativeAsyncWrapId")),
+                ("getProviderType", crate::host::shared_vm::operation!("nativeAsyncWrapProvider")),
+                ("asyncReset", crate::host::shared_vm::operation!("nativeAsyncWrapReset")),
             ] {
-                let method = c.host_function_named(crate::host::shared_vm::operation(op), name)?;
+                let method = c.host_function_named(op, name)?;
                 put(c, prototype, name, method)?;
             }
             put(c, owner, "constructor", constructor)?;

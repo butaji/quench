@@ -336,6 +336,8 @@ fn request_options(c: &mut Context<'_>, args: &[RootId]) -> Result<(RootId, Root
     let (mut input, mut options, mut callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
     if is_string(c, input) {
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("utilLazyPropertyInitialize");
         let url_class = get(c, global, "URL")?;
         let url = c.construct_rooted(url_class, url_class, &[input])?;
         let undefined = c.undefined();
@@ -560,6 +562,8 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
         let authorization = header(c, this, "authorization")?;
         if c.truthy_rooted(auth)? && !c.truthy_rooted(authorization)? {
             let global = c.global_root()?;
+            // A lazy global read by name: its getter is linked with this read.
+            let _ = crate::host::shared_vm::operation!("bufferGlobalGet");
             let buffer = get(c, global, "Buffer")?;
             let bytes = call_method(c, buffer, "from", &[auth])?;
             let base64 = c.string_rooted("base64");

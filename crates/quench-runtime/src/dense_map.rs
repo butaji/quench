@@ -1,8 +1,14 @@
 //! A map from small dense ids (atoms, registers) to values, kept as one flat vector indexed by
 //! the id: a lookup is an index, never a hash or a tree walk.
+// One reader: the closed-world folding path, which the derived-row lowering replaces; the map
+// stays the one recipe for a sparse table over ids.
+#![allow(dead_code)]
 
 /// Values by dense `u32` id; an id with no entry holds `None`.
 #[derive(Clone, Debug)]
+// Written by `frozen::frozen_fields` for a lowering that folds whole-program field values; a
+// build whose lowering folds them another way keeps the map's shape but reads none of it.
+#[allow(dead_code)]
 pub struct DenseMap<V> {
     slots: Vec<Option<V>>,
     len: usize,
@@ -17,6 +23,7 @@ impl<V> Default for DenseMap<V> {
     }
 }
 
+#[allow(dead_code)]
 impl<V> DenseMap<V> {
     pub fn get(&self, id: &u32) -> Option<&V> {
         self.slots.get(*id as usize)?.as_ref()

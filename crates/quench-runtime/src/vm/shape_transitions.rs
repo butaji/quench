@@ -1,17 +1,37 @@
 //! The cached shape transitions, by parent shape and transition key. A child shape records
 //! both its parent and the transition that made it, so the index holds only child ids and
-//! confirms a candidate by reading those back from the shape table: four bytes and a control
-//! byte per transition, where a map entry copied the parent and key beside each child. The
-//! control bytes keep a few bits of each hash, so a probe rarely reads a shape that is not
-//! the one sought.
+//! confirms a candidate by reading those back from the shape table. Each slot is one word:
+//! the child id and, above it, the high half of its hash, which places the slot and lets a
+//! probe skip a shape that is not the one sought without reading it. The slots are the whole index, with no pointer in them, so a
+//! snapshot keeps them as they are and a restore copies them back (`slots`, `from_slots`).
 
 use super::{Shape, ShapeTransition, ShapeTransitionKey};
 use std::hash::{Hash, Hasher};
 
+/// A slot no child holds: no child id is `u32::MAX` (`NO_LAST_CHILD`).
+const EMPTY: u64 = u64::MAX;
+/// The fewest slots an index allocates.
+const MIN_SLOTS: usize = 16;
+
 #[derive(Default)]
 pub(super) struct ShapeTransitionIndex {
-    /// Child shape ids, hashed by their parent and transition key.
-    children: hashbrown::HashTable<u32>,
+    /// Open-addressed slots, a power of two of them, probed linearly from `home` and at most
+    /// half full; each holds `slot_of(hash, child)` or `EMPTY`.
+    slots: Vec<u64>,
+    len: usize,
+}
+
+/// The slot word of `child` indexed under `hash`.
+#[inline(always)]
+fn slot_of(hash: u64, child: u32) -> u64 {
+    (hash & !u64::from(u32::MAX)) | u64::from(child)
+}
+
+/// The first slot a probe for `hash` (or a slot word holding it) reads: from the hash's high
+/// half, the part a slot keeps, so a slot is placed again from itself as the index grows.
+#[inline(always)]
+fn home(hash: u64, mask: usize) -> usize {
+    (hash >> 32) as usize & mask
 }
 
 /// The shape whose parent and transition a cached child stands for: the child itself, or the
@@ -27,16 +47,6 @@ fn hash(parent: u32, key: ShapeTransitionKey) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     (parent, key).hash(&mut hasher);
     hasher.finish()
-}
-
-/// The hash `child` is indexed under.
-fn child_hash(shapes: &[Shape], child: u32) -> u64 {
-    let origin = origin(shapes, &shapes[child as usize]);
-    let key = origin
-        .transition
-        .cache_key()
-        .expect("an indexed transition has a cache key");
-    hash(origin.parent, key)
 }
 
 /// Whether `child` is the cached transition from `parent` by `key`.
@@ -62,9 +72,22 @@ impl ShapeTransitionIndex {
         parent: u32,
         key: ShapeTransitionKey,
     ) -> Option<u32> {
-        self.children
-            .find(hash(parent, key), |&child| is_transition(shapes, child, parent, key))
-            .copied()
+        if self.slots.is_empty() {
+            return None;
+        }
+        let hash = hash(parent, key);
+        let mask = self.slots.len() - 1;
+        let mut at = home(hash, mask);
+        loop {
+            let slot = self.slots[at];
+            if slot == EMPTY {
+                return None;
+            }
+            if (slot ^ hash) >> 32 == 0 && is_transition(shapes, slot as u32, parent, key) {
+                return Some(slot as u32);
+            }
+            at = (at + 1) & mask;
+        }
     }
 
     /// Records `child`, already in `shapes`, as the transition from `parent` by `key`, which
@@ -77,59 +100,79 @@ impl ShapeTransitionIndex {
         child: u32,
     ) {
         debug_assert!(self.get(shapes, parent, key).is_none());
-        self.children
-            .insert_unique(hash(parent, key), child, |&child| child_hash(shapes, child));
+        if (self.len + 1) * 2 > self.slots.len() {
+            self.grow();
+        }
+        self.place(slot_of(hash(parent, key), child));
+    }
+
+    /// Puts `slot` in the first empty slot of its probe; the index has room.
+    fn place(&mut self, slot: u64) {
+        let mask = self.slots.len() - 1;
+        let mut at = home(slot, mask);
+        while self.slots[at] != EMPTY {
+            at = (at + 1) & mask;
+        }
+        self.slots[at] = slot;
+        self.len += 1;
+    }
+
+    /// Doubles the slots, placing each child again by its hash.
+    fn grow(&mut self) {
+        let slots = (self.slots.len() * 2).max(MIN_SLOTS);
+        let old = std::mem::replace(&mut self.slots, vec![EMPTY; slots]);
+        self.len = 0;
+        for slot in old.into_iter().filter(|&slot| slot != EMPTY) {
+            self.place(slot);
+        }
     }
 
     pub(super) fn clear(&mut self) {
         *self = Self::default();
     }
 
-    /// Every indexed child, for a snapshot (`crate::snapshot`).
-    pub(super) fn children(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
-        self.children.iter().copied()
+    /// Every indexed child.
+    #[cfg(test)]
+    pub(super) fn children(&self) -> impl Iterator<Item = u32> + '_ {
+        self.slots.iter().filter(|&&slot| slot != EMPTY).map(|&slot| slot as u32)
     }
 
-    /// The hash each of `children` is indexed under, for a snapshot: a restoring VM of this build
-    /// indexes them by it (`insert_hashed`) instead of deriving it again.
-    pub(super) fn hashes<'a>(shapes: &'a [Shape], children: &'a [u32]) -> impl ExactSizeIterator<Item = u64> + 'a {
-        children.iter().map(|&child| child_hash(shapes, child))
+    /// The slots, as a snapshot keeps them (`crate::snapshot`).
+    pub(super) fn slots(&self) -> &[u64] {
+        &self.slots
     }
 
-    /// Indexes restored `child` under `hash`, which this build's index derived for it (`hashes`).
-    pub(super) fn insert_hashed(&mut self, shapes: &[Shape], child: u32, hash: u64) -> bool {
-        if child as usize >= shapes.len() {
-            return false;
+    /// The index whose slots a snapshot kept (`slots`), for the shape table of `shape_count`
+    /// shapes it was saved with. Each held child must be a shape of the table; the slots are
+    /// otherwise taken as written, as the shape table is.
+    pub(super) fn from_slots(shape_count: usize, slots: impl ExactSizeIterator<Item = u64>) -> Option<Self> {
+        let count = slots.len();
+        if count != 0 && (!count.is_power_of_two() || count < MIN_SLOTS) {
+            return None;
         }
-        self.children.insert_unique(hash, child, |&child| child_hash(shapes, child));
-        true
-    }
-
-    /// An empty index with room for `capacity` children.
-    pub(super) fn with_capacity(capacity: usize) -> Self {
-        Self { children: hashbrown::HashTable::with_capacity(capacity) }
-    }
-
-    /// Admit a restored child and index it using the same origin/key derivation.
-    /// A missing child or a transition without a cache key is rejected.
-    pub(super) fn try_insert_child(&mut self, shapes: &[Shape], child: u32) -> bool {
-        let Some(shape) = shapes.get(child as usize) else { return false };
-        let origin = origin(shapes, shape);
-        let Some(key) = origin.transition.cache_key() else { return false };
-        self.children
-            .insert_unique(hash(origin.parent, key), child, |&child| child_hash(shapes, child));
-        true
+        let mut len = 0;
+        let mut table = Vec::with_capacity(count);
+        for slot in slots {
+            if slot != EMPTY {
+                if slot as u32 as usize >= shape_count {
+                    return None;
+                }
+                len += 1;
+            }
+            table.push(slot);
+        }
+        (len * 2 <= count).then_some(Self { slots: table, len })
     }
 
     #[cfg(feature = "profile-memory")]
     pub(super) fn len(&self) -> usize {
-        self.children.len()
+        self.len
     }
 
-    /// The table's slots and their control bytes.
+    /// The table's slots.
     #[cfg(feature = "profile-memory")]
     pub(super) fn bytes(&self) -> usize {
-        self.children.capacity() * (size_of::<u32>() + 1)
+        self.slots.capacity() * size_of::<u64>()
     }
 }
 
@@ -140,7 +183,7 @@ mod tests {
     use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
 
     #[test]
-    fn restored_transition_admission_preserves_dictionary_origins() {
+    fn restored_slots_keep_dictionary_origins() {
         let mut shapes = Shape::table();
         let parent = 0;
         let key = PropertyKey::string(0);
@@ -155,11 +198,11 @@ mod tests {
             1, Some(DictionaryTrigger::PropertyCount), facts));
         for child in [added, dictionary] {
             let mut index = ShapeTransitionIndex::default();
-            assert!(!index.try_insert_child(&shapes, u32::MAX));
-            assert!(!index.try_insert_child(&shapes, parent));
-            assert!(index.try_insert_child(&shapes, child));
-            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::Add(key, attributes)), Some(child));
-            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::FunctionName(0)), None);
+            index.insert(&shapes, parent, ShapeTransitionKey::Add(key, attributes), child);
+            let restored = ShapeTransitionIndex::from_slots(shapes.len(), index.slots().iter().copied()).unwrap();
+            assert_eq!(restored.get(&shapes, parent, ShapeTransitionKey::Add(key, attributes)), Some(child));
+            assert_eq!(restored.get(&shapes, parent, ShapeTransitionKey::FunctionName(0)), None);
+            assert!(ShapeTransitionIndex::from_slots(1, index.slots().iter().copied()).is_none());
         }
     }
 }

@@ -17,10 +17,10 @@ use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Sh
 
 /// The facts one analysis proves, by unit PC.
 pub(crate) struct IntRanges {
-    overflow_free: CompoundBitSet,
-    in_bounds: CompoundBitSet,
+    overflow_free: quench_runtime::dataflow::BitSet,
+    in_bounds: quench_runtime::dataflow::BitSet,
     /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
-    string_bounds: CompoundBitSet,
+    string_bounds: quench_runtime::dataflow::BitSet,
     /// The accesses whose indices their loop's entry compares with the array's length once
     /// (`Lowering::version_loops`), by PC (ascending).
     versioned: Vec<Version>,
@@ -39,22 +39,22 @@ pub(crate) struct IntRanges {
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
-    zero_free: CompoundBitSet,
+    zero_free: quench_runtime::dataflow::BitSet,
     /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
-    non_negative_dividend: CompoundBitSet,
+    non_negative_dividend: quench_runtime::dataflow::BitSet,
     /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
-    nonzero_divisor: CompoundBitSet,
+    nonzero_divisor: quench_runtime::dataflow::BitSet,
     /// The element stores whose value the point before them holds a Number of (`Point::numeric_store`).
-    numeric_stores: CompoundBitSet,
+    numeric_stores: quench_runtime::dataflow::BitSet,
 }
 
 impl IntRanges {
     pub(crate) fn new(instructions: usize) -> Self {
-        Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            string_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
-            non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
-            numeric_stores: CompoundBitSet::with_capacity(instructions) }
+        Self { overflow_free: quench_runtime::dataflow::BitSet::with_capacity(instructions), in_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            string_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            non_negative_dividend: quench_runtime::dataflow::BitSet::with_capacity(instructions), nonzero_divisor: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            numeric_stores: quench_runtime::dataflow::BitSet::with_capacity(instructions) }
     }
 
     /// Whether the remainder at `pc` has a dividend no negative: its `-0` is no zero it can make.
@@ -157,7 +157,7 @@ impl Lowering<'_, '_> {
     /// writes the register out of the range (a hash, say), the header's fact is the whole int32
     /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
     pub(crate) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
+        leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
         let typed = |pc: usize| self.typed_access(pc);
@@ -176,7 +176,7 @@ impl Lowering<'_, '_> {
 
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(crate) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
+        leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
         let typed = |pc: usize| self.typed_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };

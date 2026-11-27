@@ -44,7 +44,7 @@ pub(crate) fn declared_rest_element(program: &ResidualProgram, function: &quench
 /// the register (`written`, the unit's written registers): its element reads are then reads of the
 /// array the activation made. The rest parameter is the last of the function's `params`.
 pub(crate) fn declared_rest_read(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
-    written: &CompoundBitSet) -> Option<(Register, Type)> {
+    written: &quench_runtime::dataflow::BitSet) -> Option<(Register, Type)> {
     let ty = declared_rest_element(program, function)?;
     let register = scalar::parameter_register(function, usize::from(function.params.checked_sub(1)?))?;
     (!written.contains(usize::from(register))).then_some((register, ty))
@@ -55,7 +55,7 @@ pub(crate) fn declared_rest_read(program: &ResidualProgram, function: &quench_ru
 /// The rest parameter is left out, as its element reads are `declared_rest_read`'s. Only a function
 /// with a signature key (its source span start) can declare a parameter; the top level has none.
 pub(crate) fn declared_member_reads(program: &ResidualProgram, function: &quench_runtime::bytecode::Function,
-    written: &CompoundBitSet) -> Vec<(Register, u16)> {
+    written: &quench_runtime::dataflow::BitSet) -> Vec<(Register, u16)> {
     if program.declared_types.is_none() || function.source_span.is_none() { return Vec::new(); }
     let rest = if function.rest { function.params.checked_sub(1) } else { None };
     (0..function.params).filter(|index| Some(*index) != rest)

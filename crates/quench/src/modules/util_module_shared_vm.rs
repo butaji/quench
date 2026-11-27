@@ -1,6 +1,5 @@
 //! `node:util` in Rust (lib/util.js): the module's exports over the native inspector
 //! (`util_inspect_shared_vm`), predicates, comparisons and policies.
-use crate::host::shared_vm::operation;
 use crate::modules::util_inspect_shared_vm::{self as inspect, DefaultOption};
 use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
@@ -137,12 +136,12 @@ pub(super) fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
     c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
 }
 
-fn function(c: &mut Context<'_>, operation_name: &str, name: &str) -> Result<RootId, RootedError> {
-    c.host_function_named(operation(operation_name), name)
+fn function(c: &mut Context<'_>, operation_name: quench_runtime::HostFunctionId, name: &str) -> Result<RootId, RootedError> {
+    c.host_function_named(operation_name, name)
 }
 
-fn function_with(c: &mut Context<'_>, operation_name: &str, name: &str, data: RootId) -> Result<RootId, RootedError> {
-    c.host_function_named_with_data(operation(operation_name), name, data)
+fn function_with(c: &mut Context<'_>, operation_name: quench_runtime::HostFunctionId, name: &str, data: RootId) -> Result<RootId, RootedError> {
+    c.host_function_named_with_data(operation_name, name, data)
 }
 
 pub(super) fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -203,8 +202,8 @@ pub(crate) fn build_primordials(c: &mut Context<'_>) -> Result<RootId, RootedErr
     }
     for &(alias, target) in inspect::COLOR_ALIASES {
         let target = c.string_rooted(target);
-        let getter = function_with(c, "utilColorAliasGet", "get", target)?;
-        let setter = function_with(c, "utilColorAliasSet", "set", target)?;
+        let getter = function_with(c, crate::host::shared_vm::operation!("utilColorAliasGet"), "get", target)?;
+        let setter = function_with(c, crate::host::shared_vm::operation!("utilColorAliasSet"), "set", target)?;
         let descriptor = c.null_object_rooted()?;
         put(c, descriptor, "get", getter)?;
         put(c, descriptor, "set", setter)?;
@@ -226,7 +225,7 @@ pub(crate) fn build_primordials(c: &mut Context<'_>) -> Result<RootId, RootedErr
     put(c, primordials, "codesWarned", warned)?;
     let debug = c.null_object_rooted()?;
     put(c, primordials, "debugImpls", debug)?;
-    let inspect_function = function(c, "utilInspect", "inspect")?;
+    let inspect_function = function(c, crate::host::shared_vm::operation!("utilInspect"), "inspect")?;
     put(c, primordials, "inspect", inspect_function)?;
     Ok(primordials)
 }
@@ -236,43 +235,43 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
     let module = c.object_rooted()?;
     let inspect_function = get(c, primordials, "inspect")?;
     decorate_inspect(c, inspect_function, primordials)?;
-    export_functions(c, module, &[("_errnoException", "utilErrnoException"), ("_exceptionWithHostPort", "utilExceptionWithHostPort")])?;
-    let extend = function(c, "utilExtend", "_extend")?;
+    export_functions(c, module, &[("_errnoException", crate::host::shared_vm::operation!("utilErrnoException")), ("_exceptionWithHostPort", crate::host::shared_vm::operation!("utilExceptionWithHostPort"))])?;
+    let extend = function(c, crate::host::shared_vm::operation!("utilExtend"), "_extend")?;
     let extend = deprecated_export(c, extend, EXTEND_DEPRECATION)?;
     put(c, module, "_extend", extend)?;
     let callbackify = super::util_callbackify_shared_vm::function(c)?;
     put(c, module, "callbackify", callbackify)?;
-    let debuglog = function(c, "utilDebuglog", "debuglog")?;
+    let debuglog = function(c, crate::host::shared_vm::operation!("utilDebuglog"), "debuglog")?;
     put(c, module, "debug", debuglog)?;
     put(c, module, "debuglog", debuglog)?;
-    export_functions(c, module, &[("deprecate", "utilDeprecate"), ("format", "utilFormat")])?;
+    export_functions(c, module, &[("deprecate", crate::host::shared_vm::operation!("utilDeprecate")), ("format", crate::host::shared_vm::operation!("utilFormat"))])?;
     let style = super::util_style_shared_vm::function(c, inspect_function)?;
     put(c, module, "styleText", style)?;
-    export_functions(c, module, &[("formatWithOptions", "utilFormatWithOptions")])?;
-    let get_call_site = function(c, "utilGetCallSite", "deprecated")?;
+    export_functions(c, module, &[("formatWithOptions", crate::host::shared_vm::operation!("utilFormatWithOptions"))])?;
+    let get_call_site = function(c, crate::host::shared_vm::operation!("utilGetCallSite"), "deprecated")?;
     put(c, module, "getCallSite", get_call_site)?;
     export_functions(c, module, &[
-        ("getCallSites", "utilGetCallSitesPublic"),
-        ("getSystemErrorMap", "utilGetSystemErrorMap"),
-        ("getSystemErrorName", "utilGetSystemErrorName"),
-        ("getSystemErrorMessage", "utilGetSystemErrorMessage"),
-        ("inherits", "utilInherits"),
+        ("getCallSites", crate::host::shared_vm::operation!("utilGetCallSitesPublic")),
+        ("getSystemErrorMap", crate::host::shared_vm::operation!("utilGetSystemErrorMap")),
+        ("getSystemErrorName", crate::host::shared_vm::operation!("utilGetSystemErrorName")),
+        ("getSystemErrorMessage", crate::host::shared_vm::operation!("utilGetSystemErrorMessage")),
+        ("inherits", crate::host::shared_vm::operation!("utilInherits")),
     ])?;
     put(c, module, "inspect", inspect_function)?;
     export_predicates(c, module)?;
-    let log = function(c, "utilLog", "log")?;
+    let log = function(c, crate::host::shared_vm::operation!("utilLog"), "log")?;
     let log = deprecated_export(c, log, LOG_DEPRECATION)?;
     put(c, module, "log", log)?;
-    let promisify = function(c, "utilPromisify", "promisify")?;
+    let promisify = function(c, crate::host::shared_vm::operation!("utilPromisify"), "promisify")?;
     let custom = get(c, primordials, "promisifyCustom")?;
     put(c, promisify, "custom", custom)?;
     put(c, module, "promisify", promisify)?;
     export_functions(c, module, &[
-        ("stripVTControlCharacters", "utilStripVTControlCharacters"),
-        ("toUSVString", "utilToUSVString"),
-        ("transferableAbortSignal", "utilTransferableAbortSignal"),
-        ("transferableAbortController", "utilTransferableAbortController"),
-        ("aborted", "utilAborted"),
+        ("stripVTControlCharacters", crate::host::shared_vm::operation!("utilStripVTControlCharacters")),
+        ("toUSVString", crate::host::shared_vm::operation!("utilToUSVString")),
+        ("transferableAbortSignal", crate::host::shared_vm::operation!("utilTransferableAbortSignal")),
+        ("transferableAbortController", crate::host::shared_vm::operation!("utilTransferableAbortController")),
+        ("aborted", crate::host::shared_vm::operation!("utilAborted")),
     ])?;
     export_late(c, module)?;
     let formatters = c.null_object_rooted()?;
@@ -286,7 +285,7 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
 }
 
 /// Exports each operation's function under its export name, which is also its own name.
-fn export_functions(c: &mut Context<'_>, module: RootId, exports: &[(&str, &str)]) -> Result<(), RootedError> {
+fn export_functions(c: &mut Context<'_>, module: RootId, exports: &[(&str, quench_runtime::HostFunctionId)]) -> Result<(), RootedError> {
     for &(name, operation_name) in exports {
         let value = function(c, operation_name, name)?;
         put(c, module, name, value)?;
@@ -298,11 +297,11 @@ fn export_functions(c: &mut Context<'_>, module: RootId, exports: &[(&str, &str)
 fn export_predicates(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     for (index, predicate) in PREDICATES.iter().enumerate() {
         let Predicate::Legacy(legacy) = predicate else {
-            export_functions(c, module, &[("isDeepStrictEqual", "utilIsDeepStrictEqual")])?;
+            export_functions(c, module, &[("isDeepStrictEqual", crate::host::shared_vm::operation!("utilIsDeepStrictEqual"))])?;
             continue;
         };
         let data = c.number(index as f64);
-        let test = function_with(c, "utilLegacyIs", legacy.name, data)?;
+        let test = function_with(c, crate::host::shared_vm::operation!("utilLegacyIs"), legacy.name, data)?;
         let length = c.number(f64::from(legacy_length(legacy.test)));
         let key = c.string_rooted("length");
         c.define_data_property_rooted(test, key, length, false, false, true)?;
@@ -317,27 +316,27 @@ fn export_predicates(c: &mut Context<'_>, module: RootId) -> Result<(), RootedEr
 fn export_late(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let types = types_object(c)?;
     put(c, module, "types", types)?;
-    export_functions(c, module, &[("parseEnv", "parseEnv")])?;
+    export_functions(c, module, &[("parseEnv", crate::host::shared_vm::operation!("parseEnv"))])?;
     let parse_args = super::util_parse_args_shared_vm::function(c)?;
     put(c, module, "parseArgs", parse_args)?;
     for name in ["TextDecoder", "TextEncoder"] {
         let name_value = c.string_rooted(name);
         let data = c.record_rooted(false, &["module", "name"], &[module, name_value])?;
-        let initializer = function_with(c, "utilGlobalExport", "", data)?;
+        let initializer = function_with(c, crate::host::shared_vm::operation!("utilGlobalExport"), "", data)?;
         c.define_lazy_data_properties_rooted(module, &[name], true, initializer)?;
     }
     let (mime, params) = super::util_mime_shared_vm::classes(c)?;
     put(c, module, "MIMEType", mime)?;
     put(c, module, "MIMEParams", params)?;
-    export_functions(c, module, &[("diff", "utilDiff"), ("setTraceSigInt", "utilSetTraceSigInt")])
+    export_functions(c, module, &[("diff", crate::host::shared_vm::operation!("utilDiff")), ("setTraceSigInt", crate::host::shared_vm::operation!("utilSetTraceSigInt"))])
 }
 
 /// `inspect.custom`, `inspect.defaultOptions`, `inspect.colors` and `inspect.styles`.
 fn decorate_inspect(c: &mut Context<'_>, inspect_function: RootId, primordials: RootId) -> Result<(), RootedError> {
     let custom = get(c, primordials, "custom")?;
     put(c, inspect_function, "custom", custom)?;
-    let getter = function(c, "utilInspectDefaultsGet", "get")?;
-    let setter = function(c, "utilInspectDefaultsSet", "set")?;
+    let getter = function(c, crate::host::shared_vm::operation!("utilInspectDefaultsGet"), "get")?;
+    let setter = function(c, crate::host::shared_vm::operation!("utilInspectDefaultsSet"), "set")?;
     let descriptor = c.null_object_rooted()?;
     put(c, descriptor, "get", getter)?;
     put(c, descriptor, "set", setter)?;
@@ -358,12 +357,12 @@ pub(crate) fn types_object(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let types = c.object_rooted()?;
     for (index, &(name, _)) in TYPES.iter().enumerate() {
         let data = c.number(index as f64);
-        let predicate = function_with(c, "utilTypeCheck", name, data)?;
+        let predicate = function_with(c, crate::host::shared_vm::operation!("utilTypeCheck"), name, data)?;
         put(c, types, name, predicate)?;
     }
     for &(name, class) in KEY_TYPES {
         let data = c.string_rooted(class);
-        let predicate = function_with(c, "utilKeyTypeCheck", name, data)?;
+        let predicate = function_with(c, crate::host::shared_vm::operation!("utilKeyTypeCheck"), name, data)?;
         put(c, types, name, predicate)?;
     }
     Ok(types)
@@ -404,13 +403,15 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     if !c.is_object_rooted(value)? {
         return Ok(false);
     }
-    let global = c.global_root()?;
-    let constructor = if class == "KeyObject" {
-        let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
-        get(c, crypto, class)?
-    } else {
-        get(c, global, class)?
+    // A value is no key of a crypto module not yet built.
+    #[cfg(quench_openssl_provider)]
+    let constructor = {
+        use crate::modules::crypto_node::{built_class, Class};
+        built_class(c, if class == "KeyObject" { Class::KeyObject } else { Class::CryptoKey })
     };
+    #[cfg(not(quench_openssl_provider))]
+    let constructor: Option<RootId> = None;
+    let Some(constructor) = constructor else { return Ok(false) };
     if !c.is_callable_rooted(constructor)? {
         return Ok(false);
     }
@@ -429,7 +430,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         LegacyTest::Array => c.is_array_rooted(value)?,
         LegacyTest::Boolean => kind == ValueType::Boolean,
         LegacyTest::Buffer => {
-            let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
+            let buffer = crate::host::shared_vm::commonjs::builtin!(c, "buffer")?;
             let buffer = get(c, buffer, "Buffer")?;
             let is_buffer = get(c, buffer, "isBuffer")?;
             let result = c.call_rooted(is_buffer, buffer, &[value])?;
@@ -910,6 +911,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
     line.extend(message);
     let line = c.string_units_rooted(&line);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("consoleGlobalInitialize");
     let console = get(c, global, "console")?;
     let log = get(c, console, "log")?;
     c.call_rooted(log, console, &[line])?;
@@ -920,6 +923,8 @@ pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Roo
 pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let signal = argument(c, args, 0);
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortSignal")?;
     if !c.is_object_rooted(signal)? || !c.instance_of_rooted(signal, class)? {
         return Err(super::util_shared_vm::argument_type_error(c, signal, "signal", "AbortSignal")?);
@@ -930,6 +935,8 @@ pub(crate) fn transferable_abort_signal(c: &mut Context<'_>, _: RootId, args: &[
 /// `util.transferableAbortController()`.
 pub(crate) fn transferable_abort_controller(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let global = c.global_root()?;
+    // A lazy global read by name: its initializer is linked with this read.
+    let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
     let class = get(c, global, "AbortController")?;
     c.construct_rooted(class, class, &[])
 }

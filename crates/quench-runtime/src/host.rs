@@ -1,5 +1,16 @@
 use std::io::{self, Write};
 
+/// A host's WebAssembly frontend: the two operations the `WebAssembly` namespace runs, with
+/// the host's own resident-page policy. A JS-only host leaves it uninstalled, so a compiled
+/// image links neither the decoder nor the validator.
+#[derive(Clone, Copy)]
+pub struct WasmFrontend {
+    /// Validate a binary without producing executable code.
+    pub validate: fn(&[u8], crate::ExecutionMode) -> bool,
+    /// Decode, validate and lower a binary for `mode`.
+    pub compile: fn(&[u8], crate::ExecutionMode) -> Result<crate::WasmModule, String>,
+}
+
 /// A frozen source failure is distinct from an incompatible native image.
 #[cfg(feature = "native-execution")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +63,7 @@ pub enum CapabilityId {
     Done = 3,
     CreateRealm = 4,
     IsHTMLDDA = 5,
+    WriteErr = 6,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +233,11 @@ pub trait Host: core::any::Any {
     }
 
     fn write_line(&mut self, text: &str);
+    /// Write one host diagnostic line to the error stream. A host whose `console` writes to its
+    /// own stream overrides this.
+    fn write_err(&mut self, text: &str) {
+        let _ = writeln!(io::stderr().lock(), "{text}");
+    }
     fn clock_millis(&mut self) -> f64;
 
     /// ECMAScript proper tail calls discard strict caller activations. Hosts
@@ -263,6 +280,15 @@ pub trait Host: core::any::Any {
         self.functions().len()
     }
 
+    /// The host functions the runtime installs as globals (`Vm::initialize_host`): those whose
+    /// descriptor names a global.
+    fn global_functions(&self) -> Vec<crate::HostFunctionId> {
+        (0..self.function_count())
+            .filter(|&index| self.function_descriptor(index).is_some_and(|descriptor| descriptor.global.is_some()))
+            .filter_map(|index| u32::try_from(index).ok().map(crate::HostFunctionId))
+            .collect()
+    }
+
     fn function_descriptor(&self, index: usize) -> Option<crate::HostFunctionDescriptor> {
         self.functions().get(index).map(|binding| crate::HostFunctionDescriptor {
             name: binding.name, length: binding.length, global: binding.global,
@@ -271,6 +297,18 @@ pub trait Host: core::any::Any {
 
     fn function_callback(&self, index: usize) -> Option<crate::HostCallback> {
         self.functions().get(index).map(|binding| binding.call)
+    }
+
+    /// Whether a runtime about to be saved at rest may run host function `index` to settle
+    /// a lazy global its program names (`Vm::materialize_named_lazy_globals`).
+    fn settles_at_rest(&self, _index: usize) -> bool {
+        true
+    }
+
+    /// The staged row host function `index`'s calls run before its own steps
+    /// (`staged::host_rows`), if it declares one.
+    fn function_row(&self, _index: usize) -> Option<crate::staged::host_rows::HostRow> {
+        None
     }
 
     /// Install host-owned objects after shared intrinsics and native globals,
@@ -290,6 +328,15 @@ pub trait Host: core::any::Any {
         Self: Sized,
     {
         Ok(())
+    }
+
+    /// `resume` for a runtime saved at rest, which finished installing before it was saved
+    /// (`Runtime::new_at_rest`): only the process's own inputs are bound again.
+    fn resume_at_rest(context: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Self::resume(context)
     }
 
     /// Initialize host policy in a fresh ShadowRealm before guest execution.
@@ -536,6 +583,22 @@ impl HostStatics {
             initialize_import_meta: T::initialize_import_meta,
         }
     }
+
+    /// The statics of a runtime only ever restored at rest (`Runtime::new_at_rest`): it never
+    /// installs its host, so it links neither installation.
+    pub(crate) fn at_rest<T: Host>() -> Self {
+        Self { initialize: Self::installed, resume: T::resume_at_rest, ..Self::of::<T>() }
+    }
+
+    /// A runtime only ever restored from its startup snapshot (`Runtime::new_restored`): the
+    /// host resumes as from any startup snapshot but never installs itself.
+    pub(crate) fn restored<T: Host>() -> Self {
+        Self { initialize: Self::installed, ..Self::of::<T>() }
+    }
+
+    fn installed(_: &mut crate::NativeContext<'_>) -> Result<(), crate::RootedError> {
+        Err(crate::RootedError::host("a runtime restored at rest does not install its host"))
+    }
 }
 
 /// Recover a host's own type from the VM's erased host.
@@ -576,6 +639,11 @@ impl<'a> HostContext<'a> {
                 self.host.write_line(text.unwrap_or_default());
                 0.0
             }
+            CapabilityId::WriteErr => {
+                crate::clock::note_input("the host's direct output");
+                self.host.write_err(text.unwrap_or_default());
+                0.0
+            }
             CapabilityId::ClockMillis => {
                 crate::clock::note_input("the clock");
                 self.host.clock_millis()
@@ -596,6 +664,10 @@ pub struct SystemHost;
 impl Host for SystemHost {
     fn write_line(&mut self, text: &str) {
         let _ = writeln!(io::stdout().lock(), "{text}");
+    }
+
+    fn write_err(&mut self, text: &str) {
+        let _ = writeln!(io::stderr().lock(), "{text}");
     }
 
     fn clock_millis(&mut self) -> f64 {

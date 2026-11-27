@@ -162,13 +162,27 @@ impl Vm {
     /// recorded too: an ahead image finds its one closure there (`aot_image::symbols::closure_of`).
     /// A closure nested deeper is never looked up, so it is not recorded.
     fn record_top_level_closure(&mut self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32, function: Value) {
-        let root = |parent: u32| parent == crate::vm::ROOT_FUNCTION_ID;
-        let top_level = plan.parent.is_none_or(|parent| root(parent)
-            || p.functions.get(parent as usize).is_some_and(|outer| outer.header().parent.is_none_or(root)));
-        if !p.is_module() && top_level {
+        if self.records_closure(p, plan, id) {
             let handle = self.heap.weak_handle(function).expect("new closure is live");
             self.function_values.record((self.active_program, id), [handle]);
         }
+    }
+
+    /// Whether a closure of `id` must be findable by `cached_functions`: a top-level closure (one the
+    /// top level declares, or declares inside a function of its own), or one the loaded image's
+    /// value table names (`ClosureOf`). The image's table is read at a body's link, so a closure it
+    /// names must be found whether or not a body has been installed yet.
+    pub(super) fn records_closure(&self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
+        self.records_closure_of(p, self.active_program, plan, id)
+    }
+
+    /// `records_closure` for a closure of `program`, which need not be the active one (a lane's).
+    pub(in crate::vm) fn records_closure_of(&self, p: &ResidualProgram, program: ProgramId, plan: &crate::bytecode::FunctionHeader, id: u32) -> bool {
+        let root = |parent: u32| parent == crate::vm::ROOT_FUNCTION_ID;
+        let top_level = || plan.parent.is_none_or(|parent| root(parent)
+            || p.functions.get(parent as usize).is_some_and(|outer| outer.header().parent.is_none_or(root)));
+        let named = || self.programs.ahead_images(program, p).is_some_and(|images| images.names_closure(id));
+        !p.is_module() && (top_level() || named())
     }
 
     /// Adds the `constructor` of a recorded closure's prototype, and for a plain-scope closure of

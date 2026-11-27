@@ -98,6 +98,11 @@ fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::Sha
 }
 
 /// The messaging API object, built on first use.
+/// The API, once something built it (`api`).
+fn built_api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    state(c).borrow().messaging.api.ok_or_else(|| RootedError::host("worker_threads API is not built"))
+}
+
 fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(api) = state(c).borrow().messaging.api {
         return Ok(api);
@@ -143,6 +148,7 @@ fn register(c: &mut Context<'_>, endpoint: Arc<Endpoint>, broadcast: Option<Stri
     let referenced = broadcast.is_some();
     let port = LocalPort { endpoint, object: placeholder, started: referenced, referenced, closing: false, broadcast };
     shared.messaging.ports.insert(id, port);
+    shared.poll_on(crate::host::node_host::PollSlot::Worker, poll);
     Ok(id)
 }
 
@@ -338,10 +344,15 @@ fn start_worker(c: &mut Context<'_>, worker: RootId, start: WorkerStart) -> Resu
         environment,
         parent: worker_side,
         mode: c.execution_mode(),
+        capabilities: c.host_as::<crate::host::NodeHost>().capabilities,
     };
     let (thread_id, control) = thread::spawn(launch).map_err(RootedError::host)?;
     let object = c.retain(worker)?;
-    state(c).borrow_mut().messaging.workers.push(LocalWorker { control, object, referenced: true, online_delivered: false });
+    let state = state(c);
+    let mut state = state.borrow_mut();
+    state.messaging.workers.push(LocalWorker { control, object, referenced: true, online_delivered: false });
+    state.poll_on(crate::host::node_host::PollSlot::Worker, poll);
+    drop(state);
     Ok((thread_id, port))
 }
 
@@ -477,7 +488,7 @@ pub(crate) fn poll(
     if !has_work(shared_state) {
         return Ok(false);
     }
-    crate::modules::process_shared_vm::deliver_each(runtime, program, "messagingDrain")
+    crate::modules::process_shared_vm::deliver_each(runtime, program, crate::host::shared_vm::operation!("messagingDrain"))
 }
 
 impl State {

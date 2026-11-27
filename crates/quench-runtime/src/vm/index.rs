@@ -8,10 +8,28 @@ const ARRAY_INDEX_GET_DENSE: usize = 0;
 const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
 #[inline(always)]
+#[track_caller]
 pub fn mutable_array_elements(
     elements: &mut crate::heap::ArrayElements,
 ) -> &mut crate::heap::UniqueElements {
+    if quench_runtime_trace_on() && elements.len() == 16900 {
+        let caller = std::panic::Location::caller();
+        eprintln!("MUTABLE-ARRAY double={} at {}:{}", elements.is_double(), caller.file(), caller.line());
+    }
     elements.make_mut()
+}
+
+fn quench_runtime_trace_on() -> bool { crate::trace::Channel::JsJit.on() }
+
+/// `elements`' value at `index`, below its length, set in place where the backing takes it —
+/// a Number into a double one (`replace_in_place`), which keeps it double — and by a copy
+/// otherwise. A double backing that copies here would lose the kind for good (`KEEP_WIDE`),
+/// so every dense store takes this path, not only the one that replaces a present element.
+#[inline(always)]
+pub fn set_dense_element(elements: &mut crate::heap::ArrayElements, index: usize, value: Value) {
+    if !elements.replace_in_place(index, value) {
+        mutable_array_elements(elements).set(index, value);
+    }
 }
 
 impl Vm {
@@ -467,7 +485,7 @@ impl Vm {
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements).set(index, value);
+        set_dense_element(elements, index, value);
         if mapped {
             self.sync_mapped_argument(object, index, value);
         }
@@ -607,7 +625,7 @@ impl Vm {
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(elements.owner_count() != 1);
-            mutable_array_elements(elements).set(index, value);
+            set_dense_element(elements, index, value);
             self.sync_mapped_argument(object, index, value);
             return true;
         }

@@ -83,6 +83,11 @@ impl Context {
         Self { chain: vec![caller], top: u32::from(registers), limit, budget: policy.max_total_instructions, policy }
     }
 
+    /// Keeps the windows planned from now on above `register`, which the site holds across its callee's rows.
+    pub(crate) fn above(&mut self, register: Register) {
+        self.top = self.top.max(u32::from(register) + 1);
+    }
+
     fn reserve(&mut self, bytecodes: usize) {
         self.budget -= bytecodes;
     }
@@ -175,7 +180,8 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
     }
     // The opcode a callee body may hold: the numeric rows of the stencil library, its jumps (the
     // site's own rows), and the `Return` that becomes a move and a jump to the continuation.
-    match callee.code.iter().find(|instruction| !crate::compiled::meaning_compiled::stitchable(**instruction)) {
+    // A receiver read is a move of the call's `this` or a site read on it (`Emitter::receiver_row`).
+    match callee.code.iter().find(|instruction| !crate::compiled::meaning_compiled::stitchable(**instruction) && !reads_plain_receiver(**instruction)) {
         Some(instruction) => Err(Refused::Opcode(instruction.op().class())),
         None => Ok(()),
     }
@@ -184,6 +190,13 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
 /// Whether `instruction` reads the callee's `this`: a `LoadThis`, or a field read whose base is `this`.
 fn reads_receiver(instruction: WideInstruction) -> bool {
     crate::compiled::meaning_compiled::is_load_this(instruction) || (crate::compiled::meaning_compiled::is_get_field(instruction) && instruction.b() == FieldBase::THIS.0)
+}
+
+/// Whether `instruction` is a receiver read the emitter takes as it is: a `LoadThis`, or a field read through
+/// `this` of a named atom, neither returning (`Emitter::receiver_row`).
+fn reads_plain_receiver(instruction: WideInstruction) -> bool {
+    reads_receiver(instruction) && instruction.result_flags() == 0
+        && (crate::compiled::meaning_compiled::is_load_this(instruction) || matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })))
 }
 
 /// Whether `row` reads the register it writes.

@@ -307,3 +307,21 @@ where
         Kind::Content => first_stop(values, reverse, content),
     }
 }
+
+/// The index a `lastIndexOf` search starts from in an array of `length`, as an integer word: the
+/// last index when no `fromIndex` is `present`, else the integer word `from` clamped as the spec
+/// clamps it (a negative one counts from the end). Below zero when nothing is searched. The one
+/// body of the start for every tier.
+#[inline(always)]
+pub fn last_index_start_row<S: super::Stage>(stage: &mut S, present: bool, from: S::Word, length: S::Word) -> S::Word {
+    let last = stage.add_imm(length, u64::MAX);
+    if !present {
+        return last;
+    }
+    let sign = stage.shr_imm(from, 63u64);
+    let negative = stage.ne_imm(sign, 0u64);
+    let counted = stage.add(length, from);
+    let inside = stage.ult(from, length);
+    let clamped = stage.select(inside, from, last);
+    stage.select(negative, counted, clamped)
+}

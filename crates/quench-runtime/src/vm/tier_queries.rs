@@ -317,6 +317,10 @@ impl Vm {
     /// The storage span of the array `base`, its values and readable and writable lengths (`Heap::array_storage_span`).
     #[inline(always)]
     pub fn array_storage_span(&mut self, base: Value) -> Option<(std::ptr::NonNull<Value>, usize, usize)> { self.heap.array_storage_span(base) }
+    /// The raw double words of the array `base` (`Heap::array_double_span`), which a loop kernel
+    /// reads and writes as f64 elements.
+    #[inline(always)]
+    pub fn array_double_span(&mut self, base: Value) -> Option<(std::ptr::NonNull<u64>, usize, usize)> { self.heap.array_double_span(base) }
     /// Widens the elements of the array `base` to tagged values (`Heap::widen_array_elements`).
     #[inline(always)]
     pub fn widen_array_elements(&mut self, base: Value) { self.heap.widen_array_elements(base) }

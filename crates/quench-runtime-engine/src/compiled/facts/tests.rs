@@ -59,7 +59,7 @@ fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
         .map(|instruction| instruction.result_register()).take(names.len()).collect();
     assert_eq!(homes.len(), names.len(), "candidate homes {names:?}: {}", program.disassemble());
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
-    let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+    let mut candidates: quench_runtime::dataflow::BitSet = quench_runtime::dataflow::BitSet::with_capacity(initial.len());
     for register in &homes { candidates.insert(usize::from(*register)); }
     inductive_int32(&mut initial, candidates, header..=back, &instructions, &leaders, &program.constants,
         &super::super::lane_region::writes, &|_| None, false, &[], Observed::NONE);

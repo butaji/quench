@@ -26,7 +26,9 @@ pub(super) enum ParsedProgramShape<'a> {
     /// A Function-constructor program: its root function and the functions nested in its body.
     /// Each nested function compiles as a stub when the source is large, as a script's do, but
     /// its captures are the body's bindings (`nested` stubs), not the global environment.
-    DynamicFunction { parameter_list_end: usize },
+    /// `eager` compiles every body at load, as a native image must: a stub needs a compiler the
+    /// image does not carry.
+    DynamicFunction { parameter_list_end: usize, eager: bool },
     Eval(EvalContext, Option<Span>),
     /// The chunk of a first-call stub: a Script of one function of a program's
     /// text, compiled as it is called, whole.
@@ -83,7 +85,7 @@ impl ParsedProgramShape<'_> {
         let eval = matches!(self, Self::Eval(..));
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
         let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
-        let dynamic = matches!(self, Self::DynamicFunction { .. }) && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
+        let dynamic = matches!(self, Self::DynamicFunction { eager: false, .. }) && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
         Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct, skim: direct || script }
     }
 

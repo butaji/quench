@@ -179,6 +179,7 @@ fn submit(
             ))),
         };
     }
+    state.borrow_mut().poll_on(crate::host::node_host::PollSlot::Cares, |runtime, program, _| poll(runtime, program));
     state.borrow_mut().dns.pending.push(Pending {
         request,
         async_id,
@@ -330,3 +331,4 @@ impl State {
         Ok(())
     }
 }
+

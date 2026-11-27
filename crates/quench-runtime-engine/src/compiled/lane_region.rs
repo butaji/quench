@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
 /// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
 pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
-use cranelift_codegen::bitset::CompoundBitSet;
+use quench_runtime::dataflow::BitSet;
 use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/known_branches.rs"]
@@ -139,7 +139,7 @@ const INLINE_ARRAY_VIEWS: usize = 4;
 
 /// Per block leader that a later PC enters (a loop's header, or a rotated body a latch enters), its forward edges and
 /// the last PC that enters it (`Lowering::carry_typed_views`). The entry `start` has edges no instruction names: none.
-fn loop_carries(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize) -> BTreeMap<usize, (usize, usize)> {
+fn loop_carries(instructions: &[WideInstruction], leaders: &BitSet, start: usize) -> BTreeMap<usize, (usize, usize)> {
     let mut edges: BTreeMap<usize, (usize, Option<usize>)> = BTreeMap::new();
     let mut add = |pc: usize, target: usize| {
         if !leaders.contains(target) || target == start { return; }
@@ -252,7 +252,7 @@ struct LocalProofs {
     headers: Vec<Option<ObjectHeader>>,
     /// The owners of `headers` whose proof a read made, which may name a function's record
     /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
-    readable: CompoundBitSet,
+    readable: BitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
@@ -288,7 +288,7 @@ struct LocalProofs {
     specialized: bool,
     /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
     /// definition retires one, so a call writes back only what changed since the last write-back.
-    homed: CompoundBitSet,
+    homed: BitSet,
 }
 
 impl LocalProofs {
@@ -321,7 +321,7 @@ impl LocalProofs {
     }
 
     /// Keeps the homes `other` also holds, for a state both arrivals reach.
-    fn meet_homed(&mut self, other: &CompoundBitSet) {
+    fn meet_homed(&mut self, other: &BitSet) {
         let dropped: Vec<usize> = self.homed.iter().filter(|register| !other.contains(*register)).collect();
         for register in dropped { self.homed.remove(register); }
     }
@@ -341,10 +341,10 @@ impl State {
 
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
-            headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
+            headers: vec![None; registers + 1], readable: BitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
-            arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
     }
 
     /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
@@ -423,6 +423,8 @@ struct Entry {
     /// The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`).
     capture_values: Variable,
     capture_len: Variable,
+    /// Whether those slots admit every direct store (the captures word's `CAPTURE_STORES_BIT`).
+    capture_stores: Variable,
     /// The word of the storage the activation's environment-owned locals live in (`JsStepDispatch::environment_storage`),
     /// read once at entry and again after an operation that makes an environment (`Lowering::reload_environment`).
     environment: Variable,
@@ -430,9 +432,9 @@ struct Entry {
     /// Flat per-site immutable slot inputs; no per-operation probe.
     fields: smallvec::SmallVec<[(u16, FieldSlotBinding); INLINE_FIELD_BINDINGS]>,
     /// Function-bound numeric calls whose invariant closure was admitted here.
-    calls: CompoundBitSet,
+    calls: BitSet,
     /// Inlined frames whose invariant receiver needs no boxing on recovery.
-    call_receivers: CompoundBitSet,
+    call_receivers: BitSet,
 }
 
 /// A lane body lowered for the code generator, which may run it on another thread.
@@ -553,7 +555,7 @@ impl Default for LoweredRegion {
 struct GuardExit {
     block: ir::Block,
     values: Vec<RegisterFact>,
-    homed: CompoundBitSet,
+    homed: BitSet,
     virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
     pc: u32,
     line: u32,
@@ -643,16 +645,16 @@ pub(crate) struct Lowering<'a, 'f> {
     polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
     /// Already-conforming backedges meet before their common fault poll.
     poll_latches: super::SecondaryMap<ir::Block, Option<ir::Block>>,
-    shared_headers: CompoundBitSet,
+    shared_headers: BitSet,
     payload: ir::Value,
     registers_base: ir::Value,
     /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
     entry_words: (ir::Value, ir::Value),
     callee_slots: Vec<(u16, ir::Value)>,
     registers: Registers,
-    written: CompoundBitSet,
+    written: BitSet,
     /// Source operations already consumed by an exact, unobservable scalar pair.
-    consumed: CompoundBitSet,
+    consumed: BitSet,
     blocks: Vec<Option<ir::Block>>,
     /// Per resume PC, its leave blocks, one per set of registers stored (`exits.rs`).
     exits: Vec<Vec<exits::ExitBlock>>,
@@ -692,7 +694,7 @@ pub(crate) struct Lowering<'a, 'f> {
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<InvariantRead>>,
     /// The unit's block leaders (`leaders`), made once for the first loop whose reads hoist.
-    unit_leaders: std::cell::OnceCell<std::rc::Rc<CompoundBitSet>>,
+    unit_leaders: std::cell::OnceCell<std::rc::Rc<BitSet>>,
     /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
     intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
@@ -747,10 +749,10 @@ pub(crate) struct Lowering<'a, 'f> {
     carried_typed: BTreeMap<usize, Vec<smallvec::SmallVec<[TypedProof; INLINE_ARRAY_VIEWS]>>>,
     /// The block leaders an entry or a lowered edge enters: a block none does is not
     /// lowered, its code reached only past a leave.
-    entered: CompoundBitSet,
+    entered: BitSet,
     /// The block leaders sealed when lowered, which only edges lowered before enter
     /// (`edges::leader_edges`): a variable read in one resolves without a parameter.
-    sealable: CompoundBitSet,
+    sealable: BitSet,
     /// Whether a run can do anything but leave: complete natively or run a loop natively. A
     /// body that can do neither declines (`lower`).
     finishes: bool,
@@ -1289,7 +1291,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     /// The unit's block leaders (`leaders`), made once for the unit.
-    fn unit_leaders(&self) -> &CompoundBitSet {
+    fn unit_leaders(&self) -> &BitSet {
         self.unit_leaders.get_or_init(|| std::rc::Rc::new(leaders(&self.unit.instructions)))
     }
 
@@ -1386,8 +1388,8 @@ struct PendingUnit {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-pub(crate) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
-    let mut leaders = CompoundBitSet::with_capacity(instructions.len());
+pub(crate) fn leaders(instructions: &[WideInstruction]) -> BitSet {
+    let mut leaders = BitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
         let layout = instruction.op().control_flow_layout();
@@ -1405,7 +1407,7 @@ pub(crate) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
 
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
 /// nops back to `header` within one block, so copies share the comparison's SSA value.
-fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
+fn move_root(instructions: &[WideInstruction], leaders: &BitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
     for at in (header..pc).rev() {
         if at + 1 < pc && leaders.contains(at + 1) { break; }
         let instruction = instructions[at];
@@ -1563,7 +1565,7 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
 /// Resolve only block-local receiver copies to a caller home unchanged by the
 /// whole loop. A branch or implicit frame initialization ends this proof.
 fn invariant_field_owner(unit: &super::lane_unit::Unit, header: usize, pc: usize,
-    mut owner: Register, written: &BTreeSet<Register>, boundaries: &CompoundBitSet) -> Option<Register> {
+    mut owner: Register, written: &BTreeSet<Register>, boundaries: &BitSet) -> Option<Register> {
     for at in (header..pc).rev() {
         if owner < unit.caller_registers && !written.contains(&owner) { return Some(owner); }
         let instruction = unit.instructions[at];
@@ -1596,7 +1598,7 @@ fn entry_callee(unit: &super::lane_unit::Unit, frame: usize, written: &BTreeSet<
 /// A monomorphic frame whose callee comes from an entry read through only
 /// block-local copies. Other markers implicitly initialize scratch homes.
 fn invariant_callee_read(unit: &super::lane_unit::Unit, reads: impl IntoIterator<Item = usize>, frame: usize,
-    boundaries: &CompoundBitSet) -> Option<usize> {
+    boundaries: &BitSet) -> Option<usize> {
     let call = unit.frames[frame];
     let marker = unit.markers[frame];
     if call.alternative.is_some() || unit.frames.iter().any(|other| other.alternative == Some(marker)) {
@@ -1659,7 +1661,7 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
                 .any(|target| target <= pc && (pc, target) != (back, header)))
             || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
                 (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
-        let mut written: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(unit.registers));
+        let mut written: BitSet = BitSet::with_capacity(usize::from(unit.registers));
         for instruction in &unit.instructions[header..=back] {
             for register in writes(*instruction) { written.insert(usize::from(register)); }
         }
@@ -1796,6 +1798,9 @@ pub(crate) struct RegionSpecializer<'p> {
     pub(crate) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
     pub(crate) int_captures: &'p [u16],
+    /// The kind each loop array's register held at entry (`Observation::typed_kinds`): an array's
+    /// reads and writes keep their own kind's arm, not a walk over every kind.
+    pub(crate) typed_kinds: &'p [(Register, quench_runtime::tier_surface::TypedArrayKind)],
     pub(crate) plan: RegionPlan,
     /// The gate's proof that this region's compile may run (minted by `specialize`).
     pub(crate) admitted: super::admission::CompiledUnit,
@@ -1807,7 +1812,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.typed_kinds, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1817,6 +1822,20 @@ thread_local! {
     static DECLINED: std::cell::Cell<Option<(&'static str, usize)>> = const { std::cell::Cell::new(None) };
     /// The opcodes this thread's current lowering leaves at because it has no lowering for them.
     static UNLOWERED: std::cell::RefCell<std::collections::BTreeSet<String>> = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    /// Whether this thread's current lowering wrote a value whose lane disagrees with the
+    /// register's representation (`register_define`): the register's variable is per representation,
+    /// so the body is no well-formed lowering and is declined.
+    static MISMATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes that the lowering wrote a value of the wrong representation (`register_define`).
+pub(super) fn note_mismatch() {
+    MISMATCH.with(|mismatch| mismatch.set(true));
+}
+
+/// Whether the current lowering wrote a representation mismatch.
+fn mismatched() -> bool {
+    MISMATCH.with(std::cell::Cell::get)
 }
 
 /// Notes why the lowering declines, for `QUENCH_TRACE=aot-lanes`; the first reason stands.
@@ -1844,8 +1863,9 @@ pub(crate) fn lower_body(
     let isa = super::jit_backend::target_isa()?;
     DECLINED.with(|declined| declined.set(None));
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
+    MISMATCH.with(|mismatch| mismatch.set(false));
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], admitted,
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], admitted,
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views } };
     // The scalar entry lowers first: the body calls it only where it exists.
@@ -1909,6 +1929,7 @@ pub(crate) fn lower(
     (int_entries, number_entries, string_entries): (&[(Register, IntRange)], &[Register], &[Register]),
     typed_captures: &[u16],
     int_captures: &[u16],
+    typed_kinds: &[(Register, quench_runtime::tier_surface::TypedArrayKind)],
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
@@ -1948,10 +1969,13 @@ pub(crate) fn lower(
     let mut stage = emit(&mut builder);
     let payload = if numeric { stage.raw_const(Lane::I64, 0) } else {
         stage.raw_load(Lane::I64, regions::dispatch(), context, std::mem::offset_of!(CallContext, head.adapter_payload) as i32) };
-    let fault_poll = match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
+    // An image body is linked away from its compile, so a fault poll would name the compiling
+    // process's fault address: its back edge polls `context.interrupt` instead (no trapping check).
+    let fault_poll = !matches!(helpers, LaneHelpers::Ahead)
+        && match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
         && super::FAULT_POLL_SUPPORTED && quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).next().is_some();
-    let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
-    let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
+    let mut seen_headers: BitSet = BitSet::with_capacity(unit.instructions.len());
+    let mut shared_headers = BitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Jump)) { continue; }
         let target = instruction.jump_target() as usize;
@@ -2050,8 +2074,8 @@ pub(crate) fn lower(
         declared_members: Vec::new(),
         declared_member_start: None,
         registers,
-        written: CompoundBitSet::with_capacity(count),
-        consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
+        written: BitSet::with_capacity(count),
+        consumed: BitSet::with_capacity(unit.instructions.len()),
         blocks,
         exits: std::iter::repeat_with(Vec::new).take(unit.instructions.len() + 1).collect(),
         shared_exits: Vec::new(),
@@ -2088,9 +2112,9 @@ pub(crate) fn lower(
         ranges: int_ranges::IntRanges::new(0),
         entering: Vec::new(),
         at: 0,
-        forward: Vec::new(), sealable: CompoundBitSet::new(),
+        forward: Vec::new(), sealable: BitSet::new(),
         arrived: BTreeMap::new(), loop_carry: BTreeMap::new(), carried_typed: BTreeMap::new(),
-        entered: CompoundBitSet::with_capacity(unit.instructions.len()),
+        entered: BitSet::with_capacity(unit.instructions.len()),
         finishes: false,
         leave,
         stop,
@@ -2184,7 +2208,7 @@ pub(crate) fn lower(
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false, |at| lowering.held_field(at),
-        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
@@ -2194,7 +2218,7 @@ pub(crate) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::compiled::performed(&instructions[at]), Some(quench_runtime::staged::Operation::LoadCapture { .. })))),
-        |at| lowering.held_field(at), lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+        |at| lowering.held_field(at), lowering.views, typed_kinds, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
         && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
@@ -2642,7 +2666,7 @@ impl Lowering<'_, '_> {
     /// (`TypeSummary::result`). A return of the function's own record (`Origin::Caller`) returns the
     /// value its `Return` names, typed before it, or the result an operator flagged to return defines,
     /// typed after it. A return the facts do not type joins `ANY`; a body that never returns natively is `ANY`.
-    fn returned_type(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    fn returned_type(&self, instructions: &[WideInstruction], leaders: &BitSet,
         written: &dyn Fn(WideInstruction) -> super::facts::Writes) -> Type {
         let native_calls = self.native_calls;
         let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
@@ -2706,13 +2730,13 @@ impl Lowering<'_, '_> {
 
     /// The running activation's dense capture slots (address, count): a lane body's caller
     /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads its window's header.
-    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value) {
-        if !self.body_entry() {
+    fn entry_capture_words(&mut self) -> (ir::Value, ir::Value, ir::Value) {
+        let word = if self.body_entry() { self.entry_words.1 } else {
             let window = self.loop_window();
-            let word = emit_frame_word(&mut self.builder, window, quench_runtime::staged::frame::CONTEXT_BODY);
-            return self.capture_slots_of(word);
-        }
-        self.entry_capture_slots()
+            emit_frame_word(&mut self.builder, window, quench_runtime::staged::frame::CONTEXT_BODY)
+        };
+        let (values, len) = self.capture_slots_of(word);
+        (values, len, self.raw_binary_imm(Binary::And, word, quench_bjit::shared_words::CAPTURE_STORES_BIT as i64))
     }
 
     /// The window a loop region runs in: its payload's register file, whose header holds its receiver and captures word.
@@ -2725,7 +2749,7 @@ impl Lowering<'_, '_> {
     fn body_entry(&self) -> bool { matches!(self.coverage, Coverage::Prefix | Coverage::PrefixFrom(_)) }
 
     /// The facts every run proves once at entry.
-    fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
+    fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &BitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Bound(..) => self.fixed_this(),
@@ -2743,9 +2767,11 @@ impl Lowering<'_, '_> {
         // have stored to it.
         let capture_values = self.builder.declare_var(types::I64);
         let capture_len = self.builder.declare_var(types::I64);
-        let (values, len) = self.entry_capture_words();
+        let capture_stores = self.builder.declare_var(types::I64);
+        let (values, len, stores) = self.entry_capture_words();
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
+        self.builder.def_var(capture_stores, stores);
         let environment = self.builder.declare_var(types::I64);
         let storage = self.environment_word();
         self.builder.def_var(environment, storage);
@@ -2757,8 +2783,8 @@ impl Lowering<'_, '_> {
                 let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                 CheckedObjectTable::prove(&mut self.builder, base, exit)
             });
-        let mut calls = CompoundBitSet::with_capacity(self.unit.frames.len());
-        let mut call_receivers = CompoundBitSet::with_capacity(self.unit.frames.len());
+        let mut calls = BitSet::with_capacity(self.unit.frames.len());
+        let mut call_receivers = BitSet::with_capacity(self.unit.frames.len());
         if !self.completion.numeric() {
             // Roots name canonical caller homes never written by this unit.
             // Local Move aliases are valid only within their basic block.
@@ -2889,7 +2915,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, environment, this, fields, calls, call_receivers }
+        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
     }
 
     /// Per receiver shape a field site folds, whether the receiver has it.
@@ -2975,7 +3001,7 @@ impl Lowering<'_, '_> {
     fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
         object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
         let count = usize::from(self.unit.registers);
-        let mut owners: CompoundBitSet = CompoundBitSet::with_capacity(count + 1);
+        let mut owners: BitSet = BitSet::with_capacity(count + 1);
         let mut reachable = false;
         for (pc, instruction) in instructions.iter().enumerate() {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
@@ -3965,7 +3991,7 @@ impl Lowering<'_, '_> {
     /// Move-only latches can carry the nullish test's direct-object proof to
     /// the next field receiver. These are guarded input contracts, including
     /// the first iteration, never assumptions about values stored in a field.
-    fn require_object_latches(&mut self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    fn require_object_latches(&mut self, instructions: &[WideInstruction], leaders: &BitSet,
         loops: &[(usize, usize)]) {
         for &(header, back) in loops {
             if !matches!(crate::compiled::decoded(instructions[back]), Some(quench_runtime::staged::Operation::Jump))
@@ -4014,7 +4040,7 @@ impl Lowering<'_, '_> {
     /// and backedge must preserve it too; failed hypotheses are removed before
     /// reanalysis so a dependent candidate cannot keep using their assumptions.
     fn refine_inductive_inputs(&mut self, initial: &mut [Type], instructions: &[WideInstruction],
-        boundaries: &CompoundBitSet, loops: &[(usize, usize)],
+        boundaries: &BitSet, loops: &[(usize, usize)],
         own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
         let header = self.coverage.entry();
         let Some((_, back)) = loops.iter().copied().filter(|(start, _)| *start == header)
@@ -4023,7 +4049,7 @@ impl Lowering<'_, '_> {
         // Keep their canonical lowering until this analysis models those edges.
         if self.unit.markers.iter().zip(&self.unit.frames).any(|(pc, frame)|
             (header..=back).contains(pc) && frame.alternative.is_some()) { return; }
-        let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        let mut candidates: BitSet = BitSet::with_capacity(initial.len());
         self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, ty| {
                 let index = usize::from(register);
@@ -4040,7 +4066,7 @@ impl Lowering<'_, '_> {
         // An accumulator that entered as a Number (an int32 or a double) and that every
         // definition keeps a Number is carried as a double, as C carries its `double` sum: the
         // entering edge proves it once, and the loop neither boxes nor tests it.
-        let mut numbers: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        let mut numbers: BitSet = BitSet::with_capacity(initial.len());
         self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, _| {
                 let index = usize::from(register);
@@ -4058,7 +4084,7 @@ impl Lowering<'_, '_> {
 
     /// The registers a loop never writes whose every use proves them Numbers, each a Number header
     /// contract: proved once on the entering edge, so the body holds it as a double and tests it no more.
-    fn number_inputs(&self, header: usize, back: usize, defined: &CompoundBitSet, candidates: &mut Vec<(super::facts::Contract, std::ops::RangeInclusive<usize>)>) {
+    fn number_inputs(&self, header: usize, back: usize, defined: &BitSet, candidates: &mut Vec<(super::facts::Contract, std::ops::RangeInclusive<usize>)>) {
         let Some(types) = self.facts.at(header) else { return };
         for instruction in &self.unit.instructions[header..=back] {
             for register in super::facts::proves_numbers(*instruction, types.len(), &self.program.constants, &writes, self.native_calls) {
@@ -4077,12 +4103,12 @@ impl Lowering<'_, '_> {
     /// yields an int32 takes an int32 header contract. The edge entering the loop proves it
     /// once (`conform`), instead of each use re-proving an exact int32 of a double.
     fn refine_loop_inputs(&mut self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        boundaries: &CompoundBitSet, loops: &[(usize, usize)],
+        boundaries: &BitSet, loops: &[(usize, usize)],
         own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) {
         let mut candidates = Vec::new();
         for &(header, back) in loops.iter().filter(|(header, _)| *header != self.coverage.entry()) {
             let Some(types) = self.facts.at(header) else { continue };
-            let mut defined: CompoundBitSet = CompoundBitSet::with_capacity(types.len());
+            let mut defined: BitSet = BitSet::with_capacity(types.len());
             for instruction in &instructions[header..=back] {
                 for register in writes(*instruction) { defined.insert(usize::from(register)); }
             }
@@ -4102,7 +4128,7 @@ impl Lowering<'_, '_> {
     /// The type already proved for an operand at a use. Feedback is not enough:
     /// an admitted field read carries its actual loop-entry contract, even when
     /// the general analysis has no field feedback (as in linked AOT).
-    fn int32_operand_at(&self, pc: usize, operand: Operand, boundaries: &CompoundBitSet) -> bool {
+    fn int32_operand_at(&self, pc: usize, operand: Operand, boundaries: &BitSet) -> bool {
         if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY).is_int32() { return true; }
         let Some(mut register) = operand.register_index() else { return false };
         if self.facts.before(pc, register, &self.unit.instructions, boundaries,
@@ -4132,8 +4158,8 @@ impl Lowering<'_, '_> {
     /// A capture may choose the same checked integer view as a bitwise use, or
     /// as the already-proved integer on the other side of a Number relation.
     /// This selects an entry guard; it does not prove the capture's type.
-    fn capture_int32_use(&self, pc: usize, boundaries: &CompoundBitSet) -> bool {
-        let mut aliases: CompoundBitSet = CompoundBitSet::with_capacity(usize::from(self.unit.registers));
+    fn capture_int32_use(&self, pc: usize, boundaries: &BitSet) -> bool {
+        let mut aliases: BitSet = BitSet::with_capacity(usize::from(self.unit.registers));
         aliases.insert(usize::from(self.unit.instructions[pc].result_register()));
         for at in pc + 1..self.unit.instructions.len() {
             if boundaries.contains(at) || self.unit.markers.contains(&at) { break; }
@@ -4173,7 +4199,7 @@ impl Lowering<'_, '_> {
     /// The hoisted read of the callee an inlined capture read belongs to, where it is the callee
     /// the frame's call binds: `Ok(None)` for a caller's own read, `Err` where the read is not
     /// admitted (its loop then reads it where it runs).
-    fn admitted_callee_read(&mut self, state: &mut State, pc: usize, reads: &[InvariantRead], boundaries: &CompoundBitSet,
+    fn admitted_callee_read(&mut self, state: &mut State, pc: usize, reads: &[InvariantRead], boundaries: &BitSet,
         exit: ir::Block, held: Option<Register>) -> Result<Option<ir::Value>, ()> {
         let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] else { return Ok(None) };
         if let Some(register) = held {
@@ -5111,7 +5137,7 @@ impl Lowering<'_, '_> {
             return Some(true);
         }
         match (arithmetic, bitwise) {
-            _ if remainder => { self.remainder(state, pc, destination, [left, right], exit); }
+            _ if remainder => { if !self.remainder(state, pc, destination, [left, right], exit) { return Some(false); } }
             (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;

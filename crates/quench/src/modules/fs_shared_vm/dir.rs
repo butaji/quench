@@ -74,18 +74,18 @@ pub(crate) fn dirent_class(c: &mut Context<'_>) -> Result<(RootId, RootId), Root
     for (name, _, kind) in super::stats::TYPE_PREDICATES {
         let key = c.string_rooted(name);
         let data = c.number(f64::from(kind));
-        classes::method(c, prototype, key, "fsDirentIs", name, Some(data))?;
+        classes::method(c, prototype, key, crate::host::shared_vm::marked_operation!("fsDirentIs"), name, Some(data))?;
     }
     Ok((constructor, prototype))
 }
 
 /// The members of `Dir.prototype`: key, operation and function name.
-const DIR_METHODS: [(&str, &str); 5] = [
-    ("read", "fsDirRead"),
-    ("readSync", "fsDirReadSync"),
-    ("close", "fsDirClose"),
-    ("closeSync", "fsDirCloseSync"),
-    ("entries", "fsDirEntries"),
+const DIR_METHODS: [(&str, crate::host::shared_vm::MarkedOperation); 5] = [
+    ("read", crate::host::shared_vm::marked_operation!("fsDirRead")),
+    ("readSync", crate::host::shared_vm::marked_operation!("fsDirReadSync")),
+    ("close", crate::host::shared_vm::marked_operation!("fsDirClose")),
+    ("closeSync", crate::host::shared_vm::marked_operation!("fsDirCloseSync")),
+    ("entries", crate::host::shared_vm::marked_operation!("fsDirEntries")),
 ];
 
 pub(crate) fn dir_class(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
@@ -98,11 +98,11 @@ pub(crate) fn dir_class(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedE
         classes::method(c, prototype, key, operation, name, None)?;
     }
     let dispose = classes::well_known_symbol(c, "dispose", "nodejs.dispose")?;
-    classes::method(c, prototype, dispose, "fsDirDispose", "[nodejs.dispose]", None)?;
+    classes::method(c, prototype, dispose, crate::host::shared_vm::marked_operation!("fsDirDispose"), "[nodejs.dispose]", None)?;
     let async_dispose = classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
-    classes::method(c, prototype, async_dispose, "fsDirAsyncDispose", "[nodejs.asyncDispose]", None)?;
+    classes::method(c, prototype, async_dispose, crate::host::shared_vm::marked_operation!("fsDirAsyncDispose"), "[nodejs.asyncDispose]", None)?;
     let iterator = classes::well_known_symbol(c, "asyncIterator", "Symbol.asyncIterator")?;
-    classes::method(c, prototype, iterator, "fsDirEntries", "entries", None)?;
+    classes::method(c, prototype, iterator, crate::host::shared_vm::marked_operation!("fsDirEntries"), "entries", None)?;
     Ok((constructor, prototype))
 }
 
@@ -246,7 +246,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
         (args::function(c, args[0], "callback")?, c.undefined())
     };
     adjust_in_flight(c, state, 1.0)?;
-    let delivery = crate::modules::stream_shared_vm::closure(c, "fsDirDeliverRead", "", &[state, deliver])?;
+    let delivery = crate::modules::stream_shared_vm::closure(c, crate::host::shared_vm::operation!("fsDirDeliverRead"), "", &[state, deliver])?;
     super::streams::complete(c, delivery, &[])?;
     Ok(result)
 }
@@ -342,8 +342,8 @@ pub(crate) fn iterate(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcom
 /// forgetting them) at the last.
 pub(crate) fn iterate_state(c: &mut Context<'_>, state: RootId) -> Outcome {
     let iterator = c.object_rooted()?;
-    for (name, operation) in [("next", "fsDirIteratorNext"), ("return", "fsDirIteratorReturn")] {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, state)?;
+    for (name, operation) in [("next", crate::host::shared_vm::operation!("fsDirIteratorNext")), ("return", crate::host::shared_vm::operation!("fsDirIteratorReturn"))] {
+        let function = c.host_function_named_with_data(operation, name, state)?;
         put(c, iterator, name, function)?;
     }
     let key = classes::well_known_symbol(c, "asyncIterator", "Symbol.asyncIterator")?;

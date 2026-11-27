@@ -247,7 +247,7 @@ impl Dataflow for DemandSolve<'_> {
 /// block runs again only when a successor's row grew, so each change queues its predecessors
 /// alone instead of sweeping every block once more.
 pub(crate) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-    leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
+    leaders: &quench_runtime::dataflow::BitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
     let masks = masks.as_deref();
     let length = unit.instructions.len();

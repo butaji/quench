@@ -36,7 +36,10 @@ fn lane_inlinable(instruction: WideInstruction) -> bool {
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
         _ if quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() || throws(instruction) => instruction.result_flags() == 0,
-        _ if super::super::meaning_compiled::is_construct(instruction) => instruction.result_flags() == 0,
+        // A construction whose result the callee returns (`return new X(...)`, a returning
+        // construct) splits into the construction and the frame's return (`emit_returning`), as a
+        // returning call does.
+        _ if super::super::meaning_compiled::is_construct(instruction) => plain,
         _ if super::super::meaning_compiled::is_call(instruction) => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         _ => plain && super::super::meaning_compiled::is_numeric_binary(instruction),
     })

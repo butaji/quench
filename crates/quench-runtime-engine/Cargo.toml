@@ -11,10 +11,13 @@ doctest = false
 
 [features]
 # Never enabled here: quench-runtime files this crate mounts name quench-runtime's feature of that name.
-test-support = []
-default = ["jit", "native-execution"]
+test-support = ["intl", "tzdb", "wasm"]
+default = ["jit", "native-execution", "intl", "tzdb", "wasm"]
 # The same features as quench-runtime's, which quench-layers enables together with the core's.
 jit = ["quench-runtime/jit"]
+intl = ["quench-runtime/intl"]
+tzdb = ["quench-runtime/tzdb"]
+wasm = ["quench-runtime/wasm"]
 native-execution = ["quench-runtime/native-execution"]
 profile-field-primitives = ["quench-runtime/profile-field-primitives"]
 profile-lane-exits = ["quench-runtime/profile-lane-exits"]
@@ -38,7 +41,7 @@ quench-bjit = { path = "../quench-bjit" }
 quench-alloc = { path = "../quench-alloc" }
 quench-stack = { path = "../quench-stack" }
 oxc_ast = { workspace = true }
-smallvec = "1.15.2"
+smallvec = { version = "1.15.2", features = ["const_generics"] }
 rustc-hash = "2.1"
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
 wasmparser = "0.247"

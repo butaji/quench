@@ -1,6 +1,5 @@
 //! `node:querystring` in Rust (lib/querystring.js and internal/querystring.js), over
 //! UTF-16 code units as the JavaScript implementation reads them.
-use crate::host::shared_vm::operation;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 type Context<'a> = NativeContext<'a>;
@@ -29,14 +28,14 @@ const SURROGATE_BITS: u32 = 0x3ff;
 const SUPPLEMENTARY_START: u32 = 0x10000;
 
 /// The exports, in Node's order: (export, function name, operation, length).
-const EXPORTS: &[(&str, &str, &str, f64)] = &[
-    ("unescapeBuffer", "unescapeBuffer", "querystringUnescapeBuffer", 2.0),
-    ("unescape", "qsUnescape", "querystringUnescape", 2.0),
-    ("escape", "qsEscape", "querystringEscape", 1.0),
-    ("stringify", "stringify", "querystringStringify", 4.0),
-    ("encode", "stringify", "querystringStringify", 4.0),
-    ("parse", "parse", "querystringParse", 4.0),
-    ("decode", "parse", "querystringParse", 4.0),
+const EXPORTS: &[(&str, &str, crate::host::shared_vm::MarkedOperation, f64)] = &[
+    ("unescapeBuffer", "unescapeBuffer", crate::host::shared_vm::marked_operation!("querystringUnescapeBuffer"), 2.0),
+    ("unescape", "qsUnescape", crate::host::shared_vm::marked_operation!("querystringUnescape"), 2.0),
+    ("escape", "qsEscape", crate::host::shared_vm::marked_operation!("querystringEscape"), 1.0),
+    ("stringify", "stringify", crate::host::shared_vm::marked_operation!("querystringStringify"), 4.0),
+    ("encode", "stringify", crate::host::shared_vm::marked_operation!("querystringStringify"), 4.0),
+    ("parse", "parse", crate::host::shared_vm::marked_operation!("querystringParse"), 4.0),
+    ("decode", "parse", crate::host::shared_vm::marked_operation!("querystringParse"), 4.0),
 ];
 
 /// `noEscape`: the characters `querystring.escape` keeps.
@@ -52,12 +51,13 @@ fn hex_value(unit: u16) -> Option<u8> {
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let module = c.object_rooted()?;
     let data = c.array_rooted(&[module])?;
-    let mut created: Vec<(&str, RootId)> = Vec::new();
-    for &(export, name, operation_name, length) in EXPORTS {
+    let mut created: Vec<(quench_runtime::HostFunctionId, RootId)> = Vec::new();
+    for &(export, name, operation, length) in EXPORTS {
+        let operation_name = operation.id();
         let function = match created.iter().find(|(existing, _)| *existing == operation_name) {
             Some(&(_, function)) => function,
             None => {
-                let function = c.host_function_named_with_data(operation(operation_name), name, data)?;
+                let function = c.host_function_named_with_data(operation_name, name, data)?;
                 let key = c.string_rooted("length");
                 let length = c.number(length);
                 c.define_data_property_rooted(function, key, length, false, false, true)?;

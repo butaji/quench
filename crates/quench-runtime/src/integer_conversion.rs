@@ -17,12 +17,9 @@ pub fn to_integer_or_infinity(number: f64) -> f64 {
 /// negative count is from the end, and the result is clamped to `0..=len`.
 #[inline]
 pub fn relative_index(number: f64, len: usize) -> usize {
-    let integer = to_integer_or_infinity(number);
-    if integer < 0.0 {
-        len.saturating_sub((-integer) as usize)
-    } else {
-        (integer as usize).min(len)
-    }
+    // An infinity saturates to the widest integer, which clamps the same way
+    // (`staged::string_search::clamped_index`).
+    crate::staged::string_search::relative_bound(to_integer_or_infinity(number) as i64, len)
 }
 
 /// ToLength of a Number: NaN and non-positive values are 0, the rest truncate and clamp to

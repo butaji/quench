@@ -165,20 +165,20 @@ pub(crate) fn verify(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
 }
 
 pub(crate) fn build(c: &mut Context<'_>, writable: RootId) -> Result<Vec<(Class, RootId)>, RootedError> {
-    let sign = super::subclass(c, "cryptoSignConstructor", "Sign", writable)?;
+    let sign = super::subclass(c, crate::host::shared_vm::marked_operation!("cryptoSignConstructor"), "Sign", writable)?;
     let prototype = get(c, sign, "prototype")?;
     define_methods(
         c,
         prototype,
-        &[("_write", "cryptoSignWrite"), ("update", "cryptoSignUpdate"), ("sign", "cryptoSignSign")],
+        &[("_write", crate::host::shared_vm::marked_operation!("cryptoSignWrite")), ("update", crate::host::shared_vm::marked_operation!("cryptoSignUpdate")), ("sign", crate::host::shared_vm::marked_operation!("cryptoSignSign"))],
         Members::Assigned,
     )?;
-    let verify = super::subclass(c, "cryptoVerifyConstructor", "Verify", writable)?;
+    let verify = super::subclass(c, crate::host::shared_vm::marked_operation!("cryptoVerifyConstructor"), "Verify", writable)?;
     let prototype = get(c, verify, "prototype")?;
     define_methods(
         c,
         prototype,
-        &[("_write", "cryptoSignWrite"), ("update", "cryptoSignUpdate"), ("verify", "cryptoVerifyVerify")],
+        &[("_write", crate::host::shared_vm::marked_operation!("cryptoSignWrite")), ("update", crate::host::shared_vm::marked_operation!("cryptoSignUpdate")), ("verify", crate::host::shared_vm::marked_operation!("cryptoVerifyVerify"))],
         Members::Assigned,
     )?;
     Ok(vec![(Class::Sign, sign), (Class::Verify, verify)])

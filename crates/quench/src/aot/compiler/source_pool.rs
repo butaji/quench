@@ -1,4 +1,7 @@
-use std::{collections::{BTreeMap, BTreeSet}, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
 
 /// Exact UTF-8 inputs, shared across source identities, diagnostics and loader assets.
 /// Longer texts own contained inputs so wrappers and their original bodies share bytes.
@@ -9,9 +12,16 @@ pub(super) struct SourcePool<'a> {
 
 impl<'a> SourcePool<'a> {
     pub(super) fn new(inputs: impl IntoIterator<Item = &'a str>) -> Self {
-        let mut inputs: Vec<_> = inputs.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+        let mut inputs: Vec<_> = inputs
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         inputs.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
-        let mut pool = Self { text: String::new(), ranges: BTreeMap::new() };
+        let mut pool = Self {
+            text: String::new(),
+            ranges: BTreeMap::new(),
+        };
         for text in inputs {
             let start = pool.text.find(text).unwrap_or_else(|| {
                 let start = pool.text.len();
@@ -23,11 +33,20 @@ impl<'a> SourcePool<'a> {
         pool
     }
 
-    pub(super) fn text(&self) -> &str { &self.text }
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
 
     pub(super) fn reference(&self, text: &str) -> String {
-        let range = self.ranges.get(text).expect("native source collected before emission");
-        format!("quench_native_source_text({}, {})", range.start, range.len())
+        let range = self
+            .ranges
+            .get(text)
+            .expect("native source collected before emission");
+        format!(
+            "quench_native_source_text({}, {})",
+            range.start,
+            range.len()
+        )
     }
 }
 
