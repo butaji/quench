@@ -41,6 +41,7 @@ use crate::ext_traits::*;
 pub(crate) mod inline;
 pub(crate) mod chain;
 pub(crate) mod builtin;
+pub(crate) mod planned;
 use builtin::BuiltinCall;
 pub(crate) use chain::ChainRead;
 use chain::chained_reads;
@@ -219,6 +220,9 @@ pub(crate) struct DirectFacts {
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
     pub(crate) held: bool,
+    /// The last arm of a site whose plan has no miss (`Miss::None`): once every arm is chained, the row
+    /// need not check the callee register, the closed world having no other callee (`plan_call`).
+    pub(crate) closed: bool,
     /// The address of the callee's `DirectCallee`, which the body owns (`Callees::owned`, moved into the
     /// published method or region whole, so the address holds): the native header's descriptor word
     /// (`CallRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
@@ -252,6 +256,7 @@ impl DirectFacts {
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             held,
+            closed: false,
             descriptor: std::ptr::from_ref(callee).addr() as u64,
         }
     }
@@ -425,8 +430,9 @@ fn argument_places(plan: &CallPlan) -> [u8; PLACED_ARGUMENTS] {
 }
 
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
-/// argument is passed from (`argument_places`).
-fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64) -> Result<(CallPart, Box<CallRecord>), String> {
+/// argument is passed from (`argument_places`). The row compares the callee register unless a Stable fact holds
+/// it or `unchecked` says the plan's closed arms leave no other callee.
+fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64, unchecked: bool) -> Result<(CallPart, Box<CallRecord>), String> {
     // The callee's plain header: a native frame (NATIVE, as the u-jit's `push_native` writes it) of `argc`
     // arguments in the callee's function, which `native_frames::link_header` links by its descriptor.
     let packed = u64::from(facts.function) | PLAIN_FLAG | NATIVE_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
@@ -452,7 +458,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
     let pinned = arguments.iter().any(|&place| place != Place::Mem.code());
-    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held, pinned })?;
+    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held && !unchecked, pinned })?;
     let mut holes = [0; HOLES];
     holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
     holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
@@ -496,9 +502,12 @@ pub(crate) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
         .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
     let arguments = argument_places(plan);
+    // The closed plan's last arm is unchecked only where every arm is a direct row: a declined arm reaches the helper row
+    // through the chain, and the unchecked row would take its callee.
+    let every_arm_direct = choices.iter().all(|(choice, _)| *choice == Choice::Direct);
     let mut directs = Vec::new();
     for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
-        directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args)?);
+        directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args, facts.closed && every_arm_direct)?);
     }
     // A builtin callee where no direct row stands declines the region (`decline_builtin`).
     if directs.is_empty() {
