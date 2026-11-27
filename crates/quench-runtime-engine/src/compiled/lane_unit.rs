@@ -12,7 +12,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
+use quench_runtime::bytecode::{FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand, OperandKind, Register, WideInstruction};
 use quench_runtime::bytecode::Function;
 use quench_runtime::compile::call_plan::CallPlan;
 use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
@@ -191,19 +191,19 @@ fn throws(instruction: WideInstruction) -> bool {
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers
-/// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
+/// (`renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
         _ if quench_runtime::staged::Operation::<u64, ()>::is_unit_rewritten(instruction) => true,
         _ if site_field_read(instruction) => true,
         _ => {
-            let plain = if super::osr_loop::inlined_returning(instruction) {
+            let plain = if inlined_returning(instruction) {
                 WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
             } else {
                 instruction
             };
-            super::osr_loop::renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
+            renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
         }
     }
 }
@@ -221,7 +221,7 @@ fn site_field_read(instruction: WideInstruction) -> bool {
 fn completion_length(instruction: WideInstruction) -> u32 {
     if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Return { .. })) {
         2
-    } else if super::osr_loop::inlined_returning(instruction) {
+    } else if inlined_returning(instruction) {
         3
     } else {
         1
@@ -558,7 +558,7 @@ impl Emitter {
     #[allow(clippy::too_many_arguments)]
     fn emit_inlined(&mut self, instruction: WideInstruction, origin: Origin, register: &dyn Fn(Register) -> Register,
         receiver: Register, result: Register, continuation: u32, target_of: &dyn Fn(u32) -> Option<u32>) -> Option<()> {
-        if super::osr_loop::inlined_returning(instruction) {
+        if inlined_returning(instruction) {
             return self.emit_returning(instruction, origin, register, receiver, result, continuation, target_of);
         }
         let rewritten = match () {
@@ -579,7 +579,7 @@ impl Emitter {
                 let flags = instruction.result_flags();
                 super::meaning_compiled::get_field_record(flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }
-            _ => super::osr_loop::renamed(instruction, &register, receiver, &target_of)?,
+            _ => renamed(instruction, &register, receiver, &target_of)?,
         };
         self.unit.instructions.push(rewritten);
         self.unit.origins.push(origin);
@@ -587,7 +587,7 @@ impl Emitter {
     }
 
     /// A callee's instruction that computes the returned value, then moves it to `result` and
-    /// jumps to `continuation` (`osr_loop::inlined_returning`).
+    /// jumps to `continuation` (`inlined_returning`).
     #[allow(clippy::too_many_arguments)]
     fn emit_returning(&mut self, instruction: WideInstruction, origin: Origin, register: &dyn Fn(Register) -> Register,
         receiver: Register, result: Register, continuation: u32, target_of: &dyn Fn(u32) -> Option<u32>) -> Option<()> {
@@ -596,7 +596,7 @@ impl Emitter {
             WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
         } else {
             let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
-            super::osr_loop::renamed(plain, &register, receiver, &target_of)?
+            renamed(plain, &register, receiver, &target_of)?
         };
         self.unit.instructions.push(computed);
         self.unit.instructions.push(super::meaning_compiled::move_record(result, register(instruction.result_register())));
@@ -681,3 +681,78 @@ pub(crate) fn with_plans<'f>(
 #[cfg(test)]
 #[path = "lane_unit/tests.rs"]
 pub(crate) mod tests;
+
+/// Whether an inlined callee's instruction computes its result and returns it in one
+/// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
+/// the computation and the `Return` it makes.
+pub(crate) fn inlined_returning(instruction: WideInstruction) -> bool {
+    instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER
+        && !quench_runtime::staged::returns(instruction.op())
+        && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
+        && instruction.defined_register().is_some()
+}
+
+
+/// `instruction` with each register `register` renames, a `this` field base made the
+/// `this` register, and a jump target `target` renames; `None` for a field it cannot
+/// rename, or a register with flags.
+pub(crate) fn renamed(
+    instruction: WideInstruction,
+    register: &dyn Fn(Register) -> Register,
+    this: Register,
+    target: &dyn Fn(u32) -> Option<u32>,
+) -> Option<WideInstruction> {
+    let op = instruction.op();
+    let rename = |field: InstructionField, raw: u16| -> Option<u16> {
+        Some(match op.field_layout(field) {
+            FieldLayout::Unused
+            | FieldLayout::BooleanFlag
+            | FieldLayout::BinaryOperator
+            | FieldLayout::CacheSiteIndex
+            | FieldLayout::FieldLookupCacheSiteIndex => raw,
+            FieldLayout::ResultRegister
+            | FieldLayout::Register
+            | FieldLayout::WriteRegister
+            | FieldLayout::ReadWriteRegister => {
+                (raw <= Operand::PAYLOAD_MASK).then_some(())?;
+                register(raw)
+            }
+            FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
+                let operand = Operand(raw);
+                match operand.kind()? {
+                    OperandKind::Register => Operand::register(register(operand.payload())).0,
+                    OperandKind::Constant => raw,
+                    OperandKind::Field | OperandKind::Local => return None,
+                }
+            }
+            FieldLayout::FieldBase => {
+                let base = FieldBase(raw);
+                if base == FieldBase::THIS {
+                    FieldBase::register(this).0
+                } else {
+                    FieldBase::register(register(base.register_index()?)).0
+                }
+            }
+            _ => return None,
+        })
+    };
+    let a = rename(InstructionField::A, instruction.a())?;
+    let b = rename(InstructionField::B, instruction.b())?;
+    let c = rename(InstructionField::C, instruction.c())?;
+    let imm = match op.immediate_role() {
+        ImmediateRole::JumpTarget => target(instruction.imm())?,
+        // A call's argument window renames as one block: each of its registers to the one
+        // after the base's rename.
+        _ if quench_runtime::staged::calls(op) => {
+            let imm = instruction.imm();
+            let base = ImmediateLayout::call_window_base(imm);
+            let count = ImmediateLayout::argument_count(imm);
+            let renamed_base = register(base);
+            (0..count).all(|offset| register(base + offset) == renamed_base + offset).then_some(())?;
+            ImmediateLayout::call_immediate(renamed_base, count, ImmediateLayout::direct_eval(imm), ImmediateLayout::parameter_eval(imm))
+        }
+        _ => instruction.imm(),
+    };
+    Some(WideInstruction::new(op, a, b, c, imm))
+}
+

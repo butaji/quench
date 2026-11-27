@@ -36,8 +36,7 @@ use quench_runtime::bytecode::{Class, FieldBase, FieldLookup, Register, WideInst
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::tier_surface::GlobalFact;
 use quench_runtime::value::Value;
-use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, InlinedCall};
-use super::super::super::osr_loop::{inlined_returning, renamed};
+use super::super::super::lane_unit::{inlined_returning, renamed, CallRecovery, CallTarget, CalleeBinding, InlinedCall};
 use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
 use super::super::super::base_rows::Heap;
