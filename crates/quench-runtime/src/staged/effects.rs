@@ -54,6 +54,122 @@ impl Effects {
     /// An operation that may run guest code or collect: it reads and writes every region.
     pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
+
+    /// The union of two rows: a region is read or written if either row reads or writes it, and a
+    /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
+    pub(crate) const fn join(self, other: Self) -> Self {
+        Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
+            may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
+            may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
+    }
+}
+
+/// How far a step can take the running activation out of native code (a leave). The lattice is a
+/// chain: a function that cannot leave is `Never`; one that can leave only before its first effect
+/// is `RestartCall`, so the call starts again from its entry; one that can leave after an effect
+/// needs its frame rebuilt from the registers, `Materialize`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Leaves {
+    /// No step can leave the activation under the facts.
+    Never,
+    /// The activation may leave only before its first write or allocation, so the call restarts.
+    RestartCall,
+    /// A leave needs the frame rebuilt.
+    Materialize,
+}
+
+impl Leaves {
+    /// The larger of the two: the chain's join is its maximum.
+    pub const fn join(self, other: Self) -> Self {
+        if other as u8 > self as u8 { other } else { self }
+    }
+}
+
+/// Whether a step with effect row `effects` can leave the activation, and how, given whether an
+/// earlier step of the same function wrote or allocated. A step that may throw, run guest code or
+/// collect can leave. Before any write or allocation nothing the call did is visible, so the call
+/// restarts from its entry; after one, the frame must be rebuilt. Every tier reads this one rule.
+const fn leave_of(effects: Effects, written_before: bool) -> Leaves {
+    let can_leave = effects.may_throw || effects.may_call_js || effects.may_collect;
+    match (can_leave, written_before) {
+        (false, _) => Leaves::Never,
+        (true, false) => Leaves::RestartCall,
+        (true, true) => Leaves::Materialize,
+    }
+}
+
+/// One step of a function's code as the fold sees it: an operation's own effect row, or a call,
+/// which stands for the signature joined over the callees it may reach.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Step {
+    Row(Effects),
+    Call(Signature),
+}
+
+/// The composed effect signature of a function: the leaves its steps can cause and the effects they
+/// have together. Composing steps is Kleisli composition in an effect-graded monad: each step is
+/// graded by its row, sequencing joins the rows, and a later step's leave is judged against the
+/// writes of the steps before it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Signature {
+    pub leaves: Leaves,
+    pub effects: Effects,
+}
+
+impl Signature {
+    /// Bottom: no leave and no effect. A function whose steps no solve has seen yet has it.
+    pub const NEVER: Self = Self { leaves: Leaves::Never, effects: Effects::NONE };
+    /// Top: any leave and any effect. A call whose targets the facts do not name has it.
+    pub const ANY: Self = Self { leaves: Leaves::Materialize, effects: Effects::ANY };
+
+    /// The component-wise join: the larger leave and the union of the effect rows.
+    pub const fn join(self, other: Self) -> Self {
+        Self { leaves: self.leaves.join(other.leaves), effects: self.effects.join(other.effects) }
+    }
+
+    /// The signature of `steps` in code order. A call step's leave is its callee's, judged after
+    /// the writes of the steps before it: a callee that restarts is only a restart before any write.
+    pub fn of_steps(steps: impl IntoIterator<Item = Step>) -> Self {
+        let mut signature = Self::NEVER;
+        let mut written = false;
+        for step in steps {
+            let (leaves, effects) = match step {
+                Step::Row(effects) => (leave_of(effects, written), effects),
+                Step::Call(callee) => {
+                    let leaves = match callee.leaves {
+                        Leaves::Never => Leaves::Never,
+                        _ if written => Leaves::Materialize,
+                        leaves => leaves,
+                    };
+                    (leaves, callee.effects)
+                }
+            };
+            signature = signature.join(Self { leaves, effects });
+            written |= effects.writes != RegionSet::NONE || effects.may_alloc;
+        }
+        signature
+    }
+}
+
+/// How a call site is lowered, by one rule in every tier (interpreter, b-jit, u-jit, AOT): an
+/// inlinable callee is inlined; a callee that cannot leave the activation, collect or run guest code
+/// needs no frame, so it is called frameless; any other callee is called with a frame.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallForm {
+    Inline,
+    Frameless,
+    Framed,
+}
+
+/// The call form of a call whose callee has signature `callee`.
+pub fn call_form(callee: Signature, inlinable: bool) -> CallForm {
+    if inlinable {
+        CallForm::Inline
+    } else if callee.leaves == Leaves::Never && !callee.effects.may_collect && !callee.effects.may_call_js {
+        CallForm::Frameless
+    } else {
+        CallForm::Framed
+    }
 }
 
 impl<W> CallOperation<W> {
