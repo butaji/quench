@@ -43,6 +43,32 @@ pub(super) const BUILTINS: &[Builtin] = &[
     Builtin { object: Some("Math"), name: "trunc", arguments: Arguments::Numbers },
 ];
 
+/// The String methods whose result the string rules type (`staged::typing::char_at` and the rest), by name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StringMethod {
+    CharAt,
+    CharCodeAt,
+    Substring,
+    Slice,
+}
+
+/// The String methods the typing names, with their method names.
+pub(super) const STRING_METHODS: [(&str, StringMethod); 4] = [
+    ("charAt", StringMethod::CharAt),
+    ("charCodeAt", StringMethod::CharCodeAt),
+    ("substring", StringMethod::Substring),
+    ("slice", StringMethod::Slice),
+];
+
+/// The String builtins a call's result is typed by (`Types::strings`), where the program leaves them as the host installed
+/// them: the atom of the global `String` (`String(x)` converts `x` to a string), and the atoms of the methods of
+/// `STRING_METHODS` no store or definition names.
+#[derive(Default, PartialEq, Eq)]
+pub(super) struct StringBuiltins {
+    pub(super) global: Option<u32>,
+    pub(super) methods: Vec<(u32, StringMethod)>,
+}
+
 /// A point that may run guest code and the proof that it does not, as the flow found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Quiet {
@@ -138,6 +164,12 @@ impl Proofs {
             Quiet::Intrinsic { object: Some(object), name } => self.intrinsic(object) && !self.stored.contains(&name) && !self.any_change,
             Quiet::OwnField(_) => false,
         }
+    }
+
+    /// Whether a String method named `atom` is still the host's: no store or definition names it, and nothing the analysis
+    /// cannot follow may reach a builtin prototype.
+    pub(super) fn string_method(&self, atom: u32) -> bool {
+        !self.wild && !self.defined && !self.any_change && !self.stored.contains(&atom)
     }
 
     /// Whether global `atom` is still the builtin the host installed: the program never writes it, nor reaches the

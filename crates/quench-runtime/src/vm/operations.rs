@@ -692,11 +692,11 @@ impl Vm {
 
     /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
     /// native's call parked on the chain's top record, kept for the build. The native does not run;
-    /// the run returns the chain as its outcome (`JsError::captured`, taken with `into_captured`). Only the input natives' own entries
+    /// the run returns the chain as its outcome (`JsError::captured`, read as the run's `Captured` exit by `exit::Exit::of`). Only the input natives' own entries
     /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
     pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value], new_target: Option<Value>) -> JsError {
         let callee = self.native_value(native);
-        JsError::captured(self.capture_chain_parked(0, callee, this, args, new_target))
+        JsError::captured(self.capture_chain_parked(0, callee, this, args.into(), new_target))
     }
 
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).

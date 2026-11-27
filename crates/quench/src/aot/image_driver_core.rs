@@ -71,10 +71,10 @@ fn dump_state() -> Result<(), String> {
     // allocates (the chain is not rooted in flight).
     let outcome = {
         let Rest { runtime, program, .. } = &mut *rest;
-        runtime.execute_restored(program.residual()).map_err(quench_runtime::JsError::into_captured)
+        runtime.execute_restored(program.residual())
     };
     match outcome {
-        Err(Ok(chain)) => rest.resume = Some(chain),
+        Err(quench_runtime::vm::exit::Exit::Captured(chain)) => rest.resume = Some(chain),
         _ => rest = fresh_state()?,
     }
     // The dump keeps the realm the closed world reaches: the closure of the program over the
@@ -99,7 +99,7 @@ fn run() -> Result<u8, String> {
     let Rest { runtime, program, resume } = &mut *rest;
     match resume.take() {
         Some(chain) => runtime.resume_input_chain(chain).map_err(|error| uncaught(&error))?,
-        None => runtime.execute_restored(program.residual()).map_err(|error| uncaught(&error))?,
+        None => runtime.execute_restored(program.residual()).map_err(|exit| uncaught(&quench_runtime::JsError::from(exit)))?,
     }
     runtime.run_host_jobs(program.residual()).map_err(|error| uncaught(&error))?;
     runtime.finish_deferred_execution(program.residual()).map_err(|error| uncaught(&error))?;

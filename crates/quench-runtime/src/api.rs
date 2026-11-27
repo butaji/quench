@@ -226,7 +226,7 @@ impl<H: Host> Runtime<H> {
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
         self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
-        self.vm.execute_restored(program.residual()).map(drop)
+        self.vm.execute_restored(program.residual()).map(drop).map_err(JsError::from)
     }
 
     /// Run precompiled global Scripts before a native entry in the same realm.
@@ -411,8 +411,9 @@ impl<H: Host> Runtime<H> {
         self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))
     }
 
-    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
-    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`). Its error is the run's
+    /// exit: a `Captured` one is the chain an input edge stopped at (`Vm::resume_chain` resumes it).
+    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), crate::vm::exit::Exit> {
         self.vm.execute_restored(program).map(drop)
     }
 

@@ -105,13 +105,12 @@ pub fn number_cell(env: &impl Abstract, number: NumberOperation) -> Cell {
 }
 
 /// The cell of an indexed read of `base` at `index`: the elements `base` names (`Elements::element`), joined with those no
-/// field names (`Abstract::unnamed_elements`), and with `undefined` unless the index is within a fixed length
-/// (`within_length`), where a hole may not read. Any value where the types are not solved yet.
+/// field names (`Abstract::unnamed_elements`). A read takes `undefined` where the array has holes or the index is not
+/// within a fixed length (`within_length`). Any value where the types are not solved yet.
 pub fn element(env: &impl Abstract, base: Cell, index: Cell) -> Cell {
     let Some(unnamed) = env.unnamed_elements() else { return Cell::ANY };
     let elements = base.elements.join(unnamed);
-    let element = elements.element();
-    if within_length(elements.length, index.ty) { element } else { element.join(Cell::of(Type::language(ValueType::Undefined))) }
+    elements.element(within_length(elements.length, index.ty))
 }
 
 /// Whether an index of type `index` stays within an array of length `length`: a fixed length, and an integer range inside

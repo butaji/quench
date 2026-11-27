@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 pub mod native_operands;
+pub mod exit;
 pub mod jit_backend;
 pub mod tier_policy;
 pub mod tier_queries;
@@ -2939,7 +2940,7 @@ impl Vm {
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
         }
-        self.run_main(program, drain_jobs)
+        self.run_main(program, drain_jobs).map_err(JsError::from)
     }
 
     #[quench_macros::test_visible]
@@ -2955,7 +2956,7 @@ impl Vm {
 
     /// `execute_deferred_jobs` in a VM `restore_snapshot` restored, whose main program is
     /// `program`: the host resumes its installation where the snapshot left it.
-    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(crate) fn execute_restored(&mut self, program: &ResidualProgram) -> Result<Value, exit::Exit> {
         self.resume_restored()?;
         self.run_main(program, false)
     }
@@ -2969,7 +2970,7 @@ impl Vm {
 
     /// Runs the main program of an installed realm: its module graph, its declarations and
     /// its body, then optionally its jobs.
-    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, JsError> {
+    pub fn run_main(&mut self, program: &ResidualProgram, drain_jobs: bool) -> Result<Value, exit::Exit> {
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -2988,7 +2989,7 @@ impl Vm {
         let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
         // A captured run stops at its native call: its jobs wait for the run that resumes it.
-        if drain_jobs && !result.as_ref().is_err_and(JsError::is_captured) {
+        if drain_jobs && !matches!(result, Err(exit::Exit::Captured(_))) {
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;
@@ -3289,7 +3290,7 @@ impl Vm {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"string_record_reserved_bytes\":{},\"v128_record_reserved_bytes\":{v128_record_reserved_bytes},\"v128_record_used_bytes\":{v128_record_used_bytes},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_free_runs\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_free_runs\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"string_record_reserved_bytes\":{},\"v128_record_reserved_bytes\":{v128_record_reserved_bytes},\"v128_record_used_bytes\":{v128_record_used_bytes},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -3302,10 +3303,10 @@ impl Vm {
             heap.slot_arena_reserved_bytes,
             heap.object_record_reserved_bytes,
             heap.object_record_reusable_ids,
-            heap.object_record_allocation_scan_cursor,
+            heap.object_record_free_runs,
             heap.array_record_reserved_bytes,
             heap.array_record_reusable_ids,
-            heap.array_record_allocation_scan_cursor,
+            heap.array_record_free_runs,
             heap.function_record_reserved_bytes,
             heap.promise_record_reserved_bytes,
             heap.await_record_reserved_bytes,
@@ -3598,14 +3599,19 @@ impl Vm {
         }
     }
 
-    fn materialize_constant(&mut self, constant: &Constant) -> Value {
+    /// The value of a program constant. A String constant the program names is the string of its atom (`atom`), so a
+    /// string constant and the atom it spells are one string object, which `===` between atom-known operands relies on
+    /// (`staged::typing::both_interned`); a `typeof` name keeps its one shared string (`typeof_constant`).
+    fn materialize_constant(&mut self, constant: &Constant, atom: Option<Atom>) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
-            Constant::String(v) => self
-                .typeof_constant(v)
-                .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
+            Constant::String(v) => match (self.typeof_constant(v), atom) {
+                (Some(name), _) => name,
+                (None, Some(atom)) => self.atom_string(atom),
+                (None, None) => self.heap.alloc_string(JsString::from_shared_text(v)),
+            },
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint((**v).clone())),
             Constant::Boolean(true) => Value::TRUE,
@@ -3620,19 +3626,21 @@ impl Vm {
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
         let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
+        let atoms = program_atoms(program);
         for constant in &program.constants {
+            let atom = constant_atom(&atoms, constant);
             let key = match constant {
                 Constant::String(text) => StringConstantKey::Text(text),
                 Constant::StringUnits(units) => StringConstantKey::Units(units),
                 _ => {
-                    constants.push(self.materialize_constant(constant));
+                    constants.push(self.materialize_constant(constant, atom));
                     continue;
                 }
             };
             let value = match strings.entry(key) {
                 std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
                 std::collections::hash_map::Entry::Vacant(slot) => {
-                    *slot.insert(self.materialize_constant(constant))
+                    *slot.insert(self.materialize_constant(constant, atom))
                 }
             };
             constants.push(value);
@@ -4210,6 +4218,25 @@ impl Vm {
 /// A program string constant's text as written, the key under which equal constants share a
 /// cell (`Vm::materialize_program_constants`).
 #[derive(PartialEq, Eq, Hash)]
+/// The atom each name of `program` interns to, by text: the program's atoms are the VM's prefix, so an atom is its index.
+pub(crate) fn program_atoms(program: &ResidualProgram) -> FxHashMap<&str, Atom> {
+    program.atoms.iter().enumerate().map(|(index, name)| {
+        let name: &str = name.as_ref();
+        (name, index as Atom)
+    }).collect()
+}
+
+/// The atom a program constant names: a String constant whose text the program names is that atom.
+pub(crate) fn constant_atom(atoms: &FxHashMap<&str, Atom>, constant: &Constant) -> Option<Atom> {
+    match constant {
+        Constant::String(text) => {
+            let text: &str = text.as_ref();
+            atoms.get(text).copied()
+        }
+        _ => None,
+    }
+}
+
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),

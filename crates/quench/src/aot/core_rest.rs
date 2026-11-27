@@ -12,7 +12,7 @@
 //!   image is the strict replay image (`strict::fold_image`): no realm, no program, no top level.
 //! * **Captured** (`dump`): the build runs the entry to its first input. The input native's entry
 //!   captures the chain of frames that called it, parked at that call (`Vm::capture_input_native`;
-//!   the run returns it as its outcome, `JsError::into_captured`), before the native runs. The dump run writes the realm, the
+//!   the run ends with it as its `Captured` exit, `vm::exit::Exit`), before the native runs. The dump run writes the realm, the
 //!   program and that chain as the dump the image adopts; the image resumes the chain
 //!   (`image_driver_core::run`).
 //! * **Unfinished**: the entry fails, or leaves a top-level await pending, with no input read. The
@@ -151,9 +151,9 @@ pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, Strin
     // A run that reaches an input native returns its caller chain as its outcome: taken at once,
     // before anything allocates, since the chain is not rooted in flight.
     let run = match runtime.execute_deferred_jobs(&program).and_then(|()| runtime.run_host_jobs(&program)) {
-        Err(error) => match error.into_captured() {
-            Ok(chain) => return Ok(Reach::Captured(chain)),
-            Err(error) => Err(error),
+        Err(error) => match quench_runtime::vm::exit::Exit::of(error) {
+            quench_runtime::vm::exit::Exit::Captured(chain) => return Ok(Reach::Captured(chain)),
+            quench_runtime::vm::exit::Exit::Threw(error) => Err(error),
         },
         ok => ok,
     };

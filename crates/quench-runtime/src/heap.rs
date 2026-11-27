@@ -738,12 +738,6 @@ pub struct Heap {
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     live_weight_after_full: usize,
-    /// Record and payload bytes occupied when the current full collection started, and what
-    /// the last full collection kept (`occupied_resident_bytes`).
-    resident_at_full_start: usize,
-    resident_after_full: usize,
-    /// Allocation weight between the last two full collections.
-    weight_between_fulls: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
@@ -755,6 +749,10 @@ pub struct Heap {
     /// mark plus the young budget pacing planned (`set_young_budget`).
     /// Where `allocated` makes a collection due; a shared heap may move it earlier (`request_collection`).
     collect_at: std::cell::Cell<usize>,
+    /// Whether a byte charge (external buffers, payload growth, materialized text, reclaimable
+    /// programs) made a collection due and none has run since: the one fact the polls read
+    /// (`Heap::byte_due`), so cell debt never collects at a poll.
+    byte_due: bool,
     collections: u64,
     /// A process-unique id of this heap's record layout, drawn again by a snapshot restore (which resets `collections` and the record blocks): part of `native_layout_epoch`, so equal values are never another heap's or an earlier layout.
     layout_id: u64,
@@ -1043,6 +1041,7 @@ impl Heap {
             free_slots: 0,
             layout_id: Self::next_layout_id(),
             collect_at: std::cell::Cell::new(MemoryPolicy::default().pacing().minimum_young),
+            byte_due: false,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
             ..Self::default()
@@ -1154,12 +1153,6 @@ impl Heap {
     }
 
     for_each_record_space!(record_families_fns,);
-
-    /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
-    fn occupied_resident_bytes(&mut self) -> usize {
-        let payload = self.payload_bytes;
-        self.record_families_mut().iter().map(|family| family.occupied_bytes()).sum::<usize>() + payload
-    }
 
     /// Each program a live cell or function can still run or resolve names in
     /// (`Cell::program_references`).
@@ -2442,6 +2435,7 @@ impl Heap {
         buffer_bytes::bump_view_epoch();
         self.external_bytes = 0;
         self.external_since_collection = 0;
+        self.byte_due = false;
         self.external_collection_budget = self.pacing().minimum_external_budget;
         self.payload_bytes = 0;
         self.allocated = 0;
@@ -2455,8 +2449,6 @@ impl Heap {
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
-        self.resident_at_full_start = 0;
-        self.resident_after_full = 0;
         self.rc_zero.clear();
         self.rc_candidates.clear();
         self.rc_suspects.clear();
@@ -2464,7 +2456,6 @@ impl Heap {
         if self.rc_active {
             self.set_rc(true);
         }
-        self.weight_between_fulls = 0;
         self.old_live = 0;
         self.collections = 0;
         self.layout_id = Self::next_layout_id();
@@ -2502,6 +2493,7 @@ impl Heap {
         let weight = pending / payload_unit();
         self.uncharged_payload_bytes = pending % payload_unit();
         self.allocated += weight;
+        self.note_byte_due();
     }
     /// Accounts new backing-store bytes; past the external budget a collection is due.
     pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
@@ -2509,7 +2501,20 @@ impl Heap {
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
             self.request_collection();
+            self.note_byte_due();
         }
+    }
+    /// Sets `byte_due` when the byte charge just made a collection due.
+    fn note_byte_due(&mut self) {
+        if self.should_collect() {
+            self.byte_due = true;
+        }
+    }
+    /// Whether a byte charge has made a collection due since the last collection: what the
+    /// polls test, so that only byte-charged debt is serviced at a poll.
+    #[inline(always)]
+    pub fn byte_due(&self) -> bool {
+        self.byte_due
     }
     /// Charges text made on demand (`wtf16::take_materialized_text`) as payload allocation.
     /// The string operations that make it allocate or return through the places that call
@@ -2531,6 +2536,7 @@ impl Heap {
         // allocation weight only, as no sweep releases it from the ledger.
         self.charge_payload_growth(text.units);
         self.allocated += text.beside / payload_unit();
+        self.note_byte_due();
     }
 
     /// Makes a collection due at the next safepoint, through a shared heap.
@@ -2567,7 +2573,6 @@ impl Heap {
             || !self.rc_active && self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocated_since_full(),
-                self.pacing_state.cap_backoff,
             )
             || self.pacing().program_growth_reached(
                 self.reclaimable_program_bytes_after_full,
@@ -2597,6 +2602,7 @@ impl Heap {
         if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(CHARGE_MINIMUM_PROGRAM_GROWTH) {
             self.full_due = true;
             self.request_collection();
+            self.note_byte_due();
         }
     }
     /// Records the footprints of the reclaimable programs that stay, after a full collection.
@@ -2742,9 +2748,6 @@ impl Heap {
     fn start_collection(&mut self, full: bool) -> bool {
         self.retire_record_cursors();
         self.retire_bump();
-        if full {
-            self.resident_at_full_start = self.occupied_resident_bytes();
-        }
         full
     }
 
@@ -3433,10 +3436,10 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         let allocated = self.allocated_since_collection();
         self.allocated_at_collection = self.allocated;
+        self.byte_due = false;
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(self.pacing().minimum_external_budget);
         if full {
-            self.weight_between_fulls = self.allocated_since_full();
             self.allocated_at_full = self.allocated;
             self.reclaimable_program_bytes_since_full = 0;
             self.old_live = legacy_live;
@@ -3447,7 +3450,6 @@ impl Heap {
         if full {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
-            self.resident_after_full = self.occupied_resident_bytes();
         }
         if trims_environments && closure_reads.is_some() {
             self.live_at_environment_trim = Some(live);
@@ -3469,9 +3471,6 @@ impl Heap {
                 allocated,
                 since_full,
                 aged,
-                resident_at_start: if full { self.resident_at_full_start } else { 0 },
-                resident_live: if full { self.resident_after_full } else { 0 },
-                since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
         if self.rc_active {
@@ -3485,7 +3484,7 @@ impl Heap {
                 .ok()
                 .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
                 .map_or(0, |pages| pages * 4);
-            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
         }
         if full && crate::trace::Channel::StorageCensus.on() {
             self.trace_storage_census();

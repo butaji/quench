@@ -187,7 +187,7 @@ impl Vm {
         let result = (|| {
             self.instantiate_global_declarations(&residual)?;
             let root = self.closure(&residual, 0, Value::NULL)?;
-            self.call_root(&residual, root, self.realm.globals)
+            self.call_root(&residual, root, self.realm.globals).map_err(JsError::from)
         })();
         self.set_active_program(active_program);
         self.eval_script_context = eval_script_context;
