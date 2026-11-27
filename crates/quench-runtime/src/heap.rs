@@ -271,6 +271,8 @@ mod record_children;
 mod records;
 mod class_space;
 #[cfg(test)] mod class_space_tests;
+mod object_view;
+pub use object_view::{CellView, CellViewMut, ObjectMut, ObjectRef};
 mod root;
 mod slots;
 mod snapshot;

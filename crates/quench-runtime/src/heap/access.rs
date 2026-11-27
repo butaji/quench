@@ -5,6 +5,7 @@ use super::{
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, ObjectRef32, Value};
 use crate::value_vec::ValueArena;
+use super::object_view::{ObjectMut, ObjectRef};
 use std::collections::HashSet;
 
 mod subscribe; mod function_shapes; mod slot_types; mod remembered; mod collections;
@@ -246,6 +247,31 @@ impl Heap {
     #[inline(always)]
     pub fn record_id(&self, object: ObjectRef32) -> u32 {
         object.0
+    }
+
+    /// The read view of the ordinary object `value` names (`object_view`). Same reach as `object`: a class
+    /// cell or a record. Callers use this in place of `object` and keep the view's method calls.
+    #[inline(always)]
+    pub fn object_ref(&self, value: Value) -> Option<ObjectRef<'_>> {
+        self.object(value).map(ObjectRef::Record)
+    }
+
+    /// The exclusive view of the ordinary object `value` names, the counterpart of `object_mut`.
+    #[inline(always)]
+    pub fn object_mut_ref(&mut self, value: Value) -> Option<ObjectMut<'_>> {
+        self.object_mut(value).map(ObjectMut::Record)
+    }
+
+    /// The exclusive view of `value` for a store of `stored`, the counterpart of `object_store_mut`.
+    #[inline(always)]
+    pub fn object_store_mut_ref(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> {
+        self.object_store_mut(value, stored).map(ObjectMut::Record)
+    }
+
+    /// The exclusive view of `value` with the value arena, the counterpart of `object_and_arena_mut`.
+    #[inline(always)]
+    pub fn object_and_arena_mut_ref(&mut self, value: Value) -> Option<(ObjectMut<'_>, &mut ValueArena)> {
+        self.object_and_arena_mut(value).map(|(object, arena)| (ObjectMut::Record(object), arena))
     }
 
     #[inline(always)]
