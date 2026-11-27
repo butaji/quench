@@ -7,7 +7,8 @@ use super::region::Access;
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
 pub struct Concrete {
-    tables: [u64; 1],
+    /// The property arena's values (`Table::PropertyValues`) and the class space's base (`Table::ClassSpace`).
+    tables: [u64; 2],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,
 }
@@ -15,7 +16,7 @@ pub struct Concrete {
 impl Concrete {
     #[inline(always)]
     pub fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64], heap: std::ptr::null() }
+        Self { tables: [property_values as u64, 0], heap: std::ptr::null() }
     }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
@@ -41,7 +42,7 @@ impl Concrete {
     #[inline(always)]
     pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
         // SAFETY: the caller's heap is live.
-        Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
+        Self { tables: [unsafe { (*heap).arena_values_base() } as u64, unsafe { (*heap).class_space_base() } as u64], heap }
     }
 }
 
@@ -200,6 +201,8 @@ impl Stage for Concrete {
             Table::PropertyValues => self.tables[0],
             // A static's address: no field to load.
             Table::Layouts => crate::heap::layouts::table_base() as u64,
+            // The class space's base is the heap's, which a stage without a heap holds as zero (`new`).
+            Table::ClassSpace => self.tables[1],
             // The owner tables are the heap's: a stage that reads them is a store's (`storing`).
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => {
                 debug_assert!(!self.heap.is_null(), "a slot owner table is read by a stage that holds its heap");

@@ -37,9 +37,6 @@ use crate::bytecode::Operand;
 use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
-use crate::layout::{JS_STEP_ARRAY_CURSOR, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD,
-    JS_STEP_OBJECT_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
-use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
 use crate::words::{canonical, hole, hole64, hop, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places, finish, finish_fast};
@@ -289,62 +286,14 @@ fn typed_length_row<const D: u8>(s: S) -> Out {
     finish(frame, done)
 }
 
-/// A `u32` word of the record at `base + offset`: a cursor's `next` or `limit`.
-#[inline(always)]
-fn word32_at(base: usize, offset: usize) -> u32 {
-    // SAFETY: a layout offset of a live cursor, read whole as `NATIVE_RECORD_CURSOR_LAYOUT` names it.
-    unsafe { ((base.wrapping_add(offset)) as *const u32).read_unaligned() }
-}
-
-/// Writes a `u32` word of a cursor or record the run owns, before any safepoint.
-#[inline(always)]
-fn put_word32(base: usize, offset: usize, value: u32) {
-    // SAFETY: a layout offset of a cursor or a fresh record of the run, which nothing else reads yet.
-    unsafe { ((base.wrapping_add(offset)) as *mut u32).write_unaligned(value) }
-}
-
-/// Writes a `u64` word of a fresh record the run owns, before any safepoint.
-#[inline(always)]
-fn put_word64(base: usize, offset: usize, value: u64) {
-    // SAFETY: as `put_word32`.
-    unsafe { ((base.wrapping_add(offset)) as *mut u64).write_unaligned(value) }
-}
-
-/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`): while the kind's cursor has a
-/// run left (`next < limit`) and its template is captured, the cursor's `next` is bumped, the record of the
-/// bumped id gets the template's two words, and the destination (hole 0) takes the direct reference of that id.
-/// No occupancy is written: the run was occupied when it was claimed. Every other case exits 0 with nothing
-/// written, so the lane's helper or the interpreter makes the object. Nothing here can panic.
+/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`). It leaves for the lane's helper or
+/// the interpreter, which make the object, with nothing written. R4-B2b: a fresh ordinary object's Value is its
+/// class-cell stub granule, claimed with its record (`Heap::publish_object_record`), and this row holds no
+/// region-0 cursor to claim one with, so it cannot deliver the object's word. Nothing here can panic.
 #[inline(always)]
 fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
-    let (cursor_at, records_at, record_size, tag, layout_at, words_at) = if KIND == EMPTY_OBJECT_ROW {
-        (JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, NATIVE_OBJECT_LAYOUT.record_size, DIRECT_OBJECT_TAG,
-            JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD)
-    } else {
-        (JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, NATIVE_ARRAY_LAYOUT.record_size, DIRECT_ARRAY_TAG,
-            JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD)
-    };
-    // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
-    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
-        return Out::Exit(s);
-    }
-    let cursor = word_at(payload, cursor_at) as usize;
-    let records = word_at(payload, records_at) as usize;
-    let layout = word_at(payload, layout_at);
-    if cursor == 0 || records == 0 || layout == 0 {
-        return Out::Exit(s);
-    }
-    let next = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
-    let limit = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
-    if next >= limit {
-        return Out::Exit(s);
-    }
-    let words = word_at(payload, words_at);
-    put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
-    let record = records.wrapping_add((next as usize).wrapping_mul(record_size));
-    put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
-    put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
-    deliver::<D>(s, tag | u64::from(next))
+    let _ = (KIND, D, payload);
+    Out::Exit(s)
 }
 
 /// `ArrayLength`: the `length` of the direct array at hole 1, defined into the destination. A string's

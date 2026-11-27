@@ -92,7 +92,7 @@ impl Heap {
     #[inline(always)]
     pub(crate) unsafe fn unlogged_object_record(&mut self, record_id: u32) -> *mut Object {
         // SAFETY: the caller's contract; the barrier logs nothing for the admitted store.
-        unsafe { self.object_records.get_live_mut_unbarriered(record_id) }
+        unsafe { &raw mut self.object_records.get_live_mut_unbarriered(record_id).object }
     }
 
     /// The `Object` part of function record `record_id` for a store that `store_unlogged` admitted.

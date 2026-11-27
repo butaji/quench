@@ -124,6 +124,8 @@ pub struct ObjectRef32(pub(crate) u32);
 impl ObjectRef32 {
     /// The raw low half, for code that cannot reach the heap yet. Temporary: R4-B2b deletes it.
     #[inline(always)] pub const fn raw(self) -> u32 { self.0 }
+    /// The stub granule this reference names: the identity an object link carries (`ProtoLink`).
+    #[inline(always)] pub(crate) const fn granule(self) -> u32 { self.0 }
 }
 
 #[cfg(feature = "profile-aggregate")]

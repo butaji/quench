@@ -273,7 +273,7 @@ impl Vm {
         if prototype.is_deleted() {
             return None;
         }
-        ProtoLink::object_record(self.heap.record_id(prototype.direct_object_index()?))
+        ProtoLink::object_granule_link(prototype.direct_object_index()?.granule())
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
@@ -299,7 +299,7 @@ impl Vm {
             if link == ProtoLink::NULL {
                 return Some(false);
             }
-            object = self.heap.object_record_by_id(link.object_record_id()?);
+            object = self.heap.object_record_by_granule(link.object_granule()?);
         }
     }
 
