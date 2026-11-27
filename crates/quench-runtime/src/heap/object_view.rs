@@ -5,8 +5,8 @@
 //! A cell's class facts (class, shape, prototype link, flags) live in its class word, so a cell view
 //! reads and edits them through `Object::of_class`: a record of that layout with no payload. A live
 //! cell has no extras and no arena run, so no other operation exists for it. Those operations (extras,
-//! elements, arena runs, dictionary mode, prototype marking) are record-only: they take the departure
-//! edge first (`Heap::object_mut_departing`, `Heap::object_record_mut`), so the view they use is a record.
+//! elements, arena runs, dictionary mode, prototype marking) are record-only: `ObjectRef::record_only` is
+//! `None` for a cell, and `Heap::object_record_mut` departs the cell first, so the record it returns is whole.
 
 #![allow(dead_code)]
 
@@ -78,13 +78,14 @@ macro_rules! read_methods {
 }
 
 impl<'a> ObjectRef<'a> {
-    /// The record view of the object. A live class cell has none: every operation that needs one
-    /// (extras, elements, arena runs) departs the cell first (`Heap::object_record_mut`).
+    /// The record of the object, for the operations a class cell cannot answer (extras, elements, arena runs,
+    /// inline values, payload words). `None` for a cell, which has none of that data. A caller that must
+    /// change record data takes it through `Heap::object_record_mut`, which departs a cell first.
     #[inline(always)]
-    pub fn record(&self) -> &'a Object {
+    pub fn record_only(&self) -> Option<&'a Object> {
         match self {
-            ObjectRef::Record(object) => *object,
-            ObjectRef::Cell(_) => unreachable!("a live class cell has no record view; use a departing accessor"),
+            ObjectRef::Record(object) => Some(*object),
+            ObjectRef::Cell(_) => None,
         }
     }
 
@@ -120,6 +121,22 @@ impl<'a> ObjectRef<'a> {
     }
 }
 
+/// A record is the view of its own object, so a caller holding a record passes it where a view is taken.
+impl<'a> From<&'a Object> for ObjectRef<'a> {
+    #[inline(always)]
+    fn from(object: &'a Object) -> Self {
+        ObjectRef::Record(object)
+    }
+}
+
+/// A view is `Copy`, so a caller holding a reference to one passes the view itself.
+impl<'a> From<&ObjectRef<'a>> for ObjectRef<'a> {
+    #[inline(always)]
+    fn from(object: &ObjectRef<'a>) -> Self {
+        *object
+    }
+}
+
 impl<'a> ObjectMut<'a> {
     /// The shared view of the same object.
     #[inline(always)]
@@ -130,33 +147,14 @@ impl<'a> ObjectMut<'a> {
         }
     }
 
-    /// The record view of the object. A live class cell has none: a record-only edit reaches its
-    /// record through `Heap::object_mut_departing`, which departs the cell first.
+    /// The record of the object, consuming the view so the record outlives it, for record data. `None` for a
+    /// cell. A caller that must change record data takes it through `Heap::object_record_mut`, which departs
+    /// a cell first.
     #[inline(always)]
-    pub fn record(&mut self) -> &mut Object {
+    pub fn record_only_mut(self) -> Option<&'a mut Object> {
         match self {
-            ObjectMut::Record(object) => &mut **object,
-            ObjectMut::Cell(_) => unreachable!("a live class cell has no record view; use Heap::object_mut_departing"),
-        }
-    }
-
-    /// The record view of the object for a mutation that needs record data (extras, arena runs, record
-    /// flags). R4-C4 departs a cell first: on a cell this takes the departure edge, so the record is the whole object.
-    #[inline(always)]
-    pub fn record_mut_departing(&mut self) -> &mut Object {
-        match self {
-            ObjectMut::Record(object) => &mut **object,
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
-        }
-    }
-
-    /// The record view for a mutation of record-only state, consuming the view so the record outlives it.
-    /// R4-C4 departs a cell first; until then this is the Record arm only.
-    #[inline(always)]
-    pub fn record_mut_departing(self) -> &'a mut Object {
-        match self {
-            ObjectMut::Record(object) => object,
-            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+            ObjectMut::Record(object) => Some(object),
+            ObjectMut::Cell(_) => None,
         }
     }
 
@@ -270,15 +268,6 @@ impl<'a> ObjectMut<'a> {
             ObjectMut::Cell(cell) => cell.edit_class(|object| object.note_constant_write()),
         }
     }
-
-    /// A prototype is a record: marking one departs its cell first (`Heap::object_record_mut`).
-    #[inline(always)]
-    pub fn mark_as_prototype(&mut self) {
-        match self {
-            ObjectMut::Record(object) => object.mark_as_prototype(),
-            ObjectMut::Cell(_) => unreachable!("a prototype is a record; mark it through Heap::object_record_mut"),
-        }
-    }
 }
 
 impl Heap {
@@ -300,8 +289,13 @@ impl Heap {
     #[inline(always)]
     pub fn property_get_ref(&self, object: ObjectRef<'_>, slot: usize) -> Option<Value> {
         match object {
-            ObjectRef::Cell(cell) => cell.fields.get(slot).copied(),
-            ObjectRef::Record(_) => self.property_get(object.record(), slot),
+            ObjectRef::Record(record) => self.property_get(record, slot),
+            ObjectRef::Cell(cell) => {
+                if slot >= self.properties.shape_length(cell.shape()) {
+                    return None;
+                }
+                cell.fields.get(slot).copied().filter(|value| !value.is_deleted())
+            }
         }
     }
 }

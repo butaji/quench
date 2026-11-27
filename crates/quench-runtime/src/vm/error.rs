@@ -350,7 +350,7 @@ impl Vm {
         receiver: Value,
     ) -> Result<Value, JsError> {
         // record-only: stack data
-        let records = match self.heap.object(receiver).and_then(|object| object.record().stack_data()) {
+        let records = match self.heap.object(receiver).and_then(|object| object.record_only().and_then(|record| record.stack_data())) {
             Some(StackData::Formatted(value)) => return Ok(value.clone()),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
@@ -418,8 +418,8 @@ impl Vm {
         })();
         if let Ok(value) = outcome {
             let target = self.heap.root_value(receiver_root).unwrap();
-            if let Some(object) = self.heap.object_mut(target) {
-                object.record_mut_departing().set_stack_data(StackData::Formatted(value));
+            if let Some(object) = self.heap.object_record_mut(target) {
+                object.set_stack_data(StackData::Formatted(value));
             }
         }
         for root in roots {
@@ -460,9 +460,8 @@ impl Vm {
                 let site = self.heap.alloc_object(object);
                 let root = self.heap.root(site);
                 roots.push(root);
-                self.heap.object_mut(site)
+                self.heap.object_record_mut(site)
                     .expect("CallSite is an ordinary object")
-                    .record_mut_departing()
                     .set_stack_data(StackData::CallSite(record.clone()));
                 sites.push(self.heap.root_value(root).unwrap());
             }
@@ -722,9 +721,8 @@ impl Vm {
     /// `constructor_opt`, without defining the accessor again.
     fn capture_constructed_error_stack(&mut self, error: Value, constructor_opt: Value) {
         let data = self.captured_stack_data(constructor_opt);
-        self.heap.object_mut(error)
+        self.heap.object_record_mut(error)
             .expect("a constructed error is an object")
-            .record_mut_departing()
             .set_stack_data(data);
     }
 
@@ -761,9 +759,8 @@ impl Vm {
         data: StackData,
     ) -> Result<(), JsError> {
         self.define_error_stack_property(program, target)?;
-        self.heap.object_mut(target)
+        self.heap.object_record_mut(target)
             .expect("stack target remains object-like")
-            .record_mut_departing()
             .set_stack_data(data);
         Ok(())
     }
@@ -878,7 +875,7 @@ impl Vm {
         receiver: Value,
     ) -> Result<Value, JsError> {
         // record-only: stack data
-        let record = match self.heap.object(receiver).and_then(|object| object.record().stack_data()) {
+        let record = match self.heap.object(receiver).and_then(|object| object.record_only().and_then(|record| record.stack_data())) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
                 let method = CALL_SITE_METHODS
@@ -969,13 +966,12 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(mut object) = self.heap.object_mut(receiver)
-            && matches!(
-                object.record().stack_data(),
-                Some(StackData::Captured { .. } | StackData::Formatted(_))
-            ) {
-                object.record_mut_departing().set_stack_data(StackData::Formatted(value));
-            }
+        let formatting = self.heap.object(receiver).and_then(|object| object.record_only()).and_then(|record| record.stack_data());
+        if matches!(formatting, Some(StackData::Captured { .. } | StackData::Formatted(_)))
+            && let Some(object) = self.heap.object_record_mut(receiver)
+        {
+            object.set_stack_data(StackData::Formatted(value));
+        }
         Ok(Value::UNDEFINED)
     }
 
@@ -1242,9 +1238,8 @@ impl Vm {
                 },
             )?;
         }
-        self.heap.object_mut(object)
+        self.heap.object_record_mut(object)
             .expect("primitive wrapper")
-            .record_mut_departing()
             .set_boxed_primitive(value);
         Ok(object)
     }
@@ -1264,9 +1259,8 @@ impl Vm {
             .or_else(|| self.primitive_prototype(value))
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc_object(Self::empty_object(prototype));
-        self.heap.object_mut(object)
+        self.heap.object_record_mut(object)
             .expect("bigint wrapper")
-            .record_mut_departing()
             .set_boxed_primitive(value);
         Ok(object)
     }

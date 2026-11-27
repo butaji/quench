@@ -67,7 +67,7 @@ impl Heap {
         Some(record_id)
     }
 
-    /// The departure edge for a record-only view of `value` (`object_mut_departing`, `object_and_arena_mut`,
+    /// The departure edge for a record-only view of `value` (`object_record_mut`, `object_and_arena_mut`,
     /// `object_record_mut`): a live class cell departs first, so the record the view names is the whole
     /// object. A record or a departed cell is unchanged, and a value that is no ordinary object is ignored.
     #[inline(always)]

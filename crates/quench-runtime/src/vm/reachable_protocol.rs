@@ -282,7 +282,7 @@ impl Vm {
     /// The getter and setter of `holder`'s own accessor `key`; a data property has none.
     pub(super) fn own_accessors(&self, holder: Value, key: PropertyKey) -> Vec<Value> {
         // The slot's attributes and value are record data.
-        let Some(data) = self.heap.object(holder).map(|object| object.record()) else { return Vec::new() };
+        let Some(data) = self.heap.object(holder).and_then(|object| object.record_only()) else { return Vec::new() };
         let Some((_, slot)) = self.object_property_slot(holder, key) else { return Vec::new() };
         match self.slot_attributes(data, slot) {
             Some(attributes) if attributes.accessor => attributes.getter.into_iter().chain(attributes.setter).collect(),
@@ -293,7 +293,7 @@ impl Vm {
     /// The values of `holder`'s own property `key`: its getter and setter, or its data value.
     pub(super) fn own_values(&self, holder: Value, key: PropertyKey) -> Vec<Value> {
         // The slot's attributes and value are record data.
-        let Some(data) = self.heap.object(holder).map(|object| object.record()) else { return Vec::new() };
+        let Some(data) = self.heap.object(holder).and_then(|object| object.record_only()) else { return Vec::new() };
         let Some((_, slot)) = self.object_property_slot(holder, key) else { return Vec::new() };
         let Some(attributes) = self.slot_attributes(data, slot) else { return Vec::new() };
         let mut values: Vec<Value> = attributes.getter.into_iter().chain(attributes.setter).collect();

@@ -1709,10 +1709,10 @@ impl Vm {
                 .collect(),
             "Deferred Module",
         )?;
-        let Some(mut object) = self.heap.object_mut(namespace) else {
+        let Some(object) = self.heap.object_record_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
-        object.record_mut_departing().set_deferred_module(Some(module.clone()));
+        object.set_deferred_module(Some(module.clone()));
         Ok(namespace)
     }
 
@@ -1724,7 +1724,7 @@ impl Vm {
         // The deferred module is record data.
         let Some(module) = self
             .heap.object(namespace)
-            .and_then(|object| object.record().deferred_module().cloned())
+            .and_then(|object| object.record_only().and_then(|record| record.deferred_module().cloned()))
         else {
             return Ok(namespace);
         };
@@ -1775,8 +1775,8 @@ impl Vm {
             }
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
-                if let Some(mut object) = self.heap.object_mut(namespace) {
-                    object.record_mut_departing().set_deferred_module(Some(module));
+                if let Some(object) = self.heap.object_record_mut(namespace) {
+                    object.set_deferred_module(Some(module));
                 }
                 settled?;
                 Ok(namespace)
@@ -1793,7 +1793,7 @@ impl Vm {
         // Only a deferred namespace can evaluate; most objects are rejected before the key.
         if !self
             .heap.object(namespace)
-            .is_some_and(|object| object.record().deferred_module().is_some())
+            .is_some_and(|object| object.record_only().is_some_and(|record| record.deferred_module().is_some()))
         {
             return Ok(());
         }
@@ -1863,13 +1863,13 @@ impl Vm {
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
         // The record is copied whole: its bindings and deferred module are record data.
-        let Some(source) = self.heap.object(source).map(|object| object.record().clone()) else {
+        let Some(source) = self.heap.object(source).and_then(|object| object.record_only().cloned()) else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         if self.heap.copy_property_storage(&source, target)
-            && let Some(mut object) = self.heap.object_mut(target)
+            && let Some(record) = self.heap.object_record_mut(target)
         {
-            let target = object.record_mut_departing();
+            let target = record;
             target.set_proto(source.proto());
             if source.is_module_namespace() {
                 target.set_module_namespace();
@@ -2318,7 +2318,7 @@ impl Vm {
                     let atom = self.intern_atom(name);
                     self.heap.object(namespace)
                         // Module bindings are record data.
-                        .and_then(|object| object.record().module_binding(atom))
+                        .and_then(|object| object.record_only().and_then(|record| record.module_binding(atom)))
                 }
                 _ => None,
             };
@@ -3366,7 +3366,7 @@ impl Vm {
         let bindings = self
             .heap.object(namespace)
             // Module bindings are record data.
-            .map(|object| object.record().module_bindings().to_vec())
+            .and_then(|object| object.record_only().map(|record| record.module_bindings().to_vec()))
             .unwrap_or_default();
         for (atom, program, slot) in bindings {
             let Some(environment) = self.programs.module_environment(program) else {
@@ -4508,15 +4508,15 @@ impl Vm {
             values.push((name, value));
         }
         let namespace = self.module_namespace(values)?;
-        if let Some(mut object) = self.heap.object_mut(namespace) {
-            object.record_mut_departing().set_module_bindings(bindings);
+        if let Some(object) = self.heap.object_record_mut(namespace) {
+            object.set_module_bindings(bindings);
         }
         Ok(namespace)
     }
 
     fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
         // The module bindings are record data.
-        let object = self.heap.object(namespace)?.record();
+        let object = self.heap.object(namespace)?.record_only()?;
         let bindings = object
             .module_bindings()
             .iter()
@@ -4642,8 +4642,8 @@ impl Vm {
         let namespace = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
-        if let Some(mut object) = self.heap.object_mut(namespace) {
-            object.record_mut_departing().set_module_namespace();
+        if let Some(object) = self.heap.object_record_mut(namespace) {
+            object.set_module_namespace();
         }
         self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
         // Export names are distinct, so each is appended with its final attributes and
@@ -4818,7 +4818,7 @@ impl Vm {
         }
         self.heap.mark_prototype(prototype);
         let Some(holder) = self.heap.object(prototype) else { return };
-        if holder.record().has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
+        if holder.record_only().is_some_and(|record| record.has_side_descriptors()) || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
             return;
         }
         if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {

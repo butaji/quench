@@ -40,6 +40,8 @@ pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmT
 pub use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use typed_array_kind::for_each_typed_array;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
+/// A class cell's constant mark retires the readers of its exact shape (`Object::clear_constant_mark`).
+pub(crate) use prototype_values::retire as retire_prototype_values;
 #[allow(unused_imports)]
 pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 #[allow(unused_imports)]

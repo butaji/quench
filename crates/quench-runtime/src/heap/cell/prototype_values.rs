@@ -85,7 +85,7 @@ pub type PrototypeValueWatch = Rc<crate::code_dependencies::PublishedCode<()>>;
 /// A write to a value of a prototype of exact shape `holder`: its readers retire, and where it
 /// had any, the intrinsic epoch advances (`note_intrinsic_change`), so a memo checked by epoch
 /// instead of by its watch retires with them.
-pub(super) fn retire(holder: u32) {
+pub(crate) fn retire(holder: u32) {
     // Retiring drops code, which never writes a prototype, so the table is not reentered.
     let code = PROTOTYPE_VALUE_READERS.with(|readers| readers.borrow_mut().retire(holder));
     let watches = PROTOTYPE_VALUE_WATCH_READERS.with(|readers| readers.borrow_mut().retire(holder));

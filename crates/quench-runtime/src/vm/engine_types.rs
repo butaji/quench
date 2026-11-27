@@ -4520,7 +4520,7 @@ impl LaneStack {
         object: Value,
         slot: usize,
     ) -> Option<ParameterHome> {
-        let (body, entries) = self.window_at(code, heap.object(object)?.record().window_depth()?)?;
+        let (body, entries) = self.window_at(code, heap.object(object)?.record_only()?.window_depth()?)?;
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
         let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(crate::vm::tier_queries::HeapReads::of(heap));
         (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })

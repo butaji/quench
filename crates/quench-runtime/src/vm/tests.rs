@@ -5497,9 +5497,8 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 super::property_key::PropertyKey::string(atom),
                 attributes,
             );
-            let mut object = vm.heap.object_mut(namespace).unwrap();
+            let object = vm.heap.object_record_mut(namespace).unwrap();
             object.set_proto(Value::NULL);
-            let object = object.record_mut_departing();
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -7377,7 +7376,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             ));
             let clone = vm
                 .heap
-                .alloc_object(vm.heap.object(error).unwrap().record().clone());
+                .alloc_object(vm.heap.object(error).unwrap().record_only().unwrap().clone());
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -22961,7 +22960,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             let marked = |vm: &Vm, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-                let id = vm.heap.record_id(object.direct_object_index().unwrap()) as usize;
+                let id = vm.heap.record_id(object.direct_object_index().unwrap()).unwrap() as usize;
                 let (blocks, count) = vm.heap.native_object_mark_blocks();
                 let block = id / layout.mark_records_per_block;
                 assert!(block < count);

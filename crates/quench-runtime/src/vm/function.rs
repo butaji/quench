@@ -300,7 +300,7 @@ impl Vm {
     pub fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.heap.object(object)?;
         // record-only: side descriptors
-        if data.record().has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
+        if data.record_only().is_some_and(|record| record.has_side_descriptors()) || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(data.shape(), atom)?;
@@ -449,7 +449,7 @@ impl Vm {
     /// bound function it calls again (`LaneStack::bound_call`).
     pub fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
         // record-only: flat slot reads below take the record
-        let data = self.heap.object(env)?.record();
+        let data = self.heap.object(env)?.record_only()?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
         // bound function (`bound_parts_layout`), found by name once per shape.

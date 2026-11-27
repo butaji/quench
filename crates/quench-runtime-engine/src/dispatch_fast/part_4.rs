@@ -907,8 +907,7 @@ pub(super) unsafe fn memo_read_in_lane<const SHAPE: u8>(
         {
             let base = read_base_in_lane(quench_runtime::bytecode::FieldBase(*base), arguments, this)?;
             let receiver = vm.record_field_formed_hit(*field, base)?;
-            // R4-B2b: needs heap (HeapReads has no record_id; the engine cannot reach &Heap)
-            let record = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(receiver.direct_object_index()?));
+            let record = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(receiver.direct_object_index()?)?);
             if vm.record_field_formed_hit_in(*method_field, record)? != *method {
                 return None;
             }

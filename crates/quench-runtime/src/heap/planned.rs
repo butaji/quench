@@ -113,7 +113,10 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index().filter(|_| !cfg!(feature = "profile-aggregate")) else {
             return false;
         };
-        let record_id = self.record_id(object_ref);
+        // A live class cell has no record to reserve a run for.
+        let Some(record_id) = self.record_id(object_ref) else {
+            return false;
+        };
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; nothing is stored, so the barrier
         // logs nothing.

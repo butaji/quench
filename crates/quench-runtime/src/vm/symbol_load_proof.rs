@@ -329,7 +329,7 @@ impl Vm {
     pub(super) fn proof_holder<'a>(&'a self, data: &'a crate::heap::Object, hops: u8) -> Option<&'a crate::heap::Object> {
         let mut link = data;
         for _ in 0..hops {
-            link = self.heap.object(link.proto())?.record();
+            link = self.heap.object(link.proto())?.record_only()?;
         }
         Some(link)
     }

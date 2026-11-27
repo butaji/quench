@@ -382,7 +382,7 @@ mod tests {
     /// The interpreter's reading of `run`: `None` for a miss.
     fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
         let mut stage = Concrete::over(heap);
-        let record = heap.object(object)?.record() as *const Object as u64;
+        let record = heap.object(object)?.record_only()? as *const Object as u64;
         let records = heap.object_record_base()? as u64;
         run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
     }
@@ -446,7 +446,7 @@ mod tests {
             let holder = heap.object(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
-                let interpreter = unsafe { heap.holder_property_get_flat(holder.record(), slot) };
+                let interpreter = unsafe { heap.holder_property_get_flat(holder.record_only().unwrap(), slot) };
                 assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
                     "slot {slot} of {len}");
             }

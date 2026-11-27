@@ -287,7 +287,7 @@ impl Vm {
             return None;
         }
         // record: the holder is returned as &Object
-        let holder = self.heap.object(guard.owner)?.record();
+        let holder = self.heap.object(guard.owner)?.record_only()?;
         (holder.shape() == guard.owner_shape).then_some(holder)
     }
 

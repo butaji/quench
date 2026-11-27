@@ -84,7 +84,7 @@ fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
             // SAFETY: the function reads the record and the arena run it names, both live.
             let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
             for (object, values) in &objects {
-                let data = heap.object(*object).unwrap().record();
+                let data = heap.object(*object).unwrap().record_only().unwrap();
                 let Some(expected) = values.get(usize::from(slot)) else { continue };
                 let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.property_values_base() as u64) });
                 let storage = data.plain_property_storage();
@@ -368,7 +368,7 @@ fn a_formed_arena_read_emits_no_inline_flag_test() {
     let mut heap = Heap::new();
     let objects = objects_of_every_form(&mut heap);
     let arena_object = objects.iter().map(|(object, _)| *object)
-        .find(|object| heap.object(*object).unwrap().record().plain_property_storage() == Some(PlainPropertyStorage::Arena))
+        .find(|object| heap.object(*object).unwrap().record_only().unwrap().plain_property_storage() == Some(PlainPropertyStorage::Arena))
         .expect("a wide object keeps its values in the arena");
     let id = heap.object(arena_object).unwrap().hint_shape();
     assert_eq!(ic::form_of_layout(id), Form::Arena);

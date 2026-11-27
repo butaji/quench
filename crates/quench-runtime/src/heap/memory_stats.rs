@@ -200,7 +200,7 @@ impl Heap {
                     .profile_variant_name()
             };
             *cell_variant_counts.entry(variant_name).or_insert(0usize) += 1;
-            let object = object_record.or_else(|| self.object(identity).map(|object| object.record()));
+            let object = object_record.or_else(|| self.object(identity).and_then(|object| object.record_only()));
             if let Some(object) = object {
                 object_headers += 1;
                 let property_width = self.properties.len(object.properties());

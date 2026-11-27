@@ -210,7 +210,7 @@ impl Vm {
         }
         if self
             .heap.object(buffer)
-            .is_some_and(|object| object.record().is_structured_transfer_forbidden()) // record-only: detach key
+            .is_some_and(|object| object.record_only().is_some_and(|record| record.is_structured_transfer_forbidden())) // record-only: detach key
         {
             return Err(self.type_error(
                 p,
@@ -709,7 +709,7 @@ impl Vm {
         };
         if self
             .heap.object(this)
-            .is_some_and(|object| object.record().is_structured_transfer_forbidden()) // record-only: detach key
+            .is_some_and(|object| object.record_only().is_some_and(|record| record.is_structured_transfer_forbidden())) // record-only: detach key
         {
             return Err(self.type_error(
                 p,

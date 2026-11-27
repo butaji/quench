@@ -57,7 +57,7 @@ use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concre
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
+    IteratorHelper, IteratorKind, Native, Object, ObjectRef, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};

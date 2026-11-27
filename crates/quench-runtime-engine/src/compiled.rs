@@ -3475,12 +3475,15 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         use quench_runtime::vm::native_op_profile::StoreStorage;
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
-            Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(id));
-                if object.plain_storage_start().is_some() { StoreStorage::Arena }
-                else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
-                else { StoreStorage::OtherRecord }
-            }
+            Some(id) => match vm.heap_reads().record_id(id) {
+                None => StoreStorage::NonRecord,
+                Some(record) => {
+                    let object = vm.heap_reads().object_record_by_id(record);
+                    if object.plain_storage_start().is_some() { StoreStorage::Arena }
+                    else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
+                    else { StoreStorage::OtherRecord }
+                }
+            },
         }
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
@@ -4276,7 +4279,7 @@ impl JsStepDispatch {
             return;
         }
         let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.record().stored_words();
+        let (payload, layout) = record.stored_words();
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
     }
@@ -4289,7 +4292,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object(array) else { return };
+        let Some(record) = vm.heap_reads().object(array).and_then(|object| object.record_only()) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4521,9 +4524,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         return "non-direct-object";
     }
     let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
-    if object.record().inline_properties().is_some() {
+    if object.record_only().and_then(|record| record.inline_properties()).is_some() {
         "inline-storage"
-    } else if object.record().plain_storage_start().is_none() {
+    } else if object.record_only().and_then(|record| record.plain_storage_start()).is_none() {
         "extras-storage"
     } else {
         if vm.active_program != vm.frames[frame].program {
@@ -4536,9 +4539,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
             } else if let Some(holder) = object.proto_link().object_granule().and_then(|granule| vm.heap_reads().object_record(quench_runtime::Value::direct_object(granule))) {
                 if holder.exact_shape() != cache.holder {
                     "prototype-holder-shape-miss"
-                } else if holder.record().inline_properties().is_some() {
+                } else if holder.record_only().and_then(|record| record.inline_properties()).is_some() {
                     "prototype-holder-inline"
-                } else if holder.record().extras_storage_start().is_some() {
+                } else if holder.record_only().and_then(|record| record.extras_storage_start()).is_some() {
                     "prototype-holder-extras"
                 } else if holder.plain_storage_start().is_some() {
                     "prototype-holder-plain"
@@ -10514,7 +10517,7 @@ mod tests {
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object(receiver).unwrap().record().inline_properties().is_some());
+        assert!(vm.heap_reads().object(receiver).unwrap().record_only().unwrap().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10527,6 +10530,7 @@ mod tests {
         let prototype = vm.heap_reads().object(receiver).unwrap().proto();
         let holder = vm.heap_reads().object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
+        let holder = holder.record_only().expect("a prototype record");
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 

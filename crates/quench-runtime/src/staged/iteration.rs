@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(step(&heap, unmemoed, epoch), None, "the keys came from the general walk");
         let other_shape = state(&mut heap, held, [u64::from(shape) + 1, epoch]);
         assert_eq!(step(&heap, other_shape, epoch), None, "the object is not of the listed shape");
-        heap.object_mut_departing(object).expect("an object").mark_as_prototype();
+        heap.object_record_mut(object).expect("an object").mark_as_prototype();
         let prototype = state(&mut heap, held, [u64::from(shape), epoch]);
         assert_eq!(step(&heap, prototype, epoch), None, "an object with extras keeps keys outside its shape");
         for state in [stale, unmemoed, other_shape, prototype] {

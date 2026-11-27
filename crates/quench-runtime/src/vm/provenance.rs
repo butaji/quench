@@ -233,7 +233,7 @@ impl Vm {
             && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| candidate == key)
             // The prototype-lookup flag is record data.
-            && (!object.was_used_as_prototype() || object.record().prototype_lookup_ready())
+            && (!object.was_used_as_prototype() || object.record_only().is_some_and(|record| record.prototype_lookup_ready()))
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
@@ -292,9 +292,9 @@ impl Vm {
                         let mut current = receiver;
                         while let Some(data) = self.heap.object(current) {
                             // The prototype-lookup flag is record data.
-                            if self.proxy_parts(current).is_some() || data.record().prototype_lookup_ready() { break; }
+                            if self.proxy_parts(current).is_some() || data.record_only().is_some_and(|record| record.prototype_lookup_ready()) { break; }
                             let next = data.proto();
-                            self.heap.object_mut(current).expect("lookup object").record_mut_departing().prepare_prototype_lookup();
+                            self.heap.object_record_mut(current).expect("lookup object").prepare_prototype_lookup();
                             current = next;
                         }
                     }
@@ -311,7 +311,7 @@ impl Vm {
     fn chain_reaches_function(&self, mut object: Value) -> bool {
         // An object record is neither a function nor a proxy, so a run of them is passed
         // reading only each one's prototype, without the cell families' dispatch.
-        while let Some(record) = object.direct_object_index().map(|r| self.heap.record_id(r)) {
+        while let Some(record) = object.direct_object_index().and_then(|r| self.heap.record_id(r)) {
             object = self.heap.object_record_by_id(record).proto();
         }
         while let Some(data) = self.heap.object(object) {
