@@ -131,6 +131,12 @@ pub(super) struct FunctionFlow {
     /// The `extends` links the function makes: `(class, parent)` for each intrinsic `setPrototypeOf` that links two class
     /// prototypes (`accessors::heritage_link`). `types::Types::holder` walks them.
     pub(super) parents: Vec<(u32, u32)>,
+    /// The parameters `(destination, source)` of a copy helper: a body that copies each element a for-in over `source`
+    /// reaches into `destination` and returns it, as `Object.extend` does (`Record::copies`). Its one store is accounted at
+    /// its call sites (`copies::expand`), not as a wild store.
+    pub(super) copies: Option<(u16, u16)>,
+    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (`Origin::Literal`).
+    pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.

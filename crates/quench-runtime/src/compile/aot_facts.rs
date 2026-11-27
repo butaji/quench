@@ -18,6 +18,7 @@ mod accessors;
 mod blocks;
 mod census;
 mod class_layout;
+mod copies;
 mod effects;
 mod escapes;
 mod flow;

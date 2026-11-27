@@ -307,6 +307,12 @@ fn value_of(
     // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
     // by `typing::value` like the other Number operations.
     let before = Before { ctx, state };
+    // An object literal of a fixed shape is named by its allocation site (`Origin::Literal`): its keys and values are the
+    // literal's table (`Record::observe`), which a copy of it reads (`copies`).
+    if matches!(operation, Some(Operation::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. }, .. })) {
+        let cell = operation.as_ref().and_then(|operation| typing::value(operation, &before)).unwrap_or(Cell::ANY);
+        return Word { cell, origin: Some(Origin::Literal { function: ctx.id, pc: pc as u32 }) };
+    }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }

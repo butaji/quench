@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use super::accessors;
 use super::census::{self, Census};
 use super::class_layout;
+use super::copies;
 use super::escapes;
 use super::phase;
 use super::flow::{self, FunctionFlow};
@@ -108,10 +109,12 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<value::Key, u32>, names: &std::collections::BTreeSet<u32>,
         types: Option<&types::Types>, feedback: &length_settle::Feedback| -> Vec<FunctionFlow> {
-        (0..program.function_count())
+        let mut flows: Vec<FunctionFlow> = (0..program.function_count())
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
                 (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, names, types, feedback)))
-            .collect()
+            .collect();
+        copies::expand(&mut flows, scope.assign);
+        flows
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
     // that closure, so a class object or prototype reached through a binding keeps its identity

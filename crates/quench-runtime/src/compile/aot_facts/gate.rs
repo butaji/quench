@@ -239,7 +239,7 @@ pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, fl
 /// Names whose presence lets a property of an object change with no store the flows record: a descriptor-defining builtin
 /// (`defineProperty`, `defineProperties`, `assign`), a prototype setter that retargets a function's chain (`setPrototypeOf`,
 /// `__proto__`), and the reflective and proxy objects that write through a trap or `Reflect.set`.
-const APPLY_WRITE_NAMES: [&str; 7] = ["defineProperty", "defineProperties", "assign", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
+const APPLY_WRITE_NAMES: [&str; 6] = ["defineProperty", "defineProperties", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
 
 /// Whether a write of `key` names property `atom` (`Member`, `MemberAny` or `MemberOn`): a store the census counts.
 fn writes_named(key: Key, atom: u32) -> bool {
