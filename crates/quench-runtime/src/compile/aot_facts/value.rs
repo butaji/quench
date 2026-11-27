@@ -1,11 +1,11 @@
 //! The facts the closed-world analyses carry: what a register holds, and which binding a write
 //! reaches.
 
-use crate::typed_ir::{Cell, Representation, Type};
+use crate::typed_ir::{Cell, Elements, Representation, Type};
 
-/// The elements key of the arrays no field names (an alias, a local, an array an opaque store reaches): every
-/// element read joins its cell (`types::Types::unnamed_elements`), so no array's element type or length is
-/// trusted past a store that names no field.
+/// The element key of the arrays no field names: an array read off a binding, a return, an element or an argument
+/// has no field origin, so its element class is this one (`Key::elements_class`). An array stored into a field
+/// joins this class (`Word::link`), so a store through either reaches the other's elements (`census::ElementClasses`).
 pub(super) const UNNAMED_ARRAYS: u32 = u32::MAX;
 
 /// A binding: a global name (by atom), or a slot of the environment or frame of `owner`.
@@ -24,6 +24,18 @@ pub(super) enum Key {
     Return(u32),
     /// The elements of the arrays field `0` holds: every indexed store through a read of that field (`types`).
     Element(u32),
+}
+
+impl Key {
+    /// The element class of an array stored into this binding or field. A field's (`Member`, `MemberAny`, `MemberOn`)
+    /// is the field's name, which an array read off it carries as its `Word::elements_key`; every other binding, a
+    /// return and an element is `UNNAMED_ARRAYS`, the class an array read off one of those carries.
+    pub(super) fn elements_class(self) -> u32 {
+        match self {
+            Self::Member(atom) | Self::MemberAny(atom) | Self::MemberOn { atom, .. } => atom,
+            _ => UNNAMED_ARRAYS,
+        }
+    }
 }
 
 /// Where a register's value was read from, which the census follows to the closure it names.
@@ -114,13 +126,22 @@ impl Word {
         }
     }
 
-    /// The `Key::Element` an element store into the array `self` names: the field the array was read from, else
-    /// `UNNAMED_ARRAYS`.
+    /// The element class of the array `self` holds: the field it was read from, else `UNNAMED_ARRAYS`. Every store
+    /// into an array names its class by this key, and the class's cell is read back through it (`flow::settled`).
     pub(super) fn elements_key(self) -> u32 {
         match self.origin {
             Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => atom,
             _ => UNNAMED_ARRAYS,
         }
+    }
+
+    /// The link a store of `self` into the element class `class` makes: `self`'s class joins `class` when `self` may hold
+    /// an array (its elements are not `Elements::NEVER`). The array is read back from the destination with that
+    /// destination's origin, so the two classes must be one: a store through either reaches the other's elements.
+    /// `None` where `self` holds no array or already is of `class`.
+    pub(super) fn link(self, class: u32) -> Option<(u32, u32)> {
+        let from = self.elements_key();
+        (self.cell.elements != Elements::NEVER && from != class).then_some((from, class))
     }
 
     /// The atom `self` is the property-key constant of, if it is one.

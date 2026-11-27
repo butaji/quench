@@ -66,8 +66,9 @@ pub struct AotFacts {
     /// slot's dependency.
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
     /// The settled cell of every key of the program (`typed_ir::FactKey`): each class's own fields (joined
-    /// with the stores into objects of no one class), returns, bindings, array fields' elements, parameters
-    /// and receivers. The one store of the solve's facts: code that trusts a cell subscribes to its key.
+    /// with the stores into objects of no one class), returns, bindings, the elements of each element class
+    /// (`Elements`, `UnnamedElements`), parameters and receivers. The one store of the solve's facts: code that
+    /// trusts a cell subscribes to its key.
     pub(crate) cells: BTreeMap<crate::typed_ir::FactKey, crate::typed_ir::Cell>,
     /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
     /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
@@ -178,7 +179,12 @@ fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSe
         let mut set: std::collections::BTreeSet<FactKey> = std::collections::BTreeSet::new();
         for key in keys {
             set.insert(census::fact_key(key));
-            if let value::Key::Member(atom) = key { set.extend(fields.get(&atom).into_iter().flatten().copied()); }
+            match key {
+                value::Key::Member(atom) => set.extend(fields.get(&atom).into_iter().flatten().copied()),
+                // An element read depends on every key of its class: a store through any of them moves the class's elements.
+                value::Key::Element(atom) => set.extend(found.element_members(atom).map(|member| census::fact_key(value::Key::Element(member)))),
+                _ => {}
+            }
         }
         for (&(caller, pc), _) in facts.call_targets.range((function, 0)..=(function, u32::MAX)) {
             set.extend(facts.function_facts(caller).call_targets(pc).into_iter().map(FactKey::Return));

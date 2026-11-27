@@ -5,7 +5,7 @@
 use super::effects::{Ctx, Events};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
-use super::value::{Key, Origin, PrototypeBase, Word};
+use super::value::{Key, Origin, PrototypeBase, Word, UNNAMED_ARRAYS};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type};
 
@@ -24,6 +24,7 @@ pub(super) struct Record {
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    links: Vec<(u32, u32)>,
     handed: Vec<Word>,
     closures: Vec<u32>,
 }
@@ -42,6 +43,7 @@ impl Record {
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            links: Vec::new(),
             handed: Vec::new(),
             closures: Vec::new(),
         }
@@ -62,11 +64,9 @@ impl Record {
                 self.unsafe_reads[usize::from(register)] = true;
             }
         }
-        // An element read of an array a field holds reads that field's elements (`Key::Element`).
-        if instruction.op() == crate::bytecode::Op::GetIndex
-            && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
-        {
-            self.reads.insert(Key::Element(atom));
+        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
+        if instruction.op() == crate::bytecode::Op::GetIndex {
+            self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
         }
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
@@ -111,6 +111,8 @@ impl Record {
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
             }
+            self.links.extend(receiver.link(UNNAMED_ARRAYS));
+            self.links.extend(arguments.iter().filter_map(|argument| argument.link(UNNAMED_ARRAYS)));
             self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
         }
     }
@@ -120,6 +122,7 @@ impl Record {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
+        self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
         self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
@@ -160,6 +163,7 @@ impl Record {
             field_owners: self.field_owners,
             registers: self.registers,
             reads: self.reads,
+            links: self.links,
             arity,
             returns_out,
             handed: self.handed,

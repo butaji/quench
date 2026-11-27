@@ -2,7 +2,7 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Before, Ctx, step};
+use super::effects::{Before, Ctx, settled, step};
 use super::record::Record;
 use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
@@ -57,9 +57,11 @@ pub(super) struct FunctionFlow {
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
     /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,
-    /// or the name's), element reads of an array field. Its parameters, receiver and callees' returns are
+    /// or the name's), element reads of an array's class. Its parameters, receiver and callees' returns are
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
+    /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
+    pub(super) links: Vec<(u32, u32)>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -122,7 +124,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut record = Record::new(ctx.registers);
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
-            let cells = state.words.iter().map(|word| word.cell).collect();
+            let cells = state.words.iter().map(|word| settled(&ctx, *word)).collect();
             let sources = state.words.iter().map(|word| Source::of(word.origin)).collect();
             record.registers.push_entry(blocks.ranges[block].start as u32, cells, sources);
             solver.replay(block, state.words, &mut record);
@@ -411,7 +413,7 @@ impl Solver<'_> {
             record.commit(instruction, &state, events);
             let written: Box<[_]> = instruction.written_registers().map(|register| {
                 let word = state[usize::from(register)];
-                (u16::from(register), word.cell, Source::of(word.origin))
+                (u16::from(register), settled(self.ctx, word), Source::of(word.origin))
             }).collect();
             if !written.is_empty() { record.registers.push_writes(pc as u32, written); }
         }
