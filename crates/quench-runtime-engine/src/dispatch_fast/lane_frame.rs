@@ -5,6 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::lane_reads::Reads;
+use super::completions::return_record_in_lane;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
@@ -472,6 +473,9 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
+    /// The lane context and the leaf form of a `Return` record (`return_form`), where the row is one:
+    /// its completion in the lane is `Frame::ret`. `None` otherwise.
+    returns: Option<(*mut LaneContext, u8)>,
     /// The row's double result keeps its double bits, not an int32 canonical form: set for a fused
     /// record's raw producer (its `mode` raw mask: `raw_bit(0)` for `A`, or a last link with `MODE_RAW_OUT`),
     /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
@@ -907,7 +911,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1586,6 +1590,23 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let value = Value::from_bits64(self.raw_read(stage, register)?)?;
         // SAFETY: the running lane's context, which `row_frame` took the completion from.
         let resumed = unsafe { complete(context, value) }?;
+        Some(LaneControl::Resumed(resumed))
+    }
+
+    /// A `Return` record's value completes its activation in the lane (`return_record_in_lane`) at the
+    /// record's leaf form; `None` for a record that is no `Return` of the family (`return_form`), or a
+    /// completion the lane's rules decline, which leaves the record to its miss.
+    #[inline(always)]
+    fn ret(&mut self, _stage: &mut Concrete, register: Register) -> Option<LaneControl> {
+        let (cx, leaf) = self.returns?;
+        let value = self.read_value(register);
+        let resumed = match leaf {
+            0 => return_record_in_lane::<0>(cx, self.registers, value),
+            1 => return_record_in_lane::<1>(cx, self.registers, value),
+            2 => return_record_in_lane::<2>(cx, self.registers, value),
+            3 => return_record_in_lane::<3>(cx, self.registers, value),
+            _ => return_record_in_lane::<4>(cx, self.registers, value),
+        }?;
         Some(LaneControl::Resumed(resumed))
     }
 
@@ -3787,6 +3808,9 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        if let Some(leaf) = const { return_form(MISS) } {
+            frame.returns = Some((cx, leaf));
+        }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 if const { !quench_runtime::staged::row_writes_result(LaneFields::<OP>::OPCODE) } {
@@ -3802,6 +3826,16 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
         }
     }
+}
+
+/// The leaf form of the `Return` record whose miss is `miss` (`returning_code(RETURN_KIND, leaf)`), which
+/// completes its activation in the lane (`Frame::ret`); `None` for any other miss, a constant return's among them.
+pub(crate) const fn return_form(miss: u16) -> Option<u8> {
+    use super::protocol_misses::returns::{returning_code, LEAF_FORMS, RETURN_KIND};
+    if protocol_family::of(miss) != protocol_family::RETURN { return None; }
+    let parameters = protocol_family::parameters(miss);
+    let leaf = parameters % LEAF_FORMS;
+    if parameters == returning_code(RETURN_KIND, leaf) { Some(leaf) } else { None }
 }
 
 /// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
