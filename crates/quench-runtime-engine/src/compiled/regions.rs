@@ -5,6 +5,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+use std::collections::BTreeMap;
 use cranelift_codegen::ir::{self, AliasRegion, AliasRegionData, MemFlagsData};
 
 use quench_runtime::staged::region::{Access, Mutability, Region};
@@ -13,12 +14,25 @@ use quench_runtime::staged::region::{Access, Mutability, Region};
 /// reorders it past accesses to other regions, and where nothing changes the memory while code
 /// runs, readonly and movable so it hoists and merges freely.
 pub(crate) fn flags(access: Access) -> MemFlagsData {
-    let tagged = MemFlagsData::new().with_notrap().with_aligned()
-        .with_alias_region(Some(AliasRegion::from_u32(access.region as u32)));
+    let tagged = trusted(AliasRegion::from_u32(access.region as u32));
     match access.mutability {
         Mutability::Mutable => tagged,
         Mutability::Readonly => tagged.with_readonly().with_can_move(),
     }
+}
+
+/// The flags of a trusted, mutable access in `region`, a handle `declare_field_regions` made.
+fn trusted(region: AliasRegion) -> MemFlagsData {
+    MemFlagsData::new().with_notrap().with_aligned().with_alias_region(Some(region))
+}
+
+/// The (class, atom) a named property is keyed by: the proven class of its receiver and its atom.
+pub(crate) type FieldKey = (u32, u32);
+
+/// The flags of a mutable property-value access keyed by `field`: its own field region when the
+/// function declared one (`declare_field_regions`), else `Region::ObjectSlots`.
+pub(crate) fn property_flags(field: Option<AliasRegion>) -> MemFlagsData {
+    trusted(field.unwrap_or(AliasRegion::from_u32(Region::ObjectSlots as u32)))
 }
 
 /// Declares every region in `function` unless it already names its own (the Wasm tier numbers
@@ -33,6 +47,52 @@ pub(crate) fn declare_regions(function: &mut ir::Function) {
             description: format!("{region:?}").into(),
         });
         debug_assert_eq!(handle.as_u32(), *region as u32, "regions are declared in order");
+    }
+}
+
+/// Declares one alias region per (class, atom) key after `Region::ALL` (`declare_regions` runs
+/// first), and returns each key's handle. A key is split off `Region::ObjectSlots` only under the
+/// function's soundness rule (`retag_field_regions`): a store to one key never kills a load of
+/// another, so every property access must be keyed, which the caller checks before it asks.
+pub(crate) fn declare_field_regions(function: &mut ir::Function, keys: impl IntoIterator<Item = FieldKey>) -> BTreeMap<FieldKey, AliasRegion> {
+    debug_assert_eq!(function.dfg.alias_regions.len(), Region::ALL.len(), "the regions are declared first");
+    keys.into_iter().map(|(class, atom)| {
+        let user_id = function.dfg.alias_regions.len() as u32;
+        let handle = function.dfg.alias_regions.insert(AliasRegionData {
+            user_id,
+            description: format!("field {class}.{atom}").into(),
+        });
+        ((class, atom), handle)
+    }).collect()
+}
+
+/// The soundness rule of the field regions. Cranelift's alias analysis forwards a load past a
+/// store to another region, so a property access left in `Region::ObjectSlots` beside keyed
+/// ones would be missed by them: if any load or store of the function still names
+/// `Region::ObjectSlots` (a property access with an unknown class or a computed key, or a staged
+/// helper that names the region itself), every keyed access goes back to `Region::ObjectSlots`,
+/// and the function's property values stay one region. Calls observe every region already, so
+/// they stay barriers either way.
+pub(crate) fn retag_field_regions(function: &mut ir::Function, fields: &BTreeMap<FieldKey, AliasRegion>) {
+    if fields.is_empty() { return; }
+    let object_slots = AliasRegion::from_u32(Region::ObjectSlots as u32);
+    let mut keyed = Vec::new();
+    let mut unkeyed = false;
+    for index in 0..function.dfg.num_insts() {
+        let inst = ir::Inst::new(index);
+        let Some(memflags) = function.dfg.insts[inst].memflags() else { continue };
+        match function.dfg.mem_flags[memflags].alias_region() {
+            Some(region) if region == object_slots => unkeyed = true,
+            Some(region) if fields.values().any(|field| *field == region) => keyed.push(inst),
+            _ => {}
+        }
+    }
+    if !unkeyed { return; }
+    for inst in keyed {
+        let Some(memflags) = function.dfg.insts[inst].memflags() else { continue };
+        let data = function.dfg.mem_flags[memflags].with_alias_region(Some(object_slots));
+        let retagged = function.dfg.mem_flags.insert_unchecked(data);
+        if let Some(slot) = function.dfg.insts[inst].memflags_mut() { *slot = retagged; }
     }
 }
 
