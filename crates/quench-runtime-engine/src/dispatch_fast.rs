@@ -5193,7 +5193,7 @@ impl Vm {
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+            crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -5236,9 +5236,10 @@ impl Vm {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let proper_tail_calls = self.host.proper_tail_calls();
+                let facts = self.programs.aot_facts(id);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
-                        proper_tail_calls, self.programs.tiers())
+                        proper_tail_calls, self.programs.tiers(), facts.as_deref())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -7959,7 +7960,10 @@ use crate::jit_routes::handler_in_lane;
 
 
 pub(crate) mod loop_kernel;
-pub(crate) mod int_kinds; pub(crate) mod int_steps;
+pub(crate) mod int_steps;
+// Bridge until `compiled/admission.rs` (`speculation_allowed`, `retire_after_native`) and `engine_calls.rs`
+// (`note_retired`) name `int_steps` directly: the speculation latch lives there, the int32 kinds are gone.
+pub(crate) use int_steps as int_kinds;
 
 
 
@@ -8096,7 +8100,7 @@ impl Vm {
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
             .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
-                crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
     }

@@ -341,13 +341,12 @@ pub struct LaneView {
     /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
     /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a `Kind::Speculative` register, each with that proven handler and its
-    /// checked form: what `retire_int_speculation` restores once an update overflowed one.
+    /// The operator records whose proven form reads a speculative register, each with that proven handler and its
+    /// checked form: what `retire_int_speculation` restores once an update overflowed one. Empty: the solve's int32
+    /// cells type no speculative register, so no record takes a speculative form.
     pub int_speculating: Box<[(u32, *const (), *const ())]>,
-    /// The held back edges' `IncDec` records whose counter the kinds prove, with it and whether it is speculative (`int_steps`).
-    pub proven_counters: Box<[(u32, u16, bool)]>,
-    /// The registers its records read as `Speculative` int32s (`int_steps::native_handed_doubles`).
-    pub speculative_registers: Box<[u16]>,
+    /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
+    pub proven_counters: Box<[(u32, u16)]>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -628,15 +627,6 @@ pub struct StringCaseFilter {
     pub buckets: Box<[Bucket]>,
     pub cases: Box<[Case]>,
 }
-
-/// A register's kind, ordered by the join: a larger kind admits more values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Kind {
-    Int32,
-    Speculative,
-    Tagged,
-}
-
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in

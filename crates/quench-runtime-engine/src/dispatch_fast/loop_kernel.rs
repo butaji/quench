@@ -69,6 +69,17 @@ fn pass(shape: &Shape) -> Option<recur::Recurrence> {
     recur::Recurrence::of(shape).filter(|recurrence| crate::compiled::admission::kernel_takes_recurrence(recurrence.interprets()))
 }
 
+/// The registers `masks` covers per pc, `None` for a windowed mask.
+fn covered(masks: &quench_runtime::compile::liveness::RegisterMasks) -> Option<usize> {
+    use quench_runtime::compile::liveness::{RegisterMasks, RegisterSet};
+    match masks {
+        RegisterMasks::Narrow(_) => Some(u64::BITS as usize),
+        RegisterMasks::Half(_) => Some(u128::BITS as usize),
+        RegisterMasks::Wide(_) => Some(RegisterSet::BITS as usize),
+        RegisterMasks::Windowed { .. } => None,
+    }
+}
+
 /// Drops the temps (registers the body writes before it reads them) dead where the loop exits:
 /// an expression's scratch registers, whose last values no one reads, so the run neither keeps
 /// their columns nor writes their final values. The loop's one exit is its test's jump past
@@ -79,7 +90,7 @@ fn drop_dead_temps(shape: &mut Shape, decoded: &[WideInstruction], header: usize
     live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> bool {
     let guarded = shape.guarded.is_empty();
     let Some(masks) = live else { return guarded };
-    let Some(width) = super::int_kinds::covered(masks) else { return guarded };
+    let Some(width) = covered(masks) else { return guarded };
     let exits: Vec<usize> = (header..=backedge)
         .filter(|&pc| quench_runtime::staged::meaning::means(decoded[pc], quench_runtime::staged::meaning::Meaning::CompareJump))
         .map(|pc| decoded[pc].jump_target() as usize)
@@ -96,7 +107,7 @@ fn drop_dead_temps(shape: &mut Shape, decoded: &[WideInstruction], header: usize
 
 /// A register scalar of `shape` that every definition in the function loads with a non-number
 /// constant (`a === "abc"` in the body): the kernel runs on numbers, so every entry would decline,
-/// and an installed kernel costs the view its int kinds and proven loop step (`int_kinds`).
+/// and an installed kernel costs the view its int32 cells and proven loop step (`int32_at`).
 fn never_number_scalar(shape: &Shape, decoded: &[WideInstruction], constants: &[Value]) -> Option<u16> {
     use quench_runtime::compile::liveness::{definitions, register_in, RegisterSet};
     shape.scalars.iter().find_map(|scalar| {

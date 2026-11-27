@@ -3218,7 +3218,7 @@ fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
     Some(table[entry])
 }
 
-/// The first `FLAG` of a comparison jump whose operands the view's int32 kinds prove int32s (`proven_compare_jump`):
+/// The first `FLAG` of a comparison jump whose operands the solve's int32 cells prove int32s (`proven_compare_jump`):
 /// `FLAG_COMPARE_PROVEN + 2 * entry + form`, the operator and operand form of `FLAG_COMPARE_FORMED`. It ends the
 /// flag space: the last instance is 251.
 const FLAG_COMPARE_PROVEN: u8 = FLAG_COMPARE_BOOLEAN + BOOLEAN_TESTS.len() as u8;
@@ -3269,11 +3269,10 @@ fn proven_compare_row<const BACKWARD: bool>(offset: usize) -> Option<Handler> {
 }
 
 /// The proven instance of the plain comparison jump `record` (`jump_row` of `COMPARE_JUMP_ROW`, not yet run), where
-/// `proven` says the view's int32 kinds prove a register operand an int32: its left operand is such a register, its
+/// `proven` says the solve's int32 cells prove a register operand an int32: its left operand is such a register, its
 /// right one such a register or an int32 constant (`mode` takes the constant), and its operator a `FORMED_COMPARISONS`
-/// one that `record` decodes to. Returns the proven instance and the formed instance `compare_jump_row` chooses for
-/// the same operands, the handler the record takes back where the proof retires. `None` otherwise, the record unchanged.
-pub(crate) fn proven_compare_jump(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool + Copy) -> Option<(Handler, Handler)> {
+/// one that `record` decodes to. `None` otherwise, the record unchanged.
+pub(crate) fn proven_compare_jump(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool + Copy) -> Option<Handler> {
     const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
     if record.handler == jump_row::<OP>(true) as *const () {
         proven_compare_of::<true>(record, constants, proven)
@@ -3294,11 +3293,10 @@ fn formed_compare_of(record: &LaneInstruction) -> Option<(usize, Operand, Operan
     decodes_so.then_some((entry, Operand(record.b), Operand(record.c)))
 }
 
-fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool) -> Option<(Handler, Handler)> {
+fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool) -> Option<Handler> {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
     let (entry, left, right) = formed_compare_of(record)?;
     if left.kind() != Some(Register) || !proven(left) { return None }
-    let operator = FORMED_COMPARISONS[entry];
     let (form, mode) = match right.kind() {
         Some(Register) if proven(right) => (0, 0),
         Some(Constant) => {
@@ -3308,10 +3306,44 @@ fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constan
         }
         _ => return None,
     };
-    let formed = compare_jump_row::<BACKWARD>(operator, left, right)?;
     let proven_handler = proven_compare_row::<BACKWARD>(2 * entry + form)?;
     if form == 1 { record.mode = mode; }
-    Some((proven_handler, formed))
+    Some(proven_handler)
+}
+
+/// The nullish or Boolean instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its
+/// operand types decide at derivation: a register `typed` gives a type within `null` or `undefined`, compared with a
+/// constant `null` or `undefined` (`nullish_jump_row`); or a register of a type within Boolean, compared with a constant
+/// Boolean (`boolean_jump_row`). `typed` gives a register operand's cell type (`None` where no cell is). Both instances
+/// test any value exactly, so the cell only picks the instance the first run would otherwise pick (`row_jump`). `None`
+/// otherwise, the record unchanged.
+pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value],
+    typed: impl Fn(Operand) -> Option<quench_runtime::typed_ir::Type>) -> Option<Handler> {
+    use quench_runtime::typed_ir::Type;
+    use quench_runtime::ValueType;
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    let (_, left, right) = formed_compare_of(record)?;
+    if left.kind() != Some(quench_runtime::bytecode::OperandKind::Register) { return None }
+    if right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) { return None }
+    let constant = constants.get(usize::from(right.payload())).copied()?;
+    let ty = typed(left)?;
+    if ty == Type::NEVER { return None }
+    let operator = u32::from(record.a);
+    let nullish = Type::language(ValueType::Null).join(Type::language(ValueType::Undefined));
+    if ty.is_subtype(nullish) {
+        return if backward { nullish_jump_row::<true>(operator, constant) } else { nullish_jump_row::<false>(operator, constant) };
+    }
+    if ty.is_subtype(Type::language(ValueType::Boolean)) {
+        return if backward { boolean_jump_row::<true>(operator, constant) } else { boolean_jump_row::<false>(operator, constant) };
+    }
+    None
 }
 
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
@@ -3337,7 +3369,7 @@ pub(crate) fn guarded_compare_jump(record: &LaneInstruction) -> Option<Handler> 
 }
 
 script_handler! {
-    /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the view's int32 kinds do not
+    /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the solve's int32 cells do not
     /// prove (`guarded_compare_jump`). It tests both registers' int32 tags, once per execution: an int32 pair runs the proven
     /// instance (`proven_compare_row`) over the same record. Any other pair requickens the record to its formed register and
     /// register instance (`compare_jump_row`) for good.
@@ -3428,6 +3460,9 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         // A comparison jump's operator is a constant of its record: its first run moves the record to
         // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
         // constant and its row folds to that operator's test rather than matching every comparison.
+        // The nullish, Boolean and formed instances here are chosen by the first run only for the operands no
+        // cell decides (`typed_compare_jump`, `proven_compare_jump` pick the others at derivation); this path
+        // goes once the solve covers every program.
         if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
             && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
             // The operator is the record's field A (`binary_operator_field`); the instance is taken only
@@ -3533,7 +3568,7 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         if const { matches!(compare_operands(FLAG), Some(true)) } {
             frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
         }
-        // A proven instance's operands are int32s the view's kinds prove (`proven_compare_jump`), which the staged
+        // A proven instance's operands are int32s the solve's int32 cells prove (`proven_compare_jump`), which the staged
         // comparison reads untagged, as `operator_row`'s proven forms do.
         if const { proven_compare_flag(FLAG) } { frame.operands_int = true; }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
@@ -4135,9 +4170,9 @@ pub(crate) const OPERANDS_REGISTERS: u8 = 1;
 pub(crate) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(crate) const OPERANDS_REGISTER_INT32: u8 = 3;
 pub(crate) const OPERANDS_INT32: u8 = 4;
-/// Two registers the view's int32 kinds prove int32s (`int_kinds`): read with no tag test.
+/// Two registers the solve's int32 cells prove int32s (`int32_at`): read with no tag test.
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
-/// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
+/// A register the solve's int32 cells prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
 /// Two registers the view did not prove: their int32 tags are tested once per execution, and a pair of
 /// int32s runs the `OPERANDS_PROVEN` instance; any other pair requickens the record to `OPERANDS_REGISTERS` for good.
@@ -4201,8 +4236,8 @@ script_handler! {
         if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             frame.reads = frame.reads.with_immediate(Value::integer(i.mode as u32 as i32));
         }
-        // The view's int32 kinds proved each register operand an int32 (`int_kinds`), which an
-        // overflowing update of a speculative one retires before it writes a double.
+        // The solve's int32 cells proved each register operand an int32 before this record (`int32_at`), which
+        // the staged row reads with no tag test.
         if const { FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } { frame.operands_int = true; }
         match quench_runtime::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
