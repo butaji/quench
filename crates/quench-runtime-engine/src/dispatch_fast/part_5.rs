@@ -583,7 +583,6 @@ pub(crate) fn derive_lane_view<'live>(
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
         name_records,
-        int_speculating: Box::default(),
         proven_counters: proven_counters.into_boxed_slice(),
     }
 }

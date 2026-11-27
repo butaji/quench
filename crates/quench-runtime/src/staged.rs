@@ -189,10 +189,6 @@ pub mod call_return;
 pub mod call_iteration;
 #[allow(unused_imports)]
 pub use forms::{Arguments, CallFacts, CallRecord, Callee, FunctionId, Invocation, Receiver, RegisterList};
-/// The record of a call-family instruction under the name the compiled lane reads it by
-/// (`compiled/meaning_compiled.rs`, the only reader of the alias). Not `staged::effects::CallForm`, the lowering decision.
-#[allow(unused_imports)]
-pub use forms::CallRecord as CallForm;
 pub use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod prologue;

@@ -6425,7 +6425,7 @@ pub(crate) mod name_probe; use name_probe::probe_handler;
 #[cfg_attr(not(feature = "jit"), allow(unreachable_code, unused_variables))] pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
-pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
+pub(crate) use vm_steps::{ahead_general_step, body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
@@ -7954,9 +7954,6 @@ use crate::jit_routes::handler_in_lane;
 
 
 pub(crate) mod int_steps;
-// Bridge until `compiled/admission.rs` (`speculation_allowed`, `retire_after_native`) and `engine_calls.rs`
-// (`note_retired`) name `int_steps` directly: the speculation latch lives there, the int32 kinds are gone.
-pub(crate) use int_steps as int_kinds;
 
 
 

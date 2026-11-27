@@ -120,8 +120,6 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
                 compare_fields(fields)
             } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                 Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
-            } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
-                Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
             } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmJump)) } {
                 Operation::decode_wasm_jump(quench_runtime::staged::Fields::wide(fields))
             } else {
@@ -270,8 +268,6 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
                     compare_fields(fields)
                 } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
                     Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
-                } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
-                    Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
                 } else if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmJump)) } {
                     Operation::decode_wasm_jump(quench_runtime::staged::Fields::wide(fields))
                 } else {
