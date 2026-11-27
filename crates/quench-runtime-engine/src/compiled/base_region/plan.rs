@@ -112,7 +112,7 @@ pub(crate) struct Planned {
     /// Set for a row that leaves the function or completes it: it jumps to its leave row.
     pub(crate) stop: Option<Stop>,
     /// The call record the row reads (`CallRecord`), which the code must not outlive.
-    pub(crate) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    pub(crate) owned: Vec<crate::compiled::OwnedCallRecord>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
     pub(crate) cold: bool,
     /// The holes that name a symbol the loader resolves, each with its symbol (`CallPart::symbols`).

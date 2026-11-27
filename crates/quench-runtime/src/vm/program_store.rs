@@ -946,7 +946,7 @@ impl ProgramStore {
         })))
     }
 
-    /// Writes `record` (a `CallRecord` address) as the entry of method `selector` in the method vector of class layout
+    /// Writes `record` (a `CalleeRecord` address) as the entry of method `selector` in the method vector of class layout
     /// `layout` of program `id`, allocating the vector zeroed on its first write, and publishes its address to
     /// `layouts::set_class_methods`. Nothing is written where the program has no selectors.
     pub fn set_class_method(&self, id: ProgramId, layout: u32, selector: u32, record: usize) {

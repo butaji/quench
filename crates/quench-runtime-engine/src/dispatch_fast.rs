@@ -1253,7 +1253,7 @@ const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 #[quench_macros::ext(ScriptCallTargetOps1)]
 impl ScriptCallTarget {
     /// The closure environment and captures pointer its activation's window holds
-    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CalleeRecord::env`, `capture`).
     #[inline(always)]
     pub(crate) fn context_words(&self) -> (u64, u64) {
         (self.env.to_bits(), self.capture.expose_provenance() as u64)

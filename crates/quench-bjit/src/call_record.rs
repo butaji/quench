@@ -56,37 +56,24 @@ pub enum DirectHole {
 /// Bytes of one register slot of the frame window (`size_of::<Value>()`, a word).
 pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 
-/// The per-site record of a direct-call row, two cache lines, patched into the row as the one
-/// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
-/// holes: the callee's identity and cell, the cell's validity word the call was planned under,
-/// the callee's header words (the caller's call record and base, the packed word, the descriptor), the callee's capture word, the global object a sloppy
-/// callee binds an `undefined` or `null` receiver to, the caller
-/// registers the call names, and where each leading argument's word is (`argument_places`: a place
-/// code, `MEM` for the caller's window slot, else the pinned register holding the value). The plan
-/// owns the record and must outlive the code.
+/// The callee's record of a direct call: the words that are the callee's (its closure identity, its cell and the
+/// validity the call was planned under, its captures, its sloppy global, its function, its descriptor, its closure
+/// environment and captures pointer, its window size and sloppiness). One per bound callee; a site's
+/// `CallRecord` names it by address (`callee_record`), and a closed-set indirect call reads it from its class's
+/// method vector (`layouts::class_methods`), so one callee record serves every site that reaches that callee.
+/// Its field order is the offsets the stencils and the lane read by (`offset_of!(CalleeRecord, _)`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(C, align(64))]
-pub struct CallRecord {
+#[repr(C)]
+pub struct CalleeRecord {
     pub callee: u64,
     pub cell: u64,
     pub expected: u64,
     /// The callee's capture word (`CONTEXT_BODY`).
     pub captures: u64,
     pub global_this: u64,
-    /// The caller's call record the callee returns to (`CONTEXT_CALL`).
-    pub call: u64,
-    /// The caller's base instruction pointer (`CONTEXT_CALLER_BASE`).
-    pub caller_base: u64,
-    /// The packed word of the callee's plain header (`CONTEXT_PACKED`): function, flags, argc.
-    pub packed: u64,
-    pub callee_register: u16,
-    pub this_register: u16,
-    pub args_register: u16,
-    pub result_register: u16,
-    pub argument_places: [u8; PLACED_ARGUMENTS],
-    /// The arguments the caller proves Numbers (bit `k`: argument `k`). The row enters the callee's proven-arguments
-    /// entry where every guard its cell names (`EntryCell::numbers`) is covered by these bits.
-    pub proven_args: u64,
+    /// The callee's function: the function bits (0-31) of its plain header's packed word (`CONTEXT_PACKED`). The flags and
+    /// the argc are the site's (`CallRecord::packed`), so the header is the two words' union.
+    pub function: u64,
     /// The callee's descriptor word: the address of its `DirectCallee`, which the native header's descriptor
     /// (`native_table`) names. Written by the binding of an image's proven call (`BoundCalls::bind`) and read by the
     /// AOT lane body's native call (`call_frames::push_native`); a JIT plan's record leaves it zero.
@@ -101,5 +88,33 @@ pub struct CallRecord {
     pub sloppy: u64,
 }
 
-/// Two cache lines: the record is aligned to one.
-const _: () = assert!(core::mem::size_of::<CallRecord>() == 2 * core::mem::align_of::<CallRecord>());
+/// The per-site record of a direct-call row, one cache line, patched into the row as the one 64-bit value hole 0
+/// (its address). Everything a call site knows that does not belong to the callee: the caller's call record and base,
+/// the descriptor and packed word's flags and argc of the site, the caller registers the call names, where each leading
+/// argument's word is (`argument_places`: a place code, `MEM` for the caller's window slot, else the pinned register
+/// holding the value), the caller's proven Number arguments, and the pointer to the callee's `CalleeRecord`. The plan
+/// owns the record and must outlive the code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C, align(64))]
+pub struct CallRecord {
+    /// The caller's call record the callee returns to (`CONTEXT_CALL`).
+    pub call: u64,
+    /// The caller's base instruction pointer (`CONTEXT_CALLER_BASE`).
+    pub caller_base: u64,
+    /// The arguments the caller proves Numbers (bit `k`: argument `k`). The row enters the callee's proven-arguments
+    /// entry where every guard its cell names (`EntryCell::numbers`) is covered by these bits.
+    pub proven_args: u64,
+    /// The flags and the argc of the plain header (`CONTEXT_PACKED`), which the site fixes; the function bits are the
+    /// callee's (`CalleeRecord::function`).
+    pub packed: u64,
+    /// The address of the callee's `CalleeRecord` (the one the row reads the callee's words from).
+    pub callee_record: u64,
+    pub callee_register: u16,
+    pub this_register: u16,
+    pub args_register: u16,
+    pub result_register: u16,
+    pub argument_places: [u8; PLACED_ARGUMENTS],
+}
+
+/// One cache line: the site record is aligned to one.
+const _: () = assert!(core::mem::size_of::<CallRecord>() == core::mem::align_of::<CallRecord>());
