@@ -69,6 +69,8 @@ pub(crate) enum ObjectRecord {
 }
 
 impl ObjectRecord {
+    /// The Cranelift projection of staged `object::object_record_of` (via `direct_object_record`).
+    /// R4-B2b changes it together with `staged::object::object_record_of`: the record id is read from the cell header.
     pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let records = match records.into() {
