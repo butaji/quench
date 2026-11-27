@@ -6,17 +6,6 @@
 use crate::ext_traits::*;
 use super::tier_policy::{Priors, PER_MILLE};
 
-/// The part per thousand of a compile's time that waits on the running program: the prior's
-/// where the process has a second core for the code generator's thread, all of it where it
-/// has one (the compile then takes the program's own time).
-const SINGLE_CORE: usize = 1;
-
-pub(crate) fn compile_wall_permille(priors: &Priors) -> u64 {
-    static SECOND_CORE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let second_core = *SECOND_CORE.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() > SINGLE_CORE));
-    if second_core { priors.compile_wall_permille } else { PER_MILLE }
-}
-
 /// What a body of `ir` instructions costs the running program before it runs: its plan
 /// (`plan_ns`, all on the program's thread; 0 once the plan is made) and the wall share of its compile.
 pub(crate) fn outlay_ns(ir: usize, plan_ns_per_ir: u64, compile_ns_per_ir: u64, wall_permille: u64) -> u64 {

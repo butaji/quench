@@ -669,6 +669,9 @@ struct ProgramEntry {
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
     call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
+    /// Per function, its predicted tier as a call of its body from a loop's region or not (`[called outside a loop,
+    /// called by a loop]`), solved once beside `call_graph` (`predicted_tiers`).
+    predicted_tiers: std::cell::OnceCell<std::sync::Arc<[[crate::vm::tier_policy::PredictedTier; 2]]>>,
     /// The program's method selectors (`compile::call_plan::Selectors`), solved once beside `call_graph` (`selectors`).
     selectors: std::cell::OnceCell<std::sync::Arc<crate::compile::call_plan::Selectors>>,
     /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
@@ -966,6 +969,18 @@ impl ProgramStore {
         Some(std::sync::Arc::clone(entry.call_graph.get_or_init(|| {
             let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
             std::sync::Arc::new(crate::compile::call_graph::CallGraph::of(&entry.residual, &facts))
+        })))
+    }
+
+    /// The predicted tier of each function of program `id`, per whether a loop region calls it (`tier_policy::predicted_tier`),
+    /// solved on its first call from `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
+    pub fn predicted_tiers(&self, id: ProgramId) -> Option<std::sync::Arc<[[crate::vm::tier_policy::PredictedTier; 2]]>> {
+        let entry = self.entry(id)?;
+        let graph = self.call_graph(id)?;
+        Some(std::sync::Arc::clone(entry.predicted_tiers.get_or_init(|| {
+            (0..entry.residual.functions.len() as u32)
+                .map(|function| [false, true].map(|called_by_loop| crate::vm::tier_policy::predicted_tier(&graph, &entry.residual, function, called_by_loop)))
+                .collect()
         })))
     }
 
@@ -1489,6 +1504,7 @@ impl ProgramStore {
             js_entry_facts: JsEntryFactsTable::default(),
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),
+            predicted_tiers: std::cell::OnceCell::new(),
             selectors: std::cell::OnceCell::new(),
             class_method_vectors: Default::default(),
             class_headers: std::cell::OnceCell::new(),
