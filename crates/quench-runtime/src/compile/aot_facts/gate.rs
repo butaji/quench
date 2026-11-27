@@ -205,6 +205,14 @@ fn index_name(program: &ResidualProgram, atom: u32) -> bool {
 /// Whether `call` is a `defineProperty` that may define an index: its callee is that property, read by name or through an alias
 /// (`aliased`: the program names it, and the callee is no member read), and no argument names a non-index atom as the key.
 fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bool {
+    is_property_definer(program, call, aliased)
+        && !call.arguments.iter().any(|argument| argument.atom_key().is_some_and(|atom| !index_name(program, atom)))
+}
+
+/// Whether `call` calls the builtin `defineProperty` (`Object.defineProperty`, `Reflect.defineProperty`), by the name it is read by:
+/// a method, or a named read. A callee read through no name is that builtin only where the program names it (`aliased`,
+/// `names_property_definer`).
+pub(super) fn is_property_definer(program: &ResidualProgram, call: &Call, aliased: bool) -> bool {
     let name = match call.target {
         Target::Method(atom) => Some(atom),
         Target::Register => match call.callee.origin {
@@ -214,12 +222,19 @@ fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bo
         Target::Known(_) => None,
     };
     name.is_some_and(|atom| atom_text(program, atom) == PROPERTY_DEFINER)
-        && !call.arguments.iter().any(|argument| argument.atom_key().is_some_and(|atom| !index_name(program, atom)))
+}
+
+/// Whether the program names `defineProperty`, so a callee read through no name may be that builtin (`is_property_definer`).
+pub(super) fn names_property_definer(program: &ResidualProgram) -> bool {
+    program.atoms.iter().any(|atom| {
+        let text: &str = atom.as_ref();
+        text == PROPERTY_DEFINER
+    })
 }
 
 /// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
 /// converts to none (`lengths::transfer::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
-/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::member_wild`),
+/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::wild`),
 /// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
 pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
     let names = |name: &str| program.atoms.iter().any(|atom| {
@@ -230,10 +245,17 @@ pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, fl
     world == World::Closed
         && !INDEX_ACCESSOR_NAMES.iter().any(|name| names(name))
         && flows.iter().all(|flow| {
-            !flow.member_wild
+            flow.wild.is_none()
                 && flow.accessors.iter().all(|accessor| !index_name(program, accessor.atom))
                 && flow.calls.iter().all(|call| !may_define_index(program, call, aliased))
         })
+}
+
+/// Whether no builtin prototype object (`Cell::prototype`) gains an index property through a store the flows record: no element
+/// store writes one, and no builtin store does (`FunctionFlow::prototype_writes`). `AotFacts::prototype_indices_empty` adds this
+/// to `index_accessors_absent`, which already rules out an index defined by `defineProperty` or an accessor.
+pub(super) fn prototype_writes_absent(flows: &[FunctionFlow]) -> bool {
+    flows.iter().all(|flow| !flow.prototype_writes && flow.element_stores.values().all(|store| !store.prototype))
 }
 
 /// Names whose presence lets a property of an object change with no store the flows record: a descriptor-defining builtin
@@ -249,7 +271,7 @@ fn writes_named(key: Key, atom: u32) -> bool {
 /// Whether property `apply` of every function is `Function.prototype.apply`, the builtin, so `f.apply(this, arguments)` reaches
 /// the builtin for every `f`. Only the closed world proves it: code added at run time may store `apply`. Given a closed world,
 /// it holds when no flow stores `apply` under a name, no store through a computed key may write a named property
-/// (`FunctionFlow::member_wild`), and the program names no builtin that writes a property the flows do not record
+/// (`FunctionFlow::wild`), and the program names no builtin that writes a property the flows do not record
 /// (`APPLY_WRITE_NAMES`). A program that never names `apply` has no such call, so it holds.
 pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
     let names = |name: &str| program.atoms.iter().any(|atom| {
@@ -263,5 +285,5 @@ pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &
     let apply = apply as u32;
     world == World::Closed
         && !APPLY_WRITE_NAMES.iter().any(|name| names(name))
-        && flows.iter().all(|flow| !flow.member_wild && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
+        && flows.iter().all(|flow| flow.wild.is_none() && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
 }

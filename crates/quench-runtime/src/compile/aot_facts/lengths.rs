@@ -318,7 +318,7 @@ impl Lengths {
     /// a step that may run guest code (`calls_js`: a call or an accessor may write any field). `Equal` names registers, not
     /// fields, so a store leaves it.
     fn clobber_loads(&mut self, events: &Events, calls_js: bool) {
-        let wild = calls_js || events.wild_member || events.wild_owner || events.shape.is_some();
+        let wild = calls_js || !events.wild.is_none() || events.wild_owner || events.shape.is_some();
         let names = |written: &Key, key: u32| matches!(*written, Key::Member(atom) | Key::MemberAny(atom) | Key::MemberOn { atom, .. } if atom == key);
         self.relations.retain(|relation| match *relation {
             Relation::Loaded { key, .. } => !wild && !events.writes.iter().any(|(written, _)| names(written, key)),

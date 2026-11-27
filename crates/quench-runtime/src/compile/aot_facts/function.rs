@@ -225,6 +225,11 @@ impl<'a> FunctionFacts<'a> {
         self.facts.index_accessors_absent
     }
 
+    /// Whether no builtin prototype object has an index property (`AotFacts::prototype_indices_empty`).
+    pub(crate) fn prototype_indices_empty(&self) -> bool {
+        self.facts.prototype_indices_empty()
+    }
+
     /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
     pub(crate) fn call_site(&self, pc: u32) -> Option<&'a CallSite> {
         self.facts.call_sites.get(&(self.function, pc))

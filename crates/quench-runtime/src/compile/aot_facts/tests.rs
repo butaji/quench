@@ -928,7 +928,27 @@ fn constructors_sharing_one_class_factory_body_are_distinct_classes() {
     }
 }
 
+/// The atom `name` interns to, in `program`.
+fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
+    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("an atom of that name") as u32
+}
+
 #[test]
+fn a_store_of_a_name_a_define_property_may_make_non_writable_stays_observed() {
+    let program = program("function Proto() {} var p = new Proto(); p.x = 1; Object.defineProperty(Proto.prototype, 'x', {writable: false});");
+    let facts = analyze(&program);
+    assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, "x"))), "a defineProperty may make x non-writable, so a store of x fails rather than writes");
+}
+
+#[test]
+fn every_store_stays_observed_once_a_builtin_may_freeze_an_object() {
+    let program = program("var p = {}; p.x = 1; p.y = 2; Object.freeze(p);");
+    let facts = analyze(&program);
+    for name in ["x", "y"] {
+        assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, name))), "a frozen object rejects a store of {name}, so the store is observed");
+    }
+}
+
 /// The pcs of the element reads (`ElementRead`) of function `id`.
 fn element_reads(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
     program.with_record(id, |function| {
@@ -956,4 +976,16 @@ fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
     let reads = element_reads(&program, advect);
     let function = facts.function_facts(advect as u32);
     assert!(reads.iter().any(|&pc| function.index_ceiling(pc).is_some()), "a read of the clamped index has a range invariant in its loop");
+}
+
+#[test]
+fn a_store_into_a_builtin_prototype_makes_its_index_properties_non_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; Array.prototype[0] = 1; a[1];");
+    assert!(!analyze(&program).prototype_indices_empty(), "Array.prototype gains an index property the frame array's holes would read");
+}
+
+#[test]
+fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; a[1];");
+    assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
 }
