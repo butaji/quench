@@ -19,6 +19,7 @@ mod census;
 mod effects;
 mod flow;
 mod gate;
+mod readers;
 mod scope;
 mod types;
 mod value;
@@ -33,6 +34,7 @@ use crate::typed_ir::Representation;
 use super::signatures::{self, Signatures};
 use census::Census;
 use flow::FunctionFlow;
+use readers::Readers;
 use scope::Scope;
 pub use gate::World;
 pub use flow::RegisterCells;
@@ -81,6 +83,9 @@ pub struct AotFacts {
     /// The composed effect signatures of the program's functions and call forms, solved over the settled facts
     /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
     pub(crate) signatures: Option<Signatures>,
+    /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
+    /// whose result no read follows. None where the type solve did not settle.
+    readers: Option<Readers>,
 }
 
 impl AotFacts {
@@ -101,6 +106,7 @@ impl AotFacts {
             dependencies: BTreeMap::new(),
             call_keys: BTreeMap::new(),
             signatures: None,
+            readers: None,
         }
     }
 
@@ -115,6 +121,14 @@ impl AotFacts {
     /// trusts these facts reads no invalidation word and keeps no exit for them.
     pub fn closed(&self) -> bool {
         self.world == World::Closed
+    }
+
+    /// Whether some read of the program may observe the value stored under field key `key` (`readers`). False only
+    /// for a field key (`Field`, `AnyField`) that no reachable read reaches and that the world cannot move: its stores
+    /// are dead, and its slot need not exist in the layout. A key the world can move has a reader, since code added
+    /// later may read it. Every other key is observed (`true`).
+    pub fn field_has_reader(&self, key: crate::typed_ir::FactKey) -> bool {
+        self.live(key) || self.readers.as_ref().map_or(true, |readers| readers.observes(key))
     }
 
     /// The names stored into `function`'s `prototype`, each once, in the order the program's code
@@ -242,6 +256,13 @@ impl<'a> FunctionFacts<'a> {
     /// closed world none is live, so it subscribes nothing and keeps no exit.
     pub fn dependencies(&self) -> &'a [crate::typed_ir::FactKey] {
         self.facts.dependencies.get(&self.function).map_or(&[], |keys| keys)
+    }
+
+    /// Whether the instruction at `pc` keeps its result, false only for a call whose result register no read follows
+    /// (`Readers::result_dead`): such a call boxes no result. Not a deletion check: a call may be dropped only when its
+    /// `site_effects` are none besides the result. Any other instruction, and a function the solve did not settle, keeps it.
+    pub fn result_used(&self, pc: u32) -> bool {
+        !self.facts.readers.as_ref().is_some_and(|readers| readers.result_dead(self.function, pc))
     }
 
     /// The method name and key the callee of the call at `pc` was read from (`AotFacts::call_keys`).
@@ -376,10 +397,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
     let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
+    let mut field_readers = Readers::new(program);
     if settled {
         for (id, mut flow) in analyze_typed(&resolved, Some(&found)).into_iter().enumerate() {
             let id = id as u32;
-            facts.registers.insert(id, std::mem::take(&mut flow.registers));
             reads.insert(id, std::mem::take(&mut flow.reads));
             for call in &flow.calls {
                 let keyed = match call.callee.origin {
@@ -403,6 +424,9 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
                 if census.guessed(call.callee) { facts.guessed_calls.insert((id, call.pc)); }
                 facts.call_candidates.remove(&(id, call.pc));
             }
+            // The callees of this function's calls are settled now: its reads and escapes are scanned against them.
+            field_readers.scan(program, id, &flow, &facts, &scope);
+            facts.registers.insert(id, std::mem::take(&mut flow.registers));
         }
     }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
@@ -410,6 +434,8 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     if settled {
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
+        field_readers.finish(&facts.cells);
+        facts.readers = Some(field_readers);
         facts.dependencies = dependencies(&facts, reads, &found);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
