@@ -95,10 +95,11 @@ fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: 
 }
 
 /// Whether the call at `pc` of `function` is a tail site: `staged::effects::tail_site` of its record's return flag
-/// (`returns`) and of the caller's permission (`permits_js_tail_call_at`: strict, not a class initializer, no handler
-/// covering the call), with every arm an ordinary function. A construction is never one (`construct`). The
-/// interpreter's proper tail calls (`Vm::js_tail_call_allowed`, `call_forms`) take the same facts: no host setting
-/// gates them, since stack depth is not observable (DESIGN.md decision 4.4), so this is the whole decision.
+/// (`returns`) and of the caller's permission (`permits_js_tail_call_at`: the caller's frame owes its caller nothing
+/// after the call, see that function), with every arm an ordinary function. A construction is never one (`construct`).
+/// The interpreter's proper tail calls (`Vm::js_tail_call_allowed`, `Vm::tail_call_reuses_frame`) take the same
+/// facts: no host setting gates them, since stack depth is not observable (DESIGN.md decision 4.4), so this is the
+/// whole decision.
 fn tail_of(program: &ResidualProgram, function: u32, pc: u32, returns: bool, construct: bool, arms: &[Arm]) -> bool {
     let caller = program.function(function as usize);
     !construct
