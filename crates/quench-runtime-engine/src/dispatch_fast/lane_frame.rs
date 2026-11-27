@@ -787,6 +787,14 @@ impl RecordPlan {
         Self { store: Some(store), ..Self::own_store(layout, slot, records) }
     }
 
+    /// The tracked store the hint `(layout, slot)` proves by a row installed for the slot's held type
+    /// `held` (`StorePlan::Held`), a refusal leaving at the miss edge.
+    #[inline(always)]
+    pub(crate) fn own_held(layout: u32, slot: u16, records: u64, held: u8) -> Self {
+        let store = quench_runtime::staged::property::StorePlan::Held { id: layout, slot, held };
+        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
+    }
+
     /// The store the hint `(layout, slot)` and the site's polymorphic entries prove
     /// (`StorePlan::Polymorphic`).
     #[inline(always)]

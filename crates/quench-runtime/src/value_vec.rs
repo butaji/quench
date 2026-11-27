@@ -6,7 +6,7 @@ use crate::typed_ir::SlotType;
 use crate::vm::switches;
 use rustc_hash::FxHashMap;
 
-mod buffer; mod plan_values;
+mod aux_form; mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
 #[allow(unused_imports)]
@@ -70,16 +70,7 @@ fn read_type() -> SlotType {
 // The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
 pub use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
 pub const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
-/// An object whose values code holds as constants (`Object::mark_constant`, an own-constant
-/// read): set by the read that takes a value as a constant, cleared by the first write to any
-/// value or any change of the object's layout or storage, which retires that code
-/// (`Object::note_constant_write`). It is part of the raw auxiliary word and so of the layout
-/// id, so every guard that compares the raw word (a lane hint, a generated row's recorded
-/// shape, `formed_plain_start`) misses a marked object and leaves to the VM, whose stores clear
-/// it; the Rust-side shapes (`shape`, `exact_auxiliary`, `ordinary_shape`) leave it out, so a
-/// marked object keeps its shape tables and cache entries. Unlike extras it is cleared once:
-/// a written object returns to every fast store.
-pub(crate) const CONSTANT_FORM: u32 = 1 << 25;
+pub(crate) use aux_form::CONSTANT_FORM;
 const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
 /// The auxiliary bits above `CONSTANT_FORM` no storage form uses (26): no shape reaches them.
 const SHAPE_LIMIT_BITS: u32 = 1 << 26;

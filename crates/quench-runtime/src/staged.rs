@@ -135,6 +135,8 @@ pub mod store;
 pub mod slot_store;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod slot_store;
+/// The held types a tracked store row is installed for (`slot_store::HELD_*`).
+pub use slot_store::{HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
 pub mod strings;
 /// The natives run in place by identity: the table (`native_row_table`) and the map to it (`native_row`).
 pub mod native_row_table;

@@ -111,6 +111,7 @@ pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
 crate::projection!(StencilStage => StencilStage);
 
 impl Stage for StencilStage {
+    const SLOT_TABLES: bool = false;
     type Word = u64;
     type Proof = ();
     type Cond = bool;
@@ -305,6 +306,8 @@ impl Stage for StencilStage {
             }
             // A static of the runtime at a fixed address: no field to load.
             Table::Layouts => LAYOUT_TABLE_BASE,
+            // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
+            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a stencil row stores through the VM"),
         }
     }
     #[inline(always)]

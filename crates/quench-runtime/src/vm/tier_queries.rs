@@ -290,6 +290,8 @@ heap_reads! {
     fn native_layout_epoch() -> u64;
     /// Whether slot representations are tracked (`Heap::tracks_slot_representations`).
     fn tracks_slot_representations() -> bool;
+    /// The held type of a tracked store row through a hint (`Heap::tracked_store_held`).
+    fn tracked_store_held(layout: u32, slot: u16) -> u8;
     /// The typed view directory (`Heap::typed_view_directory`).
     fn typed_view_directory() -> (*const usize, usize);
     /// The Wasm GC record arena's base (`Heap::wasm_gc_record_base`).

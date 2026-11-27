@@ -211,6 +211,11 @@ pub enum StorePlan<'a> {
     /// (`narrow`), which `PropertyFrame::field_store_hinted` makes in place; a refusal leaves to
     /// `join` (the VM's own-field store).
     Hinted { id: u32, slot: u16, narrow: bool, join: StoreJoin },
+    /// A tracked store through the record's own arena-form hint (`id`, `slot`) by a row installed for
+    /// the slot's held type `held` (`slot_store::HELD_*`): the slot still holding that type and the
+    /// value being of it, the store widens and observes nothing and is made in place
+    /// (`slot_store::held_holds`); a refusal leaves at the miss edge.
+    Held { id: u32, slot: u16, held: u8 },
     /// A store the record's own hint, the site's polymorphic entries or the proved add completes
     /// (`PropertyFrame::field_store_polymorphic`); a refusal leaves at the miss edge.
     Polymorphic { id: u32, slot: u16 },

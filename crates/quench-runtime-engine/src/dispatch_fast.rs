@@ -2987,6 +2987,16 @@ pub(crate) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
 /// the untracked own store (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`).
 pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
 
+/// The site facts of a tracked store installed for its slot's held type (`StorePlan::Held`,
+/// `slot_store::HELD_*`), one per type a store keeps in place: a tagged slot's row stores with no
+/// class test, an int slot's with one, an object slot's and an object-or-null slot's with one or two.
+/// A store the slot's type refuses takes the tracked row (`TRACKED_SITE`), which stores, widens and
+/// installs the row of the type the slot holds now (`tracked_store_row`). Free own-form indexes.
+pub(crate) const TRACKED_TAGGED_SITE: u8 = own_site(false, OWN_FORMS.len() + 13);
+pub(crate) const TRACKED_INT_SITE: u8 = own_site(false, OWN_FORMS.len() + 19);
+pub(crate) const TRACKED_OBJECT_SITE: u8 = own_site(false, OWN_FORMS.len() + 43);
+pub(crate) const TRACKED_OBJECT_OR_NULL_SITE: u8 = own_site(false, OWN_FORMS.len() + 49);
+
 /// The site fact of a named store past one shape (`StorePlan::Polymorphic`): the record's hint,
 /// the site's polymorphic entries, then the proved add, all inside the row; a refusal takes
 /// `GENERAL_SITE`'s activation path.

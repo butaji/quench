@@ -311,6 +311,10 @@ pub trait Stage: crate::projection::Sealed {
         let zero = self.constant(0);
         if value { self.eq_imm(zero, 0u64) } else { self.ne_imm(zero, 0u64) }
     }
+    /// Whether the stage reads the arena's slot owner tables (`Table::SlotChains`, `Table::ChainOwners`,
+    /// `Table::OwnerTypes`), so a tracked store runs in place; a stage without them stores
+    /// through the frame's VM call, which is the same store.
+    const SLOT_TABLES: bool = true;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
@@ -396,6 +400,13 @@ pub enum Table {
     /// The object layout table (`heap::layouts`): a record's header words at its layout id
     /// times eight. Entries never change once written.
     Layouts,
+    /// The arena's chain start per shape (`ValueArena::shape_chains`), a `u32` each. Changes
+    /// as shapes are made, so a read of it is never hoisted.
+    SlotChains,
+    /// The owner of each chain slot (`ValueArena::chain_owners`), a `u32` each.
+    ChainOwners,
+    /// The representation each owner holds (`ValueArena::owner_types`), one `SlotType` byte each.
+    OwnerTypes,
 }
 
 

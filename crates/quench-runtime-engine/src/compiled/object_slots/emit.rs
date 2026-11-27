@@ -91,6 +91,7 @@ impl Emit<'_, '_> {
 quench_runtime::projection!(Emit<'_, '_> => Emit);
 
 impl Stage for Emit<'_, '_> {
+    const SLOT_TABLES: bool = false;
     type Proof = super::super::EmitProof;
     type Word = ir::Value;
     /// Any integer: nonzero holds.
@@ -410,6 +411,8 @@ impl Stage for Emit<'_, '_> {
             },
             // The table is a static that never moves; in-process code embeds its address.
             Table::Layouts => self.constant(quench_runtime::tier_surface::layouts::table_base() as u64),
+            // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
+            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a Cranelift row stores through the VM"),
         }
     }
     /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
