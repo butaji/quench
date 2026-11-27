@@ -9073,8 +9073,14 @@ script_handler! {
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
         let entry = &mut vm.lane_stack.script_targets.entries[index];
         debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
+        // An entry proved already is a site meeting another callee than its link named (a polymorphic
+        // `this.task.run(p)`): the link now names this one, and the call activates in place, not
+        // back through the row, which declined it.
         if entry.admission.0 & Admission::UNPROVEN == 0 {
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
+            match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
+                Some(resumed) => resume!(cx, resumed),
+                None => sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view)),
+            }
         }
         entry.admission.0 &= !Admission::UNPROVEN;
         debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
