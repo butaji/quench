@@ -16,12 +16,12 @@ pub(in crate::vm) struct AwaitResume {
 }
 
 impl Vm {
-    /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
-    /// finds live there (`suspension_registers`): a collection while it is suspended traces
-    /// those alone, so a dead temporary does not stay reachable until it resumes.
+    /// `Continuation::suspend` of the record `frame` at an await or yield, with the registers
+    /// liveness finds live there (`suspension_registers`): a collection while it is suspended
+    /// traces those alone, so a dead temporary does not stay reachable until it resumes.
     pub fn suspend_activation(
         &self,
-        frame: Box<super::Frame>,
+        frame: Box<FrameRecord>,
         completion: Completion,
         resume_register: Option<u16>,
         promise: Value,

@@ -22,6 +22,7 @@ mod effects;
 mod escapes;
 mod flow;
 mod gate;
+mod length_settle;
 mod lengths;
 mod quiet;
 mod readers;
@@ -89,9 +90,12 @@ pub struct AotFacts {
     /// Per function, the cells and sources its registers hold at every point of the settled solve (`registers::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
     pub(crate) registers: BTreeMap<u32, RegisterCells>,
-    /// Per function, the length relations each pc holds before its instruction (`lengths::Settled`): an index proven below
+    /// Per function, the length relations each pc holds before its instruction (`length_settle::Settled`): an index proven below
     /// an array's length, which `FunctionFacts::below_length` answers.
-    pub(crate) lengths: BTreeMap<u32, lengths::Settled>,
+    pub(crate) lengths: BTreeMap<u32, length_settle::Settled>,
+    /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
+    /// no guest code for a key that converts to none (`lengths::element_runs_guest_code`).
+    pub(crate) index_accessors_absent: bool,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
@@ -137,6 +141,7 @@ impl AotFacts {
             access_classes: BTreeMap::new(),
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
+            index_accessors_absent: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
             captures: BTreeMap::new(),
@@ -449,6 +454,11 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
     }
 
+    /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
+    pub(super) fn index_accessors_absent(&self) -> bool {
+        self.facts.index_accessors_absent
+    }
+
     /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
     pub(crate) fn call_site(&self, pc: u32) -> Option<&'a CallSite> {
         self.facts.call_sites.get(&(self.function, pc))
@@ -617,7 +627,6 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             // The callees of this function's calls are settled now: its reads and escapes are scanned against them.
             field_readers.scan(program, id, &flow, &facts, &scope);
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
-            facts.lengths.insert(id, std::mem::take(&mut flow.lengths));
         }
         open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
@@ -635,6 +644,15 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
+        // The length relations are solved after the signatures, over the settled words (`length_settle::settle`): a call resizes only
+        // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
+        facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
+        let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
+            let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &found, &facts.function_facts(id as u32)));
+            (id as u32, settled)
+        }).collect();
+        facts.lengths = settled_lengths;
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());

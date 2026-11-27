@@ -284,15 +284,16 @@ pub(crate) struct AsyncGeneratorRequest {
 }
 
 impl Continuation {
-    /// `frame`, suspended with `completion`; `resume_register` receives the value it resumes
-    /// with, and `promise` is an async activation's result.
+    /// `frame` (a record, `FrameRecord::capture`d at the pop that retired its activation),
+    /// suspended with `completion`; `resume_register` receives the value it resumes with, and
+    /// `promise` is an async activation's result.
     pub(super) fn suspend(
-        frame: Box<super::Frame>,
+        frame: Box<FrameRecord>,
         completion: Completion,
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
-        Self { frame: FrameRecord::capture(frame), completion, resume_register, promise }
+        Self { frame, completion, resume_register, promise }
     }
 
     /// A lane resumes the frame as an activation over its register file, which stays in this
@@ -397,7 +398,7 @@ mod tests {
         frame.with_base = 3;
         frame.fixed_this = true;
         let continuation =
-            Continuation::suspend(frame, Completion::Await(Value::heap(6)), Some(1), Value::heap(7));
+            Continuation::suspend(FrameRecord::capture(frame), Completion::Await(Value::heap(6)), Some(1), Value::heap(7));
         assert_eq!(
             continuation.roots(),
             [
@@ -430,7 +431,7 @@ mod tests {
         let suspended = |epoch| {
             let mut frame = Box::new(super::super::Frame::empty(ProgramId::MAIN, 0));
             frame.registers = crate::vm::register_file::RegisterFile::from_registers(&[Value::heap(1), Value::heap(2), Value::heap(3)]);
-            let mut continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, Value::UNDEFINED);
+            let mut continuation = Continuation::suspend(FrameRecord::capture(frame), Completion::Await(Value::UNDEFINED), None, Value::UNDEFINED);
             continuation.frame.suspend_registers((Some(RegisterSet::from(0b101u64)), epoch));
             continuation
         };

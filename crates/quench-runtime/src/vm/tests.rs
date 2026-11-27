@@ -1,7 +1,7 @@
 use super::wtf16::JsString;
 use super::{
     CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, NO_FIELD_HOLDER,
-    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation,
+    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation, activation::FrameRecord,
     regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Value};
@@ -7165,7 +7165,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     frame.env = live;
     frame.dynamic_bindings = vec![(held_atom, held)];
     let continuation =
-        Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
+        Continuation::suspend(FrameRecord::capture(frame), Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState::arm(
             crate::heap::AwaitKind::function(continuation),
@@ -9549,7 +9549,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 fixed_this: false,
             };
             let continuation = Continuation::suspend(
-                Box::new(frame),
+                FrameRecord::capture(Box::new(frame)),
                 completion(completion_value),
                 Some(0),
                 promise,

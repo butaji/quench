@@ -62,7 +62,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-pub use activation::{CallCompletion, CallContext, ConstructionTarget};
+pub use activation::{CallCompletion, CallContext, ConstructionTarget, FrameRecord};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -1967,10 +1967,11 @@ pub enum FrameOutcome {
         this: Value,
     },
     ParameterInitializationComplete,
-    /// A suspension, with the activation's frame when the caller retains it. The frame is boxed
-    /// so every `FrameOutcome` stays a few words: the common completions move it through each
-    /// call return.
-    Suspend(Suspended, Option<Box<Frame>>),
+    /// A suspension. Its frame is the record the suspension captured (`FrameRecord::capture`) at
+    /// the pop that retired the activation, which the caller takes; `None` where the frame is still
+    /// on the frame stack for that pop to take. The record is boxed so every `FrameOutcome` stays a
+    /// few words: the common completions move it through each call return.
+    Suspend(Suspended, Option<Box<FrameRecord>>),
 }
 
 impl FrameOutcome {
