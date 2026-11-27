@@ -85,8 +85,13 @@ pub(super) fn of_call(scope: &Scope, call: &Call) -> Option<Quiet> {
 pub(super) struct Proofs {
     /// Some code reaches a name the analysis cannot follow (`with`, `eval`, sloppy declarations).
     wild: bool,
-    /// Some write reaches the global object by a key the analysis cannot name, or the global object is read.
+    /// Some write reaches the global object by a name the analysis cannot name.
     global_wild: bool,
+    /// Some store through a non-Number key may write a name of the global object (`FunctionFlow::computed_global`).
+    computed: bool,
+    /// The global object may be reachable as a value: some function makes it one (`FunctionFlow::global_source`), or
+    /// some sloppy plain call reaches a function that reads its `this` (`FunctionFlow::plain_calls`).
+    global_source: bool,
     /// Some call defines properties on the objects it is given (`Change::Define`).
     defined: bool,
     /// Some store names a key the analysis cannot name (`Change::Any`).
@@ -103,6 +108,11 @@ impl Proofs {
         for flow in flows {
             proofs.wild |= flow.wild_owner;
             proofs.global_wild |= flow.global_wild;
+            proofs.computed |= flow.computed_global;
+            proofs.global_source |= flow.global_source;
+            proofs.global_source |= flow.plain_calls.iter().any(|&callee| {
+                callee.and_then(|function| flows.get(function as usize)).map_or(true, |callee| callee.reads_this)
+            });
             proofs.written.extend(flow.writes.iter().filter_map(|(key, _)| match key {
                 Key::Global(atom) => Some(*atom),
                 _ => None,
@@ -131,8 +141,9 @@ impl Proofs {
     }
 
     /// Whether global `atom` is still the builtin the host installed: the program never writes it, nor reaches the
-    /// global object by a name it cannot follow, nor defines a property.
+    /// global object by a name it cannot follow, nor defines a property. A computed-key store reaches the global object
+    /// only if the program makes it a value (`global_source`).
     fn intrinsic(&self, atom: u32) -> bool {
-        !self.wild && !self.global_wild && !self.defined && !self.written.contains(&atom)
+        !self.wild && !self.global_wild && !(self.computed && self.global_source) && !self.defined && !self.written.contains(&atom)
     }
 }

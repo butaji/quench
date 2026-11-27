@@ -204,3 +204,28 @@ fn a_call_to_an_unknown_function_before_the_last_store_has_no_layout() {
     let p = function_named(&program, "P") as u32;
     assert_eq!(facts.class_layout(p), None);
 }
+
+/// A program whose constructor makes an array after its first store, and that stores a computed name on an array
+/// elsewhere. `extra` adds the code that makes the global object a value.
+fn array_store_program(extra: &str) -> String {
+    format!(
+        "function P(n) {{ this.a = 1; this.b = new Array(2); }} function fill(obj, k, x) {{ obj.list[k] = x; }} \
+         function make() {{ var o = {{ list: [] }}; fill(o, 'q', 1); return new P(0); }} {extra} make();"
+    )
+}
+
+#[test]
+fn a_computed_name_store_on_an_array_keeps_a_layout_while_no_global_object_is_reachable() {
+    let program = program(&array_store_program(""));
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), Some(&[atom_named(&program, "a"), atom_named(&program, "b")][..]));
+}
+
+#[test]
+fn a_computed_name_store_into_the_global_object_loses_a_layout_that_makes_an_array() {
+    let program = program(&array_store_program("function setg(k, v) { globalThis[k] = v; } setg('zz', 1);"));
+    let facts = analyze(&program);
+    let p = function_named(&program, "P") as u32;
+    assert_eq!(facts.class_layout(p), None, "the global object is reachable, so Array may be rebound before the store");
+}

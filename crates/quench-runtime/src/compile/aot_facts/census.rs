@@ -71,7 +71,7 @@ impl Census {
             members,
             members_on,
             writes,
-            global_wild: flows.iter().any(|flow| flow.global_wild),
+            global_wild: flows.iter().any(|flow| flow.global_wild || flow.computed_global),
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
         }
     }

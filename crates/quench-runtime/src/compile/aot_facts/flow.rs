@@ -2,7 +2,7 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Ctx, Events, is_global_load, operand_fact, runs_guest_code, step};
+use super::effects::{Ctx, Events, decoded, is_global_load, operand_fact, runs_guest_code, step};
 use super::quiet::{self, Quiet};
 use super::numeric;
 use super::scope::Scope;
@@ -46,6 +46,15 @@ pub(super) struct FunctionFlow {
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
     pub(super) global_wild: bool,
+    /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
+    pub(super) computed_global: bool,
+    /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
+    /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
+    pub(super) global_source: bool,
+    /// The callee of each call the function makes with no receiver: its function id, if it names one, else None.
+    pub(super) plain_calls: Vec<Option<u32>>,
+    /// Whether the function reads its `this` (a load, a store or a field read of it, or a method of it).
+    pub(super) reads_this: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
@@ -362,6 +371,10 @@ struct Record {
     writes: Vec<(Key, Word)>,
     wild_owner: bool,
     wild_global: bool,
+    computed_global: bool,
+    global_source: bool,
+    plain_calls: Vec<Option<u32>>,
+    reads_this: bool,
     wild_member: bool,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Word>>,
@@ -382,6 +395,10 @@ impl Record {
             writes: Vec::new(),
             wild_owner: false,
             wild_global: false,
+            computed_global: false,
+            global_source: false,
+            plain_calls: Vec::new(),
+            reads_this: false,
             wild_member: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
@@ -409,6 +426,9 @@ impl Record {
         }
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
+        }
+        if matches!(decoded(instruction), Some(Operation::LoadThis { .. } | Operation::SetField { base: None, .. })) {
+            self.reads_this = true;
         }
         self.note_quiet(ctx, instruction, pc as u32);
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
@@ -455,6 +475,19 @@ impl Record {
                 self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
             }
             let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            if matches!(invocation.receiver, crate::staged::Receiver::This { .. }) {
+                self.reads_this = true;
+            }
+            if !matches!(invocation.receiver, crate::staged::Receiver::Register(_) | crate::staged::Receiver::This { .. } | crate::staged::Receiver::Allocated) {
+                self.plain_calls.push(match call.target {
+                    Target::Known(function) => Some(function),
+                    Target::Register => call.callee.cell.ty.body_index(),
+                    Target::Method(_) => None,
+                });
+            }
+            if method.is_some_and(|atom| ctx.scope.passes_this(atom)) {
+                self.global_source = true;
+            }
             self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
             if let Some(proof) = quiet::of_call(ctx.scope, &call) {
                 self.quiet.push((pc as u32, proof));
@@ -467,6 +500,8 @@ impl Record {
     fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
+        self.computed_global |= events.computed_store;
+        self.global_source |= events.global_source;
         self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
         self.shapes.extend(events.shape);
@@ -503,6 +538,7 @@ impl Record {
             && base == crate::bytecode::FieldBase::THIS
         {
             self.quiet.push((pc, Quiet::OwnField(atom)));
+            self.reads_this = true;
         }
     }
 
@@ -522,6 +558,10 @@ impl Record {
             writes: self.writes,
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
+            computed_global: self.computed_global,
+            global_source: self.global_source,
+            plain_calls: self.plain_calls,
+            reads_this: self.reads_this,
             member_wild: self.wild_member,
             numbers,
             field_owners: self.field_owners,

@@ -39,6 +39,11 @@ pub(super) struct Ctx<'a> {
 pub(super) struct Events {
     pub(super) writes: Vec<(Key, Word)>,
     pub(super) wild_global: bool,
+    /// Whether the instruction may make the global object reachable as a value: a read of a global object's name, or
+    /// the root's `this`. Sloppy plain calls and `call`/`apply`/`bind` are sources too (`flow::Record::observe`).
+    pub(super) global_source: bool,
+    /// Whether a store through a non-Number key may write a name of the global object (`writes_global_name`).
+    pub(super) computed_store: bool,
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
@@ -206,6 +211,7 @@ fn value_of(
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
+        events.global_source |= ctx.scope.is_global_object(atom);
         return resolved(ctx, Key::Global(atom));
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
@@ -436,6 +442,7 @@ fn writes(
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
 fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
+    events.computed_store |= writes_global_name(operation.as_ref(), state);
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
@@ -504,15 +511,30 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         events.wild_owner = true;
     }
     match operation {
-        Some(
-            Operation::ElementWrite { .. }
-            | Operation::IndexWrite { .. }
-            | Operation::IndexSetHelper { .. }
-            | Operation::Delete { .. },
-        ) => events.wild_global = true,
-        Some(Operation::LoadThis { .. }) if ctx.is_root => events.wild_global = true,
+        Some(Operation::LoadThis { .. }) if ctx.is_root => {
+            events.wild_global = true;
+            events.global_source = true;
+        }
         _ => {}
     }
+}
+
+/// Whether a store through a computed key (`operation`) may write a name of the global object: a key that is no Number
+/// (a Number names no identifier a name read reads), into a receiver that may be the global object (`may_be_global`).
+/// A store through an operation with no receiver the analysis names may be any of them.
+fn writes_global_name(operation: Option<&Operation<(), ()>>, state: &[Word]) -> bool {
+    match operation {
+        Some(Operation::ElementWrite { base, key, .. } | Operation::Delete { base, key, .. }) =>
+            !state[usize::from(*key)].is_number() && may_be_global(state[usize::from(*base)]),
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => true,
+        _ => false,
+    }
+}
+
+/// Whether a value of cell `word` may be the global object: an object of no one known class (`Classes::Many`), as the
+/// global object is no instance of a constructed class.
+fn may_be_global(word: Word) -> bool {
+    word.cell.classes == Classes::Many && word.cell.ty.direct_object_part().is_some()
 }
 
 /// Records the binding stores `operation` makes, with the facts they store.

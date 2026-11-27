@@ -6,8 +6,10 @@ use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS};
 
-/// Names that reach the global object as a value (`globalThis`, and Node's `global`).
-const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
+/// Names that reach the global object as a value (`globalThis`, Node's `global`, and the browser names `self` and `window`).
+const GLOBAL_OBJECT_NAMES: [&str; 4] = ["globalThis", "global", "self", "window"];
+/// Methods that pass their receiver argument as the `this` of a call (`f.call(undefined)`): a sloppy callee gets the global object.
+const THIS_PASSERS: [&str; 3] = ["call", "apply", "bind"];
 
 /// Array methods that may change an array's elements or length, so a call of one on an array changes what its
 /// elements cell names (`effects`, `flow`). Any other method is taken to leave them as they are.
@@ -24,6 +26,8 @@ pub(super) struct Scope {
     global_objects: Vec<u32>,
     /// The atoms of the builtins that add properties to the objects they are given (`PROPERTY_ADDERS`).
     property_adders: Vec<u32>,
+    /// The atoms of the methods that pass a `this` (`THIS_PASSERS`) the program names.
+    this_passers: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
@@ -65,6 +69,7 @@ impl Scope {
                 .filter(|(_, name)| PROPERTY_ADDERS.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
             mutators: program
@@ -103,6 +108,11 @@ impl Scope {
     /// Whether `atom` names an array method that may change the array it is called on (`ARRAY_MUTATORS`).
     pub(super) fn is_array_mutator(&self, atom: u32) -> bool {
         self.mutators.contains(&atom)
+    }
+
+    /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).
+    pub(super) fn passes_this(&self, atom: u32) -> bool {
+        self.this_passers.contains(&atom)
     }
 
     /// Whether the builtin named `atom` adds properties to the objects it is given (`property_adders`).
