@@ -9,6 +9,7 @@
 use super::typed_elements::{NativeKind, TypedView, ViewKind};
 #[cfg(not(stencil_build))]
 use super::typed_elements::{element_number, field_bits, store_element_number, store_field_bits, typed_read};
+use super::proof::Viewed;
 use super::region::Region;
 use super::{value, Stage};
 #[cfg(not(stencil_build))]
@@ -63,20 +64,47 @@ pub(crate) fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word
 
 /// The view of the typed array `base`, proved for `access`: `None` (leaving at `miss`) for any
 /// other value, another kind than the one asked, a stale or detached record, or (to store) bytes
-/// another buffer shares.
+/// another buffer shares. A fixed kind is `prove_viewed`'s proof; any kind dispatches on the record's.
 #[inline(always)]
 pub fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word,
     access: ViewAccess, miss: S::Miss) -> Option<TypedView<S::Word>> {
+    if let Some(native) = access.kind {
+        return prove_viewed(stage, records, base, native, access.writable, miss).map(Viewed::view);
+    }
     let record = view_record(stage, records, base, miss)?;
     let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
-    let kind = match access.kind {
-        Some(native) => {
-            let observed = stage.eq_imm(kind_word, native.kind as u64);
-            stage.guard(observed, miss)?;
-            ViewKind::Static(native)
-        }
-        None => ViewKind::Dynamic(kind_word),
-    };
+    let (values, length) = attached_view(stage, records, record, access.writable, miss)?;
+    Some(TypedView { values, length, kind: ViewKind::Dynamic(kind_word), within: false })
+}
+
+/// The one guard of a typed array's view of kind `native`: the record of `base` (`view_record`)
+/// is of that kind, current, attached and (to store) unshared. Its proof (`Viewed`) is what the
+/// rows take; a code dependency keeps it past a call (`HeldViews`).
+#[inline(always)]
+pub fn prove_viewed<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word,
+    native: NativeKind, writable: bool, miss: S::Miss) -> Option<Viewed<S::Word>> {
+    let (values, length) = kind_view(stage, records, base, native.kind as u8, writable, miss)?;
+    Some(Viewed::of_guard(values, length, native))
+}
+
+/// The address and count the record of `base` publishes, where it is of kind `kind` (a
+/// `TypedArrayKind`'s discriminant, or `NO_KIND` for a DataView: `data_view::prove_data_view`),
+/// current, attached and (to store) unshared: every view's one guard.
+#[inline(always)]
+pub(super) fn kind_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, kind: u8,
+    writable: bool, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let record = view_record(stage, records, base, miss)?;
+    let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
+    let observed = stage.eq_imm(kind_word, u64::from(kind));
+    stage.guard(observed, miss)?;
+    attached_view(stage, records, record, writable, miss)
+}
+
+/// The address and count `record` publishes, where its stamp is the current relocation count, it
+/// is attached and (to store) its bytes are its own.
+#[inline(always)]
+fn attached_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, record: S::Word, writable: bool,
+    miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let stamp = stage.load_u64(Region::Records.mutable(), record, VIEW.stamp_offset as i32);
     let current = stage.load_u64(Region::HeapMeta.mutable(), records.relocations, 0);
     let moved = stage.sub(stamp, current);
@@ -85,14 +113,14 @@ pub fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>,
     let detached = stage.load_u8(Region::Records.mutable(), record, VIEW.detached_offset as i32);
     let attached = stage.eq_imm(detached, 0u32);
     stage.guard(attached, miss)?;
-    if access.writable {
+    if writable {
         let unshared = stage.load_u8(Region::Records.mutable(), record, VIEW.unshared_offset as i32);
         let alone = stage.eq_imm(unshared, 1u32);
         stage.guard(alone, miss)?;
     }
     let values = stage.load_u64(Region::Records.mutable(), record, VIEW.data_offset as i32);
     let length = stage.load_u32(Region::Records.mutable(), record, VIEW.length_offset as i32);
-    Some(TypedView { values, length, kind, within: false })
+    Some((values, length))
 }
 
 /// The interpreter's view of the typed array `base` among the record pages of `directory`: the proof

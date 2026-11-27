@@ -20,6 +20,8 @@ pub(crate) struct StableUses {
     pub(crate) chains: BTreeSet<quench_runtime::code_dependencies::PrototypeChain>,
     /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
     pub(crate) shapes: quench_runtime::staged::HeldShapes,
+    /// Whether the code held the typed views it proved past a call (`StableHold::hold_views`).
+    pub(crate) views: quench_runtime::staged::HeldViews,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -56,7 +58,8 @@ impl StableUses {
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: self.layouts.take(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take() }
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take(),
+            views: self.views.take() }
     }
 }
 
@@ -90,6 +93,20 @@ impl StableHold<'_> {
         let online = self.online.filter(|online| (online.shape_stable)(shape))?;
         self.read_held(frame, online, state, exit);
         Some(self.shapes.hold(shape))
+    }
+
+    /// Holds the typed views the code proved, from the instruction at `at`: an invalidation point
+    /// as `hold_holder`'s, the code retiring at the first change of a live view (bytes moved,
+    /// resized, detached, shared). A view proved before a call is then the same view after it
+    /// (`Viewed::by_fact`), with no test. `None` where the code takes no dependencies on the VM or
+    /// changes of live views keep retiring code (`heap::typed_views_stable`).
+    pub(crate) fn hold_views(&mut self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers),
+        state: &mut State, exit: ir::Block) -> Option<quench_runtime::staged::TypedViewFact> {
+        let online = self.online.filter(|_| quench_runtime::tier_surface::typed_views_stable())?;
+        // Not `read_held`: a loop that holds every Stable fact may still run an instruction that changes a view
+        // (`keep_typed_views`), which only this block's own read since answers.
+        if !state.proofs.stable { read_invalidation_word(builder, helpers, online.invalidation, state, exit); }
+        Some(self.views.hold())
     }
 }
 
@@ -171,9 +188,24 @@ impl Lowering<'_, '_> {
         read_invalidation_word(&mut self.builder, self.helpers, live, state, exit);
     }
 
+    /// The view of the typed array in `register` of kind `kind` (for stores where `writable`) an earlier access proved
+    /// (`Proofs::typed`). A view kept past an instruction that may change one (`keep_typed_views`) is the same view
+    /// where the code holds views (`StableHold::hold_views`): one invalidation read answers for every kept view, else
+    /// the kept views go and the access proves its view again.
+    pub(crate) fn typed_view_of(&mut self, state: &mut State, (register, kind, writable): (Register, quench_runtime::tier_surface::TypedArrayKind, bool),
+        exit: ir::Block) -> Option<TypedProof> {
+        let proof = state.proofs.typed.iter().find(|view| view.register == register && view.kind == kind && (view.writable || !writable)).copied()?;
+        if !proof.kept { return Some(proof); }
+        let mut hold = StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops,
+            online: self.vm.online, at: self.at };
+        let held = hold.hold_views((&mut self.builder, self.helpers), state, exit).is_some();
+        state.proofs.typed.retain_mut(|view| { view.kept &= !held; !view.kept });
+        held.then_some(TypedProof { kept: false, ..proof })
+    }
+
     /// Holds the values of prototypes of exact shape `holder` (`hold_stable`).
     pub(crate) fn hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
-        let mut hold = StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops,
+        let mut hold = StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops,
             online: self.vm.online, at: self.at };
         hold.hold_holder((&mut self.builder, self.helpers), state, exit, holder).expect("only a division with Stable facts holds a prototype");
     }

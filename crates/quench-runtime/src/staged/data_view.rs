@@ -9,9 +9,9 @@
 //! ToInt32 modulo the width for a store, the binary32 rounding of a float store.
 
 use super::region::Region;
-use super::typed_view::{view_record, TypedRecords};
+use super::typed_view::{kind_view, TypedRecords};
 use super::{NumericStage, Stage};
-use crate::heap::{NATIVE_TYPED_ARRAY_LAYOUT as VIEW, NO_KIND};
+use crate::heap::NO_KIND;
 
 /// The fixed-width element kinds a DataView reads and writes in place (Float16 and BigInt stay on the general path).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -56,25 +56,7 @@ pub struct DataViewWords<W> {
 #[inline(always)]
 pub fn prove_data_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, writable: bool,
     miss: S::Miss) -> Option<DataViewWords<S::Word>> {
-    let record = view_record(stage, records, base, miss)?;
-    let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
-    let plain = stage.eq_imm(kind_word, u64::from(NO_KIND));
-    stage.guard(plain, miss)?;
-    let stamp = stage.load_u64(Region::Records.mutable(), record, VIEW.stamp_offset as i32);
-    let current = stage.load_u64(Region::HeapMeta.mutable(), records.relocations, 0);
-    let moved = stage.sub(stamp, current);
-    let fresh = stage.eq_imm(moved, 0u32);
-    stage.guard(fresh, miss)?;
-    let detached = stage.load_u8(Region::Records.mutable(), record, VIEW.detached_offset as i32);
-    let attached = stage.eq_imm(detached, 0u32);
-    stage.guard(attached, miss)?;
-    if writable {
-        let unshared = stage.load_u8(Region::Records.mutable(), record, VIEW.unshared_offset as i32);
-        let alone = stage.eq_imm(unshared, 1u32);
-        stage.guard(alone, miss)?;
-    }
-    let values = stage.load_u64(Region::Records.mutable(), record, VIEW.data_offset as i32);
-    let length = stage.load_u32(Region::Records.mutable(), record, VIEW.length_offset as i32);
+    let (values, length) = kind_view(stage, records, base, NO_KIND, writable, miss)?;
     Some(DataViewWords { values, length })
 }
 

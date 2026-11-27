@@ -9,6 +9,7 @@
 use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
+use super::view_holders::live_view_changed;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, MutexGuard};
 
@@ -32,7 +33,7 @@ pub fn buffer_relocations_address() -> *const u64 {
     BUFFER_RELOCATIONS.as_ptr().cast_const()
 }
 
-fn note_relocation() {
+pub(super) fn note_relocation() {
     BUFFER_RELOCATIONS.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -94,7 +95,7 @@ impl Clone for BufferBytes {
             Self::from(self.to_vec())
         } else {
             // A store two handles share is copied before either writes.
-            note_relocation();
+            live_view_changed();
             Self(self.0.clone())
         }
     }
@@ -233,7 +234,7 @@ impl BufferBytes {
             }
             BufferStore::Shared(bytes) => {
                 *store = BufferStore::AddressPinned(bytes.to_vec());
-                note_relocation();
+                live_view_changed();
             }
             BufferStore::AddressPinned(_) | BufferStore::Wasm(_) => {}
             BufferStore::AtomicShared(_) => {
@@ -255,7 +256,7 @@ impl BufferBytes {
     /// The store for writing, copied first where another handle shares it.
     fn unshared_store(&mut self) -> &mut BufferStore {
         if Rc::strong_count(&self.0) > 1 {
-            note_relocation();
+            live_view_changed();
         }
         Rc::make_mut(&mut self.0)
     }
@@ -267,7 +268,7 @@ impl BufferBytes {
         let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
-            note_relocation();
+            live_view_changed();
         }
         match store {
             BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
@@ -359,7 +360,7 @@ impl BufferBytes {
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
         bump_view_epoch();
         // The caller resizes the vector, which may move it.
-        note_relocation();
+        live_view_changed();
         let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());

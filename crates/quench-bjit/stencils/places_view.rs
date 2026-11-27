@@ -21,7 +21,8 @@ use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
-use crate::staged::typed_elements::{NativeKind, TypedView, ViewKind};
+use crate::staged::typed_elements::NativeKind;
+use crate::staged::{TypedViewFact, Viewed};
 use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalFrame, NumericFrame, PropertyFrame, entry};
 
 /// The hole holding the site table an element access reads its shape facts from (a dense access's
@@ -197,6 +198,6 @@ pub(crate) fn entry_typed<const KIND: u8>(payload: usize, (at, first): (u8, u8))
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let values = entry::entry_word(&mut stage, record, offset);
     let length = entry::entry_word(&mut stage, record, offset + LOOP_ENTRY_ARRAY_COUNT_AT);
-    Some(ElementView::Typed(TypedView { values, length, kind: ViewKind::Static(native), within: false }))
+    Some(ElementView::Typed(Viewed::by_fact(values, length, native, TypedViewFact::entry_guard()).view()))
 }
 

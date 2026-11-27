@@ -14,7 +14,7 @@ pub(crate) use crate::typed_ir::Type;
 #[path = "../../quench-runtime/src/staged/int_math.rs"] pub(crate) mod int_math;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/proof.rs"] pub(crate) mod proof;
-#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use proof::{Float64, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped};
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use proof::{Float64, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped, TypedViewFact, Viewed};
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/builtins.rs"] pub(crate) mod builtins;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/strings.rs"] pub(crate) mod strings;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/call_native.rs"] pub(crate) mod call_native;
