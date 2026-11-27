@@ -3191,9 +3191,9 @@ pub const CODE_GRANULE: usize = 64;
 pub enum NativeJsCode {
     /// Code the system linker placed in this executable (`NativeJsProgram::from_linked_image`).
     Placed(LinkedTable),
-    /// An image compiled into this process (`NativeJsProgram::compile_eager`): its file, linked
+    /// An image compiled into this process (`NativeJsProgram::publish`): its file, linked
     /// into each VM that attaches it (`aot_image::live::install`).
-    Eager(Vec<u8>),
+    Image(Vec<u8>),
 }
 
 pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;

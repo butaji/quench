@@ -149,8 +149,6 @@ use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
 #[path = "compiled/lane_method.rs"] pub(crate) mod lane_method;
-#[path = "compiled/site_posterior.rs"]
-pub(crate) mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] pub(crate) mod numeric_image; #[cfg(test)] pub(crate) use numeric_image::compile_js_typed_numeric_region;
 pub(crate) use numeric_image::NumericImage;
@@ -285,12 +283,10 @@ pub(crate) mod general_store;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 pub(crate) mod guard_aarch64;
-pub(crate) mod eager;
 pub(crate) mod frozen;
 #[cfg(feature = "native-execution")]
 pub(crate) mod semantic_stop;
 pub(crate) use frozen::ClosedFrozen;
-pub(crate) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
 pub(crate) mod fault_handler;
@@ -1868,33 +1864,6 @@ struct WasmJitModeTestOverride {
 thread_local! {
     static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
         const { std::cell::Cell::new(None) };
-    static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
-}
-
-/// Whether the eager artifact compiles functions holding `unreachable` (C asserts and aborts,
-/// which most Emscripten functions hold): the trap lowers to a return of the trap status. A test
-/// may reject them to keep such a function for the tier.
-fn eager_unreachable_admitted() -> bool {
-    #[cfg(test)]
-    if WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(std::cell::Cell::get) {
-        return false;
-    }
-    true
-}
-
-#[cfg(test)]
-pub(crate) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.set(self.0));
-        }
-    }
-    let previous =
-        WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.replace(true));
-    let _restore = Restore(previous);
-    run()
 }
 
 #[cfg(test)]
@@ -3772,7 +3741,7 @@ impl Vm {
     /// hints (`LaneView::own_field_hint`); each own read's hint becomes its loads' `formed` layout
     /// id, which a load names only where it is the load's shape (`lane_region::field_plans`). An
     /// inlined instruction's record belongs to another body's view, so it takes no hint.
-    fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
+    fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, generic: &[usize],
         view: Option<&crate::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
@@ -3787,11 +3756,28 @@ impl Vm {
                     _ => None,
                 };
                 let loads = if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) };
-                (site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
+                (pc, site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
             })
-            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
-            .map(|(site, shapes)| (usize::from(site), shapes));
+            .filter(|(pc, _, shapes)| !shapes.is_empty() && self.guards_at(program, unit, function, *pc))
+            .map(|(_, site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
+    }
+
+    /// Whether the field site at unit PC `pc` guards its shapes and exits on a miss (`lane_facts::speculates`), from the
+    /// solver's class set of the access in the running program's facts. A program not running, or one whose access the
+    /// solver does not close, reads in place through the VM's cache (`lane_region::field_probe`).
+    fn guards_at(&self, program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, pc: usize) -> bool {
+        let running = self.programs.residual(self.active_program).is_some_and(|running| std::ptr::eq(running, program));
+        let Some(facts) = self.programs.aot_facts(self.active_program).filter(|_| running) else { return false };
+        let (function, pc) = match unit.origins.get(pc) {
+            Some(lane_unit::Origin::Caller(pc)) => (function, *pc),
+            Some(lane_unit::Origin::Inlined { frame, pc }) => match unit.frames.get(*frame) {
+                Some(frame) => (frame.target.function, *pc),
+                None => return false,
+            },
+            None => return false,
+        };
+        lane_facts::speculates(facts.function_facts(function).access_classes(pc))
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -10500,7 +10486,7 @@ mod tests {
         quench_runtime::test_support::on_compile_stack(|| {
             let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
             let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
-            let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let native = quench_runtime::NativeJsProgram::publish(program.clone()).unwrap();
             for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
                 let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
                 vm.programs.enable_js_lane_methods();
@@ -10619,7 +10605,7 @@ mod tests {
         for specialized in [false, true] {
             let mut program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
             program.specialized = specialized;
-            let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
+            let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
             let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.execute_native_program(&native, true).unwrap_err();

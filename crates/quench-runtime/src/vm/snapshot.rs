@@ -696,7 +696,7 @@ mod tests {
             expected.set_execution_mode(crate::ExecutionMode::Interpreted);
             expected.execute(&program).unwrap();
             let expected = expected.host_mut().lines().to_vec();
-            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
             let mut builder = Runtime::new(crate::test_host::TestHost::default());
             let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
             let mut runtime = Runtime::new(crate::test_host::TestHost::default());
@@ -719,7 +719,7 @@ mod tests {
         expected.execute(&program).unwrap();
         let expected = expected.host_mut().lines().to_vec();
         for mode in [crate::ExecutionMode::Compiled, crate::ExecutionMode::NativeOnly] {
-            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
             let mut runtime = Runtime::new(crate::test_host::TestHost::default());
             runtime.set_execution_mode(mode);
             runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap();
@@ -741,7 +741,7 @@ mod tests {
             (Engine::specialize("function foreign(argument) { print(extra); } foreign();", "foreign.js").unwrap(), "atom IDs"),
             (Engine::specialize_unspecialized("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap(), "specialization"),
         ] {
-            let native = crate::NativeJsProgram::compile_eager(foreign).unwrap();
+            let native = crate::NativeJsProgram::publish(foreign).unwrap();
             let mut runtime = Runtime::new(crate::test_host::TestHost::default());
             runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
             let error = runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap_err();
