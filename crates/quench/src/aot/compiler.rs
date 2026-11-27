@@ -154,6 +154,12 @@ impl CompiledSources {
             Some(realm) => Some(write_closed_world(&mut catalog, realm, &demand.execution_table())?),
             None => None,
         };
+        // The global names the program reads by name: the closed world's global roots, which the dump
+        // run rebuilds its closure from (`Vm::collect_for_image`).
+        if realm.is_some() {
+            let names = demand.globals.iter().map(|name| format!("{:?}", &**name)).collect::<Vec<_>>().join(", ");
+            writeln!(catalog, "static CLOSED_GLOBALS: &[&str] = &[{names}];").map_err(|error| error.to_string())?;
+        }
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),

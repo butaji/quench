@@ -6,7 +6,9 @@
 #![no_main]
 
 use quench_runtime::native_link::image_dump;
-use quench_runtime::{ExecutionMode, NativeJsProgram, Runtime, SystemHost};
+use quench_runtime::tier_surface::Native;
+use quench_runtime::{ExecutionMode, NativeJsProgram, RealmRoots, Runtime, SystemHost};
+use std::collections::BTreeSet;
 
 // Every runtime layer (engine, intl, stencils) links through this facade: the core calls their
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
@@ -46,8 +48,16 @@ fn start_state() -> Result<Box<Rest>, String> {
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
     runtime.set_memory_policy(MEMORY_POLICY);
     runtime.install_native_at_rest(&program).map_err(|error| uncaught(&error))?;
-    let rest = Box::new((runtime, program));
+    let mut rest = Box::new((runtime, program));
     if image_dump::requested_wait().is_some() {
+        // The dump keeps the realm the closed world reaches: the closure of the program over the
+        // global names the build recorded and the natives this image keeps (`close`).
+        let globals: BTreeSet<Box<str>> = CLOSED_GLOBALS.iter().map(|name| Box::from(*name)).collect();
+        let natives: BTreeSet<Native> = BUILTINS.natives.unwrap_or(&[]).iter().copied().collect();
+        let (runtime, program) = &mut *rest;
+        runtime
+            .collect_closed_world(program.residual(), RealmRoots { globals: &globals, natives: &natives })
+            .map_err(|error| uncaught(&error))?;
         image_dump::write(0, Box::into_raw(rest).cast());
     }
     Ok(rest)
