@@ -3,11 +3,11 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 mod fields;
-
-use super::accessors::site_holder;
+mod strings;
 
 pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
-use self::fields::{member_stores, member_type, prototype_base};
+use self::fields::{member_stores, member_type, named_word, prototype_base};
+use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
@@ -217,14 +217,11 @@ fn value_of(
         if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
             return Word::from(Origin::Prototype(prototype));
         }
+        if let Some(length) = string_length(ctx, base_fact(ctx, base, state), atom) {
+            return Word::of(length);
+        }
         let cell = member_type(ctx, base_fact(ctx, base, state), atom);
-        return match owner.and_then(Word::class_site) {
-            Some(site) => {
-                let (holder, instance, guess) = site_holder(ctx, site, atom);
-                Word { cell, ..Word::member_on(holder, instance, atom, guess) }
-            }
-            None => Word::member(atom, cell),
-        };
+        return named_word(ctx, owner, cell, atom);
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -242,6 +239,9 @@ fn value_of(
     }
     if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
         return typed;
+    }
+    if ctx.types.is_some() && let Some(string) = string_call(ctx, instruction, state) {
+        return string;
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
@@ -280,6 +280,16 @@ fn value_of(
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
     if instruction.op() == crate::bytecode::Op::GetIndex {
+        // A key that is one atom reads the named field it spells, as `o.name` does; an array index is an element instead.
+        let key = state[usize::from(instruction.register_c())].cell.ty.string_fact().and_then(|fact| fact.atom());
+        if let Some(atom) = key.filter(|&atom| !ctx.scope.names_index(atom)) {
+            let owner = state[usize::from(instruction.register_b())];
+            if let Some(length) = string_length(ctx, Some(owner), atom) {
+                return Word::of(length);
+            }
+            let cell = member_type(ctx, Some(owner), atom);
+            return named_word(ctx, Some(owner), cell, atom);
+        }
         let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
         return Word::of_cell(typing::element(&before, base, index));
     }
@@ -431,3 +441,4 @@ fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, 
     let fact = if !stable && pc < ctx.parameter_end { Word::UNKNOWN } else { fact };
     events.writes.push((key, fact));
 }
+

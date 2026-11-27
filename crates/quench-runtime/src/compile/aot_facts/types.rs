@@ -21,6 +21,7 @@ use super::census::{Census, ElementClasses};
 use super::escapes::{escapes, resolved};
 use super::flow::FunctionFlow;
 use super::gate::World;
+use super::quiet::{Proofs, StringBuiltins};
 use super::scope::Scope;
 use super::value::{Key, Origin, Word};
 use crate::staged::typing;
@@ -74,6 +75,8 @@ pub(crate) struct Types {
     parents: BTreeMap<u32, u32>,
     /// The world the program is solved in: a key new code can move is no fold (`World::live`).
     world: World,
+    /// The String builtins the program leaves as the host installed them: the calls of them are typed by the string rules.
+    strings: StringBuiltins,
 }
 
 impl Types {
@@ -100,6 +103,7 @@ impl Types {
             shadows: census.accessors.shadows.clone(),
             parents: census.accessors.parents().clone(),
             world: facts.world,
+            strings: scope.string_builtins(&Proofs::of(flows)),
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
@@ -192,7 +196,7 @@ impl Types {
         if self.wild_elements { return Elements::ANY; }
         self.elements.members(class)
             .filter_map(|member| self.cells.get(&Key::Element(member)))
-            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None }))
+            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None, holes: stored.elements.holes }))
     }
 
     /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the
@@ -310,6 +314,11 @@ impl Types {
             }
         }
         class
+    }
+
+    /// The String builtins a call's result is typed by (`strings`).
+    pub(super) fn strings(&self) -> &StringBuiltins {
+        &self.strings
     }
 
     /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no

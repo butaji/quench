@@ -401,6 +401,22 @@ impl<'a> FunctionFacts<'a> {
         self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
     }
 
+    /// Whether `===` between the registers `left` and `right` just before `pc` is a pointer compare: both hold interned
+    /// atoms (`staged::typing::both_interned`).
+    pub fn interned_compare(&self, pc: u32, left: u16, right: u16) -> bool {
+        match (self.cell_at(pc, left), self.cell_at(pc, right)) {
+            (Some(left), Some(right)) => crate::staged::typing::both_interned(left.ty, right.ty),
+            _ => false,
+        }
+    }
+
+    /// Whether `===` between the string registers `left` and `right` just before `pc` is decided by their facts
+    /// (`staged::typing::string_equality`): `Some(outcome)`, or `None` where the facts leave it open.
+    pub fn string_equal(&self, pc: u32, left: u16, right: u16) -> Option<bool> {
+        let (left, right) = (self.cell_at(pc, left)?, self.cell_at(pc, right)?);
+        crate::staged::typing::string_equality(left.ty, right.ty)
+    }
+
     /// The source of the value register `register` holds just before the instruction at `pc` (`RegisterCells::source_at`),
     /// where the solve settled: a binding it was loaded from or a property it was read off, else `Computed`. Computed also
     /// where no path reaches `pc` or the solve did not settle, the answer that assumes nothing about the value's origin.
@@ -680,15 +696,16 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         facts.readers = Some(field_readers);
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
+        // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
+        facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
         // The length relations are solved after the signatures, over the settled words (`length_settle::settle`): a call resizes only
         // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
-        facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
         let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
             let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &found, &facts.function_facts(id as u32)));
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &accessor_names, &found, &facts.function_facts(id as u32)));
             (id as u32, settled)
         }).collect();
         facts.lengths = settled_lengths;

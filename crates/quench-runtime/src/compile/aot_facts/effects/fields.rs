@@ -1,5 +1,5 @@
 //! The named field reads and stores one instruction makes: the object a field access reads or writes, the type a read
-//! takes off that object, and the stores a `SetField` or a field store writes (`Events::writes`).
+//! takes off that object, the fact of a named read, and the stores a `SetField` or a field store writes (`Events::writes`).
 
 use super::super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::super::value::{Key, Origin, PrototypeBase, Word};
@@ -173,4 +173,16 @@ fn writes_global_name(operation: Option<&Operation<(), ()>>, state: &[Word]) -> 
 /// global object is no instance of a constructed class.
 fn may_be_global(word: Word) -> bool {
     word.cell.classes == Classes::Many && word.cell.ty.direct_object_part().is_some()
+}
+
+/// The fact of a named read of `atom` whose type is `cell`, off `owner`: the holder's class where the owner is an instance
+/// (`Word::member_on`), else the name it is read by (`Word::member`).
+pub(super) fn named_word(ctx: &Ctx<'_>, owner: Option<Word>, cell: Cell, atom: u32) -> Word {
+    match owner.and_then(Word::class_site) {
+        Some(site) => {
+            let (holder, instance, guess) = site_holder(ctx, site, atom);
+            Word { cell, ..Word::member_on(holder, instance, atom, guess) }
+        }
+        None => Word::member(atom, cell),
+    }
 }

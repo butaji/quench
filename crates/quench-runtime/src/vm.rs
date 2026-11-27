@@ -3598,14 +3598,19 @@ impl Vm {
         }
     }
 
-    fn materialize_constant(&mut self, constant: &Constant) -> Value {
+    /// The value of a program constant. A String constant the program names is the string of its atom (`atom`), so a
+    /// string constant and the atom it spells are one string object, which `===` between atom-known operands relies on
+    /// (`staged::typing::both_interned`); a `typeof` name keeps its one shared string (`typeof_constant`).
+    fn materialize_constant(&mut self, constant: &Constant, atom: Option<Atom>) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
-            Constant::String(v) => self
-                .typeof_constant(v)
-                .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
+            Constant::String(v) => match (self.typeof_constant(v), atom) {
+                (Some(name), _) => name,
+                (None, Some(atom)) => self.atom_string(atom),
+                (None, None) => self.heap.alloc_string(JsString::from_shared_text(v)),
+            },
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint((**v).clone())),
             Constant::Boolean(true) => Value::TRUE,
@@ -3620,19 +3625,21 @@ impl Vm {
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
         let mut strings: FxHashMap<StringConstantKey<'_>, Value> = FxHashMap::default();
+        let atoms = program_atoms(program);
         for constant in &program.constants {
+            let atom = constant_atom(&atoms, constant);
             let key = match constant {
                 Constant::String(text) => StringConstantKey::Text(text),
                 Constant::StringUnits(units) => StringConstantKey::Units(units),
                 _ => {
-                    constants.push(self.materialize_constant(constant));
+                    constants.push(self.materialize_constant(constant, atom));
                     continue;
                 }
             };
             let value = match strings.entry(key) {
                 std::collections::hash_map::Entry::Occupied(shared) => *shared.get(),
                 std::collections::hash_map::Entry::Vacant(slot) => {
-                    *slot.insert(self.materialize_constant(constant))
+                    *slot.insert(self.materialize_constant(constant, atom))
                 }
             };
             constants.push(value);
@@ -4210,6 +4217,25 @@ impl Vm {
 /// A program string constant's text as written, the key under which equal constants share a
 /// cell (`Vm::materialize_program_constants`).
 #[derive(PartialEq, Eq, Hash)]
+/// The atom each name of `program` interns to, by text: the program's atoms are the VM's prefix, so an atom is its index.
+pub(crate) fn program_atoms(program: &ResidualProgram) -> FxHashMap<&str, Atom> {
+    program.atoms.iter().enumerate().map(|(index, name)| {
+        let name: &str = name.as_ref();
+        (name, index as Atom)
+    }).collect()
+}
+
+/// The atom a program constant names: a String constant whose text the program names is that atom.
+pub(crate) fn constant_atom(atoms: &FxHashMap<&str, Atom>, constant: &Constant) -> Option<Atom> {
+    match constant {
+        Constant::String(text) => {
+            let text: &str = text.as_ref();
+            atoms.get(text).copied()
+        }
+        _ => None,
+    }
+}
+
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),
