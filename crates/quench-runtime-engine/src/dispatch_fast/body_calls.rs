@@ -450,7 +450,7 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
 #[inline]
 pub(crate) fn activation_form(target: &ScriptCallTarget, argc: u16) -> Option<CallActivation<bool>> {
     let fixed = argc <= target.params.min(FIXED_ARGUMENT_COPIES);
-    let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, matches!(target.entry, CallEntry::Environment));
+    let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, target.entry == CallEntry::framed(Framed::Environment));
     (form.plain || form.keeping || form.environment).then_some(form)
 }
 

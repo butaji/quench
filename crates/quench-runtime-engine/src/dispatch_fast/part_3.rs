@@ -615,7 +615,7 @@ pub(super) fn activate_in_lane(
     if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
         // A call keeping every value it was passed, a rest body's array aside, takes the plain
         // push with the values after its registers.
-        if !constructs && target.entry != CallEntry::Gathers {
+        if !constructs && target.entry != CallEntry::framed(Framed::Gathers) {
             return activate_keeping_window_in_lane::<true>(cx, r, ip, target, arguments, this);
         }
         return activate_keeping_in_lane::<true>(
@@ -1678,7 +1678,7 @@ pub(super) fn push_callback_in_lane(
     Some(start)
 }
 
-/// `activate_in_lane` of an environment target (`CallEntry::Environment`): its window holds
+/// `activate_in_lane` of an environment target (`CallEntry::framed(Framed::Environment)`): its window holds
 /// its registers, then its environment, made now as the frame's promotion would make it
 /// (each captured slot its parameter's argument or `undefined`, every other slot owned
 /// elsewhere), then its frame locals (each parameter its argument, a captured slot owned

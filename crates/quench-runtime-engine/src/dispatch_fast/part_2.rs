@@ -731,7 +731,7 @@ pub(super) fn receiver_this_in_lane(vm: &Vm, binding: ThisBinding, receiver: Val
     quench_runtime::staged::protocol::concrete_bind_this(receiver.to_bits(), vm.realm.globals.to_bits()).map(Value::from_bits)
 }
 
-/// Whether `target`, a settling target of the running program (`CallEntry::Settles`), may
+/// Whether `target`, a settling target of the running program (`CallEntry::framed(Framed::Settles)`), may
 /// suspend: its first `await` leaves its caller the promise, which only a caller that keeps
 /// the call's result can take (`Vm::try_settling_call`).
 #[inline(never)]
@@ -961,7 +961,7 @@ pub(super) fn forwarded_cell_entry_in_lane(
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let argc = u16::try_from(args.len()).ok().filter(|argc| *argc <= target.params)?;
-    (target.entry == CallEntry::Activates
+    (target.entry == CallEntry::framed(Framed::Activates)
         && !crosses_in_lane::<true>(cx, target)
         && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
         && !vm.with_scope_entered
@@ -988,12 +988,12 @@ pub(super) fn passed_target_in_lane(cx: *mut LaneContext, callee: Value, passed:
                 .then(|| vm.cross_call_entry(callee))
                 .flatten()
                 .map(|entry| unsafe { &*entry })
-                .filter(|target| target.entry.activates_across() || target.entry == CallEntry::Environment);
+                .filter(|target| target.entry.activates_across() || target.entry == CallEntry::framed(Framed::Environment));
             // SAFETY: as above.
             let own = || {
                 vm.script_call_entry(callee)
                     .map(|entry| unsafe { &*entry })
-                    .filter(|target| target.entry == CallEntry::Environment && target.program() == vm.active_program)
+                    .filter(|target| target.entry == CallEntry::framed(Framed::Environment) && target.program() == vm.active_program)
             };
             match cross {
                 Some(target) => *target,
@@ -1001,7 +1001,7 @@ pub(super) fn passed_target_in_lane(cx: *mut LaneContext, callee: Value, passed:
             }
         }
     };
-    if target.entry == CallEntry::Environment
+    if target.entry == CallEntry::framed(Framed::Environment)
         && passed > usize::from(target.params)
         && !vm.programs.residual(target.program())?.function(target.function as usize).rest
     {
@@ -1023,7 +1023,7 @@ pub(super) fn activate_passed_in_lane(
     passed: &[Value],
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    if target.entry == CallEntry::Environment {
+    if target.entry == CallEntry::framed(Framed::Environment) {
         return activate_environment_in_lane(cx, r, ip, target, passed, (this, false));
     }
     activate_kept_in_lane::<true>(cx, r, ip, target, passed, this)
@@ -1206,7 +1206,7 @@ pub(super) fn passed_linked_call_in_lane(
     // nothing before the activation is made resolves a target or collects; the gathering
     // activation copies it before it allocates the rest array (`activate_gathering_in_lane`).
     let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { &*target })?;
-    if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
+    if target.entry == CallEntry::framed(Framed::Gathers) && target.forms & TARGET_GATHERS_KEEPING == 0 {
         if !admits_activation_in_lane(&target) || valid < argc {
             return None;
         }
@@ -1809,12 +1809,12 @@ pub(super) fn call_keeping_activation_in_lane(
         return Err(Some(exit(ip)));
     };
     let window = ImmediateLayout::call_window_base(i.imm());
-    if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
+    if target.entry == CallEntry::framed(Framed::Gathers) && target.forms & TARGET_GATHERS_KEEPING == 0 {
         // SAFETY: the call's window of `r` holds its `argc` values.
         let passed = unsafe { r.0.add(usize::from(window)).cast_const() };
         return activate_gathering_in_lane(cx, r, ip, &target, passed, ImmediateLayout::argument_count(i.imm()), this).map_err(Some);
     }
-    if target.entry == CallEntry::Keeps {
+    if target.entry == CallEntry::framed(Framed::Keeps) {
         return activate_keeping_window_in_lane::<false>(cx, r, ip, &target, window, this).map_err(Some);
     }
     let arguments = ActivationArguments::Window(window);
@@ -1823,7 +1823,7 @@ pub(super) fn call_keeping_activation_in_lane(
 }
 
 /// The keeping activation of a target of the running program that keeps the values it was
-/// passed (`CallEntry::Keeps`), called with its window at `arguments` of `r`, made as a plain
+/// passed (`CallEntry::framed(Framed::Keeps)`), called with its window at `arguments` of `r`, made as a plain
 /// call's push is (`fill_window_in_lane`, `enter_window_in_lane`) with the values kept after its
 /// registers, as `activate_keeping_in_lane` keeps them, and the activation marked keeping.
 #[inline(always)]

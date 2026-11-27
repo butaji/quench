@@ -171,19 +171,19 @@ impl Vm {
 /// constructor its first resolution's, and any other the activation or leaf its shape allows.
 pub(crate) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, shape: &TargetBody, (settles, environment, cross): (bool, bool, bool)) -> CallEntry {
     if settles {
-        CallEntry::Settles
+        CallEntry::framed(Framed::Settles)
     } else if body.is_class_constructor {
         shape.entry
     } else if environment {
-        CallEntry::Environment
+        CallEntry::framed(Framed::Environment)
     } else if body.rest {
-        CallEntry::Gathers
+        CallEntry::framed(Framed::Gathers)
     } else if plan.keeps_arguments {
-        CallEntry::Keeps
+        CallEntry::framed(Framed::Keeps)
     } else if cross {
         // A leaf runs as one across programs too (`cross_leaf_call_in_lane`); no other
         // body form's answer reads another program's caches.
-        shape.leaf.map_or(CallEntry::Activates, CallEntry::leaf)
+        shape.leaf.map_or(CallEntry::framed(Framed::Activates), CallEntry::leaf)
     } else {
         // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
         shape.leaf.map_or(shape.entry, CallEntry::leaf)

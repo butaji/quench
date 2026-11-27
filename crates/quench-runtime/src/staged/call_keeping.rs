@@ -2,7 +2,7 @@
 //! protocol rows (`protocol`), Stage-generic, no alloc or std, so every tier runs the same rows.
 //!
 //! A keeping activation is a script activation that keeps the values it was passed past its
-//! registers (a forwarding body, a `CallEntry::Keeps` entry, a call passing more values than
+//! registers (a forwarding body, a `CallEntry::framed(Framed::Keeps)` entry, a call passing more values than
 //! the parameters, a rest body whose `arguments` or legacy reflection reads them), or gathers
 //! the values past its fixed parameters into a rest array. Its window, from register 0:
 //!
@@ -31,7 +31,7 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 
 /// The shape of a keeping window, constants of the target: its `registers` and `params`,
 /// whether it keeps the passed values past its registers (`keeps`) and whether its last
-/// parameter gathers the rest (`gathers`, `CallEntry::Gathers`).
+/// parameter gathers the rest (`gathers`, `CallEntry::framed(Framed::Gathers)`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KeepingWindow {
     pub registers: u16,

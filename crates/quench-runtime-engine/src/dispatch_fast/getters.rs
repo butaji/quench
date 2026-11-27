@@ -52,7 +52,7 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     #[inline(always)]
     fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
         let cx = self.cx;
-        if target.entry == CallEntry::Reads {
+        if target.entry == CallEntry::frameless(Frameless::Reads) {
             // A getter only the general path has called has not run its read in the lane yet: it
             // takes the kind its first run would.
             // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
@@ -78,7 +78,7 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     #[inline(always)]
     fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: Value, base: Value) {
         let site = match self.memo {
-            _ if target.entry == CallEntry::ReadsCapture => return,
+            _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => return,
             GetterMemo::Site(site) => site,
             GetterMemo::Read(i) if i.b != quench_runtime::bytecode::FieldBase::NESTED => i.c,
             _ => return,
@@ -103,8 +103,8 @@ fn memoize_getter(vm: &mut Vm, site: u16, getter: Value, base: Value) {
 /// What the getter `target` returns for `object` and every receiver of its layout, as a
 /// forward (getters-as-calls.md, trivial accessors), recognized from its body:
 /// - `return k` of a primitive constant that is no heap value (`constant_body_value`);
-/// - `return this` (`CallEntry::ReadsThis`) of a getter that binds `object` itself;
-/// - `return this.f` (`CallEntry::Reads`) whose returning `GetField` of `this` hits an own or
+/// - `return this` (`CallEntry::frameless(Frameless::ReadsThis)`) of a getter that binds `object` itself;
+/// - `return this.f` (`CallEntry::frameless(Frameless::Reads)`) whose returning `GetField` of `this` hits an own or
 ///   holder entry: that entry, which proves the receiver's shape itself;
 /// - `return this.#f`: the private field's own slot its site recorded for `object`'s exact
 ///   shape under the getter's home (`Vm::site_private_field_entry`): the getter's identity
@@ -123,9 +123,9 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
         return None;
     }
     match target.entry {
-        CallEntry::ReadsThis => Some(AccessorForward::Receiver),
+        _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(AccessorForward::Receiver),
         // SAFETY: a `Reads` target of the running program holds its returning record first.
-        CallEntry::Reads => match unsafe { LeafRead::of(target) }? {
+        _ if target.entry == CallEntry::frameless(Frameless::Reads) => match unsafe { LeafRead::of(target) }? {
             LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 Some(AccessorForward::Field(vm.field_cache_entry(cache)))
             }

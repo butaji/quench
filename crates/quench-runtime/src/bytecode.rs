@@ -2924,7 +2924,7 @@ impl Function {
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
-            // (`CallEntry::Gathers`) and a plain frame does not.
+            // (`CallEntry::framed(Framed::Gathers)`) and a plain frame does not.
             let ordinary_with_rest = registers_layout && !self.activation_binding_reads(tables);
             // A base class constructor laid out as an ordinary function runs frameless when
             // constructed (`script_construct_miss`); its calls, which throw, keep a frame.
@@ -3009,7 +3009,7 @@ impl Function {
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
-                        // (`CallEntry::Gathers`), which legacy reflection reads.
+                        // (`CallEntry::framed(Framed::Gathers)`), which legacy reflection reads.
                         !addresses_locals && (!legacy_reflection || live_parameters || self.rest)
                     } else {
                         reaches_only_forwarded_arguments

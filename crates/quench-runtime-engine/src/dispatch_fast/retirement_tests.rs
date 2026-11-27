@@ -62,7 +62,7 @@ fn direct_slot_fixture() -> (Vm, quench_runtime::ResidualProgram, Value, ScriptC
     let root = vm.own_property(vm.realm.globals, root_atom).unwrap();
     let target = vm.resolve_script_call_target(&program, leaf).unwrap();
     let root_target = vm.resolve_script_call_target(&program, root).unwrap();
-    assert!(target.entry == CallEntry::Activates && !target.view.is_null());
+    assert!(target.entry == CallEntry::framed(Framed::Activates) && !target.view.is_null());
     assert!(!root_target.view.is_null());
     (vm, program, leaf, target, root_target)
 }
