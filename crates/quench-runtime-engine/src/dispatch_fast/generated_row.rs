@@ -95,21 +95,20 @@ view_handler! {
         }
         // The cached, private and general reads answer at their record before the staged plan runs: a
         // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
-        if property && const { crate::dispatch_fast::cached_field_site(FLAG) || crate::dispatch_fast::private_field_site(FLAG) || crate::dispatch_fast::general_site(FLAG) } {
+        // A private read (its brand check throws) and a general read (it may run a getter) take the record's
+        // address and the lane's helpers, so they leave the row through `field_read_slow_row`.
+        if property && const { crate::dispatch_fast::private_field_site(FLAG) || crate::dispatch_fast::general_site(FLAG) } {
+            sibling!(field_read_slow_row::<OP, ACC, FLAG>, r, ip, view)
+        }
+        if property && const { crate::dispatch_fast::cached_field_site(FLAG) } {
             let script: *mut LaneContext = view.memory.bytes.cast();
             // The base: `this` for a `this` site, else the register the record names.
             let receiver = if const { crate::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
-            // A deleted `this` is no object for a cached or private read; the general read takes it as before.
-            if const { !crate::dispatch_fast::general_site(FLAG) } && receiver.is_deleted() { property_miss!() }
+            // A deleted `this` is no object for a cached read; the general read takes it as before.
+            if receiver.is_deleted() { property_miss!() }
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*script).code };
-            let read = if const { crate::dispatch_fast::cached_field_site(FLAG) } {
-                LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0)
-            } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
-                LaneFrame::<ACC>::private_value(script, ip.addr(), code, receiver, i.imm())
-            } else {
-                crate::dispatch_fast::general_field_read(script.cast(), ip.addr(), const { !crate::dispatch_fast::own_site_this(FLAG) }, receiver, i.imm(), i.c)
-            };
+            let read = LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0);
             match read {
                 Some(value) => {
                     // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
@@ -512,6 +511,39 @@ view_handler! {
                 if let Some((register, _, kept)) = local { r.set(register, kept); }
                 sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view)
             }
+        }
+    }
+}
+
+view_handler! {
+    /// The private and general reads of a field row, out of line: a private read's brand check throws,
+    /// and a general read may run a getter, so neither runs in the row (`generated_row`). Its record's
+    /// address is the one the row named; its miss is the row's property miss.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn field_read_slow_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let script: *mut LaneContext = view.memory.bytes.cast();
+        // The base: `this` for a `this` site, else the register the record names.
+        let receiver = if const { crate::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
+        // A deleted `this` is no object for a private read; the general read takes it as before.
+        if const { !crate::dispatch_fast::general_site(FLAG) } && receiver.is_deleted() {
+            sibling!(property_miss_row::<OP, ACC, FLAG>, r, ip, view)
+        }
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*script).code };
+        let read = if const { crate::dispatch_fast::private_field_site(FLAG) } {
+            LaneFrame::<ACC>::private_value(script, ip.addr(), code, receiver, i.imm())
+        } else {
+            crate::dispatch_fast::general_field_read(script.cast(), ip.addr(), const { !crate::dispatch_fast::own_site_this(FLAG) }, receiver, i.imm(), i.c)
+        };
+        match read {
+            Some(value) => {
+                // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
+                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value.to_bits()) } else { value };
+                r.set(i.a, value);
+                next!(script, r, following(ip), Carried::script_in(script, view))
+            }
+            None => sibling!(property_miss_row::<OP, ACC, FLAG>, r, ip, view),
         }
     }
 }
