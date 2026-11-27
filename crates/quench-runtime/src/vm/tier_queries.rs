@@ -4,7 +4,7 @@
 //! below, each the heap's own tracked write (its barrier, its shape and store-watch invalidation).
 
 use super::Vm;
-use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionRecord, Heap, MemoryPolicy, Object, RootId, TableWords, WasmGcRecord};
+use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionRecord, Heap, MemoryPolicy, Object, ObjectMut, ObjectRef, RootId, TableWords, WasmGcRecord};
 use crate::vm::engine_types::InstanceRecord;
 use crate::vm::wtf16::JsString;
 use crate::Value;
@@ -250,6 +250,10 @@ heap_reads! {
     fn is_map(value: Value) -> bool;
     /// The cell of a heap value (`Heap::get`).
     fn get(value: Value) -> Option<&'a Cell>;
+    /// The read view of an object (`Heap::object_ref`): the cell-answerable reads, else its record.
+    fn object_ref(value: Value) -> Option<ObjectRef<'a>>;
+    /// Property `slot` of the object view `object` (`Heap::property_get_ref`).
+    fn property_get_ref(object: ObjectRef<'_>, slot: usize) -> Option<Value>;
     /// An object's record (`Heap::object`).
     fn object(value: Value) -> Option<&'a Object>;
     /// An ordinary object's record (`Heap::ordinary_object`).
@@ -364,9 +368,15 @@ impl Vm {
     /// The record of the object `value`, for a store (`Heap::object_mut`).
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> { self.heap.object_mut(value) }
+    /// The exclusive view of the object `value`, for a store (`Heap::object_mut_ref`).
+    #[inline(always)]
+    pub fn object_mut_ref(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut_ref(value) }
     /// The record of the object `value`, for a store of `stored` (`Heap::object_store_mut`).
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> { self.heap.object_store_mut(value, stored) }
+    /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut_ref`).
+    #[inline(always)]
+    pub fn object_store_mut_ref(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut_ref(value, stored) }
     /// Charges `bytes` of payload growth to the collector's pacing (`Heap::charge_payload_growth`).
     #[inline(always)]
     pub fn charge_payload_growth(&mut self, bytes: usize) { self.heap.charge_payload_growth(bytes) }
