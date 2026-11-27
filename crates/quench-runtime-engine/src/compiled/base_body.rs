@@ -349,7 +349,6 @@ impl Vm {
     fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        self.keep_slot_representations();
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {

@@ -278,6 +278,9 @@ impl Vm {
         };
         vm.active_context = &*vm.idle_context;
         vm.intern_typeof_names();
+        // Every mode keeps slot representations: an image's typed field reads stand on the slots' types.
+        let layouts = vm.shape_layouts();
+        vm.heap.track_slot_representations(&layouts);
 
         if crate::trace::Dev::RcGc.on() {
             vm.heap.set_rc(true);

@@ -131,8 +131,8 @@ const CONCEPTS: &[Concept] = &[
         // One reading of the JIT mode: the specializer decides what each tier may do
         // (`admission::tier_runs`, `stencil_only`); a tier that reads the mode itself decides again.
         name: "mode-read",
-        homes: &["quench-runtime-engine/src/compiled/admission.rs", "quench-runtime/src/jit_mode.rs"],
-        marks: &[Mark::Spelled("jit_mode::")],
+        homes: &["quench-runtime-engine/src/compiled/admission.rs", "quench-runtime/src/jit_mode.rs", "quench-runtime/src/vm/tier_policy.rs"],
+        marks: &[Mark::Spelled("jit_mode::"), Mark::Spelled("MemoryFirst"), Mark::Spelled("tiers_allowed("), Mark::Spelled("base_only("), Mark::Spelled("tier_may_run(")],
     },
     Concept {
         // u-jit HOW is the Cranelift stage of the staged rows; CLIF built by hand elsewhere is

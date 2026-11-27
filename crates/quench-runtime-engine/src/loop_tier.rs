@@ -306,7 +306,6 @@ pub(crate) fn loop_compile_in_lane(
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     // Native code reads slot representations, which the runtime keeps from its first compile on.
-    machine.keep_slot_representations();
     // The tier of this compile: b-jit first, u-jit once the loop's native iterations repay it (`base_region`).
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
     let base = compiles_base(machine.programs.tiers(), site, region, tier);

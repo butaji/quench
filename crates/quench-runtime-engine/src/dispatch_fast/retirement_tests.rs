@@ -55,7 +55,6 @@ fn direct_slot_fixture() -> (Vm, quench_runtime::ResidualProgram, Value, ScriptC
     let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     vm.programs.enable_js_lane_methods();
-    vm.keep_slot_representations();
     let leaf_atom = vm.intern_atom("leaf");
     let root_atom = vm.intern_atom("root");
     let leaf = vm.own_property(vm.realm.globals, leaf_atom).unwrap();

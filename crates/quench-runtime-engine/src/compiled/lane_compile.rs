@@ -704,7 +704,6 @@ impl Vm {
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        self.keep_slot_representations();
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
         let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());
