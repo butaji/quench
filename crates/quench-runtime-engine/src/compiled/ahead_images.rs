@@ -160,7 +160,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
-    let proven = proven_calls(program, unit, function, &sites, symbols);
+    let proven = proven_calls(program, unit, function, &sites, facts, symbols);
     let plans = constructions::construct_plans(program, unit, function, facts, symbols);
     let strings = string_constants(program, unit, symbols);
     let fields = fields::class_fields(program, (unit, function), facts, symbols);
@@ -327,14 +327,22 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// By unit PC, the caller calls the closed world proves that the base body planned a record for
 /// (`calls`, its `AotImage::calls`): the lane body calls each through the same record, which the
 /// loader binds (`BoundCalls::bind`) and the lane reads by `Symbol::CallRecord`. An arrow is left
-/// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
+/// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver. An arm carries the
+/// layout key of its receiver class (`class_recipe`), where the call's plan names one, and whether the plan has no miss.
 #[cfg(feature = "jit")]
-fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
-    -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], facts: &AotFacts,
+    symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+    let plans = if calls.is_empty() { BTreeMap::new() } else { facts.call_plans(program, function) };
     (0..unit.origins.len()).filter_map(|pc| {
         let arms: Vec<_> = proven_sites(program, unit, function, calls, pc).into_iter().map(|(site, callee, this)| {
             let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc, callee: site.callee });
-            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }
+            let plan = plans.get(&site.pc);
+            let class = plan.and_then(|plan| plan.arms.iter().find(|arm| arm.function == site.callee)).and_then(|arm| arm.class);
+            let layout = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols))
+                .map(|recipe| symbols.class_layout(recipe))
+                .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
+            let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
+            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed }
         }).collect();
         (!arms.is_empty()).then_some((pc, arms))
     }).collect()
