@@ -10,6 +10,23 @@
 //! semantic type and machine view: an edge proves what its state lacks with one guard, and
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `quench_runtime::typed_ir` lattice.
+//!
+//! One solver (L2): the transfer rules below now have one home in the whole-program solve, `quench-runtime`'s
+//! `compile/aot_facts`, and a reader takes the register's `Cell` from `FunctionFacts::cell_at` (its `ty` carries the
+//! integer range) instead of re-solving. This file is deleted once its readers have switched.
+//! - `facts/binary.rs` `numeric_binary`, `number_result`, `heap_primitive_binary`: `aot_facts/numeric.rs` `binary_type`.
+//! - `facts/ranges.rs` `arithmetic_type`, `exact`, `step`, `bitwise`, `result`: `aot_facts/numeric.rs` `arithmetic`,
+//!   `bitwise`, `remainder`, `step`, over `typed_ir::IntRange`'s `add`, `subtract`, `multiply`, `as_number`, `and`, `or`,
+//!   `stepped`, `remainder`.
+//! - `facts/ranges.rs` `Edge::of`, `relation_ranges`, `effective_relation`: `aot_facts/numeric.rs` `relation_edge` over
+//!   `typed_ir::IntRange`'s `ordered_edge` and `without`, applied on the jump's edges by `aot_facts/flow.rs` `refine_ranges`.
+//! - `facts/immediates.rs` `constant_type`, `immediate`: `aot_facts/scope.rs` `constant_type` (an int32 constant is its
+//!   singleton range, `null`, `undefined` and Booleans their exact types).
+//! - Not portable to a non-relational cell: `facts/lengths.rs` (register-to-register length relations, `i < a.length`:
+//!   they belong to the typed residual graph's check deletion); `facts/written.rs` and `facts/widen.rs` (a lane body's
+//!   entry state); `facts/run.rs` relation tracking and the int32 inductions (`inductive`, `loop_int32`, lane contracts).
+//!   `ranges.rs` `index_range`, `signless_range`, `zero_free`, `overflow_free` are consumer queries: a reader derives them
+//!   from the cell's range, except the sign-of-zero case of `signless_range`, which the cell does not carry.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
