@@ -711,7 +711,7 @@ pub(crate) fn unit_planned<'f>(program: &quench_runtime::ResidualProgram, graph:
         let arms: Box<[quench_runtime::compile::call_plan::Arm]> = targets(caller, pc).into_iter()
             .map(|target| quench_runtime::compile::call_plan::Arm { class: None, function: target.function }).collect();
         (!arms.is_empty()).then(|| CallPlan { form: quench_runtime::compile::call_plan::CallForm::Inline, arms,
-            miss: quench_runtime::compile::call_plan::Miss::None, tail: false, method: None, argc: 0 })
+            miss: quench_runtime::compile::call_plan::Miss::None, tail: false, method: None, argc: 0, forwarding: None })
     };
     unit(program, graph, function_id, function, targets, &plans, body)
 }
