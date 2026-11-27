@@ -6,7 +6,7 @@ use super::blocks::Blocks;
 use super::class_ids::ClassIds;
 use super::effects::{Ctx, step};
 use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
-use super::lengths::{Lengths, Relation, advance, proves_below, refine, store_span};
+use super::lengths::{IndexRange, Interval, Lengths, Relation, advance, index_ranges, loops_of, proves_below, refine, store_span};
 use super::scope::Scope;
 use super::types::Types;
 use super::value::{Key, Origin, Word};
@@ -61,13 +61,18 @@ pub(crate) struct Settled {
     resizing: BTreeSet<(u32, ElementClass)>,
     /// The element stores (pcs) that cover a span of parameters, as (start, len) (`store_span`).
     spans: BTreeMap<u32, (u16, u16)>,
+    /// The interval of the index each element read takes, by pc, before the read (`Interval`).
+    index_intervals: BTreeMap<u32, Interval>,
+    /// The index ranges of the element reads whose forms are invariant in a loop (`ceilings::index_ranges`), by pc.
+    index_ranges: BTreeMap<u32, IndexRange>,
 }
 
 impl Settled {
     /// Records the relations and the facts the instruction at `pc` finds before it, from the words before it. An allocation
     /// is filled when every use of it other than a hole-free store, a length read or a compare finds the array complete
     /// (`Relation::Complete`): the array is then read, escaped, stored and returned only once its elements are all written.
-    fn record(&mut self, ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction, words: &[Word], relations: &[Relation]) {
+    fn record(&mut self, ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction, words: &[Word], lengths: &Lengths) {
+        let relations = lengths.relations();
         if !relations.is_empty() {
             self.points.push((pc, relations.into()));
         }
@@ -89,6 +94,9 @@ impl Settled {
         };
         if read.is_some_and(|(base, key)| proves_below(relations, key, base, 0)) {
             self.in_bounds_reads.insert(pc);
+        }
+        if let Some((_, key)) = read && words.get(usize::from(key)).is_some_and(|word| word.is_number()) {
+            self.index_intervals.insert(pc, lengths.interval(key));
         }
         let length_read = matches!(instruction.op().class(), Class::GetField)
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if ctx.scope.length == Some(atom));
@@ -134,6 +142,11 @@ impl Settled {
             Relation::Less { index: held, bound } if held == index => Some(bound),
             _ => None,
         })
+    }
+
+    /// The index range of the element read at `pc`, where its forms are invariant in a loop (`ceilings::index_ranges`).
+    pub(crate) fn index_range(&self, pc: u32) -> Option<IndexRange> {
+        self.index_ranges.get(&pc).copied()
     }
 
     /// Whether the step at `pc` may resize an array of `class`, as the settled solve reads it.
@@ -186,6 +199,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
     }
     settled.sort();
     settled.finish();
+    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks));
     settled
 }
 
@@ -221,7 +235,7 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
     for pc in range {
         let instruction = function.instruction_at(pc);
         if let Some(settled) = record.as_mut() {
-            settled.record(ctx, pc as u32, instruction, &words, lengths.relations());
+            settled.record(ctx, pc as u32, instruction, &words, &lengths);
         }
         let (_, resized) = advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
         if let Some(settled) = record.as_mut() {

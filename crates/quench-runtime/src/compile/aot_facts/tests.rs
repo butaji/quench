@@ -927,3 +927,33 @@ fn constructors_sharing_one_class_factory_body_are_distinct_classes() {
         assert!(facts.class_layout(class).is_some_and(|fields| fields.len() == 1), "each class keeps its own instance layout");
     }
 }
+
+#[test]
+/// The pcs of the element reads (`ElementRead`) of function `id`.
+fn element_reads(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter(|&pc| matches!(Operation::<u64, ()>::of(function.instruction_at(pc)), Some(Operation::ElementRead { .. })))
+            .map(|pc| pc as u32).collect()
+    })
+}
+
+#[test]
+fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
+    let program = program(
+        "function advect(d0, width, u, j0, rowSize, Wdt0, n) { \
+           var Wp5 = width + 0.5; var row1 = j0 * rowSize; var s = 0; \
+           for (var i = 0; i < n; i++) { \
+             var x = i - Wdt0 * u[i]; \
+             if (x < 0.5) x = 0.5; else if (x > Wp5) x = Wp5; \
+             var i0 = x | 0; \
+             s += d0[i0 + row1]; \
+           } \
+           return s; \
+         } advect([0, 0, 0, 0, 0, 0, 0, 0], 4, [0, 0, 0, 0], 1, 4, 1, 4);",
+    );
+    let facts = analyze(&program);
+    let advect = function_named(&program, "advect");
+    let reads = element_reads(&program, advect);
+    let function = facts.function_facts(advect as u32);
+    assert!(reads.iter().any(|&pc| function.index_ceiling(pc).is_some()), "a read of the clamped index has a range invariant in its loop");
+}

@@ -69,6 +69,8 @@ pub(super) struct Scope {
     pub(super) constant_atoms: Vec<Option<u32>>,
     /// Each constant's type, by constant index (`constant_type`).
     constant_types: Vec<Type>,
+    /// Each Number constant's value, by constant index (`constant_number`); None for any other constant.
+    constant_numbers: Vec<Option<f64>>,
     /// Each nested field lookup's last field (`FieldSite`: `base.first.second`, or `base.first`): the field
     /// its read delivers, by site index; `None` for a site with a sink, which stores rather than reads.
     pub(super) site_reads: Vec<Option<u32>>,
@@ -98,6 +100,10 @@ impl Scope {
             module: matches!(program.kind, ProgramKind::Module),
             constant_types: program.constants.iter().zip(constant_atoms(program))
                 .map(|(constant, atom)| constant_type(constant, atom)).collect(),
+            constant_numbers: program.constants.iter().map(|constant| match constant {
+                Constant::Number(value) => Some(*value),
+                _ => None,
+            }).collect(),
             global_objects: program
                 .atoms
                 .iter()
@@ -172,6 +178,11 @@ impl Scope {
     /// The type of constant `index`: what the constant is, not what a register holds (`Word`).
     pub(super) fn constant_type(&self, index: usize) -> Type {
         self.constant_types.get(index).copied().unwrap_or(Type::ANY)
+    }
+
+    /// The value of the Number constant at `index`, None where the program's constant there is no Number.
+    pub(super) fn constant_number(&self, index: usize) -> Option<f64> {
+        self.constant_numbers.get(index).copied().flatten()
     }
 
     pub(super) fn is_global_object(&self, atom: u32) -> bool {
