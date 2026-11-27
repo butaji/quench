@@ -8186,7 +8186,7 @@ impl Vm {
                 unsafe { restore_context_in_lane(cx, saved) };
                 // SAFETY: the lane's program outlives its run.
                 let code = unsafe { &*code };
-                let exited = quench_runtime::vm::dispatch_frame::LaneExit { executing, raised };
+                let exited = quench_runtime::vm::dispatch_frame::LaneHandoff { executing, raised };
                 let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
                 self.complete_user_frame(result, false).and_then(FrameOutcome::into_value)
@@ -8333,7 +8333,7 @@ impl Vm {
                         let raised = self.lane_completion.take_raised();
                         // SAFETY: the lane's program outlives its run.
                         let code = unsafe { &*code };
-                        let exited = quench_runtime::vm::dispatch_frame::LaneExit { executing, raised };
+                        let exited = quench_runtime::vm::dispatch_frame::LaneHandoff { executing, raised };
                         let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
                         self.complete_user_frame(result, false).and_then(FrameOutcome::into_value)
                     }
@@ -8645,7 +8645,7 @@ impl Vm {
                     id: std::mem::replace(&mut prepared.executing.id, program),
                     retained: prepared.executing.retained.take(),
                 };
-                let exited = quench_runtime::vm::dispatch_frame::LaneExit { executing, raised };
+                let exited = quench_runtime::vm::dispatch_frame::LaneHandoff { executing, raised };
                 let result = self.run_frames_after_lane_exit(code, frame, &mut prepared.pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
                 prepared.pending.clear();

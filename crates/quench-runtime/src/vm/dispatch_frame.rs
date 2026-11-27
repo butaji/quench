@@ -109,16 +109,16 @@ pub struct RecoveredCalls {
 /// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
-pub struct LaneExit {
+pub struct LaneHandoff {
     pub executing: ExecutingProgram,
     pub raised: Option<JsError>,
 }
 
 /// Where a general loop resumes its entry frame other than at its PC: after a lane run
-/// (`LaneExit`), or with the transition its linked native body already made there
+/// (`LaneHandoff`), or with the transition its linked native body already made there
 /// (`Vm::complete_pushed_call`), which the loop consumes as if its own entry had made it.
 pub(super) enum GeneralResume {
-    Lane(LaneExit),
+    Lane(LaneHandoff),
     #[cfg(feature = "native-execution")]
     Native(crate::vm::engine_types::JsNativeStep),
 }
@@ -562,6 +562,10 @@ impl Vm {
         result: Result<FrameOutcome, JsError>,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
+        // A captured run took its frames into its chain (`capture_chain_parked`): none is left to retire.
+        if result.as_ref().is_err_and(JsError::is_captured) {
+            return result;
+        }
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         match result? {
@@ -1570,7 +1574,7 @@ impl Vm {
         outcome
     }
 
-    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneExit`), the calls pending
+    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneHandoff`), the calls pending
     /// above the loop's entry frame in `pending_calls`: the general loop runs from there as it
     /// runs after its own lane run, until the entry frame returns.
     pub fn run_frames_after_lane_exit(
@@ -1578,7 +1582,7 @@ impl Vm {
         entry_program: &ResidualProgram,
         frame: usize,
         pending_calls: &mut Vec<PendingGeneralCall>,
-        exit: LaneExit,
+        exit: LaneHandoff,
     ) -> Result<FrameOutcome, JsError> {
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
@@ -1636,7 +1640,7 @@ impl Vm {
             }
             self.frames[running].pc = pc;
             let raised = self.lane_completion.take_raised();
-            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
+            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneHandoff { executing, raised })
         })();
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
@@ -1755,7 +1759,7 @@ impl Vm {
         #[cfg(feature = "native-execution")]
         let mut entered = None;
         let (mut executing_program, mut current_program, raised) = match resume {
-            Some(GeneralResume::Lane(LaneExit { executing, raised })) => (executing.id, executing.retained, Some(raised)),
+            Some(GeneralResume::Lane(LaneHandoff { executing, raised })) => (executing.id, executing.retained, Some(raised)),
             #[cfg(feature = "native-execution")]
             Some(GeneralResume::Native(step)) => {
                 entered = Some(step);

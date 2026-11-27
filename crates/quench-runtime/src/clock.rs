@@ -52,11 +52,10 @@ pub fn input_edge_armed() -> bool {
     INPUTS_WATCHED.load(Ordering::Relaxed)
 }
 
-/// Keeps the chain a watched run captured at its input native's entry and ends the run there.
-/// The chain is the only state a build keeps past its first input, so the run goes no further.
+/// Keeps a copy of the chain a watched run captured at its input native's entry, for the build's
+/// consumers. The run itself ends with the chain as its `Captured` exit, not by termination.
 pub fn store_input_capture(chain: Box<crate::vm::activation::FrameRecord>) {
     INPUT_CAPTURE.with(|captured| *captured.borrow_mut() = Some(chain));
-    request_watched_termination();
 }
 
 /// The chain a watched run captured at its input (`store_input_capture`), if it reached one.

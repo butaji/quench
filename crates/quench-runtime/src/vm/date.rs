@@ -318,9 +318,9 @@ impl Vm {
         new_target: Value,
     ) -> Result<Value, JsError> {
         // The input edge, for `new Date()` (richards' first input). The parked call is a construction:
-        // its receiver word is `new_target` (C4's ParkedNative needs the construct mark to resume it so).
+        // its `new_target` makes the resume a construction (`ParkedNative::new_target`).
         if args.is_empty() && crate::clock::input_edge_armed() {
-            return Err(self.capture_input_native(Native::Date, new_target, args));
+            return Err(self.capture_input_native(Native::Date, Some(new_target), Value::UNDEFINED, args));
         }
         let milliseconds = if args.len() < DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD {
             match args.first().copied() {
@@ -389,14 +389,14 @@ pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
 
 fn call_date_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     if crate::clock::input_edge_armed() {
-        return Err(vm.capture_input_native(Native::Date, this, args));
+        return Err(vm.capture_input_native(Native::Date, None, this, args));
     }
     vm.date_call()
 }
 
 fn date_now_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
     if crate::clock::input_edge_armed() {
-        return Err(vm.capture_input_native(Native::DateNow, this, args));
+        return Err(vm.capture_input_native(Native::DateNow, None, this, args));
     }
     Ok(vm.date_now())
 }
