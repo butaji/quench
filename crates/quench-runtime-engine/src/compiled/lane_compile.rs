@@ -314,9 +314,9 @@ enum LaneCompile {
 pub(crate) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
     /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
-    Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, caller: &'a crate::dispatch_fast::LaneView,
+    Start { generic: &'a [LaneExit], shrinks: u8, called: bool, caller: &'a crate::dispatch_fast::LaneView,
         /// A loop's body: the loop's span and the iterations it has taken, which weigh its
-        /// compile (`loop_model::body_taken`) as `observed` entries weigh a function's.
+        /// compile (`loop_model::body_taken`).
         looped: Option<(u64, u64)>,
         /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
         arrays: &'a [(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)] },
@@ -349,7 +349,7 @@ pub(crate) enum LaneBodyOutcome {
     /// Its function has not run long enough to pay for the compile, or callees it would call
     /// directly still warm toward their bodies: it counts on.
     Deferred,
-    /// Its function's entries have not yet paid for the compile (`pays_compile`).
+    /// The static benefit declined the compile (`lane_facts::body_pick`): the interpreter runs the function.
     Unpaid,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
     /// compile meets a call to it (`LaneView::demand_body`).
@@ -362,7 +362,7 @@ use crate::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
-use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
+use lane_facts::{unit_closed, bind_callees, Census, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
 /// The unit PCs a previous body left at, and whether it left at its entry. A leave at the first
 /// instruction is a wrong entry speculation: the next body drops its entry contract
@@ -541,13 +541,13 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView,
         arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
         #[cfg(feature = "jit")]
-        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, (observed, looped), called, caller, arrays) }
+        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller, arrays) }
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, observed, looped, called, caller, arrays);
+            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller, arrays);
             Err(Unstarted::Declined)
         }
     }
@@ -556,7 +556,7 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &crate::dispatch_fast::LaneView,
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView,
         arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
@@ -568,22 +568,20 @@ impl Vm {
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
         let planned = self.programs.planned_lane_ir(&site);
-        let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A function the loaded image gave a body was paid for ahead of time: a plan after that body
         // left (a fact it took weakened) respecializes at once, as the image's install did.
         let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
-        // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
+        // The static benefit (`lane_facts::body_pick`) decides the pick and the level (`admission::compile_level`).
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
         // A function that calls itself back through other functions runs a call tree per entry,
         // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
         let cycle = super::lane_facts::recursion_cycle(program, function, targets);
         let recursive = entry.is_none() && !cycle.is_empty();
-        if let Some(entries) = observed && !ahead {
-            let ir = estimated;
-            pick = Some(pays_compile(tiers, program, function, (entries, recursive), ir, caller, true, false));
+        if !ahead {
+            pick = Some(super::lane_facts::body_pick(tiers, program, function, targets, caller.called_by_regions()));
             if level == super::jit_backend::CompileLevel::Optimized {
-                level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
+                level = super::admission::compile_level(tiers, program, function);
             }
         }
         let looped_taken = ahead || looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
@@ -639,11 +637,11 @@ impl Vm {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        // A recurrent compile (no observed entries to price) still repays only where one entry of
-        // its unit amortizes it (`amortizes_entry`, the same test as above, inlined callees included).
+        // A body compiles only where one entry of its unit amortizes it (`amortizes_entry`, the same test as above,
+        // inlined callees included).
         // Phase B after planning: the install gate on the plan's unit (`LaneInstall`). The callees bind, and the
         // installed and admission checks run, only with that unit.
-        let install_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_regions: caller.called_by_regions(), observed_none: observed.is_none(),
+        let install_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_regions: caller.called_by_regions(),
             looped_none: looped.is_none(), recursive, amortizes_entry: entry.is_some() || recursive || amortizes_entry(tiers, &unit, function, &direct), ..Default::default() };
         let Some(_install) = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneInstall(plan_unit), facts: install_facts }).compiled() else {
             refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short);
@@ -664,7 +662,7 @@ impl Vm {
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
-            generic: generic.len(), direct: direct.len(), budget, observed, closed, plan_us });
+            generic: generic.len(), direct: direct.len(), budget, closed, plan_us });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
@@ -706,10 +704,10 @@ impl Vm {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
-        let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());
+        let (mut looped, mut called, mut arrays) = (None, false, Vec::new());
         let caller;
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (looped, called, caller, arrays) = (iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => { caller = Some(view); replan }
@@ -727,7 +725,7 @@ impl Vm {
                 return LaneBodyOutcome::Published(published);
             }
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, (observed, looped), called, caller.expect("a started body names its view"), &arrays) {
+            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, looped, called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,

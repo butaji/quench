@@ -661,8 +661,6 @@ pub(super) fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Ca
     let base = unsafe { (*cx).base };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
-    // A body warming between attempts has nothing to enter: the entry is counted and its first record runs.
-    if let Some(own) = own && crate::compiled::admission::lane_bodies_enrolled(vm) && own.counted_between_attempts(false) { return Resumed::At(r, base, Carried::script_in(cx, view)); }
     // A function of a program with a loaded AOT image enters the image's body at its first entry.
     // SAFETY: the prologue is this record, written when the tier claimed the function (`claim_for_tier`).
     if let Some(own) = own && vm.images_run_in_lane() && vm.programs.ahead_images(unsafe { (*cx).program }, unsafe { &*(*cx).code }).is_some() {
@@ -764,7 +762,7 @@ pub(super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, own: Optio
     // SAFETY: the activation just set the context to its own function's.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     if crate::compiled::admission::lane_bodies_enrolled(vm) && let Some(own) = own {
-        if !specialize_in_lane(cx, own, function, false, parameters, None) { own.release_from_tier(); }
+        if !specialize_in_lane(cx, own, function, parameters, None) { own.release_from_tier(); }
         return None;
     }
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.

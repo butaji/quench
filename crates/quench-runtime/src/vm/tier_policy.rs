@@ -29,7 +29,7 @@ pub struct Tiers {
 #[cfg(any(test, feature = "test-support"))]
 pub const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -95,14 +95,6 @@ pub struct Priors {
     /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
     /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
     pub base_body_share: u64,
-    /// A u-jit body compiled without the mid-end (`CompileLevel::Quick`: no e-graph, no loop
-    /// unswitching), as a share of the interpreter's time per bytecode, and the share of an
-    /// optimized compile's time its compile takes, both per mille. Richards' compile profile
-    /// (Nov 18): of 972M Ir of Cranelift, the e-graph took 179M and poll unswitching 140M, so a
-    /// quick compile costs about two thirds; its code keeps the values the e-graph would have
-    /// folded, a third more time per bytecode than `body_share`.
-    pub quick_body_share: u64,
-    pub quick_compile_permille: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub remaining_divisor: u64,
@@ -137,15 +129,9 @@ pub struct Loops {
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
 pub struct LaneBody {
-    /// The entries a function makes before its lane body specializes: enough that its call
-    /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
-    /// only a function called repeatedly pays for compiling one.
-    pub warmup_entries: u16,
-    /// The same under `--b-jit`, whose whole-function body (`Vm::base_body_work`) is stitched
-    /// from stencils in microseconds, with no register allocator or code generator thread to
-    /// pay for: a few entries show a function's parameters their types (the int32s its entry
-    /// rows assume), where a Cranelift body waits for hundreds to have its call sites linked.
-    pub(crate) base_entries: u16,
+    /// The executions a site's record is credited with before its statistics are read
+    /// (`site_posterior::SiteEvidence::of`): a bound a static fact supplies, no count of the run.
+    pub site_executions: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub reoptimize_share: u8,
@@ -301,7 +287,7 @@ impl crate::vm::Vm {
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { site_executions: 2, reoptimize_exits: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -317,10 +303,6 @@ impl LaneBody {
         if osr { self.max_osr_compiles } else { self.max_compiles }
     }
 
-    /// The entries before a function's body specializes in this process's mode.
-    pub fn warmup(&self) -> u16 {
-        if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
-    }
 }
 
 impl Tiers {
@@ -376,8 +358,7 @@ pub const PERCENT: u64 = 100;
 const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16 },
     lane_body: LaneBody {
-        warmup_entries: 400,
-        base_entries: 8,
+        site_executions: 400,
         reoptimize_share: 1,
         retire_after_runs: 1000,
         retire_share: 10,
@@ -399,7 +380,7 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
@@ -561,18 +542,20 @@ pub(crate) const HOT_LOOP_BACK_EDGES: u16 = 16;
 /// and source-map.
 pub(crate) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
 
-/// The entries and the milliseconds of warming past which a function specializes by its
-/// recurrence alone (`LaneView::recurrent`).
-pub(crate) const RECURRENT_ENTRIES: u32 = 16;
-
 /// The completed handler runs of a body per credit to the callees it calls natively: a callee's
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 pub(crate) const NATIVE_CREDIT_RUNS: u64 = 64;
 
-pub(crate) const RECURRENT_TICKS: u32 = 256;
+/// The static residue (`lane_facts::static_residue`) past which a function compiles at its first entry, though no loop
+/// or call cycle of the program reaches it. Conservative and untuned: a body this size repays its compile on its own.
+pub const BODY_STATIC_RESIDUE: u64 = 96;
 
-/// The most times a dropped body doubles the warm-up of the next.
-pub(crate) const MAX_DOUBLINGS: u8 = 7;
+/// The residue one call instruction weighs (`lane_facts::static_residue`); every other instruction weighs one.
+pub const CALL_RESIDUE: u64 = 4;
+
+/// The static residue from which a lane body compiles at the quick level (`CompileLevel::Quick`): a body this large
+/// costs more to compile optimized than its code saves, so it takes the cheaper compile. Conservative and untuned.
+pub const QUICK_RESIDUE: u64 = 512;
 
 /// The runs a function makes on the general path before it derives its lane view, which costs
 /// about a thousand instructions per bytecode instruction, so a function that runs fewer times
@@ -739,7 +722,7 @@ mod tests {
     #[test]
     fn the_tier_table_is_consistent() {
         let lane = &TierRows::PROCESS.table().lane_body;
-        assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
+        assert!(lane.site_executions > 0);
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TierRows::PROCESS.table().js_function.promotion_looks;

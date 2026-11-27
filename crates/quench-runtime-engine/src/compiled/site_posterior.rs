@@ -7,7 +7,7 @@ use crate::ext_traits::*;
 use super::tier_policy::{Tiers, SPECULATION};
 
 /// What a site's record holds, with no per-execution counter: its executions are bounded below
-/// by the entries its function made before planning (`LaneBody::warmup_entries`), its leaves are
+/// by the executions its function is credited with (`LaneBody::site_executions`), its leaves are
 /// the byte its leave path writes (`Vm::record_field_leave`), and each shape its cache holds past
 /// the first was a miss of the one before it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,7 +20,7 @@ impl SiteEvidence {
     pub(crate) fn of(tiers: &Tiers, leaves: u8, shapes: usize) -> Self {
         let shape_misses = u32::try_from(shapes.saturating_sub(1)).unwrap_or(u32::MAX);
         let misses = u32::from(leaves).saturating_add(shape_misses);
-        let executions = u32::from(tiers.lane_body.warmup_entries);
+        let executions = u32::from(tiers.lane_body.site_executions);
         Self { hits: executions.saturating_sub(misses), misses }
     }
 
