@@ -4,10 +4,10 @@
 use super::blocks::Blocks;
 use super::effects::{Ctx, Events, step};
 use super::scope::Scope;
-use super::value::{Word, Key, PrototypeBase};
+use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
-use crate::typed_ir::{Representation, Type};
+use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type};
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
@@ -66,6 +66,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     resolved: &std::collections::BTreeMap<Key, u32>, types: Option<&super::types::Types>) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
+    let whole = whole_literals(function);
     let ctx = Ctx {
         id,
         parameter_end: function.parameter_end_pc as usize,
@@ -73,6 +74,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         scope,
         resolved,
         registers: usize::from(function.registers),
+        whole_literals: &whole[..],
         types,
         decode,
         records,
@@ -87,6 +89,24 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     }
     let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
     record.finish(arity)
+}
+
+/// Per PC, whether the `MakeArray` there is a literal whose `DefineArrayElement` records follow it back to back and
+/// define every index in order (`allocation::literal_elements`). Such an array holds no hole: an elision leaves its index
+/// undefined, so it is not whole.
+fn whole_literals(function: &Function) -> Box<[bool]> {
+    (0..function.code.len()).map(|pc| {
+        let make = function.instruction_at(pc);
+        make.op() == crate::bytecode::Op::MakeArray && (0..make.array_length()).all(|index| {
+            let at = pc + 1 + index;
+            at < function.code.len() && {
+                let define = function.instruction_at(at);
+                define.op() == crate::bytecode::Op::DefineArrayElement
+                    && define.register_b() == make.result_register()
+                    && define.imm() as usize == index
+            }
+        })
+    }).collect()
 }
 
 impl Dataflow for Solver<'_> {
@@ -209,7 +229,7 @@ impl Record {
                 crate::staged::Callee::Known(function) => (Target::Known(u32::from(function)), Word::UNKNOWN),
                 crate::staged::Callee::Method { atom, .. } => (Target::Method(atom), Word::UNKNOWN),
             };
-            let arguments = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
+            let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
                 crate::staged::Receiver::This { path: None } if !ctx.is_root =>
@@ -225,6 +245,19 @@ impl Record {
                 },
                 _ => Word::UNKNOWN,
             };
+            // An array method that may change its array (`push`, `splice`, ...) makes the arrays the receiver names hold
+            // the arguments, and an unknown length (`Scope::is_array_mutator`).
+            let method = match (invocation.callee, callee.origin) {
+                (crate::staged::Callee::Method { atom, .. }, _) => Some(atom),
+                (crate::staged::Callee::Register(_), Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => Some(atom),
+                _ => None,
+            };
+            if method.is_some_and(|atom| ctx.scope.is_array_mutator(atom)) {
+                let stored = arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
+                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements };
+                self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
+            }
             self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
         }
     }
