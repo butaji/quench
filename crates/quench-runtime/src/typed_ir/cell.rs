@@ -216,7 +216,7 @@ impl Elements {
             View::One(kind) => view_element_type(kind),
             _ => self.ty,
         };
-        Cell { ty, classes: self.classes, elements: Elements::ANY }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, global: false }
     }
 }
 
@@ -227,18 +227,29 @@ pub struct Cell {
     pub ty: Type,
     pub classes: Classes,
     pub elements: Elements,
+    /// Whether the value may be the global object. Only the sources the closed world proves make it (a root's `this`, a
+    /// global-object name, the `this` a plain call passes: `aot_facts::gate`); a flag survives every join, where a
+    /// `Classes::Many` would absorb the global object into any object. A solve that proves no computed access or
+    /// enumeration reaches a flagged value, and no escape holds one, has its closed world verified.
+    pub global: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER };
-    /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, global: false };
+    /// Any value: the top of `ty`, `classes` and `elements`. Not the global object: an unknown value is not one, by the
+    /// closed world's premise that the host hands the program the global object only through its sources.
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, global: false };
 
-    /// A value of type `ty` from nowhere the solve follows: its classes from the type alone.
+    /// The same value, which may be the global object (`global`).
+    pub const fn maybe_global(self) -> Self {
+        Self { global: true, ..self }
+    }
+
+    /// A value of type `ty` from nowhere the solve follows: its classes from the type alone, and not the global object.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements }
+        Self { ty, classes: Classes::of_type(ty), elements, global: false }
     }
 
     /// A value of type `ty` holding objects of `classes`.
@@ -252,7 +263,12 @@ impl Cell {
     }
 
     pub fn join(self, other: Self) -> Self {
-        Self { ty: self.ty.join(other.ty), classes: self.classes.join(other.classes), elements: self.elements.join(other.elements) }
+        Self {
+            ty: self.ty.join(other.ty),
+            classes: self.classes.join(other.classes),
+            elements: self.elements.join(other.elements),
+            global: self.global || other.global,
+        }
     }
 
     /// Whether `self` is below or equal to `other` in the lattice: every value `self` describes `other` does.

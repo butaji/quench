@@ -561,3 +561,32 @@ fn a_captured_slot_read_in_an_inner_function_takes_the_slots_settled_cell() {
     assert!(cell.ty.is_subtype(Type::NUMBER), "the owner's stores of the slot are Numbers");
     assert!(facts.function_facts(inner as u32).dependencies().contains(&FactKey::Slot { owner: outer as u32, slot }), "the inner function depends on the slot");
 }
+
+#[test]
+fn an_unread_global_this_and_an_eval_in_a_dead_function_keep_the_world_closed() {
+    let program = program(
+        "var g = this; function Pair(a) { this.a = a; } \
+         Pair.prototype.toString = function () { return 'p' + this.a; }; \
+         function jsNew(c) { return eval('new c()'); } \
+         var p = new Pair(1); p.toString();",
+    );
+    assert!(analyze(&program).closed(), "the global object is never read, and the eval is in a function nothing reaches");
+}
+
+#[test]
+fn a_computed_read_of_a_global_this_reaches_the_global_functions_so_the_world_is_open() {
+    let program = program("function f() { return eval('1'); } var g = this, k = 'f'; g[k]();");
+    assert!(!analyze(&program).closed(), "g[k]() may call any global function, which holds the eval");
+}
+
+#[test]
+fn a_named_read_of_the_global_object_may_call_a_global_function_so_the_world_is_open() {
+    let program = program("function f() { return eval('1'); } var h = globalThis.f; h();");
+    assert!(!analyze(&program).closed(), "the read gives a global function that the call reaches by name");
+}
+
+#[test]
+fn a_reached_eval_keeps_the_world_open() {
+    let program = program("function f() { return eval('1'); } f();");
+    assert!(!analyze(&program).closed());
+}

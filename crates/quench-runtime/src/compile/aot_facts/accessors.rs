@@ -189,7 +189,7 @@ pub(super) fn accessor_call(ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction
         let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return None };
         if !plain { return None; }
         let receiver = base_fact(ctx, base, state)?;
-        return Some(Call { pc, callee: Word::UNKNOWN, target: Target::Accessor { atom, setter: false }, construct: false, receiver, arguments: Vec::new() });
+        return Some(Call { pc, callee: Word::UNKNOWN, target: Target::Accessor { atom, setter: false }, construct: false, receiver, plain: false, arguments: Vec::new() });
     }
     match decoded(instruction)? {
         Operation::SetField { base, atom, value, .. } => {
@@ -198,7 +198,7 @@ pub(super) fn accessor_call(ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction
                 None if !ctx.is_root => this_fact(ctx),
                 None => return None,
             };
-            Some(Call { pc, callee: Word::UNKNOWN, target: Target::Accessor { atom, setter: true }, construct: false, receiver, arguments: vec![state[usize::from(value)]] })
+            Some(Call { pc, callee: Word::UNKNOWN, target: Target::Accessor { atom, setter: true }, construct: false, receiver, plain: false, arguments: vec![state[usize::from(value)]] })
         }
         _ => None,
     }

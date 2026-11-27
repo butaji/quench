@@ -1,9 +1,7 @@
-//! Whether a program can receive source first known at execution. This is the
-//! one decision for every producer (Node AOT, the test262 emitter): a program
-//! that can reach dynamic source needs the interpreter and JIT linked beside its
-//! native code, and one that cannot is linked execution-only.
+//! Where a program can receive source first known at execution: the sites of its
+//! source that may add code (`SourceDemands`). Which of them run is decided by the
+//! closed-world solve (`compile::aot_facts::gate`), not by the source alone.
 
-use super::reachability::Reachability;
 use super::{constructors, NativeSourceKey};
 use crate::Engine;
 use oxc_ast::ast::{
@@ -61,15 +59,6 @@ pub struct SourceDemands {
 impl SourceDemands {
     pub fn requires_dynamic_source(&self) -> bool {
         !(self.eval.is_empty() && self.function.is_empty() && self.reflective.is_empty())
-    }
-
-    /// The sites that can run: those in a live function body (`Reachability`). A site in a body
-    /// nothing can call never executes, so it cannot receive source.
-    fn running(mut self, reachability: &Reachability) -> Self {
-        for sites in [&mut self.eval, &mut self.function, &mut self.reflective] {
-            sites.retain(|offset| reachability.reaches(*offset));
-        }
-        self
     }
 }
 
@@ -275,16 +264,15 @@ impl Engine {
         SourceDemands { keys, eval: hazards.eval, function, reflective: hazards.reflective, computed: hazards.computed }
     }
 
-    /// Whether a standalone Script or Module may receive source first known at
-    /// execution. Source that does not parse cannot be proved closed.
-    /// Without the source routes (`source_routes`) the answer is the conservative one.
+    /// Whether a standalone Script or Module has a site that may receive source first known at execution, whether or not the
+    /// site runs. Source that does not parse cannot be proved closed. Without the source routes (`source_routes`) the answer
+    /// is the conservative one.
     pub fn source_requires_dynamic_source(source: &str, kind: crate::SourceKind) -> bool {
         Self::standalone_source_demands(source, kind).is_none_or(|demands| demands.requires_dynamic_source())
     }
 
-    /// The demands (`source_demands`) of a standalone Script or Module that can run: the sites in
-    /// live function bodies only (`SourceDemands::running`). `None` where it does not parse, or
-    /// without the source routes (`source_routes`), which link the parser.
+    /// The demands (`source_demands`) of a standalone Script or Module, every site in the source. `None` where it does not
+    /// parse, or without the source routes (`source_routes`), which link the parser.
     pub fn standalone_source_demands(source: &str, kind: crate::SourceKind) -> Option<SourceDemands> {
         crate::compile::source_routes::routes().and_then(|routes| (routes.standalone_source_demands)(source, kind))
     }
@@ -298,9 +286,7 @@ impl Engine {
         let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
         if !parsed.diagnostics.is_empty() { return None; }
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        let scoping = semantic.semantic.scoping();
-        let live = Reachability::of(&parsed.program, scoping);
-        Some(Self::source_demands(&parsed.program, scoping, true).running(&live))
+        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping(), true))
     }
 }
 
@@ -345,36 +331,10 @@ mod tests {
     }
 
     #[test]
-    fn a_site_in_a_body_nothing_calls_does_not_require_dynamic_source() {
-        // The closure is created and never called, so its eval never runs (`reachability`).
-        assert!(!requires("(function () { function dead() { return eval('1'); } })();"));
-        // Two declarations that only read each other are both dead: the fixpoint starts from the roots.
-        assert!(!requires("(function () { function a() { b(); return eval('1'); } function b() { a(); } })();"));
-        // A read from live code makes the declaration live, and so its site runs.
-        assert!(requires("(function () { function live() { return eval('1'); } live(); })();"));
-        // A Script's global function is reached by a property read of the global object.
-        assert!(requires("function f() { return eval('1'); } globalThis.f();"));
-    }
-
-    #[test]
-    fn computed_reads_on_local_objects_keep_a_dead_site_dead() {
-        // Without the global object as a value, a computed read reaches no global: `f` stays dead.
-        assert!(!requires("function f() { return eval('1'); } var a = [1], o = {}, k = 'f'; a[k]; o[k]; var x = o[k + 1];"));
-        assert!(!requires("var k = 'f'; function f() { return eval('1'); } (function () { var s = {}; s[k]; })();"));
-    }
-
-    #[test]
-    fn the_global_object_as_a_value_roots_the_script_globals() {
-        // A computed read of `globalThis` may name any global function.
+    fn every_site_counts_whether_or_not_it_runs() {
+        // Which sites run is the closed-world solve's decision (`compile::aot_facts::gate`), not the source's.
+        assert!(requires("(function () { function dead() { return eval('1'); } })();"));
         assert!(requires("function f() { return eval('1'); } var k = 'f', g = globalThis[k];"));
-        // A sloppy function called plainly binds `this` to the global object.
-        assert!(requires("function f() { return eval('1'); } (function () { return this; })();"));
-        // A dead `globalThis` read does not materialize it.
-        assert!(!requires("function f() { return eval('1'); } (function () { function dead() { return globalThis; } })();"));
-        // A constructor only built with `new` gets a fresh object as `this`, not the global object.
-        assert!(!requires("function C() { this.x = 1; } var c = new C(); function f() { return eval('1'); }"));
-        // Strict code binds `this` to undefined.
-        assert!(!requires("'use strict'; function f() { return eval('1'); } (function () { return this; })();"));
     }
 
     #[test]

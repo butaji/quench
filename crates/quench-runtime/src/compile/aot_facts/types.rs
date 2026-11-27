@@ -123,7 +123,7 @@ impl Types {
         }
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let receiver = Cell { ty: receiver_type(call), ..call.receiver.cell };
+                let receiver = Cell { ty: receiver_type(call), global: call.receiver.cell.global || call.plain, ..call.receiver.cell };
                 for target in targets(id as u32, call, facts, census) {
                     let joined = types.receivers.entry(target).or_insert(Cell::NEVER);
                     *joined = joined.join(receiver);
@@ -136,10 +136,12 @@ impl Types {
         // An escaped function is called with any `this` (`escapes`): the class its holder guesses does not narrow it.
         for (function, class) in holders(&types.cells) {
             if escaped.contains(&function) { continue; }
-            types.receivers.entry(function).or_insert(Cell::ANY).classes = Classes::one(class, false);
+            types.receivers.entry(function).or_insert(Cell::ANY.maybe_global()).classes = Classes::one(class, false);
         }
+        // An escaped function is called by code the solve cannot follow, which may call it plainly: a sloppy function's
+        // `this` is then the global object.
         for function in &escaped {
-            types.receivers.insert(*function, Cell::ANY);
+            types.receivers.insert(*function, Cell::ANY.maybe_global());
         }
         types
     }
@@ -305,10 +307,16 @@ impl Types {
         class
     }
 
-    /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
-    /// recorded call reaches it.
+    /// Whether a constructor's returns may be the global object (`Key::Return`): a `new` of it then yields the global
+    /// object, not only the instance. A constructor no write of returns holds nothing to return.
+    pub(super) fn returns_global(&self, function: u32) -> bool {
+        self.cells.get(&Key::Return(function)).is_some_and(|cell| cell.global)
+    }
+
+    /// The cell of `this` in `function`: the join of the receivers its calls pass. Where no recorded call reaches it, a
+    /// caller the solve cannot follow may call it plainly, which binds the global object (a sloppy function's `this`).
     pub(super) fn this(&self, function: u32) -> Cell {
-        self.receivers.get(&function).copied().unwrap_or(Cell::ANY).guessed()
+        self.receivers.get(&function).copied().unwrap_or(Cell::ANY.maybe_global()).guessed()
     }
 
     /// The parameter types of every function they type, for the solve's trace.
@@ -355,7 +363,7 @@ fn call_results(
 
 /// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
 fn elements_cell(elements: Elements) -> Cell {
-    Cell { ty: elements.ty, classes: elements.classes, elements }
+    Cell { ty: elements.ty, classes: elements.classes, elements, global: false }
 }
 
 /// The functions one class alone holds as a method or an own field (`Key::MemberOn`), with that class.
