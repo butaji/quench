@@ -67,8 +67,24 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
                 if const { fixed_equality(FAMILY, CMP).1 == 1 } {
                     frame.reads = frame.reads.with_immediate(Value::integer((mode >> EQUALITY_IMMEDIATE_SHIFT) as u32 as i32));
                 }
-                let Some(number) = quench_runtime::staged::numeric::binary_operation(const { fixed_equality(FAMILY, CMP).0 }, i.a, Operand(i.b), Operand(i.c))
+                // The operand form is fixed too (`equality_fusion`): a register left, and a register, the record's int32
+                // constant (`mode`) or a pool constant right, stated so the step decodes no operand kind.
+                let left = Operand::register(i.b & Operand::PAYLOAD_MASK);
+                let right = match const { fixed_equality(FAMILY, CMP).1 } {
+                    0 => Operand::register(i.c & Operand::PAYLOAD_MASK),
+                    1 => Operand::constant(0).expect("constant index 0 fits an operand"),
+                    _ => Operand(i.c),
+                };
+                let Some(number) = quench_runtime::staged::numeric::binary_operation(const { fixed_equality(FAMILY, CMP).0 }, i.a, left, right)
                     else { unreachable!("a fixed equality is a Number relation") };
+                // An int32 constant compares int32s: any other left operand leaves at the miss.
+                let number = match number {
+                    quench_runtime::staged::NumberOperation::RelationValue { destination, left, right, relation, .. }
+                        if const { fixed_equality(FAMILY, CMP).1 == 1 } =>
+                        quench_runtime::staged::NumberOperation::RelationValue { destination, left, right, relation,
+                            domain: quench_runtime::staged::Domain::Int32 },
+                    other => other,
+                };
                 quench_runtime::staged::numeric::step_of::<{ quench_runtime::staged::numeric::kind::RELATION_VALUE }, _, _>(&mut stage, &mut frame, number)
             } else {
                 let fields = LaneFields::<A, { $flag }>(i);
