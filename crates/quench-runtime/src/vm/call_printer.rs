@@ -3,6 +3,8 @@
 //! position is found in source on the dynamic error path. Native images freeze the same
 //! descriptions before publication, so their error path needs no syntax frontend.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;

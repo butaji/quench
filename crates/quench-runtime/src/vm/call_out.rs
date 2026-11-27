@@ -2,6 +2,8 @@
 //! that runs those rows in place. The lane's helper (`dispatch_fast::vm_operation_step`) makes the same
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationNamesExt};
 use super::*;
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};

@@ -25,6 +25,7 @@
 //! the same array are ordered by their index distance, fixed at entry: a load reaching an
 //! element an earlier iteration of the same chunk stores shortens the chunk below that
 //! distance. Chunks also end at the run's safepoint (`script_below_floor`).
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

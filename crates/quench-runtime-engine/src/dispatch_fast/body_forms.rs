@@ -3,6 +3,7 @@
 //! the decode gave, so a register call, a known call, a method call and a construction run the
 //! same helper. The running activation's registers, `this` and function come from the running
 //! body, which a native callee's frame makes the innermost (`native_frames::in_innermost_frame`).
+#[allow(unused_imports)] use quench_runtime::staged::{InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::vm::field_cache::FieldCacheProbe;

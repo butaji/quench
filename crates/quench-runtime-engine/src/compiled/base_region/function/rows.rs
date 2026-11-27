@@ -2,6 +2,7 @@
 //! compare-and-jump rows (`expanded`), the facts those rows decode by (`decode_facts`), and the caller's rows collected
 //! from the planned calls and the rest (`parts`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, CallFormFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

@@ -3,6 +3,7 @@
 //! (`Model`) tracks them beside the registers' types; a relation dies with either register's
 //! next write, and one to an array's length with any instruction that may change it.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::run::{Model, Point, TypedAccess};

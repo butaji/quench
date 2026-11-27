@@ -6,6 +6,7 @@
 //! outside the family is an exact no, and a record with no staged operation is no member of any
 //! family. Nothing here asks the opcode's identity.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt, CallFormFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
@@ -283,7 +284,7 @@ pub(crate) fn is_numeric_unary(instruction: WideInstruction) -> bool {
 /// once the call site is hot (`RegionAnalysisFailure::is_call_boundary`).
 #[inline(always)]
 pub(crate) fn is_call_rejection(opcode: u16) -> bool {
-    quench_runtime::staged::Operation::<u64, ()>::is_call_index(opcode)
+    quench_runtime::staged::operation_is_call_index(opcode)
 }
 
 /// The record that reads a named field into `a` through the base in `b`, the lookup in `c` and the

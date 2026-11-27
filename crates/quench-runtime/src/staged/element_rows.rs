@@ -29,27 +29,6 @@ pub enum ElementView<W> {
     Typed(TypedView<W>),
 }
 
-#[cfg(not(stencil_build))]
-impl<W, P> Operation<W, P> {
-    #[cfg(not(stencil_build))]
-    /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
-    /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
-    /// completes a frame or an operand names a local or a field.
-    #[inline(always)]
-    pub fn decode_element(instruction: WideInstruction) -> Option<Self> {
-        if instruction.result_flags() != 0 { return None; }
-        Some(match instruction.op() {
-            Op::GetIndex => match instruction.operand_b().register_index() {
-                Some(base) => Self::ElementRead { base, key: instruction.operand_c(), destination: instruction.result_register() },
-                None => Self::ElementReadOperand { destination: instruction.result_register(),
-                    base: instruction.operand_b(), key: instruction.operand_c() },
-            },
-            Op::SetIndex => Self::ElementWrite { value: instruction.register_a(), base: instruction.register_b(),
-                key: instruction.register_c(), strict: instruction.boolean_flag().unwrap_or(false) },
-            _ => return None,
-        })
-    }
-}
 
 /// The dense view of `base` this access proves and keeps, from the array records.
 #[inline(always)]
@@ -181,7 +160,7 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
 /// The element rows of `step`: the word each produces, or `Unresolved` where the frame holds
 /// no array records or no host path for what the dense arm leaves.
 #[inline(always)]
-pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::ElementRead { base, key, destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::ELEMENT_READ]) } { match read(stage, frame, base, key) {
@@ -203,20 +182,13 @@ pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stag
 
 /// `step_of` for any operation.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
-/// The interpreter's replacement of the present element `index` of a direct array among the array
-/// records at `records` with `value`, which the caller's gate proved needs no barrier log: the
-/// row's store arm without a frame; `false` for any other base, a backing or array that is not
-/// the array's own to write in place, a hole or an index past the elements.
-#[inline(always)]
-pub(crate) fn concrete_record_replace(records: *const crate::heap::ArrayObject, base: crate::Value, index: usize,
-    value: crate::Value) -> bool {
-    let mut stage = Concrete::new(core::ptr::null());
-    prove_view(&mut stage, records as u64, base.to_bits(), true, ())
-        .and_then(|view| replace_present(&mut stage, view, index as u64, value.to_bits(), ()))
-        .is_some()
-}
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

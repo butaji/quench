@@ -16,6 +16,8 @@
 //! and the lane's activation record); the receiver rule of a
 //! construction through an initializer is `construct`.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
 use super::call::admit_room;
 use super::frame;
 use super::layout_offsets::{JS_STEP_BODY_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_PLAIN_DEPTH, JS_STEP_RETURNED_PC};

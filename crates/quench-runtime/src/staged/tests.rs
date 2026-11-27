@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationNamesExt};
 use super::*;
 use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};

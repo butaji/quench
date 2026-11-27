@@ -2,6 +2,7 @@
 //! the guards they hold (`number_guard`, `live_guard`, `poll_row`), which rows a body interprets (`interprets`),
 //! and which rows control reaches (`reachable`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

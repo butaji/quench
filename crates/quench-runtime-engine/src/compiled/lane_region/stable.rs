@@ -1,6 +1,7 @@
 //! Stable facts in a lane region: what its code folds under code dependencies, and the
 //! invalidation points where it learns that one changed.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

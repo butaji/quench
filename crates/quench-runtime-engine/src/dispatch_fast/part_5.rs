@@ -1,5 +1,6 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
 
 /// Whether the iteration step at `pc` (`iteration_step_in_lane`) is a destructuring step as

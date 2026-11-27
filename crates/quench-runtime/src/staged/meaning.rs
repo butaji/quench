@@ -5,6 +5,8 @@
 //! an instruction is (to pick a path, to scan a loop for effects) asks here instead of naming
 //! opcodes: the semantics own the mapping from records to meanings, every tier reads it.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::frame_arm::{frame_arm, FrameArm};
 use crate::bytecode::{Class, Op, WideInstruction};
 

@@ -93,20 +93,6 @@ impl Comparison {
         }
     }
 
-    #[cfg(not(stencil_build))]
-    /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
-    /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
-    /// more facts than the operator narrows it (the observed Numbers, the proved domain).
-    #[inline(always)]
-    pub fn of_operator(operator: u32) -> Self {
-        equality_operator(operator)
-            .map(|(strict, negated)| Self::Equality { strict, negated })
-            .or_else(|| NumberRelation::from_operator(operator)
-                .map(|relation| Self::Relation { relation, domain: Domain::Float64 }))
-            .or_else(|| NumberBitwise::from_operator(operator).map(Self::Bitwise))
-            .or_else(|| (operator == INSTANCEOF_OPERATOR).then_some(Self::Instanceof))
-            .unwrap_or(Self::Operator(operator))
-    }
 
     /// The comparison where the VM's residual decides what no word does: `in`, which the decode
     /// leaves as an operator, is `Membership`; every other comparison is itself.
@@ -126,22 +112,11 @@ impl Comparison {
     }
 }
 
-#[cfg(not(stencil_build))]
-impl<W, P> Operation<W, P> {
-    #[cfg(not(stencil_build))]
-    /// The `JumpBinaryFalse` row: it jumps where the comparison fails. Inlined into the row,
-    /// which decodes its record on every run.
-    #[inline(always)]
-    pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
-        let comparison = Comparison::of_operator(instruction.binary_operator_field());
-        Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
-    }
-}
 
 /// Run the comparison jump `operation`: the edge its answer takes, or `Unresolved` where the
 /// tier decides the comparison itself.
 #[inline(always)]
-pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let Operation::CompareJump { comparison, left, right, negate } = operation else { return Step::Unresolved };
     let holds = match outcome(stage, frame, comparison, [left, right], negate) {
@@ -157,7 +132,7 @@ pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stag
 
 /// `step_of` for any operation.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
@@ -414,3 +389,8 @@ fn loosely_nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

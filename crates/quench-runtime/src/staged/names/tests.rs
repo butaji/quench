@@ -1,4 +1,5 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
+#[allow(unused_imports)] use crate::staged::OperationNamesExt;
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
 use crate::typed_ir::Type;

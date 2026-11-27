@@ -10,6 +10,7 @@
 //! until then. The other sets a tag alone decides are `EntryGuard`s, kept for parameters the
 //! function never writes, which hold the fact at every row.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

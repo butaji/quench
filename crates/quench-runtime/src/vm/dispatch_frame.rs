@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;

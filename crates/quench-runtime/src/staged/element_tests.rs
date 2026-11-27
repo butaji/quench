@@ -1,5 +1,7 @@
 //! The element rows on the concrete stage, against the heap's own array model.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::element_rows::concrete_record_replace;
 use super::elements::concrete_record_element;
 use super::test_words::{ANSWER, READ, WRITE};

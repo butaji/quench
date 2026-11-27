@@ -1,6 +1,7 @@
 //! The numeric instructions' rows: a Number operation or a numeric jump decoded over the frame's Number registers,
 //! and the staged operators the decode of a numeric instruction names.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

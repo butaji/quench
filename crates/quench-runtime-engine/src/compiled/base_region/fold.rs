@@ -6,6 +6,7 @@
 //! moves (a second run of them is the first, as they read nothing they write). The method's identity is held by the native holder's
 //! exact shape (`Decoded::holder`): a change of its values retires the code, and the row holds that Stable fact, so a call the code
 //! makes that changes it is read through the invalidation word.
+#[allow(unused_imports)] use quench_runtime::staged::{CallFormFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
