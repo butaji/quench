@@ -101,6 +101,12 @@ pub(crate) const CLASS_RECORD_SHIFT: u32 = u32::BITS;
 /// The reserved class id of a departed object's cell. It lies past the class table's capacity, so no
 /// class guard matches it.
 pub(crate) const DEPARTED_CLASS: u32 = u32::MAX;
+
+/// The header word of a departed object's class cell: `DEPARTED_CLASS` in the low half, its record id above.
+/// The one definition: the runtime writes it (`heap::class_space`), and the stencils write it inline.
+pub(crate) const fn departed_header(record: u32) -> u64 {
+    DEPARTED_CLASS as u64 | ((record as u64) << CLASS_RECORD_SHIFT)
+}
 /// The class space's regions: region `k` starts at granule `k << REGION_SHIFT` and holds cells of
 /// `2^k` granules, so a granule's local cell index is `(g & REGION_MASK) >> k`.
 pub(crate) const REGION_SHIFT: u32 = 29;

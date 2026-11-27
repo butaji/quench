@@ -35,7 +35,7 @@ use crate::bytecode::Operand;
 // A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
 // rows build their writes `strict: false`.
 use crate::layout::{CLASS_CELL_GRANULE_BYTES, CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, JS_STEP_STUB_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_CLASS_CELL_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT, OBJECT_RECORD_STUB};
-use crate::layout::object_encoding::DEPARTED_CLASS;
+use crate::layout::object_encoding::departed_header;
 use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
@@ -343,8 +343,7 @@ fn empty_object_row<const D: u8>(s: S, payload: usize) -> Out {
     let words = word_at(payload, JS_STEP_EMPTY_OBJECT_PAYLOAD);
     put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
     put_word32(stubs, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, granule.wrapping_add(1));
-    let header = u64::from(DEPARTED_CLASS) | (u64::from(next) << NATIVE_CLASS_CELL_LAYOUT.record_id_shift);
-    put_word64(cells.wrapping_add((granule as usize).wrapping_mul(CLASS_CELL_GRANULE_BYTES)), NATIVE_CLASS_CELL_LAYOUT.header_offset, header);
+    put_word64(cells.wrapping_add((granule as usize).wrapping_mul(CLASS_CELL_GRANULE_BYTES)), NATIVE_CLASS_CELL_LAYOUT.header_offset, departed_header(next));
     let record = records.wrapping_add((next as usize).wrapping_mul(NATIVE_OBJECT_LAYOUT.record_size));
     put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
     put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);

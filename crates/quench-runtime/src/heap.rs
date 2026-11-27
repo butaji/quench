@@ -2775,7 +2775,8 @@ impl Heap {
         let unspent = self.object_records.retire_cursor()
             + self.array_records.retire_cursor()
             + self.function_records.retire_cursor()
-            + self.environment_records.retire_cursor();
+            + self.environment_records.retire_cursor()
+            + self.class_space.retire_stub_cursor();
         self.allocated = self.allocated.saturating_sub(unspent);
     }
 
