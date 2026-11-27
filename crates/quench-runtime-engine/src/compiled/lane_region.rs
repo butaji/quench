@@ -618,7 +618,7 @@ pub(crate) struct Lowering<'a, 'f> {
     vm: VmFacts<'a>,
     /// The call plans of the lowered function and of its inlined callees (`bindings::CallPlans`): each call
     /// site's arms and miss decide its admission.
-    plans: bindings::CallPlans,
+    plans: bindings::CallPlans<'a>,
     /// The Stable facts the code folded, each a code dependency of its publication.
     stable: stable::StableUses,
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
@@ -2093,7 +2093,7 @@ pub(crate) fn lower(
         poll_latches: super::SecondaryMap::new(),
         shared_headers,
         global_reads,
-        plans: bindings::CallPlans::of(program, vm.facts, function_id, unit),
+        plans: bindings::CallPlans::new(program, vm.facts),
         vm,
         stable: Default::default(),
         generic,

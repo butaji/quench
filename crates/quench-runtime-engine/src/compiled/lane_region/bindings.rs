@@ -9,25 +9,33 @@ use crate::compiled::regions;
 use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::compile::call_plan::{call_plans, Arm, CallPlan, Miss};
 
-/// The call plans of a lowered function and of every function its unit inlines, by function and pc
-/// (`call_plans`). Empty where the program's facts or their signatures did not settle.
-#[derive(Default)]
-pub(crate) struct CallPlans(std::collections::BTreeMap<u32, std::collections::BTreeMap<u32, CallPlan>>);
+/// The call plans of a program's functions, computed on first lookup of each function (`call_plans`) from the
+/// program's facts and signatures. Empty for every function where the facts or their signatures did not settle.
+pub(crate) struct CallPlans<'a> {
+    program: &'a quench_runtime::ResidualProgram,
+    facts: Option<&'a AotFacts>,
+    functions: std::cell::RefCell<std::collections::BTreeMap<u32, std::collections::BTreeMap<u32, CallPlan>>>,
+}
 
-impl CallPlans {
-    /// The plans of `function` and the functions `unit` inlines, from the program's facts and signatures.
-    pub(crate) fn of(program: &quench_runtime::ResidualProgram, facts: Option<&AotFacts>, function: u32, unit: &super::super::lane_unit::Unit) -> Self {
-        let Some(facts) = facts else { return Self::default() };
-        let Some(signatures) = facts.signatures() else { return Self::default() };
-        let inlinable = |callee: u32| super::super::lane_unit::inlines_whole(program, callee);
-        let functions: std::collections::BTreeSet<u32> = std::iter::once(function)
-            .chain(unit.frames.iter().map(|frame| frame.target.function)).collect();
-        Self(functions.into_iter().map(|callee| (callee, call_plans(program, facts, signatures, callee, &inlinable))).collect())
+impl<'a> CallPlans<'a> {
+    /// The plans of `program`, from `facts` (the program's AOT facts), none computed yet.
+    pub(crate) fn new(program: &'a quench_runtime::ResidualProgram, facts: Option<&'a AotFacts>) -> Self {
+        Self { program, facts, functions: Default::default() }
     }
 
     /// The plan of the call at `pc` of `function`, if a plan covers it.
-    pub(crate) fn at(&self, function: u32, pc: u32) -> Option<&CallPlan> {
-        self.0.get(&function)?.get(&pc)
+    pub(crate) fn at(&self, function: u32, pc: u32) -> Option<CallPlan> {
+        let mut functions = self.functions.borrow_mut();
+        let plans = functions.entry(function).or_insert_with(|| self.plans_of(function));
+        plans.get(&pc).cloned()
+    }
+
+    /// Every plan of `function` (`call_plans`), with inlinability from the program's bodies (`inlines_whole`).
+    fn plans_of(&self, function: u32) -> std::collections::BTreeMap<u32, CallPlan> {
+        let Some(facts) = self.facts else { return Default::default() };
+        let Some(signatures) = facts.signatures() else { return Default::default() };
+        let inlinable = |callee: u32| super::super::lane_unit::inlines_whole(self.program, callee);
+        call_plans(self.program, facts, signatures, function, &inlinable)
     }
 }
 
