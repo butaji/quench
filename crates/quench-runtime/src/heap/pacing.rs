@@ -41,6 +41,9 @@ impl Ratio {
 /// The one authority for collection pacing.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct GenerationalPacing {
+    /// Whether the host returns the pages the process no longer needs resident at each collection
+    /// boundary (`MemoryPolicy::returns_pages_at_collections`).
+    pub(super) returns_pages: bool,
     /// Allocation weight between collections, as a share of the live count.
     pub(super) young: Ratio,
     /// The smallest allocation weight between collections, whatever survived.
@@ -495,12 +498,10 @@ impl MemoryPolicy {
     }
 
     /// Whether the host returns the memory the process no longer needs resident (read-only
-    /// pages, the allocator's free pages) at collection boundaries. Under throughput it does
-    /// not: releasing them after every collection refaulted the run's hot code after each
-    /// young one (EarleyBoyer, dynamic x86_64 production build, 2026-10-20: ~63K minor faults
-    /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
+    /// pages, the allocator's free pages) at collection boundaries: a row of the policy's pacing
+    /// (`GenerationalPacing::returns_pages`).
     pub fn returns_pages_at_collections(self) -> bool {
-        matches!(self, Self::MemoryFirst) || memory_mix_has("pages")
+        self.pacing().returns_pages
     }
 
     /// The policy's own pacing table.
@@ -512,12 +513,11 @@ impl MemoryPolicy {
     }
 
     pub(super) fn pacing(self) -> GenerationalPacing {
-        let table = self.table();
-        if self == Self::MemoryFirst {
-            return table;
-        }
         let first = MEMORY_FIRST_PACING;
-        let mut mixed = table;
+        let mut mixed = self.table();
+        if memory_mix_has("pages") {
+            mixed.returns_pages = first.returns_pages;
+        }
         if memory_mix_has("young") {
             mixed.young = first.young;
             mixed.minimum_young = first.minimum_young;
@@ -578,6 +578,7 @@ pub fn memory_mix_has(part: &str) -> bool {
 const MINIMUM_ARENA_GROWTH: usize = 1 << 20;
 
 pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
+    returns_pages: false,
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
     maximum_young: THROUGHPUT_MAXIMUM_YOUNG,
@@ -621,6 +622,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
+    returns_pages: true,
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,

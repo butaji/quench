@@ -99,7 +99,7 @@ pub(crate) fn body_taken(tiers: &Tiers, span: u64, ir: usize, unplanned: bool) -
     // b-jit region where the default mode runs one, the interpreter otherwise (TOD-2194).
     let outlay = priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, priors.compile_ns_per_ir, PER_MILLE);
     let work = body_work(&tiers.loops, span, ir);
-    let below = if crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) { base_saved_per_iteration(priors, work) } else { 0 };
+    let below = if quench_runtime::vm::tier_policy::base_runs() { base_saved_per_iteration(priors, work) } else { 0 };
     body_required_taken(priors, saved_per_iteration(priors, work).saturating_sub(below), outlay)
 }
 
@@ -126,9 +126,9 @@ pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, tak
 /// native iterations reach the point where the u-jit compile is repaid over the stencil region
 /// (`promotion_taken`), counted in compiled code, not guessed from the interpreter's jumps.
 pub(crate) fn base_region(tiers: &Tiers, span: u64, native: u64) -> bool {
-    use crate::compiled::admission::{every_region_is_base, tier_runs as tiers_allowed, Tier};
-    if every_region_is_base() { return true; }
-    if !tiers_allowed(&[Tier::Base]) || tiers.admits_all { return false; }
+    use quench_runtime::vm::tier_policy::{base_runs, loop_regions_are_stencils};
+    if loop_regions_are_stencils() { return true; }
+    if !base_runs() || tiers.admits_all { return false; }
     promotion_taken(tiers, span).is_none_or(|at| native < at)
 }
 
@@ -158,7 +158,7 @@ pub(crate) fn ultra_region_taken(tiers: &Tiers, span: u64) -> u64 {
 /// Whether a loop running a b-jit region in the default mode moves to a u-jit region after
 /// `taken` iterations in all: where `base_region` no longer picks b-jit for it.
 pub(crate) fn promotes(tiers: &Tiers, span: u64, taken: u64) -> bool {
-    crate::compiled::admission::regions_promote_to_ultra() && !base_region(tiers, span, taken)
+    !quench_runtime::vm::tier_policy::loop_regions_are_stencils() && !base_region(tiers, span, taken)
 }
 
 #[cfg(test)]
