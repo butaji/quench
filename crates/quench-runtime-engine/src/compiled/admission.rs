@@ -499,7 +499,7 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
 /// lose to its slower code (`tier_model::compiles_quick`), else `Optimized`.
 pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &LaneView) -> CompileLevel {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    let observed = Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir };
+    let observed = Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive: false };
     if super::tier_model::compiles_quick(tiers, &observed, true) { CompileLevel::Quick } else { CompileLevel::Optimized }
 }
 

@@ -22,6 +22,9 @@ pub(crate) struct Observed {
     pub(crate) region_runs: u64,
     /// IR instructions of the planned body.
     pub(crate) ir: usize,
+    /// It calls itself back (`lane_facts::recursion_cycle`): a u-jit body's entries inside a call tree are its own
+    /// direct calls, so no entry of it pays `body_entry_ns`.
+    pub(crate) recursive: bool,
 }
 
 /// The part per thousand of a compile's time that waits on the running program: the prior's
@@ -59,6 +62,9 @@ pub(crate) fn net_gain_ns(future: u64, saved: u64, outlay: u64) -> i128 {
     i128::from(future) * i128::from(saved) - i128::from(outlay)
 }
 
+/// The crossing an entry of `observed`'s u-jit body pays: none for a recursive one (`Observed::recursive`).
+fn ultra_entry_ns(priors: &Priors, observed: &Observed) -> u64 { if observed.recursive { 0 } else { priors.body_entry_ns } }
+
 /// What one entry of `observed` takes from the interpreter in code taking `share` per mille of
 /// its time per bytecode, and the region crossings it makes: the work it leaves to native code
 /// is saved, and each crossing is paid by the entry.
@@ -86,7 +92,7 @@ pub(crate) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_p
 
 /// `net_ns` where the body's plan is still to make, at `plan_ns_per_ir`, besides its compile.
 pub(crate) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compile_ns_per_ir): (u64, u64), wall_permille: u64, observed: &Observed) -> i64 {
-    let saved = entry_work_ns(priors, share, observed).saturating_sub(priors.body_entry_ns);
+    let saved = entry_work_ns(priors, share, observed).saturating_sub(ultra_entry_ns(priors, observed));
     let outlay = outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille);
     net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, outlay) as i64
 }
@@ -136,7 +142,7 @@ pub(crate) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
     // In the default mode b-jit is the tier below u-jit: a function u-jit would not beat per entry takes it.
     let base = crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]).then(|| (base_net_ns(priors, observed),
         saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed),
-        saved_per_entry(priors, priors.body_share, priors.body_entry_ns, observed)));
+        saved_per_entry(priors, priors.body_share, ultra_entry_ns(priors, observed), observed)));
     let picked = if tiers.admits_all { Pick::Ultra } else { pick(net, base) };
     if diagnostics { shadow_log(priors, observed, net, base.map(|(net, ..)| net), picked); }
     picked
@@ -225,7 +231,7 @@ mod tests {
     use quench_runtime::vm::tier_policy::TEST_PRIORS as PRIORS;
 
 
-    fn observed(length: u64, loop_work: u64, entries: u32, region_runs: u64, ir: usize) -> Observed { Observed { length, loop_work, entries, region_runs, ir } }
+    fn observed(length: u64, loop_work: u64, entries: u32, region_runs: u64, ir: usize) -> Observed { Observed { length, loop_work, entries, region_runs, ir, recursive: false } }
     fn net(observed: &Observed) -> i64 { net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, observed) }
 
     #[test]
