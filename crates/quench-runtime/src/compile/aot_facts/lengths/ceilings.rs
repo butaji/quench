@@ -13,12 +13,12 @@
 use super::super::blocks::Blocks;
 use super::super::effects::Ctx;
 use super::super::value::Word;
-use super::transfer::{step_of_constant, sum_of_registers};
+use super::transfer::{is_number_binary, step_of_constant, sum_of_registers};
 use super::{CAPACITY, Lengths};
 use crate::bytecode::{ControlEdge, Function, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::staged::effects::{Affine, Base};
 use crate::staged::{NumberOperation, Operation};
-use crate::vm::operations::{NumberBitwise, NumberRelation};
+use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -245,6 +245,22 @@ impl Lengths {
         }
         if let Some((destination, source, delta)) = step_of_constant(ctx, instruction) {
             return (source != destination && number(source)).then(|| (destination, self.operand_interval(words, source, destination).shifted(delta)));
+        }
+        // A product or difference of two Numbers is integral where both operands are: a double product or difference of integers is
+        // an integer or infinite, never fractional. It is NaN where an operand may be (`Infinity * 0`), and its bounds are its own value.
+        if [NumberArithmetic::Multiply, NumberArithmetic::Subtract].into_iter().any(|operator| is_number_binary(instruction, operator)) {
+            let destination = instruction.result_register();
+            // A Number constant is integral where it has no fraction, and never NaN unless it is NaN.
+            let operand = |operand: Operand| match operand.register_index() {
+                Some(register) => (register != destination && number(register)).then(|| self.typed_interval(words, register)),
+                None => constant_value(ctx, operand).map(|value| Interval {
+                    nan: value.is_nan(),
+                    integral: value.fract() == 0.0,
+                    ..Interval::exact(destination)
+                }),
+            };
+            let (a, b) = (operand(instruction.operand_b())?, operand(instruction.operand_c())?);
+            return Some((destination, Interval { nan: a.nan || b.nan, integral: a.integral && b.integral, ..Interval::exact(destination) }));
         }
         if let Some((destination, first, second)) = sum_of_registers(instruction) {
             if first == destination || second == destination || !number(first) || !number(second) {

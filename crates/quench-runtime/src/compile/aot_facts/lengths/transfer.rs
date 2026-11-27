@@ -226,7 +226,7 @@ fn constant_of(ctx: &Ctx<'_>, operand: Operand) -> Option<i64> {
 }
 
 /// Whether `instruction` is a Number binary operation of `operation` with no flags.
-fn is_number_binary(instruction: WideInstruction, operation: NumberArithmetic) -> bool {
+pub(super) fn is_number_binary(instruction: WideInstruction, operation: NumberArithmetic) -> bool {
     instruction.op() == crate::bytecode::Op::Binary
         && instruction.result_flags() == 0
         && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) == Some(operation)

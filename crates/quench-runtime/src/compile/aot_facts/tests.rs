@@ -961,7 +961,7 @@ fn element_reads(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u
 fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
     let program = program(
         "function advect(d0, width, u, j0, rowSize, Wdt0, n) { \
-           var Wp5 = width + 0.5; var row1 = (j0 * rowSize) | 0; var s = 0; \
+           var Wp5 = width + 0.5; var row1 = j0 * rowSize; var s = 0; \
            for (var i = 0; i < n; i++) { \
              var x = i - Wdt0 * u[i]; \
              if (x < 0.5) x = 0.5; else if (x > Wp5) x = Wp5; \
