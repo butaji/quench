@@ -30,6 +30,9 @@ pub(crate) struct FieldFacts<'a> {
     pub(crate) held: HeldRead,
     /// Where a folded prototype value takes its code dependency.
     pub(crate) stable: StableHold<'a>,
+    /// The alias region of the access's (class, atom) key, where the solver proves its receiver's class and
+    /// the function declared one (`regions::declare_field_regions`); `None` keeps its values in `Region::ObjectSlots`.
+    pub(crate) property: Option<cranelift_codegen::ir::AliasRegion>,
 }
 
 /// What an instruction's field access already holds: the reads its value may come from, and for
@@ -150,7 +153,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     /// The entry's `this`, which a body that reads fields has proved bound.
     fn field_this(&mut self, stage: &mut Emit<'b, 'c>, _miss: ir::Block) -> Option<ir::Value> {
-        Some(stage.builder.use_var(self.this?))
+        Some(headers::this_word(stage.builder, self.this?))
     }
 
     fn receiver_record(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, readable: bool,
@@ -195,10 +198,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
     fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<(u32, ShapeFact)> {
-        let key = self.proof_key(owner)?;
-        let word = self.proof_word(stage.builder, owner);
-        word.and_then(|word| headers::header_shape(stage.builder, self.state, word)).or_else(||
-            self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
+        let word = self.proof_word(stage.builder, owner)?;
+        headers::header_shape(stage.builder, self.state, word).or_else(||
+            self.state.proofs.layouts.range((word, 0)..=(word, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
     }
 
     fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, (shape, proof): (u32, Shaped<ir::Value>), direct: bool) {
@@ -211,21 +213,19 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
                 let fact = &mut self.state.values[usize::from(proved)];
                 *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
             }
+            self.state.proofs.kept_shapes.insert(word, shape);
         }
     }
 
 
-    fn kept_layout(&self, owner: Owner, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
-        let key = self.proof_key(owner)?;
-        self.state.proofs.layouts.get(&(key, shape)).map(|layout| layout.layout())
+    fn kept_layout(&self, owner: Owner, object: ir::Value, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
+        if matches!(owner, Owner::Temporary) { return None; }
+        self.state.proofs.layouts.get(&(object, shape)).map(|layout| layout.layout())
     }
 
-    fn keep_layout(&mut self, owner: Owner, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
-        let Some(key) = self.proof_key(owner) else { return };
-        let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
-        for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
-            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout, fact));
-        }
+    fn keep_layout(&mut self, owner: Owner, object: ir::Value, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
+        if matches!(owner, Owner::Temporary) { return; }
+        self.state.proofs.layouts.insert((object, shape), CheckedObject::of(layout, fact));
     }
 
     fn hold_prototype(&mut self, stage: &mut Emit<'b, 'c>, shape: u32, miss: ir::Block) -> Option<()> {
@@ -295,7 +295,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn entry_slot_raw(&self) -> bool {
-        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.domain == Type::NUMBER)
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| super::number_domains::is_double(slot.domain))
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
@@ -339,7 +339,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let result = builder.append_block_param(done, types::I64);
         let (address, _) = emit_js_cached_field_slot(builder, self.payload, object,
             site, true, slow, Some(binding), header, Some(packed));
-        let value = emit(builder).load_u64(Region::ObjectSlots.mutable(), address, 0);
+        let value = emit(builder).raw_load(Lane::I64, regions::property_flags(self.fields.as_ref().and_then(|facts| facts.property)), address, 0);
         emit(builder).jump(done, &[value]);
         builder.switch_to_block(packed);
         let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);

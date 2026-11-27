@@ -6,29 +6,29 @@
 //! outside the family is an exact no, and a record with no staged operation is no member of any
 //! family. Nothing here asks the opcode's identity.
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt, CallFormFormsExt};
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt, CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Op, Register, WideInstruction};
 use quench_runtime::staged::{NumberOperation, Operation, Protocol};
 use crate::compiled::performed;
 
-pub(crate) use quench_runtime::staged::CallForm;
+pub(crate) use quench_runtime::staged::CallRecord;
 
-/// The call form `instruction` makes (`CallForm::of`, the staged module's form of every
+/// The call form `instruction` makes (`CallRecord::of`, the staged module's form of every
 /// call-family record, eval calls and array constructions included).
-pub(crate) fn call_form(instruction: WideInstruction) -> Option<CallForm> {
-    CallForm::of(instruction)
+pub(crate) fn call_record(instruction: WideInstruction) -> Option<CallRecord> {
+    CallRecord::of(instruction)
 }
 
 /// A plain call through a callee register and a window (`Call`).
 pub(crate) fn is_call(instruction: WideInstruction) -> bool {
-    call_form(instruction).is_some_and(|form| form == CallForm::Plain)
+    call_record(instruction).is_some_and(|form| form == CallRecord::Plain)
 }
 
 /// A call of a function the record names (`CallKnown`).
 pub(crate) fn is_call_known(instruction: WideInstruction) -> bool {
-    call_form(instruction).is_some_and(|form| form == CallForm::Known)
+    call_record(instruction).is_some_and(|form| form == CallRecord::Known)
 }
 
 /// A `JumpBinaryFalse`: a branch where the comparison of its two operands fails.
@@ -56,18 +56,18 @@ pub(crate) fn loads_name(instruction: WideInstruction) -> bool {
 /// An ordinary call: a plain call or a call of a spread array (`Call`, `CallArray`).
 #[inline(always)]
 pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
-    call_form(instruction).is_some_and(|form| matches!(form, CallForm::Plain | CallForm::Array))
+    call_record(instruction).is_some_and(|form| matches!(form, CallRecord::Plain | CallRecord::Array))
 }
 
 /// A call whose one argument register holds the array to apply.
 pub(crate) fn is_call_array(instruction: WideInstruction) -> bool {
-    call_form(instruction).is_some_and(|form| form == CallForm::Array)
+    call_record(instruction).is_some_and(|form| form == CallRecord::Array)
 }
 
 /// A construction, plain or `super(...)`.
 #[inline(always)]
 pub(crate) fn is_construct(instruction: WideInstruction) -> bool {
-    call_form(instruction).is_some_and(|form| matches!(form, CallForm::Construct | CallForm::Super))
+    call_record(instruction).is_some_and(|form| matches!(form, CallRecord::Construct | CallRecord::Super))
 }
 
 /// A binary operation of two operands (`Binary`): its equality row or the VM's operator.

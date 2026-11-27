@@ -9,7 +9,7 @@ use crate::staged::value::TypeofKind;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
 use crate::staged::CallFrame as _;
-use crate::staged::invoke::CallForm;
+use crate::staged::CallRecord;
 use crate::vm::call_out::{CallSite, Loaded};
 use crate::vm::var_owner::VarOwner;
 use crate::vm::{StepResult, Suspended, Vm};
@@ -115,7 +115,7 @@ impl<'a> InterpreterFrame<'a> {
     /// call completed its result, else the step the VM's call ends in (`Stop`).
     #[inline(always)]
     pub(in crate::vm) fn call_row(vm: *mut Vm, program: &'a ResidualProgram, frame: usize, pc: usize,
-        allow_inline_calls: bool, instruction: WideInstruction, form: CallForm) -> RowRun {
+        allow_inline_calls: bool, instruction: WideInstruction, form: CallRecord) -> RowRun {
         let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
         let step = interpreted.call_general(form, instruction, pc);
         if let Some(error) = interpreted.raised.take() {
@@ -572,7 +572,7 @@ impl crate::staged::CallFrame<Concrete> for InterpreterFrame<'_> {
     /// the call ends in (`pushed`, the activation or tail call the run stops on, or a return); a raise
     /// is stashed for the runner.
     #[inline(always)]
-    fn call_general(&mut self, form: CallForm, instruction: WideInstruction, pc: usize) -> Option<Step<u64, InterpreterControl>> {
+    fn call_general(&mut self, form: CallRecord, instruction: WideInstruction, pc: usize) -> Option<Step<u64, InterpreterControl>> {
         let VarOwner::Frame(frame) = self.site.owner else { return None };
         let (program, allow) = (self.program, self.allow_inline_calls);
         match self.vm().call_form_step(program, frame, form, instruction, pc, allow) {

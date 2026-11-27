@@ -319,24 +319,12 @@ impl Point {
         self.types.get(usize::from(register)).copied().and_then(Type::int_range)
     }
 
-    /// Whether the index register `index` is below the length of the string `receiver` holds here,
-    /// by the relations a string's own `length` read gives (`relate_read`: `length_of`, `atmost`) and
-    /// a loop's bound keeps (`bound_below`). A string's length never changes, and a relation dies with
-    /// either register's write, so a read of `receiver`'s units at `index` needs no bounds test. The
-    /// caller proves `index` non-negative.
-    pub(crate) fn string_index_proven(&self, receiver: Register, index: Register) -> bool {
-        let related = |table: &[Option<Register>], register: Register| table.get(usize::from(register)).copied().flatten();
-        match (related(&self.relations.below, index), related(&self.relations.under, index)) {
-            (Some(held), _) if held == receiver => true,
-            (_, Some(bound)) => related(&self.relations.atmost, bound) == Some(receiver),
-            _ => false,
-        }
-    }
-
     /// What proves the index of the element access at `pc` within `0..length` of its array: the
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
-    /// length (`Proven`) or below another register's value (`Versioned`).
-    pub(crate) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
+    /// length (`Proven`, by `below`: the solve's proof, `Lowering::proven_below_length`) or below
+    /// another register's value (`Versioned`).
+    pub(crate) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
+        below: &dyn Fn(Register, Register) -> bool) -> IndexProof {
         let (array, index) = match Operation::<u64, ()>::of(instruction) {
             Some(Operation::ElementRead { base, key, .. }) => (Some(base), key.register_index()),
             Some(Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
@@ -345,13 +333,11 @@ impl Point {
         let Some((array, index)) = array.zip(index) else { return IndexProof::Check };
         let non_negative = self.int_range(index).is_some_and(|range| range.min >= 0);
         if !(model.dense)(pc) || !non_negative { return IndexProof::Check; }
-        let related = |table: &[Option<Register>]| table.get(usize::from(index)).copied().flatten();
+        if below(index, array) { return IndexProof::Proven; }
+        let bound = self.under_of(index);
         let ceiling = self.int_range(index).map(|range| range.max).filter(|max| *max < RANGED_CEILING);
-        match (related(&self.relations.below), related(&self.relations.under)) {
-            (Some(held), _) if held == array => IndexProof::Proven,
-            // Below a bound that is at most the array's length.
-            (_, Some(bound)) if self.relations.atmost.get(usize::from(bound)).copied().flatten() == Some(array) => IndexProof::Proven,
-            (_, Some(bound)) if bound != array => IndexProof::Versioned { array, bound },
+        match bound {
+            Some(bound) if bound != array => IndexProof::Versioned { array, bound },
             _ => match ceiling {
                 Some(max) => IndexProof::Ranged { array, max },
                 None => IndexProof::Check,

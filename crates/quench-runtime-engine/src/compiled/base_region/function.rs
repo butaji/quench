@@ -187,8 +187,8 @@ pub(crate) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: E
 }
 
 /// What a built stitch adds to the trace's totals: a body's rows and exits, or a region's span and
-/// bytes with the time it took.
-fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)) {
+/// bytes.
+fn tally(built: &Result<Body, String>, ending: Ending, span: u64) {
     note(|totals, rejects| match (built, ending) {
         (Ok(body), Ending::Body) => {
             totals.bodies += 1;
@@ -199,7 +199,6 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
             totals.regions += 1;
             totals.ops += span;
             totals.bytes += body.code.len() as u64;
-            totals.nanos += nanos;
         }
         (Err(name), Ending::Body) => *rejects.entry(format!("body: {name}")).or_default() += 1,
         (Err(name), Ending::Region) => {
@@ -214,7 +213,6 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 /// # Safety
 /// As `build_body`.
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
-    let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let targets = unsafe { callees.targets() };
     let function = spec.known.program.function(spec.function as usize);
@@ -223,7 +221,7 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     let known = Known { classes: &classes, ..spec.known };
     let sites = Sites { function, id: spec.function, callees, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
-    tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
+    tally(&built, ending, u64::from(region.backedge - region.header) + 1);
     built
 }
 
@@ -260,8 +258,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let prototypes = sites.known.classes.to_vec();
     // The loop-invariant receivers whose entry shape is checked (`Known::shapes`, already limited to those the loop never writes).
     let shapes = sites.known.shapes.to_vec();
-    let mut stitched =stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
-    let heads = kernel_heads(ending, function, spec.known.constants, spec.known.program.register_root_masks(spec.function), &mut stitched.entries);
+    let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
@@ -316,8 +313,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
-    let mut singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
-    kernel_entries(&layout, &heads, &decoded, &reached, &mut singles, helpers)?;
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
         report_steps(&layout, spec.known.program, &singles);
     }
@@ -374,11 +370,12 @@ fn typed_rows(region: &LoopRegion, origins: &[super::super::lane_unit::Origin], 
     for (row, origin) in rows.iter_mut().zip(origins) {
         let super::super::lane_unit::Origin::Caller(pc) = origin else { continue };
         let Some(Some(kind)) = typed.get((*pc - region.header) as usize) else { continue };
-        if row.hole != 0 || quench_runtime::staged::typed_elements::NativeKind::new(*kind).is_none() { continue; }
+        let Some(native) = quench_runtime::staged::typed_elements::NativeKind::new(*kind) else { continue };
+        if row.hole != 0 { continue; }
         row.heap = match row.heap {
             // An integer kind's read delivers a double (`TYPED_INDEX_ROW`'s Float destination), which an index or
-            // bitwise use would convert back: only a float kind's read takes the typed row.
-            Some(Heap::Index) if matches!(kind, quench_runtime::tier_surface::TypedArrayKind::Float64 | quench_runtime::tier_surface::TypedArrayKind::Float32) => Some(Heap::TypedIndex(*kind as u8)),
+            // bitwise use would convert back: only a float kind's element (its type is the Number) takes the typed row.
+            Some(Heap::Index) if native.element_type() == quench_runtime::typed_ir::Type::NUMBER => Some(Heap::TypedIndex(*kind as u8)),
             Some(Heap::Store) => Some(Heap::TypedStore(*kind as u8)),
             other => other,
         };

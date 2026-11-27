@@ -168,31 +168,36 @@ impl Invocation {
     }
 }
 
-/// The form a call-family record makes, for every record of the family: also the ones with no
-/// staged operation (a direct or parameter eval, whose callee the host decides; a construction
-/// over an array of arguments). Where a record decodes, its operation has the same form
+/// The record of a call-family instruction: which call it makes, for every record of the family, also
+/// the ones with no staged operation (a direct or parameter eval, whose callee the host decides; a
+/// construction over an array of arguments). Where a record decodes, its operation has the same form
 /// (`Invocation`, `Operation::SpreadCall`, `Operation::SuperCall`); a tier that asks what kind of
-/// call a record is asks this, not the opcode.
+/// call a record is asks this, not the opcode. `CallRecord::of` is the one mapping from a call-family
+/// opcode to its record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum CallForm {
+pub enum CallRecord {
     /// A call through a callee register and a receiver register, over a window of arguments.
     Plain,
-    /// A call of a function the record names.
+    /// A call of a function the record names (`CallKnown`).
     Known,
-    /// A method call through a method site.
+    /// A method call through a method site, on the receiver register (`CallMethod`).
     Method,
+    /// A method call on the activation's `this` (`CallThisMethod`): its receiver is `this`, which no register holds.
+    ThisMethod,
     /// A call that passes the activation's `arguments` as its last argument.
     Forwarding,
     /// A construction, allocating its receiver.
     Construct,
+    /// `super(...)`: the construction the super initializer makes.
+    Super,
     /// A call whose one argument register holds the array to apply.
     Array,
     /// A call whose one argument register holds the iterable to spread.
     Spread,
     /// A call whose one argument register holds a rest view.
     Rest,
-    /// `super(...)`.
-    Super,
+    /// A first-call stub's call of its chunk (`CallFirstChunk`).
+    FirstChunk,
 }
 
 

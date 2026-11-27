@@ -226,7 +226,7 @@ print(JSON.stringify(out));
             .script_targets
             .entries
             .iter()
-            .find(|target| target.entry == CallEntry::AppendsCapture)
+            .find(|target| target.entry == CallEntry::frameless(Frameless::AppendsCapture))
             .copied()
             .expect("ordinary calls must resolve to the append operation")
     }

@@ -1,5 +1,5 @@
 #[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt, CallRecordFormsExt};
 // What `Vm::step` runs an opcode as: its one arm is the wildcard, `step_unlisted`, which runs each opcode as its
 // catalog runner (`RUNNERS`, decided once per opcode by `runner_of`). `step` keeps
 // `#[quench_macros::operation_semantics]`: `resolve_step_operation` (compiled.rs) selects each opcode's semantic
@@ -7,7 +7,7 @@
 // attribute rejects match guards.) The runners, in `runner_of`'s priority order:
 // - `NO_STEP` (Nop; the wide prefix `Wide` is never dispatched).
 // - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
-// - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
+// - A call-family record (`staged::CallRecord::has_general_form`: Call, CallArray, CallSpread, CallForwardingArguments,
 //   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
 //   on the frame (`call_forms.rs`, `InterpreterFrame::call_row`).
 // - `SUSPENDS` (Await, Yield, YieldStar): `staged_suspend`.
@@ -65,7 +65,7 @@ impl Vm {
     /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
     /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
     /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
-    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
+    /// call is a strict terminal one, which is a proper tail call (`call_forms`, `js_tail_call_allowed`).
     #[inline(always)]
     fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
         self.direct_eval
@@ -73,18 +73,19 @@ impl Vm {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
+            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
     }
 
-    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
-    /// permits them, the call returns from its frame, and the call site permits it.
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the call is a tail site of
+    /// its caller (`staged::effects::tail_site`: it returns from its frame and the caller's site permits it). This
+    /// is the whole decision, as `CallPlan::tail` takes it: stack depth is not observable (DESIGN.md decision
+    /// 4.4), so no host setting gates a tail call.
     #[inline(always)]
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
-        self.host.proper_tail_calls()
-            && i.returns_from_frame()
-            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+        crate::staged::effects::tail_site(
+            i.returns_from_frame(),
+            p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
+        )
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
@@ -877,7 +878,7 @@ impl Vm {
             },
             // A call-family record: its staged row first, then the call's general form on the running frame (`call_forms`).
             Runner::Call => {
-                let form = crate::staged::invoke::general_call_form(i.op()).expect("a call runner names its form");
+                let form = crate::staged::CallRecord::of(i).expect("a call runner names its form");
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
@@ -1073,7 +1074,7 @@ enum Runner {
     RowOnly,
     /// An arithmetic binary (`ARITHMETIC_BINARY`): its staged row, then the record's general `Binary` on a miss.
     RowThenGeneralBinary,
-    /// A call-family record (`invoke::general_call_form`): its staged row, then the call's general form on the frame.
+    /// A call-family record (`CallRecord::has_general_form`): its staged row, then the call's general form on the frame.
     Call,
     /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
     Owner,
@@ -1099,7 +1100,7 @@ const fn runner_of(op: Op) -> Runner {
     if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;
     }
-    if crate::staged::invoke::general_call_form(op).is_some() {
+    if matches!(crate::staged::CallRecord::of_op(op), Some(record) if record.has_general_form()) {
         return Runner::Call;
     }
     if traits.has(crate::bytecode::Traits::SUSPENDS) {

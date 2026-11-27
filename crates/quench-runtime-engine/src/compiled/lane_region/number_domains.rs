@@ -102,3 +102,9 @@ mod tests {
         assert_eq!(target_representation(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
     }
 }
+
+/// Whether `ty` is the Number class itself, NaN-free or not (`Type::NUMBER`, `Type::NOT_NAN_NUMBER`): a double
+/// whose range the facts do not narrow to integers.
+pub(crate) fn is_double(ty: Type) -> bool {
+    ty.int_range().is_none() && ty.machine() == Type::NUMBER
+}

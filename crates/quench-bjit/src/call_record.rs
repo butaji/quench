@@ -10,8 +10,10 @@
 mod lane_protocol;
 // The runtime mounts this file by path inside private modules, where only some names are read.
 #[allow(unused_imports)]
+pub use lane_protocol::exit;
+#[allow(unused_imports)]
 pub use lane_protocol::{
-    helper_outcome, return_status, return_status_pc, LaneCall, LaneStatus, Outcome, CALLEE_EXIT, GENERAL_DISPATCH_BLOCKS,
+    helper_outcome, return_status, return_status_pc, LaneStatus, Outcome, CALLEE_EXIT, GENERAL_DISPATCH_BLOCKS,
     GENERAL_RETURN_STATUS_BASE, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED,
     LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
     NATIVE_JS_STOPPED, RETURN_PC_MASK, TERMINATED_STATUS,

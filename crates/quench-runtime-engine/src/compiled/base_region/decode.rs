@@ -177,7 +177,7 @@ pub(crate) struct Decoded {
     pub(crate) int_b: bool,
     /// The typed helper that makes its instruction's step where one does, in place of the general step, for its helper
     /// row and slow arm (`steps::step_helper`): the owner step of a local, capture or name access (`LaneHelper::OwnerStep`),
-    /// a constant's load (`LaneHelper::ConstantStep`), an operator or comparison over registers and constants (`LaneHelper::ValueStep`).
+    /// an operator or comparison over registers and constants (`LaneHelper::ValueStep`).
     pub(crate) own_step: Option<crate::compiled::LaneHelper>,
 }
 

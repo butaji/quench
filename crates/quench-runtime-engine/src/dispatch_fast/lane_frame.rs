@@ -322,12 +322,13 @@ impl FieldStores {
 pub(crate) type CallActivation =
     unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> Resumed;
 
-/// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
-/// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
-/// whether its receiver is its function's `undefined` register (`script_call_prove_miss`'s `PLAIN`), and
-/// whether it returns its callee's completion (`protocol_misses::script_call::RETURNS`).
+/// The static data a call row is monomorphized over, derived at view derivation (`call_row`, from the
+/// row's miss): its leaf form (`NOT_LEAF` for a plain activation), its argument count (`ANY_ARGC` where
+/// the record's immediate holds it), whether its receiver is its function's `undefined` register
+/// (`script_call_prove_miss`'s `PLAIN`), and whether it returns its callee's completion
+/// (`protocol_misses::script_call::RETURNS`). The call's target is checked against `leaf` by its entry.
 #[derive(Clone, Copy)]
-pub(crate) struct CallForm {
+pub(crate) struct CallRow {
     leaf: LeafForm,
     argc: u16,
     plain: bool,
@@ -347,7 +348,7 @@ pub(crate) struct LaneCall {
     /// The call record and where it is.
     record: *const LaneInstruction,
     ip: Ip,
-    form: CallForm,
+    form: CallRow,
     /// The entry `call_entry` admitted.
     target: std::cell::Cell<*const ScriptCallTarget>,
     /// The plain depth `call_room` admitted the call at (`LaneStack::plain_room`), which the plain
@@ -372,7 +373,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// not hold it.
     this: Value,
     /// Whether the row trusts the activation's `this` as a direct object (`trusted_this_rows`,
-    /// `dispatch_fast::note_lane_this`): the lane checked it once where it bound it, so a read through
+    /// `dispatch_fast::receiver_trusted`): the receiver fact holds, so a read through
     /// `this` takes its record with no tag test.
     trust_this: bool,
     /// The activation's local slots and their count, for a staged local operation.
@@ -3052,30 +3053,6 @@ pub(crate) fn target_comparison(test: &crate::dispatch_fast::LaneInstruction) ->
     1 + (index * 2) as u8 + u8::from(constant)
 }
 
-/// The operators a `Binary` fused with a truth jump fixes at install (`fused::equality_fusion`), by index: `==`, `!=`, `===`, `!==`.
-const EQUALITY_OPERATORS: [u32; 4] = {
-    use oxc_ast::ast::BinaryOperator as B;
-    [B::Equality as u32, B::Inequality as u32, B::StrictEquality as u32, B::StrictInequality as u32]
-};
-
-/// The right operand forms of a fixed equality: two registers (0); a register and an int32 constant (1), which
-/// the record's `mode` holds from `EQUALITY_IMMEDIATE_SHIFT`; a register and any other constant (2), read from the context.
-pub(crate) const EQUALITY_FORMS: u8 = 3;
-
-/// Where a fixed equality's int32 constant sits in its record's `mode`, above every settings bit (`MODE_RAW_OUT` is the highest).
-pub(crate) const EQUALITY_IMMEDIATE_SHIFT: u32 = 32;
-const _: () = assert!(quench_runtime::staged::MODE_RAW_OUT < 1 << EQUALITY_IMMEDIATE_SHIFT);
-
-/// The `CMP` code of a fixed equality: operator index `index` in `EQUALITY_OPERATORS`, operand form `form`. 1 to 12; 0 is none.
-pub(crate) const fn equality_code(index: u8, form: u8) -> u8 { 1 + EQUALITY_FORMS * index + form }
-
-/// The operator (a `BinaryOperator`'s value) and operand form a fixed-equality `CMP` code names (`equality_code`); `None` for 0.
-pub(crate) const fn equality_fixed(code: u8) -> Option<(u32, u8)> {
-    if code == 0 { return None; }
-    let index = (code - 1) / EQUALITY_FORMS;
-    Some((EQUALITY_OPERATORS[index as usize], (code - 1) % EQUALITY_FORMS))
-}
-
 /// The `FUSED_TARGET` copy slot of no row: `target_run`'s `$copy` for a target run with no copy.
 const NO_COPY: u16 = quench_runtime::staged::NO_LINK;
 
@@ -3090,7 +3067,18 @@ macro_rules! row_decode {
             Operation::decode_local(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Value)) } {
             Operation::decode_value(quench_runtime::staged::Fields::wide($fields))
+        } else if const { $op == quench_runtime::staged::COMPARE_JUMP_ROW } {
+            compare_fields($fields)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE, quench_runtime::bytecode::Op::NumericAdd | quench_runtime::bytecode::Op::NumericMultiply | quench_runtime::bytecode::Op::ToPropertyKey) } {
+            operator_fields($fields)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE, quench_runtime::bytecode::Op::IntCaseIndex) } {
+            // A pure read of the record's fields: the case slot's registers and the label range.
+            Operation::decode_int_case(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
+            // `Binary` only, and only where no operator row was given it: its operator is still a field the row decodes
+            // per run. `specialize_plain_operators` gives every other `Binary` its operator's row, so the records left
+            // here are those it skips (a result flag, a numeric local target) and the accumulator-carrying `**`, `in`
+            // and `instanceof`, which have no accumulator form of their value row.
             Operation::decode_generic(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
             Operation::decode_wasm_int(quench_runtime::staged::Fields::wide($fields))
@@ -3219,7 +3207,7 @@ fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
     Some(table[entry])
 }
 
-/// The first `FLAG` of a comparison jump whose operands the view's int32 kinds prove int32s (`proven_compare_jump`):
+/// The first `FLAG` of a comparison jump whose operands the solve's int32 cells prove int32s (`proven_compare_jump`):
 /// `FLAG_COMPARE_PROVEN + 2 * entry + form`, the operator and operand form of `FLAG_COMPARE_FORMED`. It ends the
 /// flag space: the last instance is 251.
 const FLAG_COMPARE_PROVEN: u8 = FLAG_COMPARE_BOOLEAN + BOOLEAN_TESTS.len() as u8;
@@ -3256,6 +3244,62 @@ const fn compare_operands(flag: u8) -> Option<bool> {
     }
 }
 
+/// The `CompareJump` a comparison jump record decodes to, read from the record's own fields by its instance `FLAG`
+/// (`FLAG_UNREAD` for a record no instance fixes yet). The instance fixes the comparison and the operand forms, the
+/// record holds the operands (`b`, `c`) and the operator (`a`), and `negate` is the `JumpBinaryFalse` decode's
+/// (`decode_compare`, which reads those same fields). Each instance was chosen from that decode, so a run reads
+/// the fields and decodes nothing.
+#[inline(always)]
+fn compare_fields<W, P, const OP: u16, const FLAG: u8>(fields: LaneFields<'_, OP, FLAG>) -> Option<Operation<W, P>> {
+    let i = fields.0;
+    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
+    // The tag a constant operand carries, which a register-constant instance's right operand is given.
+    const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
+    let (comparison, left, right) = if let Some((strict, negated, null)) = const { nullish_flag(FLAG) } {
+        let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
+        (quench_runtime::staged::Comparison::Nullish { expected, strict, negated }, Operand(i.b & payload), Operand(i.c))
+    } else if let Some((expected, negated)) = const { boolean_flag(FLAG) } {
+        (quench_runtime::staged::Comparison::Boolean { expected, negated }, Operand(i.b & payload), Operand(i.c))
+    } else if let Some(operator) = const { compare_flag(FLAG) } {
+        // The operand form the instance fixes: the tags it fixes, so the operand reads test none.
+        let (left, right) = match const { compare_operands(FLAG) } {
+            Some(false) => (Operand(i.b & payload), Operand(i.c & payload)),
+            Some(true) => (Operand(i.b & payload), Operand((i.c & payload) | CONSTANT_TAG)),
+            None => (Operand(i.b), Operand(i.c)),
+        };
+        (quench_runtime::staged::Comparison::of_operator(operator), left, right)
+    } else {
+        (quench_runtime::staged::Comparison::of_operator(u32::from(i.a)), Operand(i.b), Operand(i.c))
+    };
+    Some(Operation::CompareJump { comparison, left, right, negate: true })
+}
+
+/// The `Operation` a `ToPropertyKey`, `NumericAdd` or `NumericMultiply` record decodes to, read from the record's own
+/// fields by its opcode (`row_decode!`'s arm for these). Their `decode_generic` arms are pure field reads: a
+/// `ToPropertyKey` names its result and source registers, and an arithmetic record's operator is its opcode's
+/// (`+` for `NumericAdd`, `*` for `NumericMultiply`), so the Number operation is `binary_operation`'s over that
+/// constant. A record whose operator field names another operator, or whose result carries flags, is none, as
+/// `decode_numeric_arithmetic` and `decode_binary` leave it. `Binary` is not here: its operator is a field no
+/// instance fixes, so which operation it is (Number, equality or the VM's) is that field's to say.
+#[inline(always)]
+fn operator_fields<W, P, const OP: u16, const FLAG: u8>(fields: LaneFields<'_, OP, FLAG>) -> Option<Operation<W, P>> {
+    let instruction = quench_runtime::staged::Fields::wide(fields);
+    if const { matches!(LaneFields::<OP, FLAG>::OPCODE, quench_runtime::bytecode::Op::ToPropertyKey) } {
+        return Some(Operation::PropertyKey { destination: instruction.result_register(), source: instruction.register_b() });
+    }
+    let own = if const { matches!(LaneFields::<OP, FLAG>::OPCODE, quench_runtime::bytecode::Op::NumericMultiply) } {
+        quench_runtime::vm::operations::binary_operator::Multiplication
+    } else {
+        quench_runtime::vm::operations::binary_operator::Addition
+    };
+    if instruction.result_flags() != 0 || instruction.binary_operator() != own {
+        return None;
+    }
+    // `+` and `*` are arithmetic operators, for which `binary_operation` is always a Number operation.
+    quench_runtime::staged::numeric::binary_operation(own, instruction.result_register(), instruction.operand_b(), instruction.operand_c())
+        .map(Operation::Number)
+}
+
 /// Whether a comparison jump's `flag` is a proven instance (`FLAG_COMPARE_PROVEN`), whose operands are int32s.
 const fn proven_compare_flag(flag: u8) -> bool {
     flag >= FLAG_COMPARE_PROVEN && ((flag - FLAG_COMPARE_PROVEN) as usize) < 2 * FORMED_COMPARISONS.len()
@@ -3270,11 +3314,10 @@ fn proven_compare_row<const BACKWARD: bool>(offset: usize) -> Option<Handler> {
 }
 
 /// The proven instance of the plain comparison jump `record` (`jump_row` of `COMPARE_JUMP_ROW`, not yet run), where
-/// `proven` says the view's int32 kinds prove a register operand an int32: its left operand is such a register, its
+/// `proven` says the solve's int32 cells prove a register operand an int32: its left operand is such a register, its
 /// right one such a register or an int32 constant (`mode` takes the constant), and its operator a `FORMED_COMPARISONS`
-/// one that `record` decodes to. Returns the proven instance and the formed instance `compare_jump_row` chooses for
-/// the same operands, the handler the record takes back where the proof retires. `None` otherwise, the record unchanged.
-pub(crate) fn proven_compare_jump(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool + Copy) -> Option<(Handler, Handler)> {
+/// one that `record` decodes to. `None` otherwise, the record unchanged.
+pub(crate) fn proven_compare_jump(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool + Copy) -> Option<Handler> {
     const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
     if record.handler == jump_row::<OP>(true) as *const () {
         proven_compare_of::<true>(record, constants, proven)
@@ -3295,11 +3338,10 @@ fn formed_compare_of(record: &LaneInstruction) -> Option<(usize, Operand, Operan
     decodes_so.then_some((entry, Operand(record.b), Operand(record.c)))
 }
 
-fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool) -> Option<(Handler, Handler)> {
+fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constants: &[Value], proven: impl Fn(Operand) -> bool) -> Option<Handler> {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
     let (entry, left, right) = formed_compare_of(record)?;
     if left.kind() != Some(Register) || !proven(left) { return None }
-    let operator = FORMED_COMPARISONS[entry];
     let (form, mode) = match right.kind() {
         Some(Register) if proven(right) => (0, 0),
         Some(Constant) => {
@@ -3309,10 +3351,67 @@ fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constan
         }
         _ => return None,
     };
-    let formed = compare_jump_row::<BACKWARD>(operator, left, right)?;
     let proven_handler = proven_compare_row::<BACKWARD>(2 * entry + form)?;
     if form == 1 { record.mode = mode; }
-    Some((proven_handler, formed))
+    Some(proven_handler)
+}
+
+/// The `null` or `undefined` constant that a register of cell type `ty` fixes a comparison `operator` against, so that the
+/// comparison is the nullish test of that constant for any value of the left operand. `ty` within `null` alone or
+/// `undefined` alone fixes it; within both fixes it only for a loose equality, which answers `null` and `undefined` alike.
+/// `NEVER` (a path leaves the register unset) fixes none.
+fn nullish_constant(operator: u32, ty: Type) -> Option<Value> {
+    use quench_runtime::ValueType;
+    if ty == Type::NEVER { return None }
+    let (strict, _) = quench_runtime::vm::operations::equality_operator(operator)?;
+    if ty.is_subtype(Type::language(ValueType::Null)) {
+        Some(Value::NULL)
+    } else if ty.is_subtype(Type::language(ValueType::Undefined)) {
+        Some(Value::UNDEFINED)
+    } else if !strict && ty.is_subtype(Type::language(ValueType::Null).join(Type::language(ValueType::Undefined))) {
+        Some(Value::NULL)
+    } else {
+        None
+    }
+}
+
+/// The nullish or Boolean instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its
+/// operand types decide at derivation. The left operand is a register. Where the right operand is a register that
+/// `typed` types `null` or `undefined` (`nullish_constant`), the comparison is the nullish test of that constant: it
+/// holds for any left value, as the constant's test does. Where the right operand is a constant, a left register that
+/// `typed` types within `null` or `undefined` takes the nullish test of the constant (`nullish_jump_row`), or one typed
+/// within Boolean takes the Boolean test of a constant Boolean (`boolean_jump_row`). Both instances test any value exactly,
+/// so the type only picks the instance the first run would otherwise pick (`row_jump`). `typed` gives a register
+/// operand's cell type, `ANY` where no cell is. `None` otherwise, the record unchanged.
+pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], typed: impl Fn(Operand) -> Type) -> Option<Handler> {
+    use quench_runtime::ValueType;
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    let (_, left, right) = formed_compare_of(record)?;
+    if left.kind() != Some(quench_runtime::bytecode::OperandKind::Register) { return None }
+    let operator = u32::from(record.a);
+    if right.kind() == Some(quench_runtime::bytecode::OperandKind::Register) {
+        let constant = nullish_constant(operator, typed(right))?;
+        return if backward { nullish_jump_row::<true>(operator, constant) } else { nullish_jump_row::<false>(operator, constant) };
+    }
+    if right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) { return None }
+    let constant = constants.get(usize::from(right.payload())).copied()?;
+    let ty = typed(left);
+    if ty == Type::NEVER { return None }
+    let nullish = Type::language(ValueType::Null).join(Type::language(ValueType::Undefined));
+    if ty.is_subtype(nullish) {
+        return if backward { nullish_jump_row::<true>(operator, constant) } else { nullish_jump_row::<false>(operator, constant) };
+    }
+    if ty.is_subtype(Type::language(ValueType::Boolean)) {
+        return if backward { boolean_jump_row::<true>(operator, constant) } else { boolean_jump_row::<false>(operator, constant) };
+    }
+    None
 }
 
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
@@ -3338,7 +3437,7 @@ pub(crate) fn guarded_compare_jump(record: &LaneInstruction) -> Option<Handler> 
 }
 
 script_handler! {
-    /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the view's int32 kinds do not
+    /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the solve's int32 cells do not
     /// prove (`guarded_compare_jump`). It tests both registers' int32 tags, once per execution: an int32 pair runs the proven
     /// instance (`proven_compare_row`) over the same record. Any other pair requickens the record to its formed register and
     /// register instance (`compare_jump_row`) for good.
@@ -3429,13 +3528,14 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         // A comparison jump's operator is a constant of its record: its first run moves the record to
         // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
         // constant and its row folds to that operator's test rather than matching every comparison.
+        // The nullish, Boolean and formed instances here are chosen by the first run only for the operands no
+        // cell decides (`typed_compare_jump`, `proven_compare_jump` pick the others at derivation); this path
+        // goes once the solve covers every program.
         if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
             && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
-            // The operator is the record's field A (`binary_operator_field`); the instance is taken only
-            // where that operator names the comparison the record decodes to.
+            // The operator is the record's field A (`binary_operator_field`), the field its decode (`decode_compare`)
+            // compares by, so the instance a record takes names the comparison the record decodes to.
             let operator = u32::from(i.a);
-            let decodes_so = matches!(Operation::<u64, ()>::decode_generic(quench_runtime::staged::Fields::wide(LaneFields::<OP>(i))),
-                Some(Operation::CompareJump { comparison, .. }) if comparison == quench_runtime::staged::Comparison::of_operator(operator));
             // A register-constant form's constant is a static fact of the record: it moves into the
             // record's `mode` (zero on an unfused record), which the formed instance reads it from.
             let right = Operand(i.c);
@@ -3443,18 +3543,18 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
                 .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
             let formable = right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) || constant.is_some();
             // A register tested against a constant `null` or `undefined`: its tag decides it (`Comparison::Nullish`).
-            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
                 && let Some(handler) = constant.and_then(|constant| nullish_jump_row::<BACKWARD>(operator, constant)) {
                 requicken(ip, handler);
                 sibling!(handler, r, ip, view)
             }
             // A register tested against a constant Boolean (`x === true`, `x !== false`): identity decides it (`Comparison::Boolean`).
-            if decodes_so && Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
+            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
                 && let Some(handler) = constant.and_then(|constant| boolean_jump_row::<BACKWARD>(operator, constant)) {
                 requicken(ip, handler);
                 sibling!(handler, r, ip, view)
             }
-            if decodes_so && formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
+            if formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
                 if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
                     // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
                     unsafe { (*ip.cast_mut()).mode = constant.to_bits() };
@@ -3471,52 +3571,12 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
             }
         }
         let fields = LaneFields::<OP>(i);
-        // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = if let Some((strict, negated, null)) = const { nullish_flag(FLAG) } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    let expected = if null { quench_runtime::ValueType::Null } else { quench_runtime::ValueType::Undefined };
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::Nullish { expected, strict, negated },
-                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
-                    })
-                }
-                other => other,
-            }
-        } else if let Some((expected, negated)) = const { boolean_flag(FLAG) } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::Boolean { expected, negated },
-                        left: quench_runtime::bytecode::Operand(left.0 & payload), right, negate,
-                    })
-                }
-                other => other,
-            }
-        } else if const { compare_flag(FLAG).is_some() } {
-            match Operation::decode_generic(quench_runtime::staged::Fields::wide(fields)) {
-                Some(Operation::CompareJump { left, right, negate, .. }) => {
-                    // The instance's operand form: the tags it fixes, so the operand reads test none.
-                    const CONSTANT_TAG: u16 = (quench_runtime::bytecode::OperandKind::Constant as u16) << 14;
-                    let payload = quench_runtime::bytecode::Operand::PAYLOAD_MASK;
-                    let (left, right) = match const { compare_operands(FLAG) } {
-                        Some(false) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand(right.0 & payload)),
-                        Some(true) => (quench_runtime::bytecode::Operand(left.0 & payload), quench_runtime::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
-                        None => (left, right),
-                    };
-                    Some(Operation::CompareJump {
-                        comparison: quench_runtime::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
-                        left, right, negate,
-                    })
-                }
-                other => other,
-            }
+        // A comparison jump decodes from its record's fields (`compare_fields`), a loop's exit by its names row
+        // (`ForInNext`), and any other jump by the flow decoder.
+        let decoded = if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW } {
+            compare_fields(LaneFields::<OP, FLAG>(i))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Names)) } {
             Operation::decode_names(quench_runtime::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
-            Operation::decode_generic(quench_runtime::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmJump)) } {
             Operation::decode_wasm_jump(quench_runtime::staged::Fields::wide(fields))
         } else {
@@ -3534,7 +3594,7 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         if const { matches!(compare_operands(FLAG), Some(true)) } {
             frame.reads = frame.reads.with_immediate(Value::from_bits(i.mode));
         }
-        // A proven instance's operands are int32s the view's kinds prove (`proven_compare_jump`), which the staged
+        // A proven instance's operands are int32s the solve's int32 cells prove (`proven_compare_jump`), which the staged
         // comparison reads untagged, as `operator_row`'s proven forms do.
         if const { proven_compare_flag(FLAG) } { frame.operands_int = true; }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
@@ -3748,7 +3808,7 @@ pub(crate) mod protocol_family {
     pub(crate) const FRAME_CALL: u16 = 10 << 8;
     /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
     pub(crate) const LEAF_CALL: u16 = 11 << 8;
-    /// Vector regions (`vector_miss_of`).
+    /// Vector (SIMD) records (`vector_miss_of`).
     pub(crate) const VECTOR: u16 = 12 << 8;
     /// Generator resumes and suspensions (`generator_miss_of`).
     pub(crate) const GENERATOR: u16 = 13 << 8;
@@ -3797,8 +3857,8 @@ pub(crate) const fn protocol_row_declines(op: Op) -> bool {
 /// the row declines every record (`protocol_row_declines`), the record's protocol miss body itself, so the
 /// record skips the row's decode and its tail call.
 pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u16>() -> Handler {
-    // A plain or leaf script call's row runs its call hooks (`call_form`), whatever its decoder.
-    if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_form(MISS).is_none() {
+    // A plain or leaf script call's row runs its call hooks (`call_row`), whatever its decoder.
+    if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_row(MISS).is_none() {
         protocol_miss(MISS)
     } else {
         protocol_row!(OP, ACC, MISS) as Handler
@@ -3816,10 +3876,10 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
     /// until its row lands.
     pub(crate) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
-        // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
+        // A plain or leaf script call's row (`call_row`) decodes by the call decoder, which the
         // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
         // proved call (`call_frame`, `CallFrame::call_hand_over`).
-        if const { call_form(MISS).is_some() } {
+        if const { call_row(MISS).is_some() } {
             // A call row's records are JavaScript, whose view carries its context (`script_handler!`).
             debug_assert_eq!(view.memory.bytes.cast::<LaneContext>(), context_in_lane(), "a JavaScript view carries its context");
             // The call decoder reads a returning call's flag itself (`Invocation::of`).
@@ -3893,33 +3953,33 @@ pub(crate) const fn return_form(miss: u16) -> Option<u8> {
     if parameters == returning_code(RETURN_KIND, leaf) { Some(leaf) } else { None }
 }
 
-/// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
+/// The static form of the call row whose miss is `miss` (`CallRow`): a plain script call of a
 /// `script_call_prove_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
 /// of a `script_call_leaf_prove_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
 /// miss, whose record the lane frame does not answer.
-pub(crate) const fn call_form(miss: u16) -> Option<CallForm> {
+pub(crate) const fn call_row(miss: u16) -> Option<CallRow> {
     use super::protocol_misses::script_call as code;
     let parameters = protocol_family::parameters(miss);
     match protocol_family::of(miss) {
         protocol_family::SCRIPT_CALL if parameters & !(code::PLAIN | code::RETURNS) <= code::ARGC_ANY => {
             let argc = parameters & !(code::PLAIN | code::RETURNS);
             let argc = if argc == code::ARGC_ANY { ANY_ARGC } else { argc as u16 };
-            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
+            Some(CallRow { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
         }
         protocol_family::LEAF_CALL => match super::protocol_misses::leaf_call::leaf_of(parameters) {
             Some((leaf, argc)) if leaf >= PLAIN_LEAF && leaf <= THIS_LEAF && argc <= FIXED_ARGUMENT_COPIES =>
-                Some(CallForm { leaf, argc, plain: false, returns: false }),
+                Some(CallRow { leaf, argc, plain: false, returns: false }),
             _ => None,
         },
         _ => None,
     }
 }
 
-/// The hand-off of the call row whose miss is `miss` (`call_form`): its leaf form's run at its
+/// The hand-off of the call row whose miss is `miss` (`call_row`): its leaf form's run at its
 /// argument count (`leaf_call_activation`), else the plain activation at its argument count
 /// (`plain_call_activation`), each an instantiation whose count and form are constants.
 const fn call_activation(miss: u16) -> CallActivation {
-    let Some(form) = call_form(miss) else { return plain_call_activation::<ANY_ARGC> };
+    let Some(form) = call_row(miss) else { return plain_call_activation::<ANY_ARGC> };
     macro_rules! leaf {
         ($form:ident) => {
             match form.argc {
@@ -3967,7 +4027,7 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
     debug_assert!(target.entry.activates() && !target.settles());
     // A leaf entry's own call form proves it published or not (`script_call_leaf_prove_miss`).
-    debug_assert!(target.entry != super::CallEntry::Activates || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    debug_assert!(target.entry != super::CallEntry::framed(Framed::Activates) || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
@@ -3983,7 +4043,7 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
         if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
     }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this, true);
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this);
     Resumed::At(registers, base, Carried::script(cx))
 }
 
@@ -4003,13 +4063,13 @@ unsafe fn leaf_call_activation<const LEAF: u8, const ARGC: u16>(context: *mut ()
 }
 
 /// The frame a call row of `MISS` steps over (`protocol_row`): the register file and the carried view,
-/// and, for a plain or leaf script call (`call_form`), the call record its call hooks read
+/// and, for a plain or leaf script call (`call_row`), the call record its call hooks read
 /// (`LaneCall`), whose form and hand-off are constants of the instantiation.
 #[inline(always)]
 fn call_frame<const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut LaneContext, r: Registers, ip: Ip,
     i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
-    if let Some(form) = const { call_form(MISS) } {
+    if let Some(form) = const { call_row(MISS) } {
         // SAFETY: the running lane's context; the addresses are taken, nothing is read.
         let vm = unsafe { vm(cx) };
         frame.call = Some(LaneCall {
@@ -4036,7 +4096,7 @@ pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &
     let vm = unsafe { vm(cx) };
     let mut frame = LaneFrame::<ACC_NONE>::new(r, Carried::script(cx));
     frame.call = Some(LaneCall { context: cx.cast(), stack: &raw const *vm.lane_stack, globals: &raw const vm.realm.globals,
-        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
+        record: ip, ip, form: CallRow { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
         depth: 0, activate, base });
     frame
 }
@@ -4136,24 +4196,24 @@ pub(crate) const OPERANDS_REGISTERS: u8 = 1;
 pub(crate) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(crate) const OPERANDS_REGISTER_INT32: u8 = 3;
 pub(crate) const OPERANDS_INT32: u8 = 4;
-/// Two registers the view's int32 kinds prove int32s (`int_kinds`): read with no tag test.
+/// Two registers the solve's int32 cells prove int32s (`int32_cell`): read with no tag test.
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
-/// A register the view's int32 kinds prove an int32 and an int32 constant on the right.
+/// A register the solve's int32 cells prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
 /// Two registers the view did not prove: their int32 tags are tested once per execution, and a pair of
 /// int32s runs the `OPERANDS_PROVEN` instance; any other pair requickens the record to `OPERANDS_REGISTERS` for good.
 pub(crate) const OPERANDS_GUARDED: u8 = 7;
 
 script_handler! {
-    /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
-    /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
-    /// instantiation rather than a field the row decodes and dispatches on. `FORM` (`OPERANDS_*`) states
-    /// the operand kinds the view proved, so the row's operand tests fold, and whether an operand is an
-    /// int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
-    /// `numeric::binary_operation`'s, over the record's own operands. Any step but a value hands the
-    /// record to its generated row for good (`requicken`), which decides every operand pair.
+    /// The lane handler of a plain `Binary` of Number operator `OPERATOR` (a `BinaryOperator`'s value: arithmetic,
+    /// bitwise, or a loose equality or relation) whose accumulator field is `ACC`: `generated_row`'s row with the
+    /// operator a parameter of the instantiation rather than a field the row decodes and dispatches on. `FORM`
+    /// (`OPERANDS_*`) states the operand kinds the view proved, so the row's operand tests fold, and whether an
+    /// operand is an int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
+    /// `numeric::binary_operation`'s, over the record's own operands. A step that is not a value widens the record
+    /// to the form below it, and at the bottom to `binary_operator_miss` of the same operator, which decides the
+    /// operands' value or leaves the pair to the general step: the record never returns to the operator-reading row.
     pub(crate) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, FORM: u8>(cx, r, ip, i, view) {
-        let generic: Handler = generated_row!(OP, ACC, FLAG_UNREAD);
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
             if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 || FORM == OPERANDS_GUARDED } {
@@ -4185,9 +4245,11 @@ script_handler! {
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
         };
+        // A Number operator always has a Number operation, so this is the operator's own pure row (`binary_operator_miss`).
         let Some(number) = number else {
-            requicken(ip, generic);
-            sibling!(generic, r, ip, view)
+            let value: Handler = crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler;
+            requicken(ip, value);
+            sibling!(value, r, ip, view)
         };
         let mut stage = Concrete::pure();
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
@@ -4202,8 +4264,8 @@ script_handler! {
         if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             frame.reads = frame.reads.with_immediate(Value::integer(i.mode as u32 as i32));
         }
-        // The view's int32 kinds proved each register operand an int32 (`int_kinds`), which an
-        // overflowing update of a speculative one retires before it writes a double.
+        // The solve's int32 cells proved each register operand an int32 before this record (`int32_cell`), which
+        // the staged row reads with no tag test.
         if const { FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } { frame.operands_int = true; }
         match quench_runtime::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
@@ -4228,6 +4290,21 @@ script_handler! {
                 sibling!(widened, r, ip, view)
             }
         }
+    }
+}
+
+script_handler! {
+    /// The plain `Binary` of `===` (`!==` where `NEGATE`) whose two operands the solve's cells type objects
+    /// (`specialize_plain_operators`). Two objects are strictly equal only as one object, and an object is never NaN,
+    /// so the operands' words decide the answer: equal words are the same object, any other pair is two objects.
+    /// No classification runs (`binary_values`), which every other pair takes.
+    pub(crate) fn object_identity_row<NEGATE: bool>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) = (super::operand_value_in_lane(cx, r, i.b), super::operand_value_in_lane(cx, r, i.c)) else {
+            sibling!(general_step_in_lane, r, ip, Carried::script_in(cx, view))
+        };
+        let value = Value::boolean((left.to_bits() == right.to_bits()) != NEGATE);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
     }
 }
 
@@ -4680,8 +4757,8 @@ unsafe fn iterator_pop_in_lane(cx: *mut ()) -> bool {
 
 // `generated_row`'s body, once per shard (`generated_row_shard`).
 /// The generated rows of the `this` sites the lane trusts (`trusted_this_row`): the same body, whose frame
-/// trusts the activation's `this` as a direct object, which every lane binding of `this` checked once
-/// (`dispatch_fast::note_lane_this`). Any requicken or sibling it takes is an untrusted row's.
+/// trusts the activation's `this` as a direct object, which its receiver fact makes it (`dispatch_fast::receiver_trusted`).
+/// A requicken it takes stays trusted; a sibling row is an untrusted row's.
 pub(crate) mod trusted_this_rows {
     use super::*;
     const TRUSTS_THIS: bool = true;

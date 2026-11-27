@@ -68,7 +68,7 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
 
 /// The calls the unit of an image's lane body inlines: each call whose target the closed world
 /// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::closed_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
+/// (`Lowering::plan_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
 /// at its call; any other leaves into its own activation, materialized from the unit's frame
 /// (`CallRecovery::Materialize`, the join's inlined leave).
 fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
@@ -160,10 +160,10 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
-    let proven = proven_calls(program, unit, function, &sites, symbols);
+    let proven = proven_calls(program, unit, function, &sites, facts, symbols);
     let plans = constructions::construct_plans(program, unit, function, facts, symbols);
     let strings = string_constants(program, unit, symbols);
-    let fields = fields::guessed_fields(program, (unit, function), facts, symbols);
+    let fields = fields::class_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), facts: Some(facts),
@@ -325,14 +325,22 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// By unit PC, the caller calls the closed world proves that the base body planned a record for
 /// (`calls`, its `AotImage::calls`): the lane body calls each through the same record, which the
 /// loader binds (`BoundCalls::bind`) and the lane reads by `Symbol::CallRecord`. An arrow is left
-/// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
+/// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver. An arm carries the
+/// layout key of its receiver class (`class_recipe`), where the call's plan names one, and whether the plan has no miss.
 #[cfg(feature = "jit")]
-fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
-    -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], facts: &AotFacts,
+    symbols: &mut SymbolTable) -> BTreeMap<usize, Vec<lane_region::ProvenCall>> {
+    let plans = if calls.is_empty() { BTreeMap::new() } else { facts.call_plans(program, function) };
     (0..unit.origins.len()).filter_map(|pc| {
         let arms: Vec<_> = proven_sites(program, unit, function, calls, pc).into_iter().map(|(site, callee, this)| {
             let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc, callee: site.callee });
-            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record }
+            let plan = plans.get(&site.pc);
+            let class = plan.and_then(|plan| plan.arms.iter().find(|arm| arm.function == site.callee)).and_then(|arm| arm.class);
+            let layout = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols))
+                .map(|recipe| symbols.class_layout(recipe))
+                .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
+            let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));
+            lane_region::ProvenCall { function: site.callee, registers: callee.registers, sloppy: this.sloppy, record, layout, closed }
         }).collect();
         (!arms.is_empty()).then_some((pc, arms))
     }).collect()
@@ -354,15 +362,6 @@ fn proven_sites<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, functi
 }
 
 pub use quench_runtime::vm::engine_types::AheadImages;
-
-/// The price of `function`'s image body: the ladder's first rung, a quick body of its bytecodes' IR. Once its runs repay
-/// the optimizing compile, the JIT respecializes it on what the run observed, its call targets above all, as it does a
-/// quick JIT body (`LaneView::optimize_due`, `respecializes`).
-pub(crate) fn ahead_quick_ir(tiers: &quench_runtime::vm::tier_policy::Tiers, program: &ResidualProgram, function: u32) -> usize {
-    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX)
-}
-
 
 use quench_runtime::vm::engine_types::recorded;
 
@@ -609,8 +608,7 @@ impl Vm {
         images.linked = linked.ok();
         // A linked image's bodies are compiled already: they enter under `--no-jit` too, as a
         // system-linked image's do (`load_linked_image`).
-        // Their activations' `this` is no binding the lane checked, so the lane trusts none (`note_lane_this`).
-        if images.linked.is_some() { self.programs.enable_ahead_lane_bodies(); crate::dispatch_fast::retire_this_trust(self); }
+        if images.linked.is_some() { self.programs.enable_ahead_lane_bodies(); }
         self.programs.add_ahead_images(images);
     }
 
@@ -624,7 +622,6 @@ impl Vm {
         // The image's bodies are compiled already, so the gate that keeps runtime lane-body
         // compiles off on AArch64 (`enable_js_lane_methods`) does not apply to them.
         self.programs.enable_ahead_lane_bodies();
-        crate::dispatch_fast::retire_this_trust(self);
         Ok(())
     }
 }

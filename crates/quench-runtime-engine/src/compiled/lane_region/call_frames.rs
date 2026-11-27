@@ -87,6 +87,10 @@ pub(crate) struct ProvenCall {
     pub(crate) registers: u16,
     pub(crate) sloppy: bool,
     pub(crate) record: (u32, u32),
+    /// The `Symbol::ClassLayout` key of the arm's receiver class, where the closed world proves its layout (`None` else).
+    pub(crate) layout: Option<u32>,
+    /// Whether the call's plan has no miss (`Miss::None`): the arms name every receiver the call can have.
+    pub(crate) closed: bool,
 }
 
 impl DirectSite<'_> {
@@ -315,11 +319,9 @@ impl EmitFrame<'_> {
 const fn context_at(index: usize) -> i32 { -((index * std::mem::size_of::<u64>()) as i32) }
 
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
-    fn call_this_bound(&mut self, stage: &mut Emit<'_, '_>, this: ir::Value, miss: ir::Block) -> Option<()> {
-        let Some(held) = self.this_trust.as_deref_mut() else { return Some(()) };
-        *held = true;
-        let object = quench_runtime::staged::value::is_direct_object(stage, this);
-        stage.guard(object, miss)
+    /// A callee's bound `this` is the callee's own fact (`dispatch_fast::receiver_trusted`): the call guards nothing.
+    fn call_this_bound(&mut self, _stage: &mut Emit<'_, '_>, _this: ir::Value, _miss: ir::Block) -> Option<()> {
+        Some(())
     }
 
     fn call_entry(&self, site: &Invocation) -> CallEntry {

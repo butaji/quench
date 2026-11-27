@@ -32,6 +32,16 @@ impl ProgramStore {
                 _ => writer.bool(false),
             }
         }
+        // Every recorded class, the main program's included: its header and the prototype its planned arms resolve from
+        // (`Vm::record_class_edge`). The main program's entry is not written, so its classes are recorded here.
+        let recorded = self.recorded_classes();
+        writer.len(recorded.len());
+        for (id, class, header, prototype) in recorded {
+            writer.u32(id.raw());
+            writer.u32(class);
+            writer.u32(header);
+            writer.value(prototype);
+        }
         writer.len(global_eval_programs.len());
         for (source, program) in global_eval_programs {
             source.text.write_snapshot(writer);
@@ -54,6 +64,9 @@ impl ProgramStore {
         for _ in 0..count {
             programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
+        let recorded = read_list(reader, |reader| {
+            Ok((ProgramId::from_raw(reader.u32()?), reader.u32()?, reader.u32()?, reader.value()?))
+        })?;
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the
         // hash and the units. The hash is derived from the text, so the snapshot keeps the text.
         #[allow(clippy::mutable_key_type)]
@@ -65,6 +78,7 @@ impl ProgramStore {
         .collect();
         let mut store = Self::default();
         store.programs = programs;
+        store.restored_classes = recorded;
         store.global_eval_programs = global_eval_programs;
         store.reclaim_passes = reader.u64()?;
         store.unchecked_reclaimable = reader.len()?;
@@ -93,6 +107,12 @@ impl ProgramEntry {
             views_in_lane: _,
             raw_masks: _,
             js_entry_facts: _,
+            aot_facts: _,
+            call_graph: _,
+            class_headers: _,
+            class_prototypes: _,
+            planned_targets: _,
+            planned_registered: _,
             lane_deferred: _,
             // Derived from the residual program on first use, as `ProgramEntry::new` leaves them.
             aot_facts: _,
@@ -236,6 +256,12 @@ impl ProgramEntry {
             views_in_lane: super::LaneViews::default(),
             raw_masks: Default::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
+            aot_facts: std::cell::OnceCell::new(),
+            call_graph: std::cell::OnceCell::new(),
+            class_headers: std::cell::OnceCell::new(),
+            class_prototypes: Default::default(),
+            planned_targets: Default::default(),
+            planned_registered: std::cell::Cell::new(false),
             lane_deferred: super::zeroed_counts(functions),
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),

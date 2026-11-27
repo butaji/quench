@@ -2,13 +2,15 @@
 
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
+use super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Cell, Classes};
-use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
+use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
+use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
-use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
+use crate::staged::typing::{self, Abstract};
+use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -22,6 +24,9 @@ pub(super) struct Ctx<'a> {
     /// Bindings the census proved hold one closure, so their loads carry its fact too.
     pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
     pub(super) registers: usize,
+    /// Per PC, whether the `MakeArray` there is a literal whose element definitions cover every index, so it
+    /// holds no hole (`flow::whole_literals`).
+    pub(super) whole_literals: &'a [bool],
     /// The field and return types the pass before found (`types`), which this pass's field reads
     /// and calls take; `None` in the passes that find call targets, which read them as any value.
     pub(super) types: Option<&'a super::types::Types>,
@@ -37,13 +42,83 @@ pub(super) struct Ctx<'a> {
 pub(super) struct Events {
     pub(super) writes: Vec<(Key, Word)>,
     pub(super) wild_global: bool,
+    /// Whether the instruction may make the global object reachable as a value: a read of a global object's name, or
+    /// the root's `this`. Sloppy plain calls and `call`/`apply`/`bind` are sources too (`flow::Record::observe`).
+    pub(super) global_source: bool,
+    /// Whether a store through a non-Number key may write a name of the global object (`writes_global_name`).
+    pub(super) computed_store: bool,
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
-    /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
-    pub(super) prototype_write: Option<(PrototypeBase, u32)>,
+    /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
+    /// element, whose array joins the unnamed class its element reads come back with.
+    pub(super) links: Vec<(ElementClass, ElementClass)>,
+    /// Whether the instruction writes elements the analysis cannot name to an array (`IndexWrite`, a length store
+    /// through an object of no known origin): the arrays of every class may change, so every class's elements are any.
+    pub(super) wild_elements: bool,
     /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
     pub(super) shape: Option<super::shape::Shape>,
+    /// The accessors the instruction defines on a proven class object (`accessor_definition`).
+    pub(super) accessors: Vec<Accessor>,
+}
+
+/// The cell `word` holds as the settled solve reads it: its elements joined with those of its element class
+/// (`Types::stored_elements`). A store into any array of the class is a store into every array of it, so an array
+/// read through another register, a field or a closure keeps the length and element types the class's stores leave.
+/// A value that holds no array (`Elements::NEVER`) is its own cell, as is every value before the types exist.
+pub(super) fn settled(ctx: &Ctx<'_>, word: Word) -> Cell {
+    match ctx.types {
+        Some(types) if word.cell.elements != Elements::NEVER =>
+            Cell { elements: word.cell.elements.join(types.stored_elements(word.elements_key())), ..word.cell },
+        _ => word.cell,
+    }
+}
+
+/// Whether the instruction at a point may run guest code with the objects it touches: a call or construction, a getter,
+/// setter or proxy trap, a conversion that runs `valueOf`. It is the operation's effect row (`Effects::may_call_js`),
+/// met with what the facts before it (`state`) prove: a Number or binary operation over Numbers runs none, and a
+/// captured or environment binding's read runs none. A store through `this` is not counted: it is the constructor's
+/// own store, whose setter `class_layout` does not model. Whatever does not decode runs guest code.
+pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> bool {
+    if crate::staged::Invocation::of(instruction, ctx.decode).is_some() {
+        return true;
+    }
+    let operation = Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or_else(|| decoded(instruction));
+    match operation {
+        None => true,
+        Some(Operation::SetField { base: None, .. }) => false,
+        Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
+        Some(Operation::Number(number)) => !numbers_over_numbers(ctx, state, number),
+        Some(Operation::Binary { left, right, .. }) => !(is_number(ctx, state, left) && is_number(ctx, state, right)),
+        // Strict equality runs nothing; loose equality runs nothing when an operand is null or undefined (no ToPrimitive).
+        Some(Operation::Equality { strict, left, right, .. }) => !strict && !(is_nullish(ctx, state, left) || is_nullish(ctx, state, right)),
+        Some(Operation::CompareJump { comparison: Comparison::Equality { strict, .. }, left, right, .. }) =>
+            !strict && !(is_nullish(ctx, state, left) || is_nullish(ctx, state, right)),
+        Some(Operation::CompareJump { comparison, .. }) => comparison.runs_guest_code(),
+        Some(operation) => operation.effects().may_call_js,
+    }
+}
+
+/// Whether the operands of a Number operation are Numbers on the facts before it, so its miss runs no guest code.
+fn numbers_over_numbers(ctx: &Ctx<'_>, state: &[Word], number: NumberOperation) -> bool {
+    match number {
+        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => is_number(ctx, state, left) && is_number(ctx, state, right),
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => is_number(ctx, state, source),
+        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
+        _ => false,
+    }
+}
+
+/// Whether operand `operand` is exactly null or undefined on the facts before it.
+fn is_nullish(ctx: &Ctx<'_>, state: &[Word], operand: Operand) -> bool {
+    let ty = typing::operand_cell(&Before { ctx, state }, operand).ty;
+    ty == Type::language(crate::ValueType::Null) || ty == Type::language(crate::ValueType::Undefined)
+}
+
+/// Whether operand `operand` is a Number on the facts before it.
+fn is_number(ctx: &Ctx<'_>, state: &[Word], operand: Operand) -> bool {
+    Word::of_cell(typing::operand_cell(&Before { ctx, state }, operand)).is_number()
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -63,10 +138,11 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         Some(_) => Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or(operation),
         None => operation,
     };
-    let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
-    // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
-    if let Some(types) = ctx.types && let Some(cell) = types.call(ctx.id, pc as u32) {
-        value = Word::of_cell(cell);
+    let mut value = value_of(ctx, pc, instruction, typed_operation, state, &mut events);
+    // A call whose callees the solve knows returns the join of their returns, and the array it returns is the array
+    // the first callee's `Return` holds (`types::Types::call`).
+    if let Some(types) = ctx.types && let Some(word) = types.call(ctx.id, pc as u32) {
+        value = word;
     }
     // A return, or an operation whose result completes the frame, writes the function's result.
     if instruction.op().is_return() {
@@ -80,6 +156,13 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     }
     events.shape = super::shape::of_instruction(ctx, pc, instruction, operation.as_ref(), state);
     writes(ctx, pc, instruction, operation, state, &mut events);
+    // A literal's element definition joins the element type of the array it defines into (`MakeArray`).
+    if instruction.op() == crate::bytecode::Op::DefineArrayElement {
+        let element = state[usize::from(instruction.register_a())].cell;
+        let array = usize::from(instruction.register_b());
+        state[array].cell.elements = state[array].cell.elements
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
+    }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
         state[usize::from(register)] = if Some(register) == defined { value } else { Word::UNKNOWN };
@@ -88,7 +171,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
 }
 
 /// Whether `instruction` reads a global name plainly (`LoadName`, `LoadNameCall`).
-fn is_global_load(instruction: WideInstruction) -> bool {
+pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
     let traits = instruction.op().traits();
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
@@ -104,15 +187,16 @@ fn resolved(ctx: &Ctx<'_>, key: Key) -> Word {
 /// The fact of the value `instruction` defines, read from the facts before it.
 fn value_of(
     ctx: &Ctx<'_>,
+    pc: usize,
     instruction: WideInstruction,
     operation: Option<Operation<(), ()>>,
     state: &[Word],
     events: &mut Events,
 ) -> Word {
+    // A constant's fact is its type (`Scope::constant_type`), and the property key it names where it is a string.
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
-        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Word::atom(atom); }
-        if let Some(ty) = ctx.scope.immediates.get(index).copied().flatten() { return Word::of(ty); }
-        return ctx.scope.constants.get(index).copied().flatten().map_or(Word::UNKNOWN, Word::number);
+        let origin = ctx.scope.constant_atoms.get(index).copied().flatten().map(Origin::Atom);
+        return Word { origin, ..Word::of(ctx.scope.constant_type(index)) };
     }
     // A method read (`o.m(...)`) also writes `this`, which takes no fact (`step`): its value is the method all the same.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -126,7 +210,10 @@ fn value_of(
         }
         let cell = member_type(ctx, base_fact(ctx, base, state), atom);
         return match owner.and_then(Word::class_site) {
-            Some((owner, instance, guess)) => Word { cell, ..Word::member_on(owner, instance, atom, guess) },
+            Some(site) => {
+                let (holder, instance, guess) = site_holder(ctx, site, atom);
+                Word { cell, ..Word::member_on(holder, instance, atom, guess) }
+            }
             None => Word::member(atom, cell),
         };
     }
@@ -141,6 +228,12 @@ fn value_of(
             None => Word::member(first, cell),
         };
     }
+    if ctx.types.is_some() && let Some(array) = array_constructed(ctx, pc, instruction, state) {
+        return array;
+    }
+    if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
+        return typed;
+    }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
         if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
@@ -151,21 +244,35 @@ fn value_of(
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
+        events.global_source |= ctx.scope.is_global_object(atom);
         return resolved(ctx, Key::Global(atom));
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Word::closure(function);
     }
-    // A `Binary` record, whatever operation it decodes to (none over a constant operand, a numeric one over
-    // registers): its operator and operands are the record's.
-    // An increment or decrement defines a Number, or a BigInt off one.
-    if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
-        let source = state[usize::from(instruction.register_b())].cell.ty;
-        return Word::of(if source == Type::NEVER { Type::NEVER } else if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(crate::ValueType::BigInt)) });
+    // An array of `length` elements: its length is fixed by its literal, and its element type is what the
+    // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    // The array is its own element class, named by its allocation site (`Origin::Alloc`).
+    if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
+        let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
+        let cell = Cell {
+            ty: Type::language(crate::ValueType::Object),
+            classes: Classes::Many,
+            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
+        };
+        return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
+    // Over the operands' cells (`typing`): a `Binary` record in the typed pass, whose operands are the record's own (none
+    // over a constant operand, a numeric one over registers), and an indexed read by its index. An increment is defined
+    // by `typing::value` like the other Number operations.
+    let before = Before { ctx, state };
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
-        return binary_value(ctx.scope, state, (instruction.operand_b(), instruction.operand_c()), instruction.binary_operator());
+        return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
+    }
+    if instruction.op() == crate::bytecode::Op::GetIndex {
+        let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
+        return Word::of_cell(typing::element(&before, base, index));
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -181,23 +288,52 @@ fn value_of(
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Word::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
         Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
-        Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
-        // The operations whose result is a Boolean, whatever their operands: an equality, a negation, a
-        // `typeof` test or an `instanceof`.
-        Some(Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. }) =>
-            Word::of(Type::language(crate::ValueType::Boolean)),
-        Some(Operation::Void { .. }) => Word::of(Type::language(crate::ValueType::Undefined)),
-        // An indexed read of the array a field holds: the field's element type, or `undefined` for a hole or an
-        // index past its length.
-        _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
-        Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
-            (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-                Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
-            _ => Word::UNKNOWN,
-        },
-        Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
-        _ => Word::UNKNOWN,
+        // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
+        Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
+            state[usize::from(source)],
+        _ => operation.as_ref().and_then(|operation| typing::value(operation, &before)).map_or(Word::UNKNOWN, Word::of_cell),
     }
+}
+
+/// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).
+/// Its holes are `undefined` where its one argument is a Number (the length), and any value where the arguments are the
+/// elements (`Array(x)` holds `x`); no argument leaves it empty. Its length is unknown, as the length is not a constant here.
+fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    if !ctx.scope.is_array_constructor(state[usize::from(register)].origin) { return None; }
+    let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
+    let holes = match arguments.as_slice() {
+        [] => Type::NEVER,
+        [length] if length.is_number() => Type::language(crate::ValueType::Undefined),
+        _ => Type::ANY,
+    };
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
+}
+
+/// The typed array a call of a native typed-array constructor (`new Float64Array(...)`) allocates at `pc`. Whatever its
+/// arguments, its kind is the constructor's, so its elements are that kind's (`View::One`) and its length is not fixed
+/// (a resizable buffer's view may change length). Its element class is its own, as an array's is.
+fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    let kind = ctx.scope.typed_array_kind(state[usize::from(register)].origin)?;
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements {
+            ty: crate::typed_ir::view_element_type(kind),
+            classes: Classes::Never,
+            length: Length::Any,
+            view: View::One(kind),
+        },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
 
 /// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
@@ -208,7 +344,10 @@ fn member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
     let named = types.cell(Key::Member(atom));
     // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
     if owner.is_some_and(|owner| owner.cell.classes == Classes::Never) { return Cell { classes: Classes::Never, ..named }; }
-    owner.and_then(Word::class_site).and_then(|(class, instance, _)| types.cell_on(class, instance, atom)).unwrap_or(named)
+    owner.and_then(Word::class_site).and_then(|site| {
+        let (class, instance, _) = site_holder(ctx, site, atom);
+        types.cell_on(class, instance, atom)
+    }).unwrap_or(named)
 }
 
 /// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
@@ -233,7 +372,7 @@ pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[
 }
 
 /// The fact of a field lookup's base: its register's, or the function's own `this`.
-fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
+pub(super) fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
     match base.register_index() {
         Some(register) => state.get(usize::from(register)).copied(),
         None if base == crate::bytecode::FieldBase::THIS && !ctx.is_root => Some(this_fact(ctx)),
@@ -242,15 +381,17 @@ fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) ->
 }
 
 /// The fact of a read of field `atom` off the function's own `this` (a receiver `this.task` of a method call):
-/// its class's own field where the solve names `this`'s class (`member_type`).
+/// its class's own field where the solve names `this`'s class (`member_type`). It carries the field's origin, so
+/// an array it holds is the field's element class, as a read of the field off any other object is.
 pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
     let this = (!ctx.is_root).then(|| this_fact(ctx));
-    Word::of_cell(member_type(ctx, this, atom))
+    Word::member(atom, member_type(ctx, this, atom))
 }
 
-/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
+/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`), and the
+/// receiver's own element class, which a resolved call joins to its receiver's (`types::entry_links`).
 pub(super) fn this_fact(ctx: &Ctx<'_>) -> Word {
-    ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id)))
+    ctx.types.map_or(Word::UNKNOWN, |types| Word { cell: types.this(ctx.id), origin: Some(Origin::Receiver(ctx.id)) })
 }
 
 /// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
@@ -262,89 +403,24 @@ fn prototype_base(base: Word) -> Option<PrototypeBase> {
     }
 }
 
-/// The fact of a numeric operand: its register's, or the Number of its constant.
-fn operand_fact(scope: &Scope, state: &[Word], operand: Operand) -> Word {
-    match (operand.register_index(), operand.kind()) {
-        (Some(register), _) => state[usize::from(register)],
-        (None, Some(OperandKind::Constant)) => {
-            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Word::UNKNOWN, Word::number)
-        }
-        _ => Word::UNKNOWN,
-    }
+/// The registers of the facts before an instruction, read as the operands of `staged::typing`. A constant's cell is the
+/// type of its value (`Scope::constant_type`); the unnamed elements are the types' (`Types::unnamed_elements`).
+pub(super) struct Before<'a, 'b> {
+    pub(super) ctx: &'a Ctx<'b>,
+    pub(super) state: &'a [Word],
 }
 
-/// The fact of the Number a numeric operation defines, when its operands are Numbers: the
-/// operation of an operand that is not one may run guest code or yield a string.
-fn number_value(scope: &Scope, state: &[Word], number: NumberOperation) -> Word {
-    let fact = |operand: Operand| operand_fact(scope, state, operand);
-    // An operand no value reaches yet (`Type::NEVER`, the type solve's bottom) is a Number among the
-    // others: what reaches it later is joined in a later pass, and an operation over it defines none yet.
-    let numeric = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
-    let both = |left: Operand, right: Operand| numeric(fact(left)) && numeric(fact(right));
-    let one = |source: Operand| numeric(fact(source));
-    let register = |source: u16| state[usize::from(source)];
-    let reached = |operands: &[Word]| operands.iter().all(|fact| fact.cell.ty != Type::NEVER);
-    let operands: Vec<Word> = match number {
-        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
-        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
-        _ => Vec::new(),
-    };
-    if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Word::of(Type::NEVER); }
-    match number {
-        NumberOperation::Arithmetic { left, right, .. }
-        | NumberOperation::Remainder { left, right, .. }
-        | NumberOperation::Extreme { left, right, .. }
-            if both(left, right) =>
-        {
-            Word::of(Type::NUMBER)
-        }
-        NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. }
-            if both(left, right) =>
-        {
-            Word::of(Type::INT32)
-        }
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Word::of(Type::NUMBER),
-        NumberOperation::BitwiseNot { source, .. } if one(source) => Word::of(Type::INT32),
-        NumberOperation::IncDec { source, .. } if numeric(register(source)) => Word::of(Type::NUMBER),
-        NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
-        _ => Word::UNKNOWN,
-    }
+impl Abstract for Before<'_, '_> {
+    fn register(&self, register: Register) -> Cell { settled(self.ctx, self.state[usize::from(register)]) }
+    fn constant(&self, index: usize) -> Cell { Cell::of(self.ctx.scope.constant_type(index)) }
+    fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
 }
 
-/// The fact of an indexed read of `base`: the element type of the field it was read from (`Key::Element`) or
-/// `undefined` (a hole, an index past the length); any value off anything else.
-fn element_value(ctx: &Ctx<'_>, base: Word) -> Word {
-    match (base.origin, ctx.types) {
-        (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-            Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
-        _ => Word::UNKNOWN,
-    }
-}
-
-/// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; an
-/// arithmetic, shift or bitwise operator over Numbers a Number (an int32 for the shifts and bitwise ones, whose
-/// results ToInt32 makes); over anything else whatever its operands' coercion makes. An operand no value
-/// reaches yet (the type solve's bottom) makes none either.
-fn binary_value(scope: &Scope, state: &[Word], (left, right): (Operand, Operand), operator: u32) -> Word {
-    use crate::vm::operations::binary_operator as op;
-    let boolean = || Word::of(Type::language(crate::ValueType::Boolean));
-    let (left, right) = (operand_fact(scope, state, left), operand_fact(scope, state, right));
-    let number = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
-    if left.cell.ty == Type::NEVER || right.cell.ty == Type::NEVER {
-        return if matches!(operator, op::In | op::Instanceof) { Word::UNKNOWN } else { Word::of(Type::NEVER) };
-    }
-    // A Number operand makes the other's coercion a Number too: a BigInt beside it throws. With neither known a
-    // Number, a numeric operator defines a Number or a BigInt, whatever valueOf the operands run.
-    let numeric = |ty: Type| if number(left) || number(right) { ty } else { ty.join(Type::language(crate::ValueType::BigInt)) };
-    match operator {
-        op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan => boolean(),
-        op::ShiftLeft | op::ShiftRight | op::BitwiseOR | op::BitwiseXOR | op::BitwiseAnd => Word::of(numeric(Type::INT32)),
-        op::ShiftRightZeroFill | op::Subtraction | op::Multiplication | op::Division | op::Remainder => Word::of(numeric(Type::NUMBER)),
-        op::Addition if number(left) && number(right) => Word::of(Type::NUMBER),
-        _ => Word::UNKNOWN,
-    }
+/// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
+/// changes an array, an index store past the length, a `delete`.
+fn length_change(class: ElementClass) -> (Key, Word) {
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
+    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
@@ -359,32 +435,57 @@ fn writes(
 ) {
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
-    member_stores(ctx, instruction, operation, state, events);
+    member_stores(ctx, pc, instruction, operation, state, events);
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
-fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
-    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
+fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
+    events.computed_store |= writes_global_name(operation.as_ref(), state);
+    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { mode, value }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
-        if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
-            events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+        match accessor_mode(mode) {
+            Some(setter) => accessor_definition(pc, setter, target, key, state[usize::from(value)], events),
+            None => {
+                if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
+                    events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+                }
+            }
         }
     }
-    // An indexed store (`SetIndex a=value b=base c=key`) into the array a field holds joins the field's element
-    // type (`Key::Element`), whatever form it decodes to.
-    if instruction.op() == crate::bytecode::Op::SetIndex
-        && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
-    {
-        events.writes.push((Key::Element(atom), state[usize::from(instruction.register_a())]));
-    }
     match operation {
+        // A store into the array `base` names (`SetIndex`): its value joins the elements of the array's element class
+        // (`Key::Element`), and the class's length changes unless the key is a Number within the length it has. A key
+        // that is no Number may name a property (`wild_member`) or the length, so its store changes the length.
+        Some(Operation::ElementWrite { value, base, key, .. }) => {
+            let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
+            let length = settled(ctx, array).elements.length;
+            let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
+            let length = if in_bounds { Length::Never } else { Length::Any };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
+            events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
+            // The stored value is an element of the array, which reads it back with the unnamed class.
+            events.links.extend(stored.link(ElementClass::Unnamed));
+            events.wild_member |= !index.is_number();
+        }
+        // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) names no array: it may store
+        // any value into an array of any class and change any length, so every class's elements are any (`wild_elements`).
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => {
+            events.wild_member = true;
+            events.wild_elements = true;
+        }
+        // `delete base[key]` keeps the values the elements hold and changes the length of `base`'s class (a hole, or the
+        // last element removed); it may name a property (`wild_member`).
+        Some(Operation::Delete { base, .. }) => {
+            events.wild_member = true;
+            events.writes.push(length_change(state[usize::from(base)].elements_key()));
+        }
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
             let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
-            if let Some(Origin::Prototype(prototype)) = owner.origin {
-                events.prototype_write = Some((prototype, atom));
+            if ctx.scope.length == Some(atom) {
+                events.writes.push(length_change(owner.elements_key()));
             }
             // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
@@ -396,12 +497,13 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
+            // A length store through an object the analysis does not name may resize an array of any class.
+            events.wild_elements |= ctx.scope.length == Some(atom);
         }
-        Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
-        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
             events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
+            events.wild_elements |= ctx.scope.length == Some(instruction.atom_index());
         }
         _ => {}
     }
@@ -421,15 +523,30 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         events.wild_owner = true;
     }
     match operation {
-        Some(
-            Operation::ElementWrite { .. }
-            | Operation::IndexWrite { .. }
-            | Operation::IndexSetHelper { .. }
-            | Operation::Delete { .. },
-        ) => events.wild_global = true,
-        Some(Operation::LoadThis { .. }) if ctx.is_root => events.wild_global = true,
+        Some(Operation::LoadThis { .. }) if ctx.is_root => {
+            events.wild_global = true;
+            events.global_source = true;
+        }
         _ => {}
     }
+}
+
+/// Whether a store through a computed key (`operation`) may write a name of the global object: a key that is no Number
+/// (a Number names no identifier a name read reads), into a receiver that may be the global object (`may_be_global`).
+/// A store through an operation with no receiver the analysis names may be any of them.
+fn writes_global_name(operation: Option<&Operation<(), ()>>, state: &[Word]) -> bool {
+    match operation {
+        Some(Operation::ElementWrite { base, key, .. } | Operation::Delete { base, key, .. }) =>
+            !state[usize::from(*key)].is_number() && may_be_global(state[usize::from(*base)]),
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => true,
+        _ => false,
+    }
+}
+
+/// Whether a value of cell `word` may be the global object: an object of no one known class (`Classes::Many`), as the
+/// global object is no instance of a constructed class.
+fn may_be_global(word: Word) -> bool {
+    word.cell.classes == Classes::Many && word.cell.ty.direct_object_part().is_some()
 }
 
 /// Records the binding stores `operation` makes, with the facts they store.
@@ -450,9 +567,6 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
                 events.wild_owner = true;
             }
         },
-        Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Word::UNKNOWN);
-        }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
             write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
         }

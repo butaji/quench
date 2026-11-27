@@ -37,7 +37,6 @@ struct JsJitCounters {
     compile_attempts: u64,
     compile_successes: u64,
     rejection_reason: Option<&'static str>,
-    compile_ns: u64,
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
@@ -622,6 +621,10 @@ pub(crate) struct RegExpArgumentShare {
     pub(crate) watch: crate::heap::PrototypeValueWatch,
 }
 
+/// Whether a planned arm enters its function `function` of the program `code` as a framed method call with `argc`
+/// arguments (`planned_call_sites`): the derivation's check on the callee's body, which the engine decides.
+pub type PlannedArmAdmission = fn(&ResidualProgram, u32, u16) -> bool;
+
 struct ProgramEntry {
     residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -664,6 +667,19 @@ struct ProgramEntry {
     js_entry_facts: JsEntryFactsTable,
     /// The program's AOT facts, solved once on the first lowering that reads them (`aot_facts`).
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
+    /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
+    call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
+    /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
+    /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
+    class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
+    /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
+    /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
+    class_prototypes: std::cell::RefCell<std::collections::BTreeMap<u32, Value>>,
+    /// The planned arms' targets by (class, method, function), each boxed so its address is the arm's for the program's
+    /// life (`planned_target`). Entries are added, never removed.
+    planned_targets: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, u32), Box<crate::vm::engine_types::PlannedTarget>>>,
+    /// Whether every function's planned sites have registered their arms' targets (`register_planned_targets`).
+    planned_registered: std::cell::Cell<bool>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -784,6 +800,9 @@ pub struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
+    /// The classes a restored snapshot recorded (program, class, header, prototype), which `Vm::install_restored_main`
+    /// records again at the class-header edge once the main program is installed; empty otherwise.
+    restored_classes: Vec<(ProgramId, u32, u32, Value)>,
     /// The id of each program `insert_shared` holds, by its code's address: `find_shared` is one
     /// probe, not a scan of every program (the Wasm boundary asks it per call).
     shared_ids: FxHashMap<usize, ProgramId>,
@@ -911,6 +930,120 @@ impl ProgramStore {
     pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
         let entry = self.entry(id)?;
         Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
+    }
+
+    /// The call graph of program `id` and its loop-or-cycle facts (`compile::call_graph::CallGraph`), solved on its first
+    /// call from the program's AOT facts and shared by every lane body that reads them after it.
+    pub fn call_graph(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::call_graph::CallGraph>> {
+        let entry = self.entry(id)?;
+        Some(std::sync::Arc::clone(entry.call_graph.get_or_init(|| {
+            let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
+            std::sync::Arc::new(crate::compile::call_graph::CallGraph::of(&entry.residual, &facts))
+        })))
+    }
+
+    /// The header cell of class `class` (a constructor's function id) in program `id`: the layout id its constructed
+    /// instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then.
+    pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
+        Self::class_header_cell(self.entry(id)?, class)
+    }
+
+    fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
+        let headers = entry.class_headers.get_or_init(|| (0..entry.residual.functions.len()).map(|_| std::cell::Cell::new(0)).collect());
+        headers.get(class as usize)
+    }
+
+    /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
+    /// method call (`CallForm::Framed`) over a closed union of classes and misses on nothing (`Miss::None`), and which
+    /// the facts admit. A site is admitted when every arm's class has a prototype that names the method (`prototype_layout`:
+    /// an own data property of the prototype, no other writes), and `admits` (the callee's body enters a framed call
+    /// with the site's argument count, `planned_calls::planned_arm_admits`) holds for each arm's function. Each arm has
+    /// its class's header cell and its target slot (`planned_target`); the last class is the default arm. Plans of one
+    /// callee (no class) keep their own rows. A site's record dispatches on its receiver's header (`planned_call_row`).
+    pub fn planned_call_sites(&self, id: ProgramId, function: u32, admits: PlannedArmAdmission) -> Vec<crate::vm::engine_types::PlannedSite> {
+        use crate::compile::call_plan::{CallForm, Miss};
+        use crate::vm::engine_types::{PlannedArm, PlannedSite};
+        let (Some(entry), Some(facts)) = (self.entry(id), self.aot_facts(id)) else { return Vec::new() };
+        facts.call_plans(&entry.residual, function).into_iter()
+            .filter(|(_, plan)| plan.miss == Miss::None && plan.form == CallForm::Framed && !plan.arms.is_empty())
+            .filter_map(|(pc, plan)| {
+                let method = plan.method?;
+                let mut arms = Vec::with_capacity(plan.arms.len());
+                for arm in plan.arms.iter() {
+                    let class = arm.class?;
+                    if !facts.prototype_layout(class)?.contains(&method) || !admits(&entry.residual, arm.function, plan.argc) {
+                        return None;
+                    }
+                    let header = Self::class_header_cell(entry, class)?;
+                    arms.push(PlannedArm { function: arm.function, header: std::ptr::from_ref(header), target: Self::planned_target(entry, class, arm.function, method) });
+                }
+                let default = arms.pop()?;
+                Some(PlannedSite { pc, arms: arms.into_boxed_slice(), default })
+            })
+            .collect()
+    }
+
+    /// The slot of the target of class `class`'s arm `function` reading `method`, made on first use.
+    fn planned_target(entry: &ProgramEntry, class: u32, function: u32, method: u32) -> *const crate::vm::engine_types::PlannedTarget {
+        let mut targets = entry.planned_targets.borrow_mut();
+        let slot = targets.entry((class, method, function)).or_insert_with(|| Box::new(crate::vm::engine_types::PlannedTarget {
+            method,
+            target: std::cell::Cell::new(crate::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET),
+        }));
+        std::ptr::from_ref(&**slot)
+    }
+
+    /// Makes every planned arm of program `id` register its target slot (`planned_call_sites` of each function), so
+    /// that a class's arms are all known when its header is recorded. Once per program.
+    pub fn register_planned_targets(&self, id: ProgramId, admits: PlannedArmAdmission) {
+        let Some(entry) = self.entry(id) else { return };
+        if entry.planned_registered.get() { return; }
+        entry.planned_registered.set(true);
+        for function in 0..entry.residual.functions.len() {
+            drop(self.planned_call_sites(id, function as u32, admits));
+        }
+    }
+
+    /// Records class `class`'s instances' prototype in program `id` at the class-header edge (`Vm::record_class_edge`).
+    pub fn record_class_prototype(&self, id: ProgramId, class: u32, prototype: Value) {
+        if let Some(entry) = self.entry(id) {
+            entry.class_prototypes.borrow_mut().insert(class, prototype);
+        }
+    }
+
+    /// Every recorded class of every program, as (program, class, header, prototype), for the snapshot (`write_snapshot`).
+    fn recorded_classes(&self) -> Vec<(ProgramId, u32, u32, Value)> {
+        let mut recorded = Vec::new();
+        for (index, entry) in self.programs.iter().enumerate() {
+            let Some(entry) = entry else { continue };
+            let id = ProgramId::from_raw(index as u32);
+            for (&class, &prototype) in entry.class_prototypes.borrow().iter() {
+                let header = Self::class_header_cell(entry, class).map_or(0, std::cell::Cell::get);
+                recorded.push((id, class, header, prototype));
+            }
+        }
+        recorded
+    }
+
+    /// The classes a restored snapshot recorded, taken once the main program is installed (`Vm::install_restored_main`).
+    pub(crate) fn take_restored_classes(&mut self) -> Vec<(ProgramId, u32, u32, Value)> {
+        std::mem::take(&mut self.restored_classes)
+    }
+
+    /// Marks program `id`'s roots pending after one of its planned arms' targets is set, so the next collection traces
+    /// the target's values (`extend_roots`).
+    pub fn planned_target_set(&mut self, id: ProgramId) {
+        self.entry_mut(id);
+    }
+
+    /// The arms of class `class` in program `id`, registered (`register_planned_targets`): each arm's function, the
+    /// property its method is read from, and its target slot.
+    pub fn planned_targets_of_class(&self, id: ProgramId, class: u32) -> Vec<(u32, u32, *const crate::vm::engine_types::PlannedTarget)> {
+        let Some(entry) = self.entry(id) else { return Vec::new() };
+        let targets = entry.planned_targets.borrow();
+        targets.range((class, 0, 0)..=(class, u32::MAX, u32::MAX))
+            .map(|(&(_, _, function), slot)| (function, slot.method, std::ptr::from_ref(&**slot)))
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -1328,6 +1461,11 @@ impl ProgramStore {
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             aot_facts: std::cell::OnceCell::new(),
+            call_graph: std::cell::OnceCell::new(),
+            class_headers: std::cell::OnceCell::new(),
+            class_prototypes: Default::default(),
+            planned_targets: Default::default(),
+            planned_registered: std::cell::Cell::new(false),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),
@@ -2326,7 +2464,6 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
-        elapsed_ns: u64,
         code_bytes: usize,
         installed: bool,
         rejection: Option<&'static str>,
@@ -2340,7 +2477,6 @@ impl ProgramStore {
             counters.compile_successes = counters
                 .compile_successes
                 .saturating_add(u64::from(installed));
-            counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
             counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
             if rejection.is_some() {
                 counters.rejection_reason = rejection;
@@ -2598,25 +2734,6 @@ impl ProgramStore {
         for entry in self.programs.iter().flatten() {
             for view in entry.views_in_lane.arena.borrow().iter().flatten() {
                 view.clear_name_hints();
-            }
-        }
-    }
-
-    /// Gives every lane view's operator records that read a speculative int32 register their
-    /// checked forms (`LaneView::retire_int_speculation`): an update of one overflowed.
-    pub(super) fn retire_int_speculation(&self) {
-        for entry in self.programs.iter().flatten() {
-            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
-                view.retire_int_speculation();
-            }
-        }
-    }
-
-    /// `LaneView::rewrite_handlers` on every lane view of every program.
-    pub fn rewrite_lane_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
-        for entry in self.programs.iter().flatten() {
-            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
-                view.rewrite_handlers(map);
             }
         }
     }
@@ -2882,6 +2999,13 @@ impl ProgramStore {
             roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
             roots.extend(entry.root_constants.environment.get());
+            // A planned arm's target holds its closure, its environment and its lexical `this`, which the arm
+            // enters while the program lives (`PlannedTarget`).
+            for slot in entry.planned_targets.borrow().values() {
+                let target = slot.target.get();
+                roots.extend([target.callee, target.env, target.lexical_this]);
+            }
+            roots.extend(entry.class_prototypes.borrow().values().copied());
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,

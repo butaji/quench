@@ -15,18 +15,19 @@ use crate::dispatch_fast::lane_roots::{LaneRoot, LaneStart};
 use quench_runtime::vm::dispatch_frame::{ExecutingProgram, PendingGeneralCall};
 #[cfg(not(feature = "jit"))]
 use quench_runtime::vm::engine_types::{ActivationShape, LaneInstruction, LaneOperand, Records, Registers, NO_CALL_LINK};
-#[cfg(not(feature = "jit"))]
 use quench_runtime::vm::ProgramId;
 
 /// `function`'s view of `code`, derived with this VM's facts (`Vm::entry_lane_view`,
-/// `Vm::view_any_in_lane` and `frame_state_in_lane`).
+/// `Vm::view_any_in_lane` and `frame_state_in_lane`) and its program's solve (`program`).
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn view_in_lane<'a>(vm: &Vm, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
+    let facts = vm.programs.aot_facts(program);
+    let planned = vm.programs.planned_call_sites(program, function, crate::dispatch_fast::planned_calls::planned_arm_admits);
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
         crate::compiled::admission::record_plan(crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY)),
-        vm.programs.reports_on_drop(), vm.host.proper_tail_calls(), vm.programs.tiers());
+        vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
     view
@@ -37,7 +38,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, function: u32, code: &Function, constant
 /// general loop.
 #[cfg(not(feature = "jit"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn view_in_lane<'a>(vm: &Vm, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, _program: ProgramId, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
     ahead_lane_view(code, constants, vm.programs.tiers())
 }
@@ -60,15 +61,12 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         tiers,
         memory_register: None,
         activation: ActivationShape::of(function),
-        this_rows: true,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: Box::new([]),
         environment_window: None,
         returns_from_entry: false,
         loops: Box::new([]),
         loop_at_backedge: Box::new([]),
-        vector_regions: Box::new([]),
-        _loop_kernels: Box::new([]),
         start: std::cell::Cell::new(base),
         prologue: std::cell::UnsafeCell::new(Records::blank()),
         tier_direct: std::cell::Cell::new(None),
@@ -79,7 +77,8 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         osr_rejections: None,
         field_records: Box::new([]),
         name_records: Box::new([]),
-        int_speculating: Box::new([]),
+        proven_counters: Box::new([]),
+        planned_calls: Box::new([]),
     }
 }
 

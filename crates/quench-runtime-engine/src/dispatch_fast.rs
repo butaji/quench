@@ -205,15 +205,15 @@ macro_rules! arithmetic_all {
 
 use quench_runtime::vm::engine_types::LeafForm;
 const NOT_LEAF: LeafForm = quench_runtime::staged::call_leaf::NOT_LEAF;
-/// Neither its receiver nor its captures (`CallEntry::Leaf`): it runs in its caller's context.
+/// Neither its receiver nor its captures (`CallEntry::frameless(Frameless::Leaf)`): it runs in its caller's context.
 const PLAIN_LEAF: LeafForm = quench_runtime::staged::call_leaf::PLAIN_LEAF;
-/// Its captures and not its receiver (`CallEntry::CaptureLeaf`): the call makes the
+/// Its captures and not its receiver (`CallEntry::frameless(Frameless::CaptureLeaf)`): the call makes the
 /// environment its own and binds no receiver unless the leaf materializes.
 const CAPTURE_LEAF: LeafForm = quench_runtime::staged::call_leaf::CAPTURE_LEAF;
-/// Its receiver, and maybe its captures (`CallEntry::ContextLeaf`): the call makes the
+/// Its receiver, and maybe its captures (`CallEntry::frameless(Frameless::ContextLeaf)`): the call makes the
 /// receiver and the environment its own.
 const CONTEXT_LEAF: LeafForm = quench_runtime::staged::call_leaf::CONTEXT_LEAF;
-/// Its receiver and not its captures (`CallEntry::ThisLeaf`): the call binds the receiver
+/// Its receiver and not its captures (`CallEntry::frameless(Frameless::ThisLeaf)`): the call binds the receiver
 /// and keeps the caller's environment, which only a materialization makes the callee's.
 const THIS_LEAF: LeafForm = quench_runtime::staged::call_leaf::THIS_LEAF;
 
@@ -310,13 +310,6 @@ impl LaneInstruction {
         self.c = (address >> 32) as u16;
         true
     }
-
-    #[inline(always)]
-    fn vector_region(&self) -> *const vector_region::VectorRegion {
-        // SAFETY: the view writes `region` for the records it gives `vector_region_row`, the
-        // only handler that reads it.
-        unsafe { self.operand.region }
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
@@ -335,11 +328,6 @@ impl LoopSite {
         count.set(count.get().saturating_add(1));
     }
 
-    /// Counts an attempt that entered nothing for `reason`, and returns the interpreter's jump at the header.
-    fn declined(&self, reason: RegionDecline) -> LoopContinuation {
-        self.count_decline(reason);
-        LoopContinuation::Jump
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LoopSite;
@@ -348,22 +336,10 @@ pub(crate) use quench_runtime::vm::engine_types::LoopSite;
 impl LoopSite {
     pub(crate) fn function(&self) -> u32 { self.function }
 
-    /// Whether native code may still run the loop: its runs have paid for their entries, its
-    /// entries are not declining, and it has code or may compile it. A site without it
-    /// retires at its next backward jump (`loop_retire_in_lane`).
-    fn may_run_natively(&self, vm: &quench_runtime::vm::Vm) -> bool {
-        self.enters() && self.tier.borrow().may_run(self.tiers, vm)
-    }
-
     fn enters(&self) -> bool {
         self.entering.get()
     }
 
-    /// Whether its loop runs in a region entered from the lane: a closed one that still enters and
-    /// has run natively (a region that never ran makes none of the loop's work native).
-    pub(crate) fn runs_region(&self) -> bool {
-        self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
-    }
 }
 
 use quench_runtime::vm::engine_types::Ip;
@@ -534,7 +510,6 @@ use operand_feedback::note_operands;
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
 pub(crate) mod loop_tier;
-use loop_tier::loop_compile_in_lane;
 use lane_leaves::LaneLeaves;
 
 
@@ -702,12 +677,11 @@ impl LaneView {
     }
 
 
-    /// Whether its body specializes again at its next entry: it left too often, or its quick body (an ahead
-    /// image's included) repaid the optimizing compile (`optimize_due`).
+    /// Whether its body specializes again at its next entry: it left too often (an ahead image's included).
     #[inline]
     pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0 || self.optimize_due())
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
@@ -798,10 +772,6 @@ impl LaneView {
 
 
 
-/// `this` trust (`Vm::this_trust`): trusted from the start, retired for good.
-const THIS_TRUSTED: u8 = 1;
-const THIS_RETIRED: u8 = 2;
-
 /// The generated rows of the hot `this` sites (a `this` own read, a formed `this` store, a `this`
 /// nested read's first hop) and their trusted forms (`lane_frame::trusted_this_rows`).
 const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
@@ -809,6 +779,29 @@ const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
     (generated_row!(62, ACC_NONE, 42), lane_frame::trusted_this_rows::generated_row::<62, ACC_NONE, 42>),
     (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
 ];
+
+/// Whether `function`'s `this` is a direct object in every activation, by the solve's receiver cell
+/// (`FactKey::Receiver`): the function's rows and code take it as one, with no tag test. A live receiver
+/// (`AotFacts::live`: new code may call the function with any `this`) is never trusted, since no edge
+/// retires a trusted row; a closed receiver never changes, so nothing subscribes to it.
+pub(crate) fn receiver_trusted(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) -> bool {
+    let key = quench_runtime::typed_ir::FactKey::Receiver(function);
+    // A cell no value reaches (`Type::NEVER`) is no fact: a function the host enters directly has none.
+    facts.is_some_and(|facts| !facts.live(key) && facts.cell(key).is_some_and(|cell| cell.ty != quench_runtime::typed_ir::Type::NEVER
+        && cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY)))
+}
+
+/// The trusted form of a row that reads `this` (`TRUSTED_THIS_ROWS`), `None` for a row with no trusted form.
+pub(crate) fn trusted_this_form(handler: *const ()) -> Option<*const ()> {
+    TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler).map(|(_, trusted)| *trusted as *const ())
+}
+
+/// Gives each row of a view whose receiver is trusted (`receiver_trusted`) its trusted form.
+pub(crate) fn trust_this_rows(records: &mut [quench_runtime::vm::engine_types::LaneInstruction]) {
+    for record in records.iter_mut() {
+        if let Some(trusted) = trusted_this_form(record.handler) { record.handler = trusted; }
+    }
+}
 
 
 
@@ -1229,7 +1222,7 @@ enum ActivationArguments {
 pub(crate) use quench_runtime::vm::engine_types::ScriptCallTarget;
 
 pub(crate) mod call_entry;
-use call_entry::CallEntry;
+use call_entry::{CallEntry, Framed, Frameless};
 
 // Recognized once per target, as it resolves; no operation runs them.
 #[path = "call_body_forms.rs"]
@@ -1240,7 +1233,7 @@ use call_body_forms::{body_entry, leaf_body};
 const TARGET_CONSTRUCTS: u8 = 1;
 /// `ScriptCallTarget::forms`: `new` may run its body as the stores alone.
 const TARGET_INITIALIZES: u8 = 2;
-/// `ScriptCallTarget::forms`: a rest body (`CallEntry::Gathers`) that keeps the values it was
+/// `ScriptCallTarget::forms`: a rest body (`CallEntry::framed(Framed::Gathers)`) that keeps the values it was
 /// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
 /// sloppy function's; any other's rest array holds every value past its parameters.
 const TARGET_GATHERS_KEEPING: u8 = 4;
@@ -1252,7 +1245,7 @@ const TARGET_REST_VIEW: u8 = 8;
 /// (`Function::arrow_reads_implicit_bindings`), whose sibling closures read their own
 /// lexical `this` (`sibling_closure_target`).
 const TARGET_READS_IMPLICIT: u8 = 16;
-/// `ScriptCallTarget::forms`: a settling target (`CallEntry::Settles`) whose body activates
+/// `ScriptCallTarget::forms`: a settling target (`CallEntry::framed(Framed::Settles)`) whose body activates
 /// over an environment window (`activate_environment_in_lane`): an async body whose locals and
 /// closures ride the window (`CallPlan::suspended_environment`).
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
@@ -1297,13 +1290,13 @@ impl ScriptCallTarget {
     /// It keeps the values it was passed for a forwarded `arguments`.
     #[inline(always)]
     fn forwards(&self) -> bool {
-        matches!(self.entry, CallEntry::Keeps | CallEntry::Gathers)
+        self.entry == CallEntry::framed(Framed::Keeps) || self.entry == CallEntry::framed(Framed::Gathers)
     }
 
     /// Its activation's return settles its call's promise (`Completion::SettlesPromise`).
     #[inline(always)]
     fn settles(&self) -> bool {
-        self.entry == CallEntry::Settles
+        self.entry == CallEntry::framed(Framed::Settles)
     }
 
     /// Its settling activation holds an environment window (`TARGET_SETTLES_IN_ENVIRONMENT`).
@@ -2369,7 +2362,6 @@ pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
 pub(crate) mod loop_body;
-pub(crate) mod loop_resume;
 use loop_body::LoopBody;
 use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
@@ -3975,9 +3967,7 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 
 script_handler! {
     /// A loop's backward jump in compiled execution (`LoopSite`): the jump's safepoint, then
-    /// the loop's native code once the jump is hot and the region compiled. Native code
-    /// resumes the lane where control leaves the region, or leaves to the general path at an
-    /// instruction outside its subset; a run its entry guards decline takes the jump.
+    /// the loop's lane body once the jump is hot and the body is ready (`loop_body::enter_loop_body`).
     fn loop_jump_miss<>(cx, r, ip, i, view) {
         let site = i.loop_site();
         if site.diagnostics {
@@ -3986,9 +3976,6 @@ script_handler! {
         }
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
-        // SAFETY: the region carries its validated header and latch PCs, and
-        // every instruction record remains contiguous in this lane view.
-        let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
         if script_fuel_out(cx) {
             return safepoint_at(ip, header, Slot::unset());
         }
@@ -3996,92 +3983,27 @@ script_handler! {
         if site.refused_now() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
-        // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
-        if site.inside_admitted_loop() && loop_tier::defers_to_enclosing(site) {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
         if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A site backing off after declined entries runs the header as a declined entry does
-        // (`LoopSite::note_decline`).
-        if site.skips_entry() {
-            lane_at_header!(cx, r, header, site)
-        }
-        // The header rule (`enter_loop_body`): a ready body first, then the region.
+        // The header rule (`enter_loop_body`): a ready body first.
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
         }
-        // A loop whose body is still to come keeps its backward jump, which a loop no region
-        // runs would otherwise retire before the body is planned.
-        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() && site.region.get().is_none() {
+        // A loop whose body is still to come keeps its backward jump, which a loop with no body
+        // would otherwise retire before the body is planned.
+        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A loop no region runs takes its plain jump from now on.
-        if site.promotion_only {
-            loop_retire_in_lane(cx, ip, site);
+        // A loop whose calls no body inlines yet is offered a body once (`offer_body`).
+        if loop_body::offer_body(cx, r, site) {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        if site.analysis_failure.is_some_and(|failure| !failure.is_call_boundary()) {
-            // An instruction no region runs leaves the loop to a body, which runs what it can
-            // natively and leaves at the rest (`loop_body::offer_body`).
-            if loop_body::offer_body(cx, r, site) { next!(cx, r, header, Carried::script_in(cx, view)) }
-            if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_rejected(cx, site); }
-            loop_retire_in_lane(cx, ip, site);
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        if !site.may_run_natively(unsafe { vm(cx) }) {
-            loop_retire_in_lane(cx, ip, site);
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        let region = match site.region.get() {
-            Some(region) => region,
-            // The calls do not run inlined: the loop leaves at them, as at any other call.
-            None => match inlining_region_in_lane(cx, r, site).or_else(|| {
-                let _ = site.inline_region.set(None);
-                loop_tier::method_call_region_in_lane(cx, site)
-            }) {
-                Some(region) => site.region.get_or_init(|| region),
-                // A call no region runs (a native's, a callee the inliner cannot take) is a
-                // loop body's: the body planner inlines what it knows (`native_calls`) and
-                // starts at the header, so the loop runs natively without a function entry.
-                None if loop_body::offer_body(cx, r, site) => next!(cx, r, header, Carried::script_in(cx, view)),
-                None => {
-                    site.entering.set(false);
-                    loop_retire_in_lane(cx, ip, site);
-                    next!(cx, r, header, Carried::script_in(cx, view))
-                }
-            },
-        };
-        let region = if !site.call_boundary_pcs.is_empty() && region.inlining.is_none() {
-            site.inline_region.get_or_init(|| inlining_region_in_lane(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
-        } else { region };
-        match loop_native_in_lane(cx, r, ip, header, site, region) {
-            LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
-            LoopAttempt::At(next) => next!(cx, r, next, Carried::script_in(cx, view)),
-            LoopAttempt::Leave(next) => next,
-            LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
-            LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
-        }
+        // A loop with no body takes its plain jump from now on.
+        loop_retire_in_lane(cx, ip, site);
+        next!(cx, r, header, Carried::script_in(cx, view))
     }
 }
-
-/// The header record's own handler at `header`, as the interpreter runs it: the one `site`
-/// holds while it holds the record (`loop_header_miss`), which the backward jump thus does
-/// not try again.
-macro_rules! lane_at_header {
-    ($cx:expr, $r:expr, $header:expr, $site:expr) => {{
-        let held = $site.header_handler.get();
-        if held.is_null() || held == RETIRED_HEADER {
-            next!($cx, $r, $header, Carried::script($cx))
-        }
-        // SAFETY: the site holds the record's handler, which has the shared signature.
-        let handler: Handler = unsafe { std::mem::transmute::<*const (), Handler>(held) };
-        sibling!(handler, $r, $header, Carried::script($cx))
-    }};
-}
-use lane_at_header;
 
 /// Continues the lane as a loop site's attempt says, or falls through where it declined.
 macro_rules! lane_attempt {
@@ -4116,37 +4038,6 @@ enum LoopAttempt {
 
 
 
-script_handler! {
-    /// A loop's header record while its site holds it (`loop_hold_header_in_lane`): arriving at
-    /// the header enters the loop's native code as its backward jump does, and otherwise
-    /// runs the record's own handler.
-    fn loop_header_miss<>(cx, r, ip, i, view) {
-        // SAFETY: a record runs this handler only while a site holds it.
-        let site = unsafe { &*header_site_in_lane(ip) };
-        if !script_below_floor(cx)
-            && let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site)
-        {
-            lane_attempt!(cx, r, attempt);
-        }
-        if !script_below_floor(cx)
-            && site.enters()
-            && let Some(region) = site.active_region()
-        {
-            match loop_native_in_lane(cx, r, ip, ip, site, region) {
-                LoopAttempt::Declined => {}
-                LoopAttempt::At(next) => next!(cx, r, next, Carried::script_in(cx, view)),
-                LoopAttempt::Leave(next) => return next,
-                LoopAttempt::Resumed(resumed) => resume!(cx, resumed),
-                LoopAttempt::Carry(registers, next, carried) => next!(cx, registers, next, carried),
-            }
-        }
-        lane_at_header!(cx, r, ip, site)
-    }
-}
-
-
-
-
 #[quench_macros::ext(DispatchFastVm)]
 impl Vm {
     /// `LaneStack::unprove_view_entries` on every lane stack that may run again: the live one,
@@ -4163,36 +4054,6 @@ impl Vm {
 }
 
 
-/// Restore the semantic header at the event that replaces its native owner.
-/// `LoopSite::header_handler` of a retired site (`loop_retire_in_lane`): no record, so the site
-/// never holds its header again.
-pub(crate) const RETIRED_HEADER: *const () = std::ptr::without_provenance(1);
-
-
-/// Where the lane goes after a loop site's native attempt.
-pub(crate) enum LoopContinuation {
-    /// Take the backward jump in the interpreter.
-    Jump,
-    Resume(u32),
-    /// The general path executes the instruction at this PC.
-    Exit(u32),
-    /// The general path executes callee PC `pc` of inlined frame `frame`, in the activation
-    /// its call makes (`LaneExit::Inlined`).
-    Inlined { frame: usize, pc: u32 },
-    /// Native code of a stitched region left inside an inlined callee, and the lane recovered the
-    /// activations around it (`inlined_continuation_in_lane`).
-    Recovered(LaneBodyLeft),
-    /// The backward jump's safepoint ends the execution termination stopped.
-    Safepoint,
-    /// The region's code compiles: take the jump, which declines nothing.
-    Compiling,
-    /// The region completed its activation with this value at this record.
-    Completed(u32, Value),
-    /// The region raised the exception in `Vm::lane_raised` at this record: unwind from it.
-    Threw(u32),
-    /// A call activated the callee's lane body: leave the run in that activation.
-    Callee,
-}
 
 
 
@@ -4213,9 +4074,6 @@ pub(crate) enum LoopContinuation {
 
 
 
-
-#[path = "vector_region.rs"]
-pub(crate) mod vector_region;
 pub(crate) mod wasm_instance;
 #[cfg(feature = "jit")]
 use wasm_instance::lane_instance_binding_memory;
@@ -4585,7 +4443,6 @@ impl Vm {
             (*cx).root = LaneRoot::Frame(caller);
             (*cx).registers = registers;
             let this = self.frame_lane_this(caller);
-            note_frame_this(cx, self, caller, this);
             registers.set_this(this);
             registers.set_env(Value::DELETED);
             (*cx).instance = Value::DELETED;
@@ -4806,7 +4663,7 @@ impl Vm {
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
-    /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
+    /// registers (`CallPlan::registers_only`), else a `CallEntry::framed(Framed::Frame)` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
     pub(crate) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
@@ -4890,7 +4747,7 @@ impl Vm {
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         let settles_in_environment = settles_in_environment && environment;
         // A non-suspending async body of the running program activates for its plain calls,
-        // whose promise its return settles (`CallEntry::Settles`); across programs, or under a
+        // whose promise its return settles (`CallEntry::framed(Framed::Settles)`); across programs, or under a
         // host that observes promise lifecycles, its calls take a frame.
         let settles = (plan.settles_in_loop || settles_in_environment) && may_settle;
         // A non-suspending async body runs in registers only as a settling activation.
@@ -4927,26 +4784,35 @@ impl Vm {
                 admission: self.lane_stack.target_admission(program),
                 function,
                 env,
-                entry: CallEntry::Frame,
+                entry: CallEntry::framed(Framed::Frame),
                 ..EMPTY_SCRIPT_CALL_TARGET
             };
             self.remember_target(target, numeric, cross);
             return Some(target);
         };
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
+        // The callee's entry form is the one its composed signature gives (`call_plan::entry_form`), of the facts of
+        // its own program; a target is a callee's fact, so the form is the same at every site that calls it. The
+        // body's shape is taken within it.
+        let frameless = quench_runtime::compile::call_plan::entry_form(self.programs.aot_facts(program).as_deref(), function)
+            == quench_runtime::staged::effects::CallForm::Frameless;
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
             // A class constructor's calls throw on the general path, so they take a
             // frame; only its constructions activate frameless (`script_construct_miss`).
-            let entry = body_entry(body, &code.constants);
+            // A frameless form whose cell holds a body that calls only natively enters it as `Frameless::Native`.
+            // SAFETY: as above; the cell's body is pinned by the view while it is published.
+            let native = frameless && unsafe { &*view }.cell_method().is_some_and(|method| method.calls_only_natively());
+            let entry = body_entry(body, &code.constants, frameless, native);
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::Activates && !environment));
+            unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::framed(Framed::Activates) && !environment));
             TargetBody {
                 entry,
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
-                leaf: (entry == CallEntry::Activates)
+                // A leaf is a frameless entry, so only a frameless call form has one (`CallEntry::leaf`).
+                leaf: (frameless && entry == CallEntry::framed(Framed::Activates))
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
                     // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
@@ -4964,7 +4830,7 @@ impl Vm {
             // run reads yet: its rows lower (`ArgumentsLength`, `ArgumentGet`), the entry does
             // not (lane-bodies claim for keeping activations).
             && !plan.keeps_arguments
-            && shape.entry == CallEntry::Activates
+            && shape.entry == CallEntry::framed(Framed::Activates)
             && tier_may_claim
             // SAFETY: as below.
             && (!crate::compiled::admission::lane_bodies_enrolled(self) || unsafe { &*view }.tier_unclaimed_in_lane())
@@ -5178,7 +5044,7 @@ impl Vm {
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return None; }
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
-            crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+            crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
         })
     }
 }
@@ -5220,10 +5086,11 @@ impl Vm {
             for function in 0..residual.functions.len() as u32 {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
-                let proper_tail_calls = self.host.proper_tail_calls();
+                let facts = self.programs.aot_facts(id);
+                let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
-                        proper_tail_calls, self.programs.tiers())
+                        self.programs.tiers(), facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -5252,9 +5119,9 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
         let entry = target.map(|target| unsafe { (*target).entry });
         let handler: Handler = match entry {
-            Some(CallEntry::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
-            Some(CallEntry::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
             Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler(entry, i),
             Some(_) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
             None => sibling!(script_call_resolve_miss, r, ip, Carried::script_in(cx, view)),
@@ -5288,7 +5155,7 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::Activates {
+        if target.entry != CallEntry::framed(Framed::Activates) {
             sibling!(script_call_requicken_miss, r, ip, Carried::script_in(cx, view))
         }
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -5324,6 +5191,7 @@ script_handler! {
 
 pub(crate) mod leaf_calls;
 pub(crate) mod inlined_views;
+pub(crate) mod planned_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, AdmittedWindow, materialize_running_leaf_in_lane, leaf_call_handler};
 
 
@@ -5342,8 +5210,8 @@ const ANY_ARGC: u16 = u16::MAX;
 script_handler! {
     /// The out-of-line form of a call row, so the plain call keeps its registers: a receiver
     /// whose binding reads the heap (`call_this_in_lane`), a forwarding target, which takes
-    /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::Reads`,
-    /// `CallEntry::ReadsElement`), whose hit (`call_read_in_lane`) completes the
+    /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::frameless(Frameless::Reads)`,
+    /// `CallEntry::frameless(Frameless::ReadsElement)`), whose hit (`call_read_in_lane`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee. A site that called such a target calls this form directly, so it
@@ -5363,10 +5231,10 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
-        if target.entry == CallEntry::Frame {
+        if target.entry == CallEntry::framed(Framed::Frame) {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
-        if target.entry == CallEntry::Environment {
+        if target.entry == CallEntry::framed(Framed::Environment) {
             // The site calls its environment target's form directly from now on.
             requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>());
             sibling!(script_call_environment_miss, r, ip, Carried::script_in(cx, view))
@@ -5388,7 +5256,17 @@ script_handler! {
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         // Past the forwards, settling, frame and environment tests above, `activation_form` holds
         // exactly when the entry activates (its plain or keeping form), so this is the same test.
-        let value = if body_calls::activation_form(target, argc).is_some()
+        // A frameless native target runs its entry with no activation (`native_call_in_lane`); where that declines,
+        // the call takes the general form below, which activates it as its records.
+        let value = if target.entry == CallEntry::frameless(Frameless::Native) {
+            if returns && !returning_call_admitted(cx) {
+                None
+            } else {
+                // SAFETY: the call's window of `r` holds its `argc` values.
+                let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+                native_call_in_lane(cx, target, passed, argc, this)
+            }
+        } else if body_calls::activation_form(target, argc).is_some()
             || returns && !returning_call_admitted(cx)
         {
             None
@@ -5438,7 +5316,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
-            !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles) && !target.forwards()
+            !target.entry.needs_frame_path() && !target.forwards()
         }) else {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
@@ -5456,7 +5334,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `script_call_full_miss` of an environment target (`CallEntry::Environment`), out of
+    /// `script_call_full_miss` of an environment target (`CallEntry::framed(Framed::Environment)`), out of
     /// line so the other calls keep their registers: its activation holds its environment
     /// and locals (`activate_environment_in_lane`). Any other callee takes the full form.
     #[inline(never)]
@@ -5476,7 +5354,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls });
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::Environment {
+        if target.entry != CallEntry::framed(Framed::Environment) {
             // A site this form serves calls the full form once its callee's target differs.
             requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
@@ -5497,7 +5375,7 @@ script_handler! {
 
 
 script_handler! {
-    /// `script_call_full_miss` of a non-suspending async target (`CallEntry::Settles`), out of
+    /// `script_call_full_miss` of a non-suspending async target (`CallEntry::framed(Framed::Settles)`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
     /// `Vm::try_settling_call` does, then activates the body, whose return settles it
     /// (`Completion::SettlesPromise`). A call passing values past the parameters, a `with`
@@ -5741,7 +5619,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `frame_call_in_lane` pushes one.
-        if !target.entry.activates_across() && target.entry != CallEntry::Environment {
+        if !target.entry.activates_across() && target.entry != CallEntry::framed(Framed::Environment) {
             #[cfg(feature = "profile-lane-exits")]
             quench_runtime::vm::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
@@ -5761,7 +5639,7 @@ script_handler! {
         // (`enter_window_in_lane`'s cross completion); the site calls its fixed form from now on
         // (`script_call_cross_plain_miss`).
         let argc = ImmediateLayout::argument_count(i.imm());
-        if target.entry == CallEntry::Activates
+        if target.entry == CallEntry::framed(Framed::Activates)
             && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
             && argc <= FIXED_ARGUMENT_COPIES
             && admits_window_in_lane(vm, target, argc)
@@ -5775,7 +5653,7 @@ script_handler! {
             let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc, this, false);
             next!(cx, registers, base, Carried::script(cx))
         }
-        let activated = if target.entry == CallEntry::Environment {
+        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
             // SAFETY: the call's window is registers of the running function.
             activate_environment_in_lane(cx, r, ip, target, unsafe { call_window_in_lane(r, i) }, (this, false))
         } else if target.forwards() {
@@ -5792,7 +5670,7 @@ script_handler! {
 
 script_handler! {
     /// `script_call_cross_miss` at a site whose last callee was another program's plain
-    /// activation (`CallEntry::Activates`) of `ARGC` arguments, which no completion of its
+    /// activation (`CallEntry::framed(Framed::Activates)`) of `ARGC` arguments, which no completion of its
     /// caller follows: that activation alone, with the fixed copy of its window. Any other
     /// call takes the general cross form.
     fn script_call_cross_plain_miss<ARGC: u16>(cx, r, ip, i, view) {
@@ -5810,7 +5688,7 @@ script_handler! {
         // SAFETY: `cross_call_holds` found the entry within the cache; nothing below resolves a
         // target or collects.
         let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.cross_targets.entries.get_unchecked(index)) };
-        debug_assert!(target.entry == CallEntry::Activates && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
+        debug_assert!(target.entry == CallEntry::framed(Framed::Activates) && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
         // The stack's room is the one test that stays per call: it is the push's depth check.
         if !activation_room_in_lane(vm, target) {
             sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
@@ -6415,7 +6293,7 @@ pub(crate) mod name_probe; use name_probe::probe_handler;
 #[cfg_attr(not(feature = "jit"), allow(unreachable_code, unused_variables))] pub(crate) mod vm_steps;
 pub(crate) mod family_helpers;
 pub(crate) mod value_steps;
-pub(crate) use vm_steps::{body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
+pub(crate) use vm_steps::{ahead_general_step, body_general_step, body_string_concat, decide_comparison, lane_allocate_step, lane_body_step_packed, owner_step, vm_operation_step};
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
@@ -6623,12 +6501,12 @@ script_handler! {
                 resume!(cx, resumed)
             }
             // The frame's own construct: the general loop returns the receiver from it, unless
-            // proper tail calls send it to the activation below, which leaves for that loop.
+            // a strict caller's proper tail call sends it to the activation below, which leaves for that loop.
             if returning_call_admitted(cx) {
                 return frame_return(vm, ip, this);
             }
         }
-        let activated = if target.entry == CallEntry::Environment {
+        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
             // SAFETY: the construction's arguments are a window of the running function's registers.
             activate_environment_in_lane(cx, r, ip, &target, unsafe { window_in_lane(r, i.c, i) }, (this, true))
         } else {
@@ -7219,7 +7097,7 @@ impl LeafRead {
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let entry = unsafe { &*(*target.view).records() };
-        if target.entry == CallEntry::ReadsElement {
+        if target.entry == CallEntry::frameless(Frameless::ReadsElement) {
             // SAFETY: as the function's contract.
             let element = unsafe { &*(*target.view).records().add(1) };
             return Some(Self::Element { base: entry.b, field: FieldHit::of(entry)?, index: element.c });
@@ -7292,7 +7170,7 @@ impl LeafRead {
     }
 }
 
-/// A `CallEntry::ForwardsRead` body's reads: the field of `this` or a parameter it reads,
+/// A `CallEntry::frameless(Frameless::ForwardsRead)` body's reads: the field of `this` or a parameter it reads,
 /// then the method of that field's value it calls.
 #[derive(Clone, Copy)]
 struct ForwardRead {
@@ -7305,7 +7183,7 @@ impl ForwardRead {
     /// The reads `target`'s records answer with now; `None` for a record state no read hits.
     ///
     /// # Safety
-    /// `target` is a `CallEntry::ForwardsRead` target of the running program, whose view
+    /// `target` is a `CallEntry::frameless(Frameless::ForwardsRead)` target of the running program, whose view
     /// holds its method read after its field read.
     #[inline(always)]
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
@@ -7943,8 +7821,7 @@ use crate::jit_routes::handler_in_lane;
 
 
 
-pub(crate) mod loop_kernel;
-pub(crate) mod int_kinds; pub(crate) mod int_steps;
+pub(crate) mod int_steps;
 
 
 
@@ -8081,7 +7958,7 @@ impl Vm {
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
             .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
-                crate::ahead_runner::view_in_lane(self, function, code, constants, kind, live, sites, image)
+                crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
     }
@@ -8443,7 +8320,6 @@ impl Vm {
                     (*cx).root = LaneRoot::Frame(caller);
                     (*cx).registers = frame_registers;
                     let this = self.frame_lane_this(caller);
-                    note_frame_this(cx, self, caller, this);
                     frame_registers.set_this(this);
                     frame_registers.set_env(Value::DELETED);
                     (*cx).registers.set_capture(std::ptr::null());
@@ -8494,7 +8370,7 @@ impl PreparedShape {
     /// array each call makes (`activate_keeping_in_lane`).
     #[inline(always)]
     fn of(caller: &LaneContext, call: Ip, target: &ScriptCallTarget, argc: usize) -> Option<Self> {
-        if target.entry == CallEntry::Gathers || argc > usize::from(u16::MAX) {
+        if target.entry == CallEntry::framed(Framed::Gathers) || argc > usize::from(u16::MAX) {
             return None;
         }
         let (params, registers) = (usize::from(target.params), usize::from(target.registers));

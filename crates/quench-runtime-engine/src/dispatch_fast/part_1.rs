@@ -935,7 +935,7 @@ pub(super) fn activate_getter_in_lane(
         .script_call_entry(getter)
         .or_else(|| vm.cross_call_entry(getter))
         .map(|target| unsafe { *target })
-        .filter(|target| target.entry == CallEntry::Environment && !constructing_in_lane(vm, getter));
+        .filter(|target| target.entry == CallEntry::framed(Framed::Environment) && !constructing_in_lane(vm, getter));
     if let Some(target) = environment {
         let Some(this) = call_this_in_lane(vm, &target, base) else {
             return Err(exit(ip));
@@ -1346,159 +1346,24 @@ pub(super) fn count_backedge(cx: *mut LaneContext) {
     unsafe { (*cx).backedges_left = Some(machine.programs.tiers().wasm.backedges_per_entry) };
 }
 
-/// `loop_native_in_lane`'s entry and run of `region` into `entry`: how it continues, or `None`
-/// where its code is awaited or its entry record cannot be built (the site notes the decline).
-#[inline(always)]
-pub(super) fn loop_run_native_in_lane(
-    cx: *mut LaneContext,
-    r: Registers,
-    site: &LoopSite,
-    region: &crate::compiled::LoopRegion,
-    entry: &mut crate::compiled::LoopEntry,
-) -> Option<LoopContinuation> {
-    let wait = { let mut tier = site.tier.borrow_mut(); tier.awaits_code(unsafe { vm(cx) }, site).then(|| tier.take_wait()) };
-    if let Some(wait) = wait {
-        // The code is compiling: the back edges until the next look run the header untried
-        // (`skips_entry`) rather than each paying the whole entry attempt (~200 Ir) to count
-        // the wait down.
-        site.skipped_entries.set(wait);
-        site.count_decline(RegionDecline::Awaiting);
-        return None;
-    }
-    let views = match loop_entry_checked_in_lane(cx, r, region, entry) {
-        Ok(views) => views,
-        Err(decline) => {
-            site.count_decline(decline);
-            site.note_decline();
-            return None;
-        }
-    };
-    // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
-    let continuation = loop_run_in_lane(cx, r, site, region, entry, views, site.header);
-    count_continuation(cx, &continuation);
-    if quench_runtime::fallback::on() { crate::compiled::fallback_sites::loop_left(cx, site, &continuation); }
-    if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
-    Some(continuation)
-}
-
-/// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
-/// jump, or the header itself): the entry guards, then native code, which resumes the lane
-/// where control leaves the region or leaves to the general path. Once the region has code,
-/// the site holds its header record, so a loop entered from outside runs natively from its
-/// first iteration.
-#[inline(always)]
-pub(super) fn loop_native_in_lane(
-    cx: *mut LaneContext,
-    r: Registers,
-    record: Ip,
-    header: Ip,
-    site: &LoopSite,
-    region: &crate::compiled::LoopRegion,
-) -> LoopAttempt {
-    // SAFETY: the region carries its validated header and latch PCs, and every instruction
-    // record remains contiguous in this lane view.
-    let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
-    if site.skips_entry() { return LoopAttempt::Declined; }
-    // The record is filled where it lives, so its words are neither cleared nor copied.
-    let mut entry = crate::compiled::LoopEntry::new();
-    let Some(continuation) = loop_run_native_in_lane(cx, r, site, region, &mut entry) else { return LoopAttempt::Declined };
-    loop_hold_header_in_lane(header, site);
-    match continuation {
-        LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
-        LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) if loop_body::left_for_tier_up(cx, site, pc) => LoopAttempt::At(at(site.header)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
-        LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
-            LoopAttempt::Leave(exit(inlined_activation_in_lane(cx, r, region, &entry, frame, at(frame.call), pc))) }
-        LoopContinuation::Recovered(resumed) => loop_body::loop_attempt(cx, record, resumed),
-        LoopContinuation::Safepoint => LoopAttempt::Leave(safepoint_at(record, header, Slot::unset())),
-        // SAFETY: the call set the callee's activation and its resume record before the body
-        // left (`body_activate_in_lane`), so the run leaves at a record of that view.
-        LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
-        LoopContinuation::Completed(pc, value) =>
-            LoopAttempt::Resumed(return_value_general_in_lane(cx, at(pc), value)),
-        LoopContinuation::Threw(pc) => LoopAttempt::Leave(raised_exit_in_lane(cx, at(pc))),
-    }
-}
-
-/// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
-/// speculation a compilation can drop, an element read, whose observed type it can drop, an
-/// element store, whose append helper it can compile, a field store, whose VM store it can call
-/// (`Lowering::store_leaves`), or a capture read, whose root-held binding
-/// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
-#[cold]
-pub(super) fn count_arithmetic_leave(cx: *mut LaneContext, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
-    if !region.contains(&pc) { return; }
-    // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-    let machine = unsafe { vm(cx) };
-    let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
-        let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).and_then(|packed| {
-            let instruction = body.widened(*packed);
-            let op = instruction.op();
-            crate::compiled::base_region::leave(site.function(), pc, op);
-            let stores = quench_runtime::staged::stores_field(op) && matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Property)); // what decodes to `SetField` (`decode_property`), with no decode
-            (quench_runtime::staged::computes_numeric_binary(op) || quench_runtime::staged::reads_element(op) || op.stores_element()
-                || stores || quench_runtime::staged::miss(op) == quench_runtime::staged::Miss::WalkScopes)
-                .then(|| (quench_runtime::staged::reads_element(op), stores))
-        })
-    });
-    match counted {
-        Some((_, true)) => site.tier.borrow_mut().left_store(site.tiers, pc as usize),
-        Some((read, false)) => site.tier.borrow_mut().left_at(site.tiers, pc as usize, read),
-        None => {}
-    }
-}
-
-/// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
-/// record runs `loop_header_miss`, and the site keeps the record's own handler.
-pub(super) fn loop_hold_header_in_lane(header: Ip, site: &LoopSite) {
-    // A retired site (`RETIRED_HEADER`) never holds its header again: its jump record is a plain
-    // jump and the header's `call_link` a field hint, so `header_site_in_lane` would read garbage.
-    if !site.hookable || !site.header_handler.get().is_null() || !site.tier.borrow().is_published() {
-        return;
-    }
-    // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view.
-    unsafe {
-        site.header_handler.set((*header).handler);
-        (*header.cast_mut()).handler = loop_header_miss as Handler as *const ();
-    }
-}
-
-/// The site whose header record is at `ip` (`LoopSite::hookable`): the header's `call_link`
-/// is the distance, in records, to the site's backward jump, whose operand is the site
-/// (`install_loop_sites`). A held header's jump still holds it: retiring the site gives the
-/// header its own handler back first (`loop_retire_in_lane`).
-///
-/// # Safety
-/// `ip` is a held header record of a live view.
-#[inline(always)]
-pub(super) unsafe fn header_site_in_lane(ip: Ip) -> *const LoopSite {
-    // SAFETY: the jump lies `call_link` records past its header in the same view.
-    unsafe { (*ip.add(usize::from((*ip).call_link.get()))).loop_site() }
-}
-
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
-    if !now && own.counted_between_attempts(false) { return true; }
+pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
     // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
     let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
-    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_first: false, callees_compiling: false })
+    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
         if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
-        let quick_ir = crate::compiled::ahead_images::ahead_quick_ir(vm.programs.tiers(), code, function);
-        let installed = own.install_ahead_lane_body(body_entry_row(), quick_ir, || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
+        let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
             unsafe { super::vm(cx) }.unprove_view_entries(own);
         }
@@ -1509,12 +1374,7 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     let jit = crate::jit_routes::jit().map(|routes| routes.lane);
     let specialize = |work: crate::compiled::LaneBodyWork| jit.map_or(crate::compiled::LaneBodyOutcome::Declined, |jit| jit(cx, own, function, parameters, looped, work));
     let published = own.entry_published();
-    let warming = if now {
-        own.specialize_lane_body_now(body_entry_row(), looped.is_some(), specialize);
-        own.body_view_in_lane().is_some()
-    } else {
-        own.specialize_lane_body(body_entry_row(), false, specialize)
-    };
+    let warming = own.specialize_lane_body(body_entry_row(), specialize);
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
     // proved calls of the view, which skip the cell body, lose their proof.
     if !published && own.entry_published() {
@@ -1530,47 +1390,28 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
-        crate::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: seen, called, caller, .. } =>
-            crate::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: looped.or(seen), called, caller, arrays: &arrays },
+        crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: seen, called, caller, .. } =>
+            crate::compiled::LaneBodyWork::Start { generic, shrinks, looped: looped.or(seen), called, caller },
         poll => poll,
     };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
-    // A start under the lane body tier waits for callees still compiling (`body_tier_in_lane::callees_compiling`).
-    // The default mode starts each body on the tier below u-jit: its b-jit body's completions then weigh the
-    // u-jit compile over it (`LaneView::promote_base_body`), so the default is never costlier than b-jit.
-    let history = own.tier().history.get();
-    let base_first = crate::compiled::admission::starts_base_first(starting, own.starts_on_base(history), vm.programs.tiers());
-    if base_first && !history.base_first { own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: true, ..history }); }
-    let callees_compiling = starting && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_first, callees_compiling }) {
+    let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, callees_compiling }) {
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
-            match vm.base_unit_or_outcome(code, function, parameters, own) {
-                Ok(unit) => return vm.base_body_work(unit, code, function, generic, parameters, own, &direct),
-                // A body the stencil tier refuses in default starts on the tier above it, never stays in the lane.
-                Err(_) if base_first => own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: false, promoted: true, ..own.tier().history.get() }),
-                Err(outcome) => return outcome,
-            }
+            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
         }
         crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
         crate::compiled::admission::LaneRoute::Lane => {}
     }
-    let started: Option<Vec<crate::compiled::LaneExit>> = match &work { crate::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
-    // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
-    // b-jit, so a function it would not beat takes the stencil body, stitched at once. A body
-    // promoted from b-jit whose u-jit compile is refused goes back to b-jit, never down to the lane.
-    let back_to_base = crate::compiled::admission::returns_to_base(matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined), own.tier().history.get().promoted);
-    if let Some(generic) = &started && (matches!(outcome, crate::compiled::LaneBodyOutcome::Base) || back_to_base) {
-        let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-        return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
-    }
     if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
         if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
     }
@@ -1589,24 +1430,14 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
     {
-        specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
+        specialize_in_lane(cx, own, site.function, &[], Some((site.span(), site.body_iterations())));
         // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
         // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
         if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
-    // A header record the site holds gets its own handler back.
     let header = unsafe { ip.byte_offset(site.jump) };
-    loop_release_header_in_lane(header, site);
-    // A run of this site still on the stack (a native attempt that retired it) must not hold
-    // the header again on its way out (`loop_hold_header_in_lane`).
-    site.header_handler.set(RETIRED_HEADER);
-    // A retired loop enters no native code, so the loops inside it take their own regions (`LoopSite::inside_admitted_loop`).
-    site.entering.set(false);
-    // No site holds the header from now on, so its record, which linked this site alone, takes
-    // field hints again (`holds_loop_site`).
-    if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken(ip, jump_row::<JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
@@ -1629,221 +1460,6 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
             requicken(update, int_steps::retired_step(cx, site, update, unsafe { &*header }, fused));
         }
     }
-}
-
-pub(super) fn loop_release_header_in_lane(header: Ip, site: &LoopSite) {
-    let held = site.header_handler.replace(std::ptr::null());
-    if !held.is_null() && held != RETIRED_HEADER {
-        // SAFETY: the validated site owns this record on the running view's thread.
-        unsafe { (*header.cast_mut()).handler = held; }
-    }
-}
-
-/// Counts what a loop run came to: in the VM's tier events, and under `QUENCH_TRACE=js-jit` in the report's.
-pub(super) fn count_continuation(cx: *mut LaneContext, continuation: &LoopContinuation) {
-    use crate::compiled::base_region::{count, Event as Region};
-    let (region, tier) = match continuation {
-        LoopContinuation::Jump | LoopContinuation::Compiling => (Region::Declined, None),
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => (Region::Left, Some(Event::OsrLeft)),
-        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => (Region::Entered, Some(Event::OsrEntered)),
-    };
-    count(region);
-    if let Some(event) = tier { unsafe { vm(cx) }.programs.tier_events().record(event); }
-}
-
-/// Compiles `site`'s region if it has no current code, for the element `views` its entry
-/// proved, then runs it on `r` with `entry`. A representation an outcome shows wrong is
-/// widened, and the code dropped for the next compilation.
-#[inline(never)]
-pub(super) fn loop_run_in_lane(
-    cx: *mut LaneContext,
-    r: Registers,
-    site: &LoopSite,
-    region: &crate::compiled::LoopRegion,
-    entry: &mut crate::compiled::LoopEntry,
-    views: crate::compiled::ElementViews,
-    from: u32,
-) -> LoopContinuation {
-    use crate::compiled::{LaneExit, RegionRun};
-    let mut tier = site.tier.borrow_mut();
-    if !tier.select(site.tiers, views) {
-        return site.declined(RegionDecline::Views);
-    }
-    if !tier.is_published() {
-        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(site.tiers, unsafe { vm(cx) }) {
-            return site.declined(RegionDecline::NoCompile);
-        }
-        let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
-        let int_entries = loop_tier::int_entries(r, region);
-        let typed_captures = loop_tier::typed_capture_slots(cx);
-        let int_captures = loop_tier::int_capture_slots(cx);
-        loop_compile_in_lane(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
-        if !tier.is_published() {
-            site.count_decline(RegionDecline::Compiling);
-            return LoopContinuation::Compiling;
-        }
-    }
-    // A b-jit region due to move to u-jit starts the u-jit compile and runs on meanwhile
-    // (`LoopTier::promote`); one not yet due runs until the u-jit region would be ahead.
-    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }) {
-        let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
-        let int_entries = loop_tier::int_entries(r, region);
-        let typed_captures = loop_tier::typed_capture_slots(cx);
-        let int_captures = loop_tier::int_capture_slots(cx);
-        loop_compile_in_lane(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
-        if !tier.is_published() { return LoopContinuation::Compiling; }
-    }
-    if let Some(budget) = tier.backedge_budget(site.tiers) { entry.set_backedge_budget(budget); }
-    // The code alone is held for the run (its publication is the tier's): one count, not two.
-    let code = tier.code.as_ref().and_then(|publication| publication.lease()).expect("compiled above");
-    drop(tier);
-    // The native field probe may access the VM only through its synchronous, cache-only
-    // callback. Pass raw pointers so no Rust borrow of the VM overlaps that callback.
-    let (machine, program, interrupt) = unsafe {
-        let context = &*cx;
-        (
-            context.vm,
-            context.program,
-            std::ptr::addr_of!((*context.vm).execution_interrupt),
-        )
-    };
-    // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the callback executes no guest code.
-    let run = match unsafe { region_run_in_lane(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) } {
-        Ok(run) => run,
-        // The lane admitted no run, so the region's code entered nothing and the interpreter takes the jump.
-        Err(decline) => return site.declined(decline),
-    };
-    if site.diagnostics {
-        loop_diagnose_in_lane(cx, r, site, region, run, program);
-    }
-    let RegionRun { exit, nested } = run;
-    if exit.entered_nothing() {
-        // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
-        site.tier.borrow_mut().missed_entry(site.tiers);
-        return crate::compiled::fallback_sites::entry_refused(cx, site, if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
-    }
-    if matches!(exit, LaneExit::Terminated) { return LoopContinuation::Safepoint; }
-    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || int_steps::native_handed_doubles(cx, site, exit, |register| r.get(register).as_int().is_some()));
-    unsafe { vm(cx) }.refresh_body_bases(); // the region reloaded only its own payload's bases, not a body frame's below it
-    // A run pays for its entry with the iterations it completed, wherever it leaves.
-    site.note_run(entry.backedge_count(), region.holds_exit(exit) || matches!(exit, LaneExit::Inlined { .. }));
-    if nested {
-        return region_left_in_lane(cx, r, site.function, exit);
-    }
-    match exit {
-        LaneExit::At(pc) if region.holds_exit(exit) => LoopContinuation::Exit(pc as u32),
-        LaneExit::At(pc) => LoopContinuation::Resume(pc as u32),
-        LaneExit::Inlined { frame, pc } => inlined_continuation_in_lane(cx, r, site, (region, &code), (frame, pc)),
-        // The call made the callee's activation, whose own records the lane runs next.
-        LaneExit::Callee => LoopContinuation::Callee,
-        LaneExit::Returned { pc, value } => LoopContinuation::Completed(pc as u32, value),
-        LaneExit::Threw { pc } => LoopContinuation::Threw(pc as u32),
-        LaneExit::Entry | LaneExit::Stub | LaneExit::Terminated => unreachable!("handled before the run paid"),
-    }
-}
-
-/// The diagnostics of a loop site's native attempt that ended in `run`, under its `site.diagnostics`.
-pub(super) fn loop_diagnose_in_lane(cx: *mut LaneContext, r: Registers, site: &LoopSite, region: &crate::compiled::LoopRegion, run: crate::compiled::RegionRun, program: ProgramId) {
-    use crate::compiled::LaneExit;
-    let bump = |count: &std::cell::Cell<u64>| count.set(count.get().saturating_add(1));
-    bump(&site.native_entry_attempts);
-    if run.nested {
-        bump(&site.native_region_runs);
-        return;
-    }
-    match run.exit {
-        LaneExit::Entry | LaneExit::Stub => {
-            if quench_runtime::trace::Channel::OsrReject.on() {
-                eprintln!("QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={}", site.function, site.header);
-            }
-            bump(&site.entry_guard_misses);
-        }
-        LaneExit::Terminated => {}
-        LaneExit::Inlined { .. } => {
-            bump(&site.native_region_runs);
-            bump(&site.native_exits);
-        }
-        // A guard's exit inside the loop; the poll's leave for a published body is a handover, not one.
-        LaneExit::At(pc) if region.holds_exit(run.exit) && !loop_body::left_for_tier_up(cx, site, pc as u32) => {
-            bump(&site.native_region_runs);
-            bump(&site.native_exits);
-            loop_trace_exit_in_lane(cx, r, site, region, program, pc as u32);
-        }
-        _ => bump(&site.native_region_runs),
-    }
-}
-
-/// Attributes a guard exit at `pc` to its recovery PC before the lane resumes, under the opt-in
-/// OSR trace; ordinary execution keeps no extra table or per-site allocation.
-pub(super) fn loop_trace_exit_in_lane(cx: *mut LaneContext, r: Registers, site: &LoopSite, region: &crate::compiled::LoopRegion, program: ProgramId, pc: u32) {
-    if quench_runtime::trace::Channel::OsrReject.on() {
-        eprintln!(
-            "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
-            program.raw(), site.function, site.header,
-        );
-        // Read recovered operands only for a non-inlined activation. These
-        // getters neither coerce a guest value nor allocate guest storage.
-        // Raw state distinguishes index/append/capacity guards without
-        // changing native exits or inventing a second guard policy.
-        if region.inlining.is_none() {
-            // SAFETY: the lane's program and VM outlive this synchronous trace;
-            // native execution has returned and restored the canonical registers.
-            let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
-            if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
-                let instruction = body.widened(packed);
-                if quench_runtime::staged::writes_element(instruction.op()) {
-                    let key = r.get(instruction.register_c());
-                    let base = r.get(instruction.register_b());
-                    if let Some(array) = unsafe { vm(cx) }.heap_reads().record_array(base) {
-                        eprintln!(
-                            "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
-                            program.raw(), site.function, site.header,
-                            key.to_bits(), key.as_number(),
-                            array.elements().len(), array.elements().capacity(),
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Runs `code`, the region of the loop of `function` over the activation with registers `r`, from
-/// its header or the record `from`, where the lane admits the run (`region_admits_in_lane`); a run it
-/// does not admit enters nothing, and the `RegionDecline` names why.
-///
-/// # Safety
-/// As `CompiledOsrRegion::run`: `machine` and `interrupt` belong to the running lane.
-pub(super) unsafe fn region_run_in_lane(
-    cx: *mut LaneContext,
-    r: Registers,
-    entry: &mut crate::compiled::LoopEntry,
-    (code, region): (&crate::compiled::CompiledOsrRegion, &crate::compiled::LoopRegion),
-    (function, from): (u32, u32),
-    (machine, program, interrupt): (*mut Vm, ProgramId, *const quench_runtime::execution_interrupt::ExecutionInterrupt),
-) -> Result<crate::compiled::RegionRun, RegionDecline> {
-    // A job's frameless lane (a generator step) has no frame for the region's activation.
-    if code.needs_frame() && !unsafe { &*cx }.has_frame() {
-        return Err(RegionDecline::Frame);
-    }
-    if !region_admits_in_lane(cx, code) {
-        // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = frame_holds_window_in_lane(cx, &code.calls) && room_prepare_in_lane(cx, code.calls.recovery_space());
-        return Ok(crate::compiled::RegionRun::own(if grown { crate::compiled::LaneExit::At(region.header as usize) } else { crate::compiled::LaneExit::Entry }));
-    }
-    // SAFETY: the caller's contract.
-    Ok(unsafe { code.run(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, direct_calls_in_lane(cx)), from) })
-}
-
-/// Whether a run of `code`, the region of the loop of `function` the lane is in, may start: the lane
-/// has the room to make the activations of the calls it inlines should it leave inside one
-/// (`room_admits_in_lane`), and the activation keeps its locals apart from the window past its
-/// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
-#[inline(always)]
-pub(super) fn region_admits_in_lane(cx: *mut LaneContext, code: &crate::compiled::CompiledOsrRegion) -> bool {
-    let room = code.calls.recovery_space();
-    room.activations == 0 || (room_admits_in_lane(cx, room, NO_PENDING_ACTIVATIONS) && frame_holds_window_in_lane(cx, &code.calls))
 }
 
 /// Whether the running activation's register storage holds the windows of the callees `calls` inlines,

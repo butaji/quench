@@ -197,9 +197,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_direct_m
 fn quench_engine_fn_in_place_in_loop(native: Native) -> bool { crate::dispatch_fast::in_place_in_loop(native) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_in_place_in_loop = quench_engine_fn_in_place_in_loop;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_note_int_speculation_retired() -> bool { crate::dispatch_fast::int_kinds::note_retired() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_note_int_speculation_retired = quench_engine_fn_note_int_speculation_retired;
-#[unsafe(no_mangle)]
 fn quench_engine_fn_retire_running_lane_context() -> () { crate::dispatch_fast::retire_running_lane_context() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_retire_running_lane_context = quench_engine_fn_retire_running_lane_context;
 #[unsafe(no_mangle)]

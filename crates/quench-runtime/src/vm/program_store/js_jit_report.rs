@@ -111,7 +111,7 @@ fn write_counters(out: &mut impl Write, counters: &JsJitCounters) -> io::Result<
         ("entries", &counters.entries), ("lane_entries", &counters.lane_entries),
         ("numeric_entries", &counters.numeric_entries), ("promotions", &counters.promotions),
         ("compile_attempts", &counters.compile_attempts), ("compile_successes", &counters.compile_successes),
-        ("compile_ns", &counters.compile_ns), ("native_entries", &counters.native_entries),
+        ("native_entries", &counters.native_entries),
         ("native_entry_coverage_ppm", &parts_per_million(counters.native_entries, counters.entries)),
         ("all_entry_native_coverage_ppm", &parts_per_million(counters.native_entries, total_entries)),
         ("field_cache_probes", &counters.field_cache_probes), ("field_cache_hits", &counters.field_cache_hits),
@@ -243,8 +243,8 @@ fn report_lane_body(program: usize, function: u32, view: &LaneView, op_at: &dyn 
     if let Some(line) = view.tier().body_stats.report(program, view.body_state_in_lane(), op_at) {
         eprintln!("{line}");
     } else {
-        let (state, entries, claimed, warming) = view.body_detail_in_lane();
-        eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.tier().body_stats.declined.get());
+        let (state, claimed, warming) = view.body_detail_in_lane();
+        eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", view.tier().body_stats.declined.get());
     }
 }
 

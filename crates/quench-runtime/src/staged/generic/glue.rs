@@ -8,6 +8,7 @@ use crate::staged::OperationCompareExt;
 pub trait OperationGenericExt<W, P>: Sized {
     fn decode_generic(instruction: WideInstruction) -> Option<Self>;
 
+    /// Public through the trait (`pub trait`): a lane row calls `Operation::decode_int_case` directly.
     fn decode_int_case(instruction: WideInstruction) -> Option<Self>;
 
     fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self>;
@@ -34,7 +35,8 @@ impl<W, P> OperationGenericExt<W, P> for Operation<W, P> {
     }
 
     #[cfg(not(stencil_build))]
-    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
+    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`. A pure read of the
+    /// record's fields, so a lane row calls it directly rather than dispatching on the opcode (`decode_generic`).
     fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
         let count = instruction.element_count();
         if count == 0 { return None; }

@@ -398,8 +398,7 @@ pub fn truncate_i64(value: f64) -> i64 {
 /// truncation converts back equal, which a fraction, NaN and the infinities fail, and a larger
 /// magnitude is tested apart (`i64::MIN`, the truncation of what is out of range, is past it).
 /// Integer tests and one truncation, no float constant, so a stencil may hold it. The one home of
-/// "this Number is a safe integer": the remainder row, the loop kernel's int32 columns and the
-/// TypeScript enum folder read it.
+/// "this Number is a safe integer": the remainder row and the TypeScript enum folder read it.
 #[inline(always)]
 pub fn safe_integer(value: f64) -> Option<i64> {
     let integer = truncate_i64(value);

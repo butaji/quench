@@ -15,7 +15,7 @@ use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::folded_roots::FoldedRoots;
 use quench_runtime::vm::Vm;
 use super::bound::BoundCalls;
-use crate::compiled::{CodeMemory, LaneHelper};
+use crate::compiled::CodeMemory;
 use quench_bjit::call_record::CallRecord;
 use std::cell::UnsafeCell;
 use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode};
@@ -341,7 +341,7 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         // process takes the process's table, which only a build with the JIT holds (`quench compile`, a `.qimg`).
         Symbol::Helper(helper) => match places.helpers {
             Some(linked) => linked.get(helper as usize).copied().filter(|address| *address != 0).map(|address| address as u64),
-            None if cfg!(feature = "jit") => LaneHelper::addresses().get(helper as usize).map(|address| *address as usize as u64),
+            None if cfg!(feature = "jit") => crate::compiled::ahead_helper_address(helper as usize).map(|address| address as u64),
             None => None,
         },
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),

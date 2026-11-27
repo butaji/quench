@@ -24,6 +24,9 @@ impl IntRange {
 
     pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: Self::FULL.max };
 
+    /// The range of the one integer zero: a divisor or a sign test's operand that may be zero is `contains(ZERO)`.
+    pub const ZERO: Self = Self { min: 0, max: 0 };
+
     /// The widest span integer arithmetic over int32s stays within without wrapping an i64,
     /// where widening settles a range that left int32: a result outside it has no range.
     pub const WORD: Self = Self { min: -(1 << WORD_BITS), max: 1 << WORD_BITS };
@@ -124,6 +127,75 @@ impl IntRange {
         if shift == 0 { return None; }
         if self.min >= 0 { return Some(Self { min: self.min >> shift, max: self.max >> shift }); }
         Some(Self { min: 0, max: i64::from(u32::MAX >> shift) })
+    }
+}
+
+/// The transfer rules of integer ranges per operator, pure over `IntRange` (the stencil build includes this file, so
+/// it names nothing outside the lattice). The solve's operator dispatch (`staged::typing`) picks one.
+impl IntRange {
+    /// The integer a Number operation over integer operands defines where a word holds it: the binary64 Number of the
+    /// result (`rounded`), within `WORD`. Beyond `WORD` the result has no integer range.
+    pub fn as_number(self) -> Option<Self> {
+        let number = self.rounded();
+        Self::WORD.contains(number).then_some(number)
+    }
+
+    /// Whether a product of integers in `self` and `other` may be a negative zero, which no integer type holds: a zero
+    /// product of an operand that may be zero, negative where the other may be.
+    pub fn product_may_be_negative_zero(self, other: Self) -> bool {
+        let zero = Self::singleton(0);
+        (self.contains(zero) && other.min < 0) || (other.contains(zero) && self.min < 0)
+    }
+
+    /// The int32 a bitwise operator reads an operand as: an operand outside int32 is any int32, since ToInt32 of any
+    /// Number lies in it.
+    pub fn int32_operand(self) -> Self {
+        if self.fits_int32() { self } else { Self::FULL }
+    }
+
+    /// `self & other`: a non-negative operand clears the bits the other has above its own maximum, so the result lies
+    /// in `0..=` the least such maximum (`i & 255` lies in `0..=255`). Two negative operands give the hull.
+    pub fn and(self, other: Self) -> Self {
+        let ceiling = [self, other].iter().filter(|range| range.min >= 0).map(|range| range.max).min();
+        match ceiling {
+            Some(max) => Self { min: 0, max },
+            None => self.bitwise_hull(other),
+        }
+    }
+
+    /// `self | other`: an operand that is zero leaves the other as it is; otherwise the bitwise hull.
+    pub fn or(self, other: Self) -> Self {
+        let zero = Self::singleton(0);
+        if other == zero { self } else if self == zero { other } else { self.bitwise_hull(other) }
+    }
+
+    /// `self % divisor` in JavaScript, whose result takes the dividend's sign. A dividend of no negative value and a
+    /// divisor that is no zero give an integer in `0..=` the lesser of the dividend's maximum and the divisor's
+    /// magnitude less one. `None` otherwise: a zero divisor's NaN, a negative dividend's possible `-0`.
+    pub fn remainder(self, divisor: Self) -> Option<Self> {
+        if self.min < 0 || divisor.contains(Self::singleton(0)) { return None; }
+        let magnitude = divisor.min.unsigned_abs().max(divisor.max.unsigned_abs());
+        let ceiling = (magnitude - 1).min(self.max.unsigned_abs());
+        Self::bounds(0, ceiling as i64)
+    }
+
+    /// The ranges of `self` and `other` on an edge where `self <= other` (`self < other` when `strict`): each keeps the
+    /// bounds the other allows. `None` where no pair of values reaches the edge.
+    pub fn ordered_edge(self, other: Self, strict: bool) -> Option<[Self; 2]> {
+        let strict = i64::from(strict);
+        Some([Self::bounds(self.min, self.max.min(other.max - strict))?,
+            Self::bounds(other.min.max(self.min + strict), other.max)?])
+    }
+
+    /// `self` on an edge where it differs from `other`: an interval drops a singleton `other` only at its end, so
+    /// `self` = [v, max] with v = `other` is [v + 1, max]. `None` where no value is left.
+    pub fn without(self, other: Self) -> Option<Self> {
+        if other.min != other.max { return Some(self); }
+        let value = other.min;
+        if self.min == value && self.max == value { None }
+        else if self.min == value { Self::bounds(value + 1, self.max) }
+        else if self.max == value { Self::bounds(self.min, value - 1) }
+        else { Some(self) }
     }
 }
 

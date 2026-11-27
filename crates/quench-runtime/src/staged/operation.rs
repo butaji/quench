@@ -4,6 +4,7 @@
 use super::*;
 #[cfg(not(stencil_build))]
 use super::wasm_jump::{BranchTableWasmJumpExt, WasmJump, WasmJumpWasmJumpExt};
+use crate::bytecode::{Function, ThrownValueSlot};
 #[cfg(not(stencil_build))]
 use super::{
     superinstructions::ConstArrayPairSuperinstructionsExt, suspend::OperationSuspendExt,
@@ -450,6 +451,38 @@ impl<W, P> Operation<W, P> {
             other => other,
         }
     }
+
+    /// Where a `Throw` at `pc` of `function` goes when a handler of the function takes it natively: a catch that binds nothing
+    /// jumps to the handler's block, one that binds a register of the `registers`-register activation moves the thrown value
+    /// first. `None` for any other operation, and for a throw the interpreter's unwinding settles (a generator, an async
+    /// function, a dynamic scope, a `with` scope to unwind, a handler that does not open after the throw, a local binding).
+    pub fn handler_edge(&self, function: &Function, pc: u32, registers: Register) -> Option<HandlerEdge> {
+        let Self::Throw { source } = self else { return None };
+        if *source >= registers || !unwinds_to_handlers(function) {
+            return None;
+        }
+        let handler = function.handler_at(pc).filter(|handler| handler.with_depth == 0 && handler.target > pc)?;
+        match handler.slot {
+            None => Some(HandlerEdge::Jump { target: handler.target }),
+            Some(ThrownValueSlot::Register(slot)) if slot < registers => Some(HandlerEdge::Bind { slot, target: handler.target }),
+            Some(ThrownValueSlot::Register(_) | ThrownValueSlot::Local(_)) => None,
+        }
+    }
+}
+
+/// The native edge of a covered `throw` (`Operation::handler_edge`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandlerEdge {
+    /// A catch that binds nothing: control jumps to the handler's block.
+    Jump { target: u32 },
+    /// A catch that binds the thrown value to the register `slot`, then jumps to the handler's block.
+    Bind { slot: Register, target: u32 },
+}
+
+/// Whether the exceptions of `function` reach its handlers by the interpreter's unwinding rule alone: a generator, an async
+/// function and a dynamic scope have state only its own unwinding settles.
+fn unwinds_to_handlers(function: &Function) -> bool {
+    !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }
 
 

@@ -313,7 +313,7 @@ impl Traits {
     /// An op whose step binds the frame's `this` (`super()` completing a derived constructor's receiver).
     pub(crate) const BINDS_THIS: Self = Self(1 << 27, 0);
     /// An op an inlined callee's unit holds by its own rewrite or an exit (`lane_unit::emit_inlined`), which
-    /// `osr_loop::renamed` is not asked about: a call, a return, `this`, a name read, a construction and a throw.
+    /// `lane_unit::renamed` is not asked about: a call, a return, `this`, a name read, a construction and a throw.
     pub(crate) const UNIT_REWRITTEN: Self = Self(1 << 28, 0);
     /// An op whose result may be an arbitrary boxed value: a read of a capture, a field, an element or a global name.
     pub(crate) const BOXED_RESULT: Self = Self(1 << 29, 0);

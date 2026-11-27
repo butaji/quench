@@ -1,4 +1,4 @@
-//! Runtime glue of `forms`: the decode of a call's form from its record (`Invocation::of`, `CallForm::of`)
+//! Runtime glue of `forms`: the decode of a call's form from its record (`Invocation::of`, `CallRecord::of`)
 //! and the plain call row constant.
 #![allow(unused_imports)]
 use super::*;
@@ -86,32 +86,51 @@ impl InvocationFormsExt for Invocation {
 }
 
 /// The row of a plain call: a call through a callee register, a receiver register and a window
-/// of arguments. `CallForm::of` reads its record as `CallForm::Plain` (the call arm), and
+/// of arguments. `CallRecord::of` reads its record as `CallRecord::Plain` (the call arm), and
 /// `Invocation::operands` reads the same record's callee and receiver.
 #[cfg(not(stencil_build))]
 pub const PLAIN_CALL_ROW: u16 = Op::Call as u16;
 
-/// The form of a call-family record (`CallForm::of`).
-pub trait CallFormFormsExt: Sized {
+/// The record of a call-family instruction (`CallRecord::of`).
+pub trait CallRecordFormsExt: Sized {
     fn of(instruction: WideInstruction) -> Option<Self>;
 }
 
-impl CallFormFormsExt for CallForm {
-    /// The form of the call-family record `instruction`, whatever its result flags; `None` for a
+impl CallRecordFormsExt for CallRecord {
+    /// The record of the call-family instruction `instruction`, whatever its result flags; `None` for a
     /// record of no call family.
     fn of(instruction: WideInstruction) -> Option<Self> {
-        Some(match instruction.op() {
+        match instruction.op() {
+            Op::Construct if instruction.is_super_construct() => Some(Self::Super),
+            op => Self::of_op(op),
+        }
+    }
+}
+
+/// `const` queries of a call-family record: the opcode runners (`vm::dispatch::runner_of`) decide by them in
+/// const context, so they are inherent (a trait method cannot be `const`).
+impl CallRecord {
+    /// The record of the call-family opcode `op`, a construction's plain record (`of` reads the super
+    /// flag); `None` for an opcode of no call family. `const`, so the opcode runners decide by it.
+    pub const fn of_op(op: Op) -> Option<Self> {
+        Some(match op {
             Op::Call => Self::Plain,
             Op::CallForwardingArguments => Self::Forwarding,
             Op::CallKnown => Self::Known,
-            Op::CallMethod | Op::CallThisMethod => Self::Method,
-            Op::Construct if instruction.is_super_construct() => Self::Super,
+            Op::CallMethod => Self::Method,
+            Op::CallThisMethod => Self::ThisMethod,
             Op::Construct => Self::Construct,
             Op::CallArray => Self::Array,
             Op::CallSpread => Self::Spread,
             Op::CallRest => Self::Rest,
+            Op::CallFirstChunk => Self::FirstChunk,
             _ => return None,
         })
     }
-}
 
+    /// Whether the VM runs the record's general form (`vm::dispatch`'s call runner, which the staged
+    /// row declines to). A rest view's call has none: its staged rows answer it alone.
+    pub const fn has_general_form(self) -> bool {
+        !matches!(self, Self::Rest)
+    }
+}

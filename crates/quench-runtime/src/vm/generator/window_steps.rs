@@ -204,6 +204,9 @@ impl Vm {
         iterators: impl Iterator<Item = ActiveIterator>,
         with_objects: impl Iterator<Item = Value>,
     ) {
+        if let Some(caller) = frame.split_caller() {
+            self.push_resumed_frame(caller, std::iter::empty(), std::iter::empty());
+        }
         frame.close_environment_window();
         let mut frame = frame.into_frame(self.with_stack.len());
         frame.with_objects.extend(with_objects);

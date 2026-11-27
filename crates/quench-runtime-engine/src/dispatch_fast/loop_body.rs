@@ -10,7 +10,6 @@ use crate::compiled::{LaneBodyOutcome, LaneExit};
 use crate::compiled::LaneBodyWork;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
-pub(crate) use crate::compiled::loop_tier_up::{header_for_tier_up, left_for_tier_up};
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
@@ -19,10 +18,13 @@ use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOO
 impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
-    /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
-    /// outside `tier-stress`, which keeps compiling every eligible body,
-    /// or where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(crate) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    /// A new loop site's body, planned under the static benefit rule every body follows
+    /// (`tier_model::static_benefit`): a loop reaches its own function, so the rule admits it, where
+    /// the process runs Cranelift function tiers (`--b-jit` runs none).
+    pub(crate) fn initial(tiers: &Tiers) -> Self {
+        let loop_fact = crate::compiled::tier_model::StaticFacts { in_loop_or_cycle: true, residue: 0 };
+        if crate::compiled::tier_model::static_benefit(tiers.admits_all, loop_fact) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined }
+    }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -65,8 +67,7 @@ impl LoopBody {
         match outcome {
             LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            // A loop entry's body is a u-jit one: where b-jit would serve the function better, its own entries stitch it (`specialize_in_lane`).
-            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid | LaneBodyOutcome::Base => Self::Idle { stuck, attempts },
+            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,
         }
     }
@@ -91,8 +92,8 @@ impl LoopBody {
 const LONG_TRIP_WARMUPS: u64 = 4;
 
 /// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
-/// script callee): loop bodies are off where a region runs the loop (`tier_policy::LOOP_BODIES`),
-/// but here none can, and without a body the loop interprets every iteration. Whether it did.
+/// script callee): a loop whose calls no region inlines takes a body, and without one the loop
+/// interprets every iteration. Whether it did.
 /// Each call must be one the body runs inline (a Math function, a string builtin) or a script
 /// function's, which it inlines or calls by its entry, by the callee its register holds now: a
 /// body's general native call costs more than the lane's own.
@@ -124,10 +125,7 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
         // calls run inline: its entry from the header is paid once per run, and the body runs
         // natively the rows the region cannot (a dense `switch`, `instanceof`). A loop of a few
         // trips per entry is its function's body's to run, and one whose calls leave interprets as well.
-        // SAFETY: the program's views outlive the lane run.
-        let entries = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .and_then(|own| own.body_detail_in_lane().1);
-        let long = entries.is_some_and(|entries| site.body_iterations() / u64::from(entries.max(1)) >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS);
+        let long = site.body_iterations() >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS;
         if !nests && (!long || !calls.into_iter().all(inline)) { return false; }
     } else if !calls.into_iter().all(inline) { return false; }
     let mut body = site.body.borrow_mut();
@@ -139,10 +137,10 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
 /// An execution-only build (no `jit`) plans no run-time body: a loop runs the image's body
 /// where one published, and the interpreter otherwise.
-fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &LoopSite) {
+fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     #[cfg(not(feature = "jit"))]
     {
-        let _ = (cx, r, own);
+        let _ = (cx, own);
         *site.body.borrow_mut() = LoopBody::Declined;
     }
     #[cfg(feature = "jit")]
@@ -165,13 +163,6 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
         return;
     }
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
-    // The loop's arrays are the activation's registers live at its header now: sampled, as an
-    // OSR loop samples its own. A dead register may hold any value a window held before
-    // (`ResidualProgram::entry_fill`), so it reads as `undefined`.
-    let live = code.register_root_masks(function);
-    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
-        if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
-    }));
     // A first plan waits for the iterations that pay for a body of the loop's span, as an unpaid one
     // waits below: planned before them, the plan would decline the loop's body for good.
     if pending.is_none() && vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header))).is_none() {
@@ -184,7 +175,7 @@ fn plan_loop_body(cx: *mut LaneContext, r: Registers, own: &LaneView, site: &Loo
     }
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending, own),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, looped: Some((site.span(), site.body_iterations())), called: false, caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
         &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
@@ -231,7 +222,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
     let ready = site.body.borrow_mut().ready();
     let Some(method) = ready else {
-        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
+        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, own, site); }
         return None;
     };
     if !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
@@ -261,18 +252,5 @@ pub(crate) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) 
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(raised_exit_in_lane(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane(cx, record, value)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::tier_up_resume;
-
-    #[test]
-    fn a_leave_at_a_held_loops_backedge_resumes_at_its_header() {
-        assert_eq!(tier_up_resume(4, 9, 9, true, true), Some(4));
-        assert_eq!(tier_up_resume(4, 9, 7, true, true), None, "a guard inside the loop keeps its own PC");
-        assert_eq!(tier_up_resume(4, 9, 9, false, true), None, "an unheld header would not dispatch");
-        assert_eq!(tier_up_resume(4, 9, 9, true, false), None, "no published body to dispatch");
     }
 }

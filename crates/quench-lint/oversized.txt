@@ -976,9 +976,6 @@ complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_read_vi
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_receiver 26
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 12
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 12
-complexity crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 32
-complexity crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 23
-complexity crates/quench-runtime/src/vm/vector_region.rs::admit 15
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 15
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::evaluate_wasm_initializer 11
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::execute_wasm_in_environment 11
@@ -1441,7 +1438,6 @@ file-lines crates/quench-runtime/src/vm/tests.rs 23918
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1116
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 951
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1956
-file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6313
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1410
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1969
@@ -3596,12 +3592,6 @@ function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_rea
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_receiver 97
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 45
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 50
-function-lines crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 131
-function-lines crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 100
-function-lines crates/quench-runtime/src/vm/vector_region.rs::admit 50
-function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::fixture 41
-function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::lane_body 45
-function-lines crates/quench-runtime/src/vm/vector_region.rs::vector_regions 54
 function-lines crates/quench-runtime/src/vm/vm_init.rs::Vm<H>::new_with_execution_interrupt 183
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 64
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::evaluate_wasm_initializer 136
@@ -5139,8 +5129,6 @@ inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/lane_frames.rs::L
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/lane_roots.rs::Vm::context_for_start 54
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/leaf_calls.rs::cross_leaf_call_in_lane 53
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/leaf_calls.rs::lane_enter_leaf 43
-inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/loop_kernel/recur.rs::Fold::fold 56
-inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/loop_kernel/typed.rs::store 44
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/native_calls.rs::builtin_row_value 42
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/native_calls.rs::in_place_row_value 44
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/unary_values.rs::unary_value 43

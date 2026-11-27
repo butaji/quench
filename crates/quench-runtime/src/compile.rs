@@ -53,6 +53,8 @@ fn plain_local_form(op: Op) -> Option<Op> {
 }
 pub mod aot_facts;
 pub mod signatures;
+pub mod call_plan;
+pub mod call_graph;
 mod annex_b_targets;
 mod arrow;
 mod ast;

@@ -5,6 +5,7 @@
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::InstructionField;
+use crate::staged::effects::CallForm;
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -30,13 +31,10 @@ use crate::staged::wasm_instance::Storage;
 use crate::staged::record_heads::CallContextHead;
 use crate::heap::TableWords;
 use super::dispatch_frame::PendingGeneralCall;
-use crate::typed_ir::Type;
-use crate::wasm::simd::SimdKernel;
 use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
 use quench_bjit::call_record::CallRecord;
 use super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-use crate::wasm::integer::I32BinaryOperator;
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
 use super::activation::FrameRecord;
@@ -288,9 +286,6 @@ pub struct LaneView {
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
     pub activation: Option<ActivationShape>,
-    /// Whether its records may read a field through the activation's `this` (a `this` site), so a
-    /// row of it may trust `this` (`dispatch_fast::note_lane_this`); conservative.
-    pub this_rows: bool,
     /// The facts of its body a frameless call target records (`TargetBody`), found on its
     /// first resolution: every closure of the function shares them.
     pub target_body: std::cell::OnceCell<TargetBody>,
@@ -310,12 +305,6 @@ pub struct LaneView {
     /// it closes: a leave finds its loop by a binary search over the few loops, where a table
     /// over every instruction cost 4 bytes per instruction of every view.
     pub loop_at_backedge: Box<[(u32, u32)]>,
-    /// The vector regions whose first records point into them (`vector_region`): only
-    /// those records read them.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub vector_regions: Box<[VectorRegion]>,
-    /// The loop kernels whose test records name them (`loop_kernel`).
-    pub _loop_kernels: Box<[Box<dyn std::any::Any>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     pub start: std::cell::Cell<Ip>,
@@ -343,13 +332,39 @@ pub struct LaneView {
     /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
     /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
     pub name_records: Box<[u32]>,
-    /// The operator records whose proven form reads a `Kind::Speculative` register, each with that proven handler and its
-    /// checked form: what `retire_int_speculation` restores once an update overflowed one.
-    pub int_speculating: Box<[(u32, *const (), *const ())]>,
-    /// The held back edges' `IncDec` records whose counter the kinds prove, with it and whether it is speculative (`int_steps`).
-    pub proven_counters: Box<[(u32, u16, bool)]>,
-    /// The registers its records read as `Speculative` int32s (`int_steps::native_handed_doubles`).
-    pub speculative_registers: Box<[u16]>,
+    /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
+    pub proven_counters: Box<[(u32, u16)]>,
+    /// The method call sites whose receiver's class union is closed (`PlannedSite`), by pc. A record names its site by
+    /// `LaneInstruction::mode`, which points into this table, so the table never moves once the view holds it.
+    pub planned_calls: Box<[PlannedSite]>,
+}
+
+/// A call site dispatched on its receiver's class header (`planned_call_row`): one arm per class of the closed
+/// receiver union its plan names. The arms before the last are compared in the plan's order; the last class is
+/// `default`, which a receiver that no other arm's header names is (the union is closed, so it needs no compare).
+pub struct PlannedSite {
+    pub pc: u32,
+    pub arms: Box<[PlannedArm]>,
+    pub default: PlannedArm,
+}
+
+/// One class of a planned site: the function its method is (`function`), the class's header cell
+/// (`ProgramStore::class_header`, 0 until its first construction records it, which is also when its
+/// target is resolved) and the target slot the arm enters (`PlannedTarget`), which the program store holds.
+pub struct PlannedArm {
+    pub function: u32,
+    pub header: *const std::cell::Cell<u32>,
+    pub target: *const PlannedTarget,
+}
+
+/// The target an arm of class `C` enters, keyed by (`C`, `function`) in the program store
+/// (`ProgramStore::planned_targets`). Resolved once, at the edge that records `C`'s header
+/// (`layer_hooks::planned_class_recorded`), from the method `method` that `C`'s prototype holds: the
+/// prototype's layout is proven, so nothing rebinds the method and the target stays the arm's.
+/// The program store keeps the slot with the program, so no lane-stack regeneration reaches it.
+pub struct PlannedTarget {
+    pub method: u32,
+    pub target: std::cell::Cell<ScriptCallTarget>,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -630,15 +645,6 @@ pub struct StringCaseFilter {
     pub buckets: Box<[Bucket]>,
     pub cases: Box<[Case]>,
 }
-
-/// A register's kind, ordered by the join: a larger kind admits more values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Kind {
-    Int32,
-    Speculative,
-    Tagged,
-}
-
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in
@@ -971,8 +977,8 @@ pub struct LaneMethod {
     /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub realm_bound: bool,
-    /// Its entry types and its activation's result type (`TypeSummary`), where it is a
-    /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
+    /// A marker that its lowering made a summary, where it is a whole function's body: a direct caller's plan
+    /// reads the callee's result from the solve (`TypeSummary`, `DirectCallee::summary`).
     /// Read through `summary()`, which a withdrawal ends.
     pub summary: Option<TypeSummary>,
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
@@ -984,13 +990,8 @@ pub struct LaneMethod {
 pub struct LaneTier {
     /// The frameless body the prologue runs once the JavaScript tier declined the function (`Vm::compile_lane_method`).
     pub tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
-    pub warm_since: std::cell::Cell<u32>,
     /// Counts specialization attempts (`specialize_lane_body`); a refused loop compile retries once it moves.
     pub body_epoch: std::cell::Cell<u32>,
-    /// (epoch, from, at): entries in `from..at` at that epoch skip the weighing (`counted_between_attempts`).
-    pub weigh_at: std::cell::Cell<(u32, u32, u32)>,
     /// Every body it published, kept until the view drops: a retired body's frame leaves through `Activation::body`.
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
@@ -1029,13 +1030,8 @@ pub struct LoopSite {
     pub header: u32,
     pub backedge: u32,
     pub jump: isize,
-    /// The header record's own handler while the site holds that record
-    /// (`loop_header_miss`), which enters the loop's native code wherever control arrives at
-    /// the header; null otherwise.
-    pub header_handler: std::cell::Cell<*const ()>,
-    /// Whether the site may hold its header record (`loop_hold_header_in_lane`): one that is
-    /// no call record, whose `call_link` names a call target, and the header of no other
-    /// site. The record's `call_link` then names the site.
+    /// Whether the header record names this site in its `call_link` (its distance to the jump):
+    /// one that is no call record, and the header of no other site.
     pub hookable: bool,
     /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
     /// tier model has admitted the compile (`LoopSite::interprets`).
@@ -1216,7 +1212,7 @@ pub type ScriptGeneration = u32;
 /// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
 /// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
 /// Entry pointers (`Vm::script_call_entry`) are not held across a resolution, which is
-/// where it grows.
+/// where it grows. Planned arms hold no entry: their targets live in the program store (`PlannedTarget`).
 pub struct ScriptTargets {
     pub entries: Box<[ScriptCallTarget]>,
     /// Live targets displaced from their set since it last grew.
@@ -1233,9 +1229,9 @@ pub struct TargetBody {
     pub entry: CallEntry,
     pub constructs: bool,
     pub initializes: bool,
-    /// Whether an `Activates` body runs as a leaf (`leaf_body`), and what its records then read
-    /// of the context: only where the tier could not claim it at the first resolution, which
-    /// specialized its returns for good.
+    /// Whether an `Activates` body of a frameless call form runs as a leaf (`leaf_body`), and what its
+    /// records then read of the context: only where the tier could not claim it at the first resolution,
+    /// which specialized its returns for good. None for a framed call form, whose entries never run a leaf.
     pub leaf: Option<LeafForm>,
 }
 
@@ -1247,7 +1243,6 @@ pub struct WasmJitDiagnostics {
     pub compiled_functions: usize,
     pub code_bytes: usize,
     pub mapped_bytes: usize,
-    pub compile_ns: u128,
     pub native_entry_requests: Vec<std::cell::Cell<u64>>,
     pub interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     pub compiled_to_vm_callouts: std::cell::Cell<u64>,
@@ -1295,25 +1290,6 @@ pub struct Records {
     pub front: usize,
     /// The first record, kept so each activation's entry reads it with one load (`base`).
     pub first: Ip,
-}
-
-/// A run of records one record executes (`vector_region_row`).
-pub struct VectorRegion {
-    /// The run's first record.
-    pub first: usize,
-    pub steps: Box<[Step]>,
-    /// The staged operations the run's `Step::Row`s run.
-    pub rows: Box<[Row]>,
-    pub spills: Box<[u16]>,
-    /// The records the run covers; the record after them continues.
-    pub records: usize,
-    pub end: Leave,
-    /// The register the record after the run reads as its carried accumulator, which its
-    /// producer, the run's last record, wrote; `NO_ACCUMULATOR` for none.
-    pub acc: u16,
-    /// The i32 comparison jump after the run when it closes a loop the run begins: the run
-    /// then takes the back edge itself, its bank kept across iterations.
-    pub looping: Option<RegionLoop>,
 }
 
 /// A b-jit body's row entries in its code, as the cell publishes them: its row entry (`rows`), its proven-arguments
@@ -1373,9 +1349,9 @@ pub struct StableFacts {
     /// Whether it holds the typed views it proved past a call (`staged::HeldViews`): the first
     /// change of a live view retires it (`heap::subscribe_typed_views`).
     pub views: bool,
-    /// Whether it takes every activation's `this` as a direct object under the lane's `this` trust
-    /// (`Vm::this_trust`): retiring the trust retires it (`heap::subscribe_this_trust`).
-    pub this_trust: bool,
+    /// Live cell keys of the covered functions whose solved register cells it trusts (`lane_region::narrow_to_cells`):
+    /// an edge that widens one retires it (`FactWatch::subscribe_cell`).
+    pub cells: Box<[crate::typed_ir::FactKey]>,
 }
 
 /// A loop analysis failure attributed to the function PC whose requirement blocked it.
@@ -1455,14 +1431,10 @@ pub struct LaneRecoverySpace {
     pub activations: usize,
 }
 
-/// What a published lane body's activation returns natively, so a direct caller types the call's
-/// result with it (`call_results`): the join of the types its own activation returns, from the facts
-/// at each return. A value a leave returns to the caller is not in the result: the caller guards the
-/// result at its completion.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TypeSummary {
-    pub result: Type,
-}
+/// A published lane body whose lowering made a whole function's summary: a direct caller reads its callee's result
+/// from the solve's return cell (`FunctionFacts::return_cell`), never from the body, so the summary carries no type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TypeSummary;
 
 
 
@@ -1627,10 +1599,11 @@ pub const JS_IMPORT_ARGUMENTS: usize = 8;
 /// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
 /// moves a body that names shape IDs back to `Unspecialized`.
 pub enum LaneBody {
-    /// Counting its entries toward specialization; `recompiles` bodies before it left too
-    /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
-    /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
+    /// Waiting for its next entry to specialize (a function with no static benefit stays here at its
+    /// first entry, and runs in the interpreter); `recompiles` bodies before it left too often for
+    /// their feedback (`LaneView::note_lane_body_end`), the last of them, where `stuck`, at those few
+    /// leaves only.
+    Unspecialized { recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
@@ -1678,25 +1651,6 @@ pub struct LaneBodyHistory {
     pub demanded: bool,
     /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
     pub region_called: bool,
-    /// The planned IR instructions of its body where that body compiled quick
-    /// (`tier_model::compiles_quick`), else 0: its completions weigh an optimizing compile.
-    pub quick_ir: u32,
-    /// Whether its next compile is the optimizing one its quick body's entries repaid
-    /// (`LaneView::optimize_body`): priced already, it compiles at its next entry.
-    pub optimize: bool,
-    /// The runs its retired bodies made (`EntryCell::evidence` at each retirement): entries of the
-    /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
-    /// (Lindy: a function that ran this long runs on), rather than starting again from none.
-    pub runs: u32,
-    /// Whether a u-jit body of it gave up (no run completed, or its leaves outweighed its runs) where
-    /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
-    /// the default mode never runs it costlier than `--b-jit` would.
-    pub base_fallback: bool,
-    /// Whether its current body is the b-jit body the default mode starts every function with (the tier
-    /// below u-jit, by construction): its completions weigh the u-jit compile (`tier_model::promotes`).
-    pub base_first: bool,
-    /// Whether its b-jit body's completions repaid the u-jit compile over it: the next compile is u-jit.
-    pub promoted: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
@@ -1709,8 +1663,6 @@ pub struct LaneBodyStats {
     pub frames: std::cell::Cell<u32>,
     /// The last compile's inlined frames as `index:function<-parent@call-pc`, `+` marking an alternative.
     pub shape: std::cell::RefCell<String>,
-    /// Wall-clock milliseconds since the epoch of each compile's publication.
-    pub compiled_at: std::cell::RefCell<Vec<u64>>,
     /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
     /// or irreversibly terminated.
     pub ends: [std::cell::Cell<u32>; super::tier_events::Event::END_COUNT],
@@ -1902,18 +1854,6 @@ pub enum RegionDecline {
     Stub,
 }
 
-/// A loop a region runs itself (`VectorRegion::looping`): its closing jump's comparison of
-/// register `left` and `right`, and the bank registers boxed before leaving from a repeated
-/// iteration, where registers the first iteration had not yet entered may be newer in the
-/// bank than in their slots.
-#[derive(Clone, Copy)]
-pub struct RegionLoop {
-    pub comparison: I32BinaryOperator,
-    pub left: u16,
-    pub right: I32Right,
-    pub carried: Leave,
-}
-
 /// A forwarding constructor whose activation a construction skipped
 /// (`forwarded_construction_in_lane`): what its frame holds when activations become frames,
 /// pending at its forwarding call.
@@ -1992,7 +1932,7 @@ pub enum Completion {
     /// the caller goes on past them, the result object unmade. Made a frame, it is `Generates`.
     StepReads(ForOfTest),
     /// A plain call of a non-suspending async function of the caller's program
-    /// (`CallEntry::Settles`): its return resolves the promise the call made, which its side
+    /// (`CallEntry::framed(Framed::Settles)`): its return resolves the promise the call made, which its side
     /// record keeps (`SidePayload::Settles`), and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
@@ -2071,38 +2011,6 @@ pub struct IndirectSite {
 pub struct Block {
     pub region: u32,
     pub offset: u32,
-}
-
-/// One step of a run: the entry of a register into the bank, a record's staged row, or the
-/// computation of a record no staged row answers. A step that may leave names its record (`at`,
-/// from the run's first) and the registers boxed first.
-#[derive(Clone, Copy)]
-pub enum Step {
-    Unbox { register: u16, at: u32, leave: Leave },
-    /// The staged row `rows[op]` of the record `at`.
-    Row { op: u32, at: u32, leave: Leave },
-    /// A SIMD operator with an i32 result, which no staged row answers: its kernel's bits.
-    Lanes { kernel: &'static SimdKernel, lane: u8, a: u16, b: Place, c: Option<Place> },
-    /// A whole-vector copy of a bank register, which no staged row answers.
-    VectorMove { a: u16, b: u16 },
-    /// A constant written to its register's slot where a slot read or liveness needs it.
-    Constant { a: u16, value: Value },
-    /// A v128 constant, which no staged row answers.
-    VectorConstant { a: u16, bits: u128 },
-    /// A v128 load of the memory in `address`, which no staged row answers.
-    Load { a: u16, address: u16, at: u32, leave: Leave },
-    /// A v128 store to the memory in `address`, which no staged row answers.
-    Store { value: u16, address: u16, at: u32, leave: Leave },
-}
-
-/// A record's staged operation, decoded once when the region is built (`Operation::decode`).
-pub type Row = crate::staged::Operation<u64, ()>;
-
-/// The registers boxed where the run leaves its record: a range of `VectorRegion::spills`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Leave {
-    pub start: u32,
-    pub end: u32,
 }
 
 
@@ -2207,13 +2115,6 @@ pub enum ForOfTest {
     Threaded,
 }
 
-/// The right operand of an i32 comparison: a register or an immediate.
-#[derive(Clone, Copy, Debug)]
-pub enum I32Right {
-    Register(u16),
-    Immediate(i32),
-}
-
 
 #[derive(Clone, Copy)]
 pub struct IdentityBranch {
@@ -2261,13 +2162,6 @@ pub enum MemoLeaf {
 
 
 
-
-/// A scalar or vector operand of a lane operator.
-#[derive(Clone, Copy, Debug)]
-pub enum Place {
-    Bank(u16),
-    I32(u16),
-}
 
 #[derive(Clone, Copy, Default)]
 pub struct ReferenceCallSiteCounts {
@@ -2444,9 +2338,6 @@ pub struct JsStepDispatch {
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
     pub call_targets: usize,
-    /// Whether the host makes a strict function's terminal calls proper tail calls
-    /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
-    pub proper_tail_calls: u64,
     pub outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -2672,6 +2563,9 @@ pub struct ConstructPlan {
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
     pub super_parent: Value,
+    /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
+    /// construction of a recorded class allocates its receiver alone.
+    pub recorded: bool,
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -2777,8 +2671,6 @@ pub union LaneOperand {
     pub call: CallOperand,
     pub jump: isize,
     pub constant: Value,
-    /// The first record of a vector region: the region, which the view owns.
-    pub region: *const VectorRegion,
 }
 
 /// A field of a plan that takes a fresh object of `constructor`, constructed from the
@@ -3724,7 +3616,7 @@ pub enum LaneRoot {
     Job(JobRoot),
 }
 
-/// A running leaf call (`CallEntry::Leaf`): what its activation would hold that the context
+/// A running leaf call (`CallEntry::frameless(Frameless::Leaf)`): what its activation would hold that the context
 /// does not. The context's registers and records are the callee's; what its form makes its
 /// own (`LeafForm`) of the receiver and environment is the callee's, the rest the caller's.
 /// Laid out as the staged leaf row's record (`staged::call_leaf::LEAF_*_AT`), which writes
@@ -3790,7 +3682,7 @@ pub struct ScriptActivation {
     /// The register past its registers that holds the first value it kept (`forwards`), its
     /// function's register count, so a read of them looks up no function; 0 when it keeps none.
     pub kept: u16,
-    /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
+    /// Its environment and frame locals follow its registers (`CallEntry::framed(Framed::Environment)`).
     pub environment: bool,
     /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
     /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
@@ -4012,6 +3904,7 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     forwarded: None,
     nested: None,
     super_parent: Value::UNDEFINED,
+    recorded: false,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -4028,7 +3921,7 @@ pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     lexical_this: Value::UNDEFINED,
     forms: 0,
     fill: 0,
-    entry: CallEntry::Activates,
+    entry: CallEntry::framed(Framed::Activates),
     capture: std::ptr::null(),
     forwarded_method: NO_FORWARDED_METHOD,
 };
@@ -4115,26 +4008,23 @@ pub const SCRIPT_TARGET_WAYS: usize = 2;
 /// below the record space's capacity, 2^24).
 pub const UNPROVEN: u64 = crate::value::ValueLayout::DIRECT_FUNCTION_TAG | u32::MAX as u64;
 
-/// How a plain lane call enters a frameless target (`ScriptCallTarget::entry`), one byte so the
-/// call tests it once. The kinds exclude each other: a body that is one read keeps nothing.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// How a lane call enters its target (`ScriptCallTarget::entry`). One call protocol, three forms
+/// (`CallForm`): the form is the one `staged::effects::call_form` gives the callee's composed
+/// signature, in every tier. `Frameless` for a callee that cannot leave its activation, collect,
+/// or run guest code; `Framed` for any other. The shape says which frameless answer
+/// (`Frameless`) or which activation layout (`Framed`) the target takes. The lane has no
+/// `CallForm::Inline` entry: an inlinable callee is spliced into its caller's unit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct CallEntry(u8);
+
+/// The shape of a `CallForm::Frameless` entry: which answer a call gets without an activation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum CallEntry {
-    /// Its activation holds its registers alone (`activate_in_lane`).
-    Activates,
-    /// It keeps the values it was passed for a forwarded `arguments`
-    /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
-    Keeps,
-    /// It keeps them, and its rest parameter, in the register after the others, starts as
-    /// the array of those past the others (`activate_keeping_in_lane`).
-    Gathers,
+pub enum Frameless {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
-    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
-    /// activation): a call takes `frame_call_in_lane`. Only the cache and the call's own
-    /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
-    Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
     ReadsElement,
@@ -4148,21 +4038,12 @@ pub enum CallEntry {
     /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
     /// compiles, which a call answers with the receiver it binds.
     ReadsThis,
-    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
-    /// activation's window holds its environment and locals after its registers
-    /// (`activate_environment_in_lane`). Only a plain call activates it.
-    Environment,
-    /// An async function whose body never suspends, laid out as its registers
-    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
-    /// it (`script_call_settles_miss`), whose promise its return settles
-    /// (`Completion::SettlesPromise`).
-    Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
     /// a window of the lane stack without an activation (`script_call_leaf_prove_miss`), which
     /// anything observing activations makes first (`materialize_leaf_in_lane`). Any other
-    /// call activates it as `Activates`.
+    /// call activates it as `Framed::Activates`.
     Leaf,
-    /// A leaf whose records read its captures and not its receiver (`CAPTURE_LEAF`), so its
+    /// A leaf whose records read their captures and not their receiver (`CAPTURE_LEAF`), so its
     /// call makes the context's environment its own, which its return restores.
     CaptureLeaf,
     /// A leaf whose records read its receiver (`CONTEXT_LEAF`), so its call makes the
@@ -4174,6 +4055,65 @@ pub enum CallEntry {
     /// A proven conditional append to a captured binding, completed without activation
     /// (`capture_append::run`).
     AppendsCapture,
+    /// A body with admitted native code, whose call runs that code's entry on a window at the lane
+    /// stack's top with no activation and no frame (`native_call_in_lane`). The callee's leaves are
+    /// `Never`, so nothing observes the window. Chosen where the target resolves, while the body is
+    /// published; a body retired since falls back to the general form.
+    Native,
+}
+
+/// The shape of a `CallForm::Framed` entry: which activation layout a call makes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Framed {
+    /// Its activation holds its registers alone (`activate_in_lane`).
+    Activates,
+    /// It keeps the values it was passed for a forwarded `arguments`
+    /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
+    Keeps,
+    /// It keeps them, and its rest parameter, in the register after the others, starts as
+    /// the array of those past the others (`activate_keeping_in_lane`).
+    Gathers,
+    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
+    /// activation): a call takes `frame_call_in_lane`. Only the cache and the call's own
+    /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
+    Frame,
+    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
+    /// activation's window holds its environment and locals after its registers
+    /// (`activate_environment_in_lane`). Only a plain call activates it.
+    Environment,
+    /// An async function whose body never suspends, laid out as its registers
+    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
+    /// it (`script_call_settles_miss`), whose promise its return settles
+    /// (`Completion::SettlesPromise`).
+    Settles,
+}
+
+impl CallEntry {
+    /// The form bit: set for a `CallForm::Framed` entry, clear for a `CallForm::Frameless` one.
+    /// The low bits hold the shape, so the entry stays one byte (`ScriptCallTarget` is 64 bytes).
+    const FRAMED: u8 = 1 << 7;
+
+    /// The entry of a frameless shape.
+    #[inline(always)]
+    pub const fn frameless(shape: Frameless) -> Self { Self(shape as u8) }
+
+    /// The entry of a framed shape.
+    #[inline(always)]
+    pub const fn framed(shape: Framed) -> Self { Self(Self::FRAMED | shape as u8) }
+
+    /// The form of the call this entry takes: `Frameless` or `Framed`, never `Inline`.
+    #[inline(always)]
+    pub const fn form(self) -> CallForm {
+        if self.0 & Self::FRAMED == 0 { CallForm::Frameless } else { CallForm::Framed }
+    }
+
+    /// The entry's byte as an index of a table of all 256 entries. The byte holds both the form bit
+    /// and the shape, so a table over it answers a framed entry without a test of the form.
+    #[inline(always)]
+    pub const fn table_index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl Admission {
@@ -4635,17 +4575,11 @@ impl LaneView {
         }
     }
 
-    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
-    /// is still warming, for the diagnostics report of a view that never compiled
-    /// (`QUENCH_LANE_STATE`).
+    /// Its body's state, and whether the tier claimed its prologue and is still warming, for the
+    /// diagnostics report of a view that never compiled (`QUENCH_LANE_STATE`).
     #[inline]
-    pub fn body_detail_in_lane(&self) -> (&'static str, Option<u32>, bool, bool) {
-        // SAFETY: as `lane_body`.
-        let entries = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized { entries, .. } => Some(*entries),
-            _ => None,
-        };
-        (self.body_state_in_lane(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
+    pub fn body_detail_in_lane(&self) -> (&'static str, bool, bool) {
+        (self.body_state_in_lane(), self.start.get() == self.prologue.get().cast_const(), self.warming())
     }
 
     /// Clears the global-object hints of its by-name loads and stores: a global
@@ -4653,43 +4587,6 @@ impl LaneView {
     #[inline]
     pub fn clear_name_hints(&self) {
         self.clear_hints(&self.name_records);
-    }
-
-    /// Gives every operator record that reads a speculative int32 register its checked form
-    /// (`int_kinds`): an update overflowed such a register, so it may hold a double from now on.
-    /// A record whose handler changed since (`operator_row` widened it) already runs a checked one;
-    /// a loop header's handler is held by its site.
-    pub fn retire_int_speculation(&self) {
-        for &(pc, proven, checked) in &self.int_speculating {
-            let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
-            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is
-            // live while the VM's increment runs.
-            unsafe {
-                if (*record).handler == proven {
-                    (*record).handler = checked;
-                }
-            }
-            for site in &self.loops {
-                if site.header == pc && site.header_handler.get() == proven {
-                    site.header_handler.set(checked);
-                }
-            }
-        }
-    }
-
-    /// Gives every record whose handler `map` names another that one, the loop headers' held
-    /// handlers too: a retired speculation's rows take their checked forms.
-    pub fn rewrite_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
-        for cell in self.records.cells.iter() {
-            let record = std::cell::UnsafeCell::raw_get(cell);
-            // SAFETY: the lane runs on the view's thread, and no reference to a handler field is live.
-            unsafe {
-                if let Some(checked) = map((*record).handler) { (*record).handler = checked; }
-            }
-        }
-        for site in &self.loops {
-            if let Some(checked) = map(site.header_handler.get()) { site.header_handler.set(checked); }
-        }
     }
 
     /// Starts activations at the first record again, once the tier declines the function.
@@ -5006,8 +4903,8 @@ impl LaneBodyStats {
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.refused.get(),
             )
         })
     }
@@ -5534,7 +5431,6 @@ impl LaneView {
     pub fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
         let body_state = body.tier_state();
         let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
-        self.credit_runs();
         let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
@@ -5559,14 +5455,13 @@ impl LaneView {
     pub fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
         let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
-        self.credit_runs();
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
         super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
-        *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
+        *body = LaneBody::Unspecialized { recompiles, stuck };
     }
 }
 
@@ -5599,10 +5494,8 @@ pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDE
 impl Default for LaneTier {
     fn default() -> Self {
         Self {
-            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
-            warm_since: std::cell::Cell::new(0),
+            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { recompiles: 0, stuck: LaneLeaves::NONE }),
             body_epoch: std::cell::Cell::new(0),
-            weigh_at: std::cell::Cell::new((0, 0, 0)),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             body_stats: LaneBodyStats::default(),
@@ -5639,16 +5532,6 @@ impl LaneLeaves {
     }
 }
 
-impl LaneView {
-    /// Books its current body's runs to its history (`LaneBodyHistory::runs`) as the body goes.
-    #[inline]
-    pub fn credit_runs(&self) {
-        let (completions, leaves) = self.entry.evidence();
-        let history = self.tier().history.get();
-        let runs = u32::try_from(completions.saturating_add(leaves)).unwrap_or(u32::MAX);
-        self.tier().history.set(LaneBodyHistory { runs: history.runs.saturating_add(runs), ..history });
-    }
-}
 
 
 impl EntryCell {
@@ -5820,13 +5703,12 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
             stats.code_bytes,
             stats.mapped_bytes,
-            stats.compile_ns,
             entries,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),
