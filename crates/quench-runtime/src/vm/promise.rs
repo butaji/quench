@@ -5081,7 +5081,7 @@ impl Vm {
 
     pub(super) fn promise_finally_continuation_handler(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         _args: &[Value],
     ) -> Result<Value, JsError> {
         let function = self

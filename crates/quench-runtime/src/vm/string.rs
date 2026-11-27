@@ -393,7 +393,7 @@ impl Vm {
 
     fn set_builtin_named_for_realm(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

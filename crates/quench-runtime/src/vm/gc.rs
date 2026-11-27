@@ -425,7 +425,7 @@ impl Vm {
     }
 
     /// A stop-the-world collection, full or minor.
-    fn collect_inner(&mut self, _program: &ResidualProgram, full: bool) {
+    fn collect_inner(&mut self, _program: &ProgramRecord, full: bool) {
         // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.

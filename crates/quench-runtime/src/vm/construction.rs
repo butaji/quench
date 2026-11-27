@@ -184,7 +184,7 @@ impl Vm {
     /// records the edge it made for the next one.
     pub fn set_function_name(
         &mut self,
-        p: &ResidualProgram,
+        p: &ProgramRecord,
         function: Value,
         (name, site): (Atom, u16),
     ) -> Result<(), JsError> {
