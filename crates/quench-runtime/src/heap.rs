@@ -224,7 +224,7 @@ mod records;
 mod class_space;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
-pub use object_view::{CellView, CellViewMut, ObjectMut, ObjectRef};
+pub use object_view::{ObjectMut, ObjectRef};
 mod root;
 mod slots;
 mod snapshot;
@@ -4974,7 +4974,7 @@ impl Heap {
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
-        self.note_object_slots(value, slot + 1);
+        self.memory_profile.object_slots_changed(value, slot + 1);
         true
     }
 

@@ -3,7 +3,7 @@
 use super::scope::Scope;
 use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};
-use crate::bytecode::{Register, Traits, WideInstruction};
+use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing::{self, Abstract};

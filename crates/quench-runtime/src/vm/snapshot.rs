@@ -51,6 +51,8 @@ impl Vm {
             shared_entry_pair: _,
             share_entry_pair: _,
             builtins: _,
+            // Like `builtins`, a static table of the build: the restoring host supplies it.
+            execution: _,
             main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
