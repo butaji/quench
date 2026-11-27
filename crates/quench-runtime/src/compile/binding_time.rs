@@ -73,8 +73,8 @@ fn transparent<'a>(value: &'a Expression<'a>) -> Option<&'a Expression<'a>> {
 
 /// A unary operator applied to a static operand, where the result needs no run-time
 /// coercion: `void` of any literal (which minifiers write for `undefined`), `!` of a
-/// literal whose ToBoolean is fixed (`!0` and `!1` for the booleans), and `-`/`+` of a
-/// number.
+/// literal whose ToBoolean is fixed (`!0` and `!1` for the booleans), `-`/`+` of a
+/// number, and `typeof` of any static value (its type's name, which no guest code decides).
 pub(super) fn unary(value: &UnaryExpression<'_>) -> Option<Constant> {
     unary_at(value, FOLD_DEPTH, &mut |_| None)
 }
@@ -83,12 +83,26 @@ fn unary_at(value: &UnaryExpression<'_>, depth: u32, names: Names<'_>) -> Option
     let operand = folded(&value.argument, depth, names)?;
     let folded = match (value.operator, operand) {
         (UnaryOperator::Void, _) => Constant::Undefined,
+        (UnaryOperator::Typeof, operand) => Constant::String(type_name(&operand)?.into()),
         (UnaryOperator::LogicalNot, operand) => Constant::Boolean(!to_boolean(&operand)?),
         (UnaryOperator::UnaryNegation, Constant::Number(value)) => Constant::Number(-value),
         (UnaryOperator::UnaryPlus, Constant::Number(value)) => Constant::Number(value),
         _ => return None,
     };
     Some(folded)
+}
+
+/// The result of `typeof` on a static value: the name of its language type. The wasm payloads are no JavaScript value.
+fn type_name(value: &Constant) -> Option<&'static str> {
+    Some(match value {
+        Constant::Number(_) => "number",
+        Constant::String(_) | Constant::StringUnits(_) => "string",
+        Constant::Boolean(_) => "boolean",
+        Constant::Undefined => "undefined",
+        Constant::Null => "object",
+        Constant::BigInt(_) => "bigint",
+        Constant::WasmBits64(_) | Constant::WasmV128(_) => return None,
+    })
 }
 
 /// A binary operator applied to static operands whose result runs no coercion: any numeric
@@ -174,6 +188,17 @@ fn strings(operator: BinaryOperator, left: &str, right: &str) -> Option<Constant
         BinaryOperator::Addition => Constant::String([left, right].concat().into()),
         BinaryOperator::Equality | BinaryOperator::StrictEquality => Constant::Boolean(left == right),
         BinaryOperator::Inequality | BinaryOperator::StrictInequality => Constant::Boolean(left != right),
+        // Relations order strings by UTF-16 code units, as the language does (not by code points).
+        BinaryOperator::LessThan | BinaryOperator::LessEqualThan
+        | BinaryOperator::GreaterThan | BinaryOperator::GreaterEqualThan => {
+            let order = left.encode_utf16().cmp(right.encode_utf16());
+            Constant::Boolean(match operator {
+                BinaryOperator::LessThan => order.is_lt(),
+                BinaryOperator::LessEqualThan => order.is_le(),
+                BinaryOperator::GreaterThan => order.is_gt(),
+                _ => order.is_ge(),
+            })
+        }
         _ => return None,
     })
 }
@@ -220,6 +245,19 @@ mod tests {
         assert!(matches!(fold("null == 0"), Some(Constant::Boolean(false))));
         assert!(matches!(fold("null < 1"), Some(Constant::Boolean(true))));
         assert!(matches!(fold("void 0 < 1"), Some(Constant::Boolean(false))), "NaN compares false");
+    }
+
+    #[test]
+    fn typeof_and_string_relations_fold_over_static_values() {
+        assert!(matches!(fold("typeof 1"), Some(Constant::String(text)) if &*text == "number"));
+        assert!(matches!(fold("typeof 'a'"), Some(Constant::String(text)) if &*text == "string"));
+        assert!(matches!(fold("typeof null"), Some(Constant::String(text)) if &*text == "object"));
+        assert!(matches!(fold("typeof void 0"), Some(Constant::String(text)) if &*text == "undefined"));
+        assert!(matches!(fold("typeof !0"), Some(Constant::String(text)) if &*text == "boolean"));
+        assert!(matches!(fold("'a' < 'b'"), Some(Constant::Boolean(true))));
+        assert!(matches!(fold("'b' <= 'a'"), Some(Constant::Boolean(false))));
+        // Code units order the strings, so the surrogate pair (0xD800...) precedes U+FFFD.
+        assert!(matches!(fold(r#"'\u{10000}' < '�'"#), Some(Constant::Boolean(true))));
     }
 
     #[test]

@@ -18,6 +18,7 @@ impl Lowering<'_, '_> {
     /// is `exit`. `None` where an operand has no proof the lowering can make.
     pub(crate) fn arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         operation: NumberArithmetic, exit: ir::Block) -> Option<()> {
+        if self.fold_arithmetic(state, pc, instruction, operation) { return Some(()); }
         let operands = (instruction.result_register(), [instruction.operand_b(), instruction.operand_c()]);
         let words = if operation == NumberArithmetic::Divide { None } else { self.index_math(state, pc, instruction) };
         if let Some(range) = words {
@@ -32,6 +33,73 @@ impl Lowering<'_, '_> {
             self.checked_arithmetic(state, pc, operands, (operation, exit))?;
         }
         Some(())
+    }
+
+    /// The one fold point of Number arithmetic in the lane. Operands whose values are exact (a constant, or a register
+    /// whose fact or whole-program solve pins it to one integer) fold the operation to its value, which the interpreter's
+    /// own operator computes (`static_number_binary`). An identity the operands make exact defines the destination as
+    /// its other operand (`copy`): `x * 1`, `x / 1` and `x - 0` for any Number, and `x + 0` only for an integer `x`,
+    /// since `-0 + 0` is `+0`. Returns whether it defined the destination; nothing else is emitted.
+    fn fold_arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, operation: NumberArithmetic) -> bool {
+        if self.left_here { return false; }
+        let destination = instruction.result_register();
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        let known = [self.known_number(state, pc, left), self.known_number(state, pc, right)];
+        if let [Some(left_value), Some(right_value)] = known
+            && let Some(quench_runtime::bytecode::Constant::Number(value)) =
+                quench_runtime::vm::operations::static_number_binary(instruction.binary_operator(), left_value, right_value)
+        {
+            let constant = self.identity_constant(Value::number(value));
+            self.define(state, destination, constant, RegisterFact::definition(Type::immediate(Value::number(value)), Representation::Tagged));
+            return true;
+        }
+        let is = |index: usize, number: f64| known[index] == Some(number);
+        let other = match operation {
+            NumberArithmetic::Multiply if is(0, 1.0) => right,
+            NumberArithmetic::Multiply if is(1, 1.0) => left,
+            NumberArithmetic::Divide if is(1, 1.0) => left,
+            NumberArithmetic::Subtract if is(1, 0.0) => left,
+            NumberArithmetic::Add if is(1, 0.0) && self.is_integer(state, pc, left) => left,
+            NumberArithmetic::Add if is(0, 0.0) && self.is_integer(state, pc, right) => right,
+            _ => return false,
+        };
+        // The identity's other operand must be a register the lane already proves a Number.
+        let Some(register) = other.register_index().filter(|_| other.kind() == Some(OperandKind::Register)) else { return false };
+        if !state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return false; }
+        self.copy(state, destination, register);
+        true
+    }
+
+    /// The Number a constant operand holds, or the one integer a register is proved to hold before the unit instruction at
+    /// `pc` (`integer_range` pins it to a single value). `None` where the operand is not exactly known.
+    fn known_number(&self, state: &State, pc: usize, operand: Operand) -> Option<f64> {
+        match operand.kind()? {
+            OperandKind::Constant => super::super::facts::constant_number(&self.program.constants, operand),
+            OperandKind::Register => {
+                let range = self.integer_range(state, pc, operand.register_index()?)?;
+                (range.min == range.max).then_some(range.min as f64)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `operand` is a register proved to hold an integer before the unit instruction at `pc`, or an integer
+    /// constant: an integer holds no negative zero.
+    fn is_integer(&self, state: &State, pc: usize, operand: Operand) -> bool {
+        match operand.kind() {
+            Some(OperandKind::Register) => operand.register_index().is_some_and(|register| self.integer_range(state, pc, register).is_some()),
+            Some(OperandKind::Constant) => super::super::facts::constant_number(&self.program.constants, operand)
+                .is_some_and(|number| number.fract() == 0.0 && number.is_finite()),
+            _ => false,
+        }
+    }
+
+    /// The integer range `register` is proved to hold before the unit instruction at `pc`: its current fact, narrowed by
+    /// the whole-program solve (`cell_before`) where both know it. `None` where neither proves an integer.
+    fn integer_range(&self, state: &State, pc: usize, register: Register) -> Option<IntRange> {
+        let fact = state.values[usize::from(register)].value.ty.int_range();
+        let solved = self.cell_before(pc, register).range();
+        fact.zip(solved).and_then(|(fact, solved)| fact.intersect(solved)).or(fact).or(solved)
     }
 
     /// Whether an operand is held as a binary64 or a wide integer, or is a constant that is no
