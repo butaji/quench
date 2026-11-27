@@ -27,9 +27,9 @@ const ARM64_ADD_OPCODE: u32 = 0x1100_0000;
 
 /// The relocation kinds `apply_relocation` fills, in the order an image file numbers them
 /// (`aot_image::file` writes a kind as its index here), so a new kind is appended.
-pub const PATCHABLE: [Reloc; 7] = [
+pub const PATCHABLE: [Reloc; 8] = [
     Reloc::Abs8, Reloc::X86PCRel4, Reloc::X86CallPCRel4, Reloc::X86CallPLTRel4, Reloc::Arm64Call,
-    Reloc::Arm64Page21, Reloc::Arm64PageOff12,
+    Reloc::Arm64Page21, Reloc::Arm64PageOff12, Reloc::Abs4,
 ];
 
 /// Whether `apply_relocation` fills relocations of `kind`.
@@ -137,6 +137,10 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
     match kind {
         Reloc::Abs8 => {
             let word = value.wrapping_add(addend as u64).to_le_bytes();
+            bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
+        }
+        Reloc::Abs4 => {
+            let word = u32::try_from(value.wrapping_add(addend as u64)).map_err(|_| "relocation is out of 32-bit range")?.to_le_bytes();
             bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
         }
         Reloc::X86PCRel4 | Reloc::X86CallPCRel4 | Reloc::X86CallPLTRel4 => {

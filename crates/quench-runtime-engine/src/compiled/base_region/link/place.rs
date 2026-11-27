@@ -19,7 +19,7 @@ const BRANCH_IMMEDIATE_MASK: u32 = (1 << BRANCH_IMMEDIATE_BITS) - 1;
 pub(crate) struct SymbolSite {
     pub(crate) offset: usize,
     pub(crate) symbol: Symbol,
-    /// The hole's class (`quench_bjit::ABS64`, or `BRANCH26` for an Apple AArch64 helper call,
+    /// The hole's class (`quench_bjit::ABS64`, `ABS32` for a 32-bit immediate, or `BRANCH26` for an Apple AArch64 helper call,
     /// which the loader patches as a branch rather than a word).
     pub(crate) class: u8,
 }
@@ -29,10 +29,11 @@ pub(crate) struct SymbolSite {
 fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Vec<SymbolSite>, String> {
     let named = |row: usize, hole: u32| symbols.get(row).into_iter().flatten().flatten().find(|(index, _)| u32::from(*index) == hole).map(|(_, symbol)| *symbol);
     quench_bjit::symbolic_fields(rows, |row, hole| named(row, hole).is_some()).into_iter().map(|field| -> Result<SymbolSite, String> {
-        // A value hole is an absolute word; Apple AArch64 names a helper call as a branch hole
-        // (`Reloc::Arm64Call`), which the loader patches in place.
-        if !matches!(field.class, quench_bjit::ABS64 | quench_bjit::BRANCH26) {
-            return Err("a symbolic hole is neither an absolute word nor a branch".to_string());
+        // A value hole is an absolute word, or a 32-bit immediate where the value is one (a guard's shape,
+        // `Symbol::GuardShape`); Apple AArch64 names a helper call as a branch hole (`Reloc::Arm64Call`),
+        // which the loader patches in place.
+        if !matches!(field.class, quench_bjit::ABS64 | quench_bjit::ABS32 | quench_bjit::BRANCH26) {
+            return Err("a symbolic hole is neither an absolute word, a 32-bit immediate nor a branch".to_string());
         }
         let symbol = named(field.row, field.hole).ok_or("a symbolic field has no symbol")?;
         Ok(SymbolSite { offset: head + field.offset, symbol, class: field.class })

@@ -563,6 +563,9 @@ impl Vm {
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
         // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
         let optimize = entry.is_none() && caller.optimize_due();
+        // A function the loaded image gave a body was paid for ahead of time: a plan after that body
+        // left (a fact it took weakened) respecializes at once, as the image's install did.
+        let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
         // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
@@ -572,14 +575,14 @@ impl Vm {
         // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
         let cycle = super::lane_facts::recursion_cycle(program, function, targets);
         let recursive = entry.is_none() && !cycle.is_empty();
-        if let Some(entries) = observed && !optimize && pick.is_none() {
+        if let Some(entries) = observed && !optimize && !ahead && pick.is_none() {
             let ir = estimated;
             pick = Some(pays_compile(tiers, program, function, (entries, recursive), ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
                 level = super::admission::compile_level(tiers, program, function, entries, ir, caller);
             }
         }
-        let looped_taken = looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
+        let looped_taken = ahead || looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
         // Phase A: the compile bound, the pick and the looped iterations, in that order (`admission::LanePlan`).
         let compiles_left = self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some()));
         let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,

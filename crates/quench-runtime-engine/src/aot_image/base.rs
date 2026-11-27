@@ -37,8 +37,9 @@ pub(crate) fn lower(
     let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id))?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
-        // Apple AArch64 names a helper call as a branch hole; every other site is a 64-bit word.
-        let kind = if site.class == quench_bjit::BRANCH26 { Reloc::Arm64Call } else { Reloc::Abs8 };
+        // Apple AArch64 names a helper call as a branch hole; a guard's shape is a 32-bit immediate;
+        // every other site is a 64-bit word.
+        let kind = match site.class { quench_bjit::BRANCH26 => Reloc::Arm64Call, quench_bjit::ABS32 => Reloc::Abs4, _ => Reloc::Abs8 };
         Relocation { offset: site.offset, kind, namespace, key, addend: 0 }
     }).collect();
     let mut pc_offsets = vec![NO_ENTRY; program.function(id as usize).instructions().count()];
