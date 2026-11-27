@@ -124,11 +124,11 @@ impl Vm {
         }
     }
 
-    /// A pure String method's general call: `call_primitive_native`, whose result is the
+    /// A pure String method's general call: its table entry (`call_native_entry`), whose result is the
     /// call's value. A string method reads its receiver as text, which it may make on demand.
     #[inline(never)]
     fn pure_string_general(&mut self, p: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-        let result = self.call_primitive_native(p, native, receiver, args).ok();
+        let result = self.call_native_entry(p, native, receiver, args).ok();
         self.heap.charge_materialized_text();
         result
     }
@@ -141,41 +141,7 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::StringRaw => self.string_raw(p, args),
-            // A narrow string holds no surrogate; a wide one is scanned in place for a lone one
-            // (`strings::lone_surrogate_row`), and a well-formed one is its own `toWellFormed`.
-            Native::StringIsWellFormed | Native::StringToWellFormed => {
-                let text = self.string_receiver_text(this)?;
-                let span = crate::staged::spans::concrete_span(text.units());
-                let mut stage = crate::staged::Concrete::new(std::ptr::null());
-                let lone = if span.form.wide() {
-                    crate::staged::strings::lone_surrogate_row(&mut stage, span.units, span.length, 0)
-                } else {
-                    span.length
-                };
-                if native == Native::StringIsWellFormed {
-                    return Ok(Value::boolean(lone == span.length));
-                }
-                if lone == span.length {
-                    return Ok(this);
-                }
-                let mut well_formed = Vec::<u16>::with_capacity(span.length as usize);
-                crate::staged::strings::to_well_formed_row(&mut stage, span.units, span.length, well_formed.as_mut_ptr() as u64);
-                // SAFETY: the row writes every one of the `length` units: each run is copied and
-                // each lone surrogate replaced.
-                unsafe { well_formed.set_len(span.length as usize) };
-                self.string_from_units(&well_formed)
-            }
             Native::BigIntValueOf => self.bigint_value_of(p, this),
-            Native::StringToString | Native::StringValueOf => {
-                if self.heap.is_string(this) {
-                    Ok(this)
-                } else {
-                    self.boxed_primitive_value(this).filter(|value| self.heap.is_string(*value)).ok_or_else(|| {
-                        self.type_error(p, "String method called on incompatible receiver".into())
-                    })
-                }
-            }
             Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {
                 self.type_error(
                     p,
@@ -195,138 +161,6 @@ impl Vm {
                     "false"
                 };
                 Ok(self.heap.alloc_string(text.into()))
-            }
-            Native::StringCharCodeAt => {
-                let index = self.argument_integer(p, args, 0, 0)?;
-                self.string_char_code_at_core(this, Value::number(index as f64))
-                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
-            }
-            Native::StringCharAt => {
-                let index = self.argument_integer(p, args, 0, 0)?;
-                self.string_char_at_core(this, Value::number(index as f64))
-                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
-            }
-            Native::StringSlice | Native::StringSubstring => {
-                let text = self.string_receiver_text(this)?;
-                let length = text.units().len() as i64;
-                let start = self.argument_integer(p, args, 0, 0)?;
-                let end = self.argument_integer(p, args, 1, length)?;
-                self.string_substring(&text, crate::staged::string_search::cut(native, length, start, end))
-            }
-            Native::StringSubstr => {
-                let text = self.string_receiver_text(this)?;
-                let length = text.units().len() as i64;
-                let start = self.argument_integer(p, args, 0, 0)?;
-                let count = self.argument_integer(p, args, 1, crate::staged::string_search::SUBSTR_REST)?;
-                self.string_substring(&text, crate::staged::string_search::cut(Native::StringSubstr, length, start, count))
-            }
-            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
-            | Native::StringEndsWith => self.string_search_general(p, native, this, args),
-            // `string_replace_native` tries `replace_string_pattern` first.
-            Native::StringReplace => self.string_replace_native(p, this, args, false),
-            // `string_replace_native` tries `replace_string_pattern` first.
-            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
-            Native::StringSplit => self.string_split_native(p, this, args),
-            Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let from_start = native != Native::StringTrimEnd;
-                let from_end = native != Native::StringTrimStart;
-                let range = match receiver.units() {
-                    super::wtf16::Units::Ascii(units) | super::wtf16::Units::Latin1(units) => {
-                        string_text::trim_range(units, from_start, from_end)
-                    }
-                    super::wtf16::Units::Wide(units) => string_text::trim_range(units, from_start, from_end),
-                };
-                self.string_substring(&receiver, range)
-            }
-            Native::StringMatch | Native::StringSearch => {
-                self.string_match_or_search_native(p, native, this, args)
-            }
-            Native::StringMatchAll => self.string_match_all_native(p, this, args),
-            Native::StringAt
-            | Native::StringCodePointAt
-            | Native::StringToUpperCase
-            | Native::StringToLowerCase
-            | Native::StringToLocaleUpperCase
-            | Native::StringToLocaleLowerCase
-            | Native::StringLocaleCompare
-            | Native::StringConcat
-            | Native::StringNormalize => self.string_basic_native(p, native, this, args),
-            Native::StringRepeat => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let count = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if count.is_infinite() || count.trunc() < 0.0 {
-                    let count = self.to_string(p, Value::number(count))?;
-                    return Err(self.range_error(p, format!("Invalid count value: {count}")));
-                }
-                let count = if count.is_nan() {
-                    0
-                } else {
-                    count.trunc() as usize
-                };
-                if receiver.len() == 0 {
-                    return Ok(if self.heap.is_string(this) {
-                        this
-                    } else {
-                        self.heap.alloc_string(receiver)
-                    });
-                }
-                let Some(size) = receiver.len().checked_mul(count) else {
-                    return Err(self.range_error(p, "Invalid string length".into()));
-                };
-                if size > super::wtf16::MAX_STRING_UNITS {
-                    return Err(self.range_error(p, "Invalid string length".into()));
-                }
-                if count == 1 && self.heap.is_string(this) {
-                    return Ok(this);
-                }
-                // Short ASCII text, as a pad or an indent: its bytes written once, in place
-                // of the rope doubling a long result takes.
-                if size <= REPEAT_COPY_MAX_UNITS
-                    && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
-                {
-                    let mut text = smallvec::SmallVec::<[u8; REPEAT_COPY_MAX_UNITS]>::from_elem(0, size);
-                    string_text::repeat_into(&mut text, bytes);
-                    return Ok(self.heap.alloc_ascii_run(&text));
-                }
-                Ok(self.heap.alloc_string(receiver.repeat(count)))
-            }
-            Native::StringPadStart | Native::StringPadEnd => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let target =
-                    self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                // A string that needs no padding is the receiver itself.
-                if !target.is_finite() || target <= 0.0 {
-                    return Ok(this);
-                }
-                let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
-                let Some(length) = string_text::pad_length(receiver.len(), target) else {
-                    return Ok(this);
-                };
-                let fill = match args.get(1).copied() {
-                    None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_ascii_bytes(string_text::PAD_FILL),
-                    Some(value) => self.coerce_js_string(p, value)?,
-                };
-                let fill_units = fill.units();
-                if fill_units.is_empty() {
-                    return Ok(this);
-                }
-                let at_end = native == Native::StringPadEnd;
-                // ASCII text and fill: the bytes written once, in order, into the result.
-                if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(filler)) = (receiver.units(), fill_units) {
-                    let mut bytes = smallvec::SmallVec::<[u8; 32]>::from_elem(0, length);
-                    string_text::pad_into(&mut bytes, text, filler, at_end);
-                    return Ok(self.heap.alloc_ascii_run(&bytes));
-                }
-                let mut units = vec![0u16; length];
-                string_text::pad_into(&mut units, &receiver.units().to_vec(), &fill_units.to_vec(), at_end);
-                self.string_from_units(&units)
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
                 let value =
@@ -353,30 +187,6 @@ impl Vm {
                     super::string_extra::decode_uri(&value, native == Native::DecodeUriComponent)
                         .map_err(|message| self.uri_error(p, message.into()))?;
                 Ok(self.heap.alloc_string(decoded))
-            }
-            Native::StringFromCharCode => {
-                if let Some(text) = self.from_char_code_numbers(args) {
-                    return Ok(text);
-                }
-                let mut units = Vec::with_capacity(args.len());
-                for value in args {
-                    units.push(crate::staged::strings::from_char_code_unit(self.to_number(p, *value)?));
-                }
-                self.string_from_units(&units)
-            }
-            Native::StringFromCodePoint => {
-                let mut units = Vec::with_capacity(args.len());
-                for value in args {
-                    let number = self.to_number(p, *value)?;
-                    if !number.is_finite()
-                        || number.fract() != 0.0
-                        || !(0.0..=crate::unicode::UNICODE_MAX_CODE_POINT as f64).contains(&number)
-                    {
-                        return Err(self.range_error(p, "invalid code point".into()));
-                    }
-                    crate::staged::strings::push_code_point_units(&mut units, number as u32);
-                }
-                self.string_from_units(&units)
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -524,3 +334,258 @@ impl Vm {
     }
 }
 
+fn native_string_raw(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_raw(p, args)
+}
+
+// A narrow string holds no surrogate; a wide one is scanned in place for a lone one
+// (`strings::lone_surrogate_row`), and a well-formed one is its own `toWellFormed`.
+fn native_string_is_well_formed(vm: &mut Vm, _p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let text = vm.string_receiver_text(this)?;
+    let span = crate::staged::spans::concrete_span(text.units());
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let lone = if span.form.wide() {
+        crate::staged::strings::lone_surrogate_row(&mut stage, span.units, span.length, 0)
+    } else {
+        span.length
+    };
+    if native == Native::StringIsWellFormed {
+        return Ok(Value::boolean(lone == span.length));
+    }
+    if lone == span.length {
+        return Ok(this);
+    }
+    let mut well_formed = Vec::<u16>::with_capacity(span.length as usize);
+    crate::staged::strings::to_well_formed_row(&mut stage, span.units, span.length, well_formed.as_mut_ptr() as u64);
+    // SAFETY: the row writes every one of the `length` units: each run is copied and
+    // each lone surrogate replaced.
+    unsafe { well_formed.set_len(span.length as usize) };
+    vm.string_from_units(&well_formed)
+}
+
+fn native_string_to_string(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    if vm.heap.is_string(this) {
+        Ok(this)
+    } else {
+        vm.boxed_primitive_value(this).filter(|value| vm.heap.is_string(*value)).ok_or_else(|| {
+            vm.type_error(p, "String method called on incompatible receiver".into())
+        })
+    }
+}
+
+fn native_string_char_code_at(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let index = vm.argument_integer(p, args, 0, 0)?;
+    vm.string_char_code_at_core(this, Value::number(index as f64))
+        .ok_or_else(|| JsError("string method receiver is not a string".into()))
+}
+
+fn native_string_char_at(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let index = vm.argument_integer(p, args, 0, 0)?;
+    vm.string_char_at_core(this, Value::number(index as f64))
+        .ok_or_else(|| JsError("string method receiver is not a string".into()))
+}
+
+fn native_string_slice(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let text = vm.string_receiver_text(this)?;
+    let length = text.units().len() as i64;
+    let start = vm.argument_integer(p, args, 0, 0)?;
+    let end = vm.argument_integer(p, args, 1, length)?;
+    vm.string_substring(&text, crate::staged::string_search::cut(native, length, start, end))
+}
+
+fn native_string_substr(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let text = vm.string_receiver_text(this)?;
+    let length = text.units().len() as i64;
+    let start = vm.argument_integer(p, args, 0, 0)?;
+    let count = vm.argument_integer(p, args, 1, crate::staged::string_search::SUBSTR_REST)?;
+    vm.string_substring(&text, crate::staged::string_search::cut(Native::StringSubstr, length, start, count))
+}
+
+fn native_string_search_general(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_search_general(p, native, this, args)
+}
+
+fn native_string_replace(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_replace_native(p, this, args, false)
+}
+
+fn native_string_replace_all(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_replace_native(p, this, args, true)
+}
+
+fn native_string_split(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_split_native(p, this, args)
+}
+
+fn native_string_trim(vm: &mut Vm, _p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let Some(receiver) = vm.heap.string(this).cloned() else {
+        return Err(JsError("string method receiver is not a string".into()));
+    };
+    let from_start = native != Native::StringTrimEnd;
+    let from_end = native != Native::StringTrimStart;
+    let range = match receiver.units() {
+        super::wtf16::Units::Ascii(units) | super::wtf16::Units::Latin1(units) => {
+            string_text::trim_range(units, from_start, from_end)
+        }
+        super::wtf16::Units::Wide(units) => string_text::trim_range(units, from_start, from_end),
+    };
+    vm.string_substring(&receiver, range)
+}
+
+fn native_string_match_or_search(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_match_or_search_native(p, native, this, args)
+}
+
+fn native_string_match_all(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_match_all_native(p, this, args)
+}
+
+fn native_string_basic(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_basic_native(p, native, this, args)
+}
+
+fn native_string_repeat(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let Some(receiver) = vm.heap.string(this).cloned() else {
+        return Err(JsError("string method receiver is not a string".into()));
+    };
+    let count = vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    if count.is_infinite() || count.trunc() < 0.0 {
+        let count = vm.to_string(p, Value::number(count))?;
+        return Err(vm.range_error(p, format!("Invalid count value: {count}")));
+    }
+    let count = if count.is_nan() {
+        0
+    } else {
+        count.trunc() as usize
+    };
+    if receiver.len() == 0 {
+        return Ok(if vm.heap.is_string(this) {
+            this
+        } else {
+            vm.heap.alloc_string(receiver)
+        });
+    }
+    let Some(size) = receiver.len().checked_mul(count) else {
+        return Err(vm.range_error(p, "Invalid string length".into()));
+    };
+    if size > super::wtf16::MAX_STRING_UNITS {
+        return Err(vm.range_error(p, "Invalid string length".into()));
+    }
+    if count == 1 && vm.heap.is_string(this) {
+        return Ok(this);
+    }
+    // Short ASCII text, as a pad or an indent: its bytes written once, in place
+    // of the rope doubling a long result takes.
+    if size <= REPEAT_COPY_MAX_UNITS
+        && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
+    {
+        let mut text = smallvec::SmallVec::<[u8; REPEAT_COPY_MAX_UNITS]>::from_elem(0, size);
+        string_text::repeat_into(&mut text, bytes);
+        return Ok(vm.heap.alloc_ascii_run(&text));
+    }
+    Ok(vm.heap.alloc_string(receiver.repeat(count)))
+}
+
+fn native_string_pad(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let Some(receiver) = vm.heap.string(this).cloned() else {
+        return Err(JsError("string method receiver is not a string".into()));
+    };
+    let target =
+        vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    // A string that needs no padding is the receiver itself.
+    if !target.is_finite() || target <= 0.0 {
+        return Ok(this);
+    }
+    let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
+    let Some(length) = string_text::pad_length(receiver.len(), target) else {
+        return Ok(this);
+    };
+    let fill = match args.get(1).copied() {
+        None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_ascii_bytes(string_text::PAD_FILL),
+        Some(value) => vm.coerce_js_string(p, value)?,
+    };
+    let fill_units = fill.units();
+    if fill_units.is_empty() {
+        return Ok(this);
+    }
+    let at_end = native == Native::StringPadEnd;
+    // ASCII text and fill: the bytes written once, in order, into the result.
+    if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(filler)) = (receiver.units(), fill_units) {
+        let mut bytes = smallvec::SmallVec::<[u8; 32]>::from_elem(0, length);
+        string_text::pad_into(&mut bytes, text, filler, at_end);
+        return Ok(vm.heap.alloc_ascii_run(&bytes));
+    }
+    let mut units = vec![0u16; length];
+    string_text::pad_into(&mut units, &receiver.units().to_vec(), &fill_units.to_vec(), at_end);
+    vm.string_from_units(&units)
+}
+
+fn native_string_from_char_code(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    if let Some(text) = vm.from_char_code_numbers(args) {
+        return Ok(text);
+    }
+    let mut units = Vec::with_capacity(args.len());
+    for value in args {
+        units.push(crate::staged::strings::from_char_code_unit(vm.to_number(p, *value)?));
+    }
+    vm.string_from_units(&units)
+}
+
+fn native_string_from_code_point(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let mut units = Vec::with_capacity(args.len());
+    for value in args {
+        let number = vm.to_number(p, *value)?;
+        if !number.is_finite()
+            || number.fract() != 0.0
+            || !(0.0..=crate::unicode::UNICODE_MAX_CODE_POINT as f64).contains(&number)
+        {
+            return Err(vm.range_error(p, "invalid code point".into()));
+        }
+        crate::staged::strings::push_code_point_units(&mut units, number as u32);
+    }
+    vm.string_from_units(&units)
+}
+
+fn native_string_values(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.string_iterator_native(p, this)
+}
+
+fn native_string_constructor(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let argument = vm.string_constructor_argument(args);
+    let text = if let Some(description) = vm.heap.symbol_data(argument) {
+        super::wtf16::JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
+    } else {
+        vm.coerce_js_string(p, argument)?
+    };
+    Ok(vm.heap.alloc_string(text))
+}
+
+/// The entry of each String native `call_primitive_native` and `call_native_table` held, by its
+/// own fn. The HTML methods are `string::html_entry`'s; the other natives are no String native.
+pub(super) fn string_entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::StringRaw => native_string_raw,
+        Native::StringIsWellFormed | Native::StringToWellFormed => native_string_is_well_formed,
+        Native::StringToString | Native::StringValueOf => native_string_to_string,
+        Native::StringCharCodeAt => native_string_char_code_at,
+        Native::StringCharAt => native_string_char_at,
+        Native::StringSlice | Native::StringSubstring => native_string_slice,
+        Native::StringSubstr => native_string_substr,
+        Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => native_string_search_general,
+        Native::StringReplace => native_string_replace,
+        Native::StringReplaceAll => native_string_replace_all,
+        Native::StringSplit => native_string_split,
+        Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => native_string_trim,
+        Native::StringMatch | Native::StringSearch => native_string_match_or_search,
+        Native::StringMatchAll => native_string_match_all,
+        Native::StringAt | Native::StringCodePointAt | Native::StringToUpperCase | Native::StringToLowerCase | Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase | Native::StringLocaleCompare | Native::StringConcat | Native::StringNormalize => native_string_basic,
+        Native::StringRepeat => native_string_repeat,
+        Native::StringPadStart | Native::StringPadEnd => native_string_pad,
+        Native::StringFromCharCode => native_string_from_char_code,
+        Native::StringFromCodePoint => native_string_from_code_point,
+        Native::StringValues => native_string_values,
+        Native::String => native_string_constructor,
+        _ => return super::string::html_entry(native),
+    };
+    Some(entry)
+}

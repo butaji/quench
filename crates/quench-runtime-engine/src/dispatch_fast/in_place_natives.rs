@@ -199,7 +199,7 @@ const fn primitive_leaf(native: Native) -> bool {
         | Native::GlobalEscape | Native::GlobalUnescape)
 }
 
-/// `String.prototype` methods of `Vm::call_primitive_native` that, for a string receiver and
+/// `String.prototype` methods of `Vm::call_native_entry` that, for a string receiver and
 /// arguments that are not objects, run no guest code: `replace` and `replaceAll` look
 /// `Symbol.replace` up only on an object pattern (ES2025), and a pattern that is not an object
 /// makes no RegExp.
@@ -221,7 +221,7 @@ fn primitive_leaf_value(vm: &mut Vm, code: &ResidualProgram, native: Native, rec
     {
         return None;
     }
-    let result = vm.call_primitive_native(code, native, receiver, args).ok();
+    let result = vm.call_native_entry(code, native, receiver, args).ok();
     // A string method reads its receiver as text, which it may make on demand.
     vm.charge_materialized_text();
     result

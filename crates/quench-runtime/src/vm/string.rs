@@ -170,9 +170,30 @@ const STRING_RECEIVERS: [StringReceiver; Native::COUNT as usize] = {
     table
 };
 
-/// Whether `native` is one of the HTML string methods (`STRING_HTML_METHODS`).
-pub(super) fn is_string_html_method(native: Native) -> bool {
-    string_html_method(native).is_some()
+/// The entry of each HTML string method (`STRING_HTML_METHODS`), called from
+/// `primitives::string_entry`.
+pub(super) fn html_entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::StringAnchor
+        | Native::StringBig
+        | Native::StringBlink
+        | Native::StringBold
+        | Native::StringFixed
+        | Native::StringFontcolor
+        | Native::StringFontsize
+        | Native::StringItalics
+        | Native::StringLink
+        | Native::StringSmall
+        | Native::StringStrike
+        | Native::StringSub
+        | Native::StringSup => string_html_native,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+fn string_html_native(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_html_method(p, native, this, args).expect("an HTML method's family is its own")
 }
 
 fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
