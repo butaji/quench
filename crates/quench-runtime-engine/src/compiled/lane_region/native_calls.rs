@@ -39,7 +39,14 @@ pub(crate) enum Inline {
     /// Any other native whose in-place body a loop may call and go on (`dispatch_fast::in_place_in_loop`):
     /// called by the scalar natives' helper with the call's receiver (`Lowering::scalar_native_call`).
     InPlace,
+    /// A collection lookup (`LOOKUPS`): the lookup alone on the receiver and key, by the native its callee is
+    /// (`lane_allocations::collection_lookup_in_lane`).
+    Lookup,
 }
+
+/// The collection lookups a call runs as a lookup alone (`Inline::Lookup`): each reads its receiver's entries
+/// and allocates nothing (`Vm::pure_collection_lookup`).
+pub(crate) const LOOKUPS: [Native; 6] = [Native::MapGet, Native::MapHas, Native::SetHas, Native::WeakMapGet, Native::WeakMapHas, Native::WeakSetHas];
 
 /// The argument count of a scalar native's binary form, and of the scalar call that takes two.
 const BINARY_ARGUMENTS: u16 = 2;
@@ -55,12 +62,13 @@ impl Inline {
             .or_else(|| Builtin::of(native).map(Self::Builtin))
             .or_else(|| scalar_native(native).then_some(Self::Scalar))
             .or_else(|| DataViewCall::of(native).map(Self::DataView))
+            .or_else(|| LOOKUPS.contains(&native).then_some(Self::Lookup))
             .or_else(|| crate::dispatch_fast::in_place_in_loop(native).then_some(Self::InPlace))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Scalar | Self::InPlace => BINARY_ARGUMENTS, Self::Math(call) => call.arity(), Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
+        match self { Self::Lookup => 1, Self::Scalar | Self::InPlace => BINARY_ARGUMENTS, Self::Math(call) => call.arity(), Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
     }
 
     /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
@@ -211,15 +219,15 @@ impl Lowering<'_, '_> {
         if !self.holds_holders() { return false; }
         // An in-place native reads its receiver: a register's value, or none for a plain call.
         let receiver = match quench_runtime::staged::Invocation::of(instruction, quench_runtime::staged::DecodeContext::EMPTY).map(|call| call.receiver) {
-            _ if !matches!(inline, Inline::InPlace) => None,
+            _ if !matches!(inline, Inline::InPlace | Inline::Lookup) => None,
             Some(quench_runtime::staged::Receiver::Register(register)) => Some(register),
             Some(quench_runtime::staged::Receiver::Undefined) => None,
             _ => return false,
         };
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let held = self.tagged(state, instruction.register_b());
-        // An in-place native's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
-        if !matches!(inline, Inline::InPlace) {
+        // An in-place native's or lookup's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
+        if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
             let same = self.is_identity(held, callee);
             emit_js_guard(&mut self.builder, same, exit);
@@ -228,6 +236,7 @@ impl Lowering<'_, '_> {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
             Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, None, exit),
             Inline::InPlace => self.scalar_native_call(state, pc, instruction, held, Some(receiver), exit),
+            Inline::Lookup => self.collection_lookup(state, instruction, held, receiver, exit),
             Inline::Math(call) => self.math_call(state, instruction, call, exit),
             Inline::DataView(call) => self.data_view_call(state, instruction, call, exit),
         }
@@ -264,6 +273,22 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, done, exit);
         // A Number or other primitive argument may allocate its text, which a body's proofs of object layouts do not survive.
         self.allocated(state);
+        self.set_tagged(state, instruction.result_register(), value);
+    }
+
+    /// The collection lookup (`Inline::Lookup`) of the call's receiver and key by the callee `held`
+    /// (`LaneHelper::CollectionLookup`), which leaves at `exit`, before it changes anything, where the callee is no
+    /// collection lookup or the receiver no collection of its kind.
+    fn collection_lookup(&mut self, state: &mut State, instruction: WideInstruction, held: ir::Value, receiver: Option<Register>, exit: ir::Block) {
+        let window = quench_runtime::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+        let this = match receiver {
+            Some(register) => self.tagged(state, register),
+            None => self.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64),
+        };
+        let key = self.tagged(state, window);
+        let value = self.helper_call(LaneHelper::CollectionLookup, &[held, this, key]);
+        let answered = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, answered, exit);
         self.set_tagged(state, instruction.result_register(), value);
     }
 

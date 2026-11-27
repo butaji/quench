@@ -105,6 +105,13 @@ pub fn staged_rechecks(text: &str) -> usize {
         .map(|line| line.matches(".guard(").count() + line.matches("choose_leaving(").count()).sum()
 }
 
+/// Places the u-jit lowers by hand (`object_slots::emit(` stages and `emit_js_guard(` tests it builds itself) instead
+/// of running a staged row: each is a second lowering of a semantics the staged rows define once (TOD-2417).
+pub fn hand_lowerings(text: &str) -> usize {
+    text.lines().filter(|line| !line.trim_start().starts_with("//"))
+        .map(|line| line.matches("object_slots::emit(").count() + line.matches("emit_js_guard(").count()).sum()
+}
+
 pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }

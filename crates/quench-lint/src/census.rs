@@ -67,6 +67,15 @@ const METRICS: &[Metric] = &[
         sources: &[Source::Tree("crates/quench-runtime/src/staged", &[])],
         extract: Extract::Text(extract::staged_rechecks),
     },
+    // TOD-2417 (one handler definition for every tier): each place the u-jit composes Emit-stage words itself, instead
+    // of running a staged row, is a second home of semantics the tiers can disagree on. Target 0.
+    Metric {
+        name: "hand_lowerings",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime-engine/src/compiled/lane_region.rs"),
+            Source::Tree("crates/quench-runtime-engine/src/compiled/lane_region", &[])],
+        extract: Extract::Text(extract::hand_lowerings),
+    },
     Metric {
         name: "opcodes",
         direction: Direction::Informational,
