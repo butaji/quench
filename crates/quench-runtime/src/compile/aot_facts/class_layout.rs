@@ -309,13 +309,13 @@ pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], censu
 /// fields (`AotFacts::class_layout`), then every field a store puts on an instance (`Shape::Field` of an owner that may hold
 /// the class, but a this-store an accessor claims, which is a setter call). It is None where the program may enumerate the
 /// instances (`Readers::reflects_class`: a for-in, a spread, `Object.keys` and the like reach them), where a computed-key
-/// store or a delete may reach them (`Change::Any`, `member_wild`), where a builtin defines properties on them
+/// store or a delete may reach them (`Change::Any`, `wild`), where a builtin defines properties on them
 /// (`Change::Define`), where a `prototype` or `__proto__` may be replaced, or where the class is derived (its prototype chain
 /// runs through a parent's stores, `binds_this`). Any store that may hit a prototype object makes its name a default for the
 /// class's instances (`FieldDefault::Prototype`), which is a guess the holder watch checks; a name `Object.prototype` defines
 /// has no such holder, so it has no union.
 fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, facts: &AotFacts, readers: &Readers, class: u32) -> Option<UnionLayout> {
-    if census.member_wild() || readers.reflects_class(class) || program.with_record(census.classes.body(class) as usize, binds_this) {
+    if census.wild_reaches_instances(class) || readers.reflects_class(class) || program.with_record(census.classes.body(class) as usize, binds_this) {
         return None;
     }
     let mut fields: Vec<u32> = facts.class_layout(class).map_or_else(Vec::new, <[u32]>::to_vec);

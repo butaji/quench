@@ -10,7 +10,7 @@ use self::fields::{base_fact, member_stores, member_type, named_word, prototype_
 use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Site, Sites, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Site, Sites, View};
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
@@ -70,8 +70,10 @@ pub(super) struct Events {
     /// Whether the instruction keys an access into a value that may be the global object (`keyed_global`).
     pub(super) global_keyed: bool,
     pub(super) wild_owner: bool,
-    /// Whether a store through a key the analysis cannot name may write a named property.
-    pub(super) wild_member: bool,
+    /// The holders of the objects a store under a name the analysis cannot list writes into (`FunctionFlow::wild`).
+    pub(super) wild: Holders,
+    /// The holders of each named store's object, by name (`FunctionFlow::member_bases`).
+    pub(super) member_bases: Vec<(u32, Holders)>,
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
     pub(super) links: Vec<(ElementClass, ElementClass)>,

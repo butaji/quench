@@ -11,7 +11,7 @@ use super::shape::{self, Shape};
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::staged::effects::{Affine, Indices};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Representation, Type, View};
 
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).
@@ -49,7 +49,8 @@ pub(super) struct Record {
     global_source: bool,
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
-    wild_member: bool,
+    wild: Holders,
+    member_bases: Vec<(u32, Holders)>,
     /// Whether a builtin stores an index into an object that may be a builtin's prototype (`FunctionFlow::prototype_writes`).
     prototype_writes: bool,
     /// Per register, the join of the facts it is defined with.
@@ -126,7 +127,8 @@ impl Record {
             global_source: false,
             plain_calls: Vec::new(),
             reads_this: false,
-            wild_member: false,
+            wild: Holders::NONE,
+            member_bases: Vec::new(),
             prototype_writes: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
@@ -298,7 +300,8 @@ impl Record {
         self.computed_global |= events.computed_store;
         self.global_keyed |= events.global_keyed;
         self.global_source |= events.global_source;
-        self.wild_member |= events.wild_member;
+        self.wild = self.wild.join(events.wild);
+        self.member_bases.extend(events.member_bases);
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
@@ -408,7 +411,8 @@ impl Record {
             global_source: self.global_source,
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,
-            member_wild: self.wild_member,
+            wild: self.wild,
+            member_bases: self.member_bases,
             prototype_writes: self.prototype_writes,
             wild_elements: self.wild_elements,
             numbers,

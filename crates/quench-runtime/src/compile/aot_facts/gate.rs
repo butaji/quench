@@ -234,7 +234,7 @@ pub(super) fn names_property_definer(program: &ResidualProgram) -> bool {
 
 /// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
 /// converts to none (`lengths::transfer::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
-/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::member_wild`),
+/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::wild`),
 /// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
 pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
     let names = |name: &str| program.atoms.iter().any(|atom| {
@@ -245,7 +245,7 @@ pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, fl
     world == World::Closed
         && !INDEX_ACCESSOR_NAMES.iter().any(|name| names(name))
         && flows.iter().all(|flow| {
-            !flow.member_wild
+            flow.wild.is_none()
                 && flow.accessors.iter().all(|accessor| !index_name(program, accessor.atom))
                 && flow.calls.iter().all(|call| !may_define_index(program, call, aliased))
         })
@@ -271,7 +271,7 @@ fn writes_named(key: Key, atom: u32) -> bool {
 /// Whether property `apply` of every function is `Function.prototype.apply`, the builtin, so `f.apply(this, arguments)` reaches
 /// the builtin for every `f`. Only the closed world proves it: code added at run time may store `apply`. Given a closed world,
 /// it holds when no flow stores `apply` under a name, no store through a computed key may write a named property
-/// (`FunctionFlow::member_wild`), and the program names no builtin that writes a property the flows do not record
+/// (`FunctionFlow::wild`), and the program names no builtin that writes a property the flows do not record
 /// (`APPLY_WRITE_NAMES`). A program that never names `apply` has no such call, so it holds.
 pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
     let names = |name: &str| program.atoms.iter().any(|atom| {
@@ -285,5 +285,5 @@ pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &
     let apply = apply as u32;
     world == World::Closed
         && !APPLY_WRITE_NAMES.iter().any(|name| names(name))
-        && flows.iter().all(|flow| !flow.member_wild && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
+        && flows.iter().all(|flow| flow.wild.is_none() && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
 }
