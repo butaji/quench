@@ -48,10 +48,17 @@ view_handler! {
                 sibling!(crate::dispatch_fast::row_set_object_field_miss, r, ip, Carried::script_in(script, view))
             }
             if const { FLAG == FLAG_UNREAD } {
-                // A tracked runtime's own hint store is the record's first choice from now on.
+                // A tracked runtime's own hint store is the record's first choice from now on, at the row of
+                // the type its slot holds (`tracked_store_row`).
                 if unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                    requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
+                    let hint = i.field_hint();
+                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
                 }
+            }
+            // A held-type store missed (its slot's type widened, or another receiver): the tracked row stores it
+            // with the VM's stores, and installs the row of the type the slot holds after (`tracked_store_row`).
+            if const { crate::dispatch_fast::store_held_site(FLAG) } {
+                sibling!(generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE), r, ip, Carried::script_in(script, view))
             }
             // A store instance missed: the plain row stores it, with the VM's stores the instance does not
             // carry (`frame.stores`), and re-chooses the instance from the hint it leaves (`requicken_store_form`).
@@ -190,14 +197,15 @@ view_handler! {
             // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
             // a plain own-field store row keeps the record's `this` and no call on its path.
             if this_store {
-                frame.this = if const { FLAG == FLAG_UNREAD || crate::dispatch_fast::store_formed_site(FLAG) } { r.this() }
+                frame.this = if const { FLAG == FLAG_UNREAD || crate::dispatch_fast::store_formed_site(FLAG) || crate::dispatch_fast::store_held_site(FLAG) } { r.this() }
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
             // its siblings), at every plain store row.
             // A store instance (`store_formed_site`) carries none: what its plan refuses, the plain row
             // completes (`store_miss!`), so the instance makes no call and keeps its values in registers.
-            if const { !crate::dispatch_fast::store_formed_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
+            // A held-type store (`store_held_site`) carries none either: its miss is the tracked row's.
+            if const { !crate::dispatch_fast::store_formed_site(FLAG) && !crate::dispatch_fast::store_held_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
             frame.plan = Some(if const { FLAG == crate::dispatch_fast::ADD_SITE } {
                 RecordPlan::own_add()
             } else if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
@@ -205,6 +213,9 @@ view_handler! {
             } else if const { FLAG == crate::dispatch_fast::POLY_SITE } {
                 let hint = i.field_hint();
                 RecordPlan::own_polymorphic(hint.receiver, hint.slot, records)
+            } else if const { crate::dispatch_fast::store_held_site(FLAG) } {
+                let hint = i.field_hint();
+                RecordPlan::own_held(hint.receiver, hint.slot, records, const { crate::dispatch_fast::held_of(FLAG) })
             } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE || FLAG == crate::dispatch_fast::NARROW_SITE } {
                 let hint = i.field_hint();
                 RecordPlan::own_hinted(hint.receiver, hint.slot, records, const { FLAG == crate::dispatch_fast::NARROW_SITE })
@@ -413,7 +424,7 @@ view_handler! {
                     // plain row (its layout store observes no representation): the record takes the tracked
                     // site's hinted store, as a refused one does (`store_miss!`), and stops asking the site.
                     if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                        requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
+                        requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
                     }
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
@@ -434,6 +445,12 @@ view_handler! {
                 }
                 if const { crate::dispatch_fast::store_formed_site(FLAG) } && frame.stored.is_some() {
                     requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
+                }
+                // The tracked row's store leaves the slot's type joined: the record takes the row of that type
+                // (`tracked_store_row`), which stores the next value of it in place.
+                if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
+                    let hint = frame.stored.unwrap_or_else(|| i.field_hint());
+                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
                 }
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }

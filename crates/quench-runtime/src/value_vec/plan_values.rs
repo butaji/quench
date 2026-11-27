@@ -86,6 +86,13 @@ impl ValueArena {
         Some(if self.float { held } else { SlotType::Tagged })
     }
 
+    /// The base addresses of the owner tables a tracked store reads: `shape_chains`, `chain_owners`
+    /// and `owner_types`, the three `Table` bases of `Stage::table`.
+    #[inline(always)]
+    pub(crate) fn owner_table_bases(&self) -> [u64; 3] {
+        [self.shape_chains.as_ptr() as u64, self.chain_owners.as_ptr() as u64, self.owner_types.as_ptr() as u64]
+    }
+
     /// Joins `value`'s class into the representation `owner` names (`slot_owner`, valid while
     /// the shapes are); whether it widened.
     #[inline(always)] pub(crate) fn join_slot_owner(&mut self, owner: u32, value: Value) -> bool {

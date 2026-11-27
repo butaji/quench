@@ -6,7 +6,7 @@
 use super::narrow::packed_form;
 use super::object::{arena_run, flat_run, inline_storage, recorded_shape, storage_form, Form, HALF_BYTES};
 use super::region::Region;
-use super::Stage;
+use super::{Stage, Table};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::{Representation, Type};
 
@@ -117,6 +117,20 @@ pub(crate) fn gated_payload<S: Stage>(stage: &mut S, record: S::Word, record_id:
     Some(stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32))
 }
 
+/// The payload of the arena-form record `record` (`record_id`) for a tracked store of `value` at `slot`
+/// through the hint `id`: the layout compare, then the slot owner's held type admitting `value`
+/// (`held_holds`, which reads the owner tables of the hint's shape, so it runs only once the record
+/// proved it), then the barrier's log alone (`held_gate_open`): a store the slot's type already holds
+/// observes nothing, which the full gate (`gate_open`) refuses wherever slots are tracked.
+#[inline(always)]
+pub(crate) fn held_payload<S: Stage, const HELD: u8>(stage: &mut S, record: S::Word, record_id: S::Word, (id, slot): (u32, u16),
+    value: S::Word, miss: S::Miss) -> Option<S::Word> {
+    admitted_word(stage, record, id, true, miss)?;
+    held_holds::<S, HELD>(stage, super::ic::layout_shape(id), slot, value, miss)?;
+    held_gate_open(stage, record_id, (value, Type::ANY), miss)?;
+    Some(stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32))
+}
+
 #[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Stores `value`, a word in `rep`'s encoding, at `slot` of the flat run the plain `payload` word
 /// addresses; the slot is a per-site operand, so its byte offset is a hole.
@@ -197,6 +211,60 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
         Some(stage.constant(0))
     })?;
     Some(())
+}
+
+/// The slot types a tracked store row is installed for (`SlotType`'s discriminants, which
+/// `slot_type.rs` asserts): the held type the row compares the slot's owner with, and so the one
+/// class test it makes of the value. `HELD_NONE` names no row: the store is the VM's.
+pub const HELD_NONE: u8 = 0;
+pub const HELD_INT32: u8 = 1;
+pub const HELD_OBJECT: u8 = 6;
+pub const HELD_OBJECT_OR_NULL: u8 = 7;
+pub const HELD_TAGGED: u8 = 12;
+
+/// Whether a tracked store through the hint `id` (`StorePlan::Hinted`) is an arena-form store a row
+/// makes in place: not narrow, the layout's form is the arena's, and it carries no constant mark (a
+/// marked object's store retires the code that holds its values, the VM's store). A record with no
+/// hint yet (`NO_FIELD_RECEIVER`, past the layout table) names no layout: its store is the VM's.
+#[inline(always)]
+pub(crate) fn hinted_arena(id: u32, narrow: bool) -> bool {
+    !narrow && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY && super::ic::layout_form(id) == 0
+        && crate::heap::layouts::auxiliary(id) & crate::value_vec::CONSTANT_FORM == 0
+}
+
+/// Continues where slot `slot` of the exact shape `shape` still holds the type `HELD` the row was
+/// installed for (the slot owner tables: the shape's chain, the slot's owner, the owner's type) and
+/// `value` is of that type, so the store widens nothing and observes nothing: one compare of the
+/// owner's type and the one class test `HELD` names (none for a tagged slot). A slot whose type
+/// widened since misses, and the plain row stores and installs the row of its type now. The edge's
+/// fact checked where the data changes: nothing is joined on a store that holds its slot's class.
+///
+/// The tables are read only by a stage that stores (`Stage::SLOT_TABLES`), which holds its heap.
+#[inline(always)]
+pub(crate) fn held_holds<S: Stage, const HELD: u8>(stage: &mut S, shape: u32, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+    let at = Region::HeapMeta.mutable();
+    let chains = stage.table(Table::SlotChains);
+    let chain_at = stage.add_imm(chains, u64::from(shape) * 4);
+    let chain = stage.load_u32(at, chain_at, 0);
+    let owners = stage.table(Table::ChainOwners);
+    let slot_index = stage.add_imm(chain, u64::from(slot));
+    let owner_offset = stage.mul_imm(slot_index, 4u64);
+    let owner_at = stage.add(owners, owner_offset);
+    let owner = stage.load_u32(at, owner_at, 0);
+    let types = stage.table(Table::OwnerTypes);
+    let held_at = stage.add(types, owner);
+    let held = stage.load_u8(at, held_at, 0);
+    let same = stage.eq_imm(held, u64::from(HELD));
+    stage.guard(same, miss)?;
+    let admitted = if const { HELD == HELD_TAGGED } { return Some(()) }
+        else if const { HELD == HELD_INT32 } { super::value::is_int(stage, value) }
+        else if const { HELD == HELD_OBJECT } { super::value::is_direct_object(stage, value) }
+        else {
+            let object = super::value::is_direct_object(stage, value);
+            let null = super::value::is_null(stage, value);
+            stage.any(object, null)
+        };
+    stage.guard(admitted, miss)
 }
 
 /// `value`, a word in `rep`'s encoding, written at the arena slot `address`.
