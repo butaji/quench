@@ -132,9 +132,12 @@ fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'stati
 #[cfg(feature = "jit")]
 pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
-) -> Result<LaneImage, &'static str> {
+) -> Result<(LaneImage, Vec<aot_image::CallSite>), &'static str> {
     let unit = unit_or_refusal(program, function, facts)?;
-    let proven = proven_calls(program, &unit, function, calls, symbols);
+    // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
+    let own = lane_call_sites(program, &unit, function, facts, calls);
+    let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
+    let proven = proven_calls(program, &unit, function, &sites, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
     let strings = string_constants(program, &unit, symbols);
     let fields = fields::guessed_fields(program, &unit, facts, symbols);
@@ -157,13 +160,34 @@ pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts
     // cost 3.4x the base body as lanes (4.46G -> 15.3G Ir). A proven call reads its callee from the
     // base body's record (`proven_calls`), so a loop whose every call is proven runs as a lane.
     if fault_poll && crosses { return Err("polls and calls through the VM's helper"); }
-    Ok(LaneImage { code, fault_poll, exits })
+    Ok((LaneImage { code, fault_poll, exits }, own))
+}
+
+/// The call sites of `function`'s `unit` that `facts` prove a callee for and no record of `calls` names: each a record
+/// the image's loader keeps (`AotImage::calls`), unbound until the VM's call of the site binds it (`rebind_ahead_call`),
+/// from which the lane's direct call reads its callee's words (`ProvenCall`). A call the unit inlines takes none.
+#[cfg(feature = "jit")]
+fn lane_call_sites(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: &AotFacts, calls: &[aot_image::CallSite]) -> Vec<aot_image::CallSite> {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    let facts = facts.function_facts(function);
+    let mut sites: Vec<aot_image::CallSite> = Vec::new();
+    for (pc, instruction) in unit.instructions.iter().enumerate() {
+        if !(means(*instruction, Meaning::Call) || means(*instruction, Meaning::MethodCall)) || !super::base_region::callees::chains(*instruction) { continue; }
+        let Some(Origin::Caller(record)) = unit.origins.get(pc).copied() else { continue };
+        let Ok(record) = u32::try_from(record) else { continue };
+        let Some(callee) = facts.call_target(record) else { continue };
+        let named = |site: &aot_image::CallSite| site.function == function && site.pc == record;
+        if calls.iter().any(named) || sites.iter().any(named) { continue; }
+        sites.push(aot_image::CallSite { function, pc: record, callee,
+            record: quench_bjit::call_record::CallRecord { callee: aot_image::unbound_callee(), ..Default::default() } });
+    }
+    sites
 }
 
 #[cfg(not(feature = "jit"))]
 pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &ClosedFrozen),
     _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable, _: &aot_image::ImageTarget,
-) -> Result<LaneImage, &'static str> {
+) -> Result<(LaneImage, Vec<aot_image::CallSite>), &'static str> {
     Err("ahead image lowering requires the jit feature")
 }
 

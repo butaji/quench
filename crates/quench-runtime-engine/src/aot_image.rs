@@ -184,13 +184,14 @@ fn lower_function(
     (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32), CallSite>),
 ) -> Result<AotFunction, String> {
     let (mut base, calls) = base::lower(program, target, id, symbols)?;
-    let mut lane = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
+    let (mut lane, lane_calls) = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?
+        .map_or((None, Vec::new()), |(lane, sites)| (Some(lane), sites));
     // A linked body's absolute words become the page references Mach-O can link in text.
     crate::aot_image::page::rewrite(&mut base.code)?;
     if let Some(lane) = &mut lane {
         crate::aot_image::page::rewrite(&mut lane.code)?;
     }
-    sites.extend(calls.into_iter().map(|call| ((call.function, call.pc), call)));
+    sites.extend(calls.into_iter().chain(lane_calls).map(|call| ((call.function, call.pc), call)));
     Ok(AotFunction { id, base, lane })
 }
 
