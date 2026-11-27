@@ -94,14 +94,55 @@ pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S:
 #[inline(always)]
 pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let present = stage.ne_imm(records, 0u32);
-    stage.guard(present, miss)?;
-    let (id, record) = direct_record(stage, records, object, miss)?;
-    if let Some(link) = link {
-        let held = proto_link(stage, record);
-        let moved = stage.sub(held, link);
-        let same = stage.eq_imm(moved, 0u32);
-        stage.guard(same, miss)?;
-    }
-    add_property(stage, record, id, edge, form, value, miss)
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    // A live cell's class is its layout: the before-class fixes the link `link` proves, so no link test is made.
+    let granule = super::value::direct_object_id(stage, object);
+    let cell = super::object::cell_at_granule(stage, granule);
+    let class = super::object::cell_class(stage, cell);
+    let live = super::object::class_is_live(stage, class);
+    stage.choose_leaving(live, #[inline(always)] |stage| {
+        add_cell_property(stage, (granule, cell, class), edge, value, miss)?;
+        Some(stage.constant(0))
+    }, #[inline(always)] |stage| {
+        let present = stage.ne_imm(records, 0u32);
+        stage.guard(present, miss)?;
+        let (id, record) = direct_record(stage, records, object, miss)?;
+        if let Some(link) = link {
+            let held = proto_link(stage, record);
+            let moved = stage.sub(held, link);
+            let same = stage.eq_imm(moved, 0u32);
+            stage.guard(same, miss)?;
+        }
+        add_property(stage, record, id, edge, form, value, miss)?;
+        Some(stage.constant(0))
+    })?;
+    Some(())
+}
+
+/// The add of `value` at the slot of `edge` to the live class cell `cell` at `granule`, in place: it holds the
+/// before-class (its header is the layout word, so one compare proves the shape, link and flags), the field
+/// fits its region's capacity, and the store gate admits the write (the class space's barrier, as
+/// `Heap::class_cell_add`). The field is stored before the header takes the after-class, so no reader sees the
+/// new class without its slot. `None` (leaving at `miss`, before any write) otherwise, where the VM departs the
+/// cell or grows nothing. The after-class is the transition's, which keeps the before-class's link and flags.
+#[inline(always)]
+fn add_cell_property<S: Stage>(stage: &mut S, (granule, cell, class): (S::Word, S::Word, S::Word), edge: Edge<S::Word>,
+    value: S::Word, miss: S::Miss) -> Option<()> {
+    let moved = stage.sub(class, edge.before);
+    let same = stage.eq_imm(moved, 0u32);
+    stage.guard(same, miss)?;
+    // The region's capacity is `2^region - 1`, so `slot < capacity` is `slot + 1 < 2^region`, which is `(slot + 1) >> region == 0`.
+    let region = stage.shr_imm(granule, u64::from(super::object_encoding::REGION_SHIFT));
+    let next = stage.add_imm(edge.slot, 1u32);
+    let beyond = stage.shr(next, region);
+    let fits = stage.eq_imm(beyond, 0u32);
+    stage.guard(fits, miss)?;
+    // Always the whole gate: the cell space's gate refuses while slot representations are tracked, so a stored
+    // word is never a Number-slot's raw double that needs converting (`slot_store::class_word`).
+    let open = stage.store_gate(StagedRecordSpace::Class, granule, value);
+    stage.guard(open, miss)?;
+    super::entry::class_store(stage, cell, edge.slot, value);
+    stage.store_u32(Region::ShapeWord.mutable(), cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.class_offset as i32, edge.after);
+    Some(())
 }
