@@ -2190,9 +2190,6 @@ pub struct Vm {
     pub native_program_resolver: Option<Box<engine_types::NativeProgramResolver>>,
     pub execution_interrupt: crate::ExecutionInterrupt,
     pub active_call_roots: Vec<Value>,
-    /// The native call a chain's top frame is parked in, set at a native's edge (`Vm::park_native`)
-    /// and taken by the next `capture_chain`, which moves it into the record.
-    pub(in crate::vm) parked_native: Option<activation::frame_record::ParkedNative>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`,
     /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
     active_roots: Vec<usize>,

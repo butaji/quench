@@ -243,12 +243,15 @@ impl Vm {
         Ok(())
     }
 
-    /// Records the native call the top frame is parked in, at a native's edge: the frame's pc is
-    /// the call instruction. The next `capture_chain` moves it into the chain's top record.
+    /// Captures the chain down to `base_depth` (`capture_chain`) at a native's edge, with the native
+    /// call its top frame is parked in: the top frame's pc is the call instruction. One call, so the
+    /// parked values go straight from the native's arguments into the traced record.
     #[allow(dead_code)]
-    pub fn park_native(&mut self, callee: Value, this: Value, args: Box<[Value]>) {
+    pub fn capture_chain_parked(&mut self, base_depth: usize, callee: Value, this: Value, args: Box<[Value]>) -> Box<FrameRecord> {
         let call_pc = self.frames.last().expect("a native is parked in a frame").pc as u32;
-        self.parked_native = Some(ParkedNative { callee, this, args, call_pc });
+        let mut top = self.capture_chain(base_depth);
+        top.parked = Some(ParkedNative { callee, this, args, call_pc });
+        top
     }
 
     /// Takes the frames from the top of the frame stack down to `base_depth` (inclusive) off it as
@@ -272,9 +275,7 @@ impl Vm {
             record.caller = chain;
             chain = Some(record);
         }
-        let mut top = chain.expect("the base frame is captured");
-        top.parked = self.parked_native.take();
-        top
+        chain.expect("the base frame is captured")
     }
 
     /// The `value` and `done` of `result` where it is an iterator result this realm made

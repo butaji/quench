@@ -48,7 +48,7 @@ pub struct FrameRecord {
     /// materializes a chain: a suspension of one frame, as today, has none.
     pub(in crate::vm) caller: Option<Box<FrameRecord>>,
     /// The native call this frame is parked in, when the chain was captured at a native's edge
-    /// (`Vm::park_native`, `Vm::capture_chain`); `None` for every frame a suspension makes.
+    /// (`Vm::capture_chain_parked`); `None` for every frame a suspension makes.
     pub(in crate::vm) parked: Option<ParkedNative>,
     pub env: Value,
     pub(in crate::vm) locals: Vec<Value>,
