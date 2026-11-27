@@ -3144,9 +3144,6 @@ pub struct NativeFieldLoad {
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
     pub function_shape: bool,
-    /// Whether the slot's arena words are raw doubles (its owner's type is Number under float
-    /// slots): its load reads the double and boxes it (`staged::object::read_slot`).
-    pub raw_double: bool,
     /// For an own read, the layout id (`Object::hint_shape`) of the receivers the site's lane
     /// record last answered: the read guards it in one compare of the record's own word,
     /// proving the shape and the storage form, and reads that form's layout, a fact of the id,

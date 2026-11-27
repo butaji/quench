@@ -296,7 +296,7 @@ impl Object {
         properties.note_shape_value(shape, slot, value);
         debug_assert!(self.admits_reserved_append(properties, slot));
         // SAFETY: `admits_reserved_append` found the reservation's room for the value.
-        unsafe { properties.push_reserved(self.properties(), slot, value, shape) };
+        unsafe { properties.push_reserved(self.properties(), slot, value) };
         self.set_shape(shape, properties);
     }
 
@@ -309,7 +309,7 @@ impl Object {
         match value.to_narrow().filter(|_| self.meta() & OBJECT_INLINE_STORAGE != 0) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
             // SAFETY: `admits_plain_append` found the arena range's room for the value.
-            None => unsafe { properties.push_in_place(self.properties(), slot, value, shape) },
+            None => unsafe { properties.push_in_place(self.properties(), slot, value) },
         }
         self.set_shape(shape, properties);
     }

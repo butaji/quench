@@ -211,7 +211,6 @@ mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
-mod float_slots;
 mod slot_words;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
@@ -1613,7 +1612,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc_object_with_properties(prototype, header.shape(), &values[..len]);
         }
-        match self.properties.young_run_padded(values, len, header.shape()) {
+        match self.properties.young_run_padded(values, len) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
@@ -1711,7 +1710,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return None;
         }
-        let start = self.properties.young_run_padded(values, len, header.shape())?;
+        let start = self.properties.young_run_padded(values, len)?;
         self.young_function_runs = true;
         Some(Object::from_run_header(header, start))
     }
@@ -1798,7 +1797,6 @@ impl Heap {
     fn admit_object_contents(&mut self, object: &Object) {
         if self.properties.tracks() {
             join_object_slot_values(object, &mut self.properties);
-            self.recode_new_object(object);
         }
     }
 
@@ -2140,7 +2138,6 @@ impl Heap {
             .expect("property owner is an object")
             .is_array();
         self.properties.note_shape_values(shape, values);
-        self.settle_widened();
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
             let (mut object, arena) = self.object_and_arena_mut(owner).expect("property owner is an object");
@@ -2230,7 +2227,6 @@ impl Heap {
             self.properties.register_derived_shape(shape as u32, length, parent);
         }
         self.join_live_slot_values();
-        self.recode_all_slots();
     }
 
     #[quench_macros::test_visible]
@@ -2240,6 +2236,22 @@ impl Heap {
         self.properties.track();
         self.refresh_store_watch();
         self.register_shape_layouts(layouts);
+    }
+
+    /// Visits every live object-bearing record and legacy cell with the property arena.
+    fn visit_live_objects(&mut self, mut visit: impl FnMut(&Object, &mut ValueArena)) {
+        let properties = &mut self.properties;
+        self.object_records.for_each_live(|_, record| visit(&record.object, properties));
+        self.array_records.for_each_live(|_, array| visit(array, properties));
+        self.function_records.for_each_live(|_, function| visit(&function.object, properties));
+        self.promise_records.for_each_live(|_, promise| visit(&promise.object, properties));
+        self.iterator_records.for_each_live(|_, iterator| visit(&iterator.object, properties));
+        self.collection_records.for_each_live(|_, collection| visit(&collection.object, properties));
+        for slot in self.slots.iter() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
+                visit(object, properties);
+            }
+        }
     }
 
     /// Joins named properties across every live object-bearing record and legacy cell.
@@ -4661,7 +4673,6 @@ impl Heap {
                 self.properties.note_slot_value(shape, slot, value);
             }
         }
-        self.settle_widened();
     }
 
     /// `property_set` of a primitive `value` over a primitive in `slot` of a cell object
@@ -4798,7 +4809,6 @@ impl Heap {
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
-        self.settle_widened();
         stored
     }
 
@@ -4821,14 +4831,13 @@ impl Heap {
         // SAFETY: the caller's contract; `&mut self` is exclusive.
         let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
-        self.settle_widened();
         stored
     }
 
     /// A tracked arena's store through a lane record's hint, the layout id `hint`
     /// (`Object::hint_shape`) at `slot`: where the record's layout is the hint, its form the
     /// arena's (the payload is the run's start), the barrier logs nothing and the slot's owner
-    /// already holds `value`'s class (`ValueArena::held_slot_word`), one owner lookup and one
+    /// already holds `value`'s class (`ValueArena::held_slot_admits`), one owner lookup and one
     /// class test, no join and no settling. Otherwise the unbarriered store, as before; false
     /// leaves the logged or widening store to the caller. The barrier is tested once, here.
     ///
@@ -4852,12 +4861,12 @@ impl Heap {
             return true;
         }
         // Packed inline values: where the slot's owner already holds the value's class, the store
-        // widens nothing, so it is the value's narrow form into its half of the payload word, which
-        // encodes no slot type (`store_exact_slot`'s packed arm, without the join). A widening or
+        // widens nothing, so it is the value's narrow form into its half of the payload word
+        // (`store_exact_slot`'s packed arm, without the join). A widening or
         // unnarrowable store, or a marked object, takes the joining store below.
         if form == NATIVE_OBJECT_LAYOUT.inline_form && !record.holds_constant_mark()
             // SAFETY: the matched layout's shape holds `slot`.
-            && unsafe { self.properties.held_slot_word(crate::staged::ic::layout_shape(hint), usize::from(slot), value) }.is_some() {
+            && unsafe { self.properties.held_slot_admits(crate::staged::ic::layout_shape(hint), usize::from(slot), value) } {
             if let Some(narrow) = value.to_narrow() {
                 // SAFETY: the caller's contract; the layout's form is packed inline storage; the barrier admitted the store.
                 let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
@@ -4870,7 +4879,7 @@ impl Heap {
 
     /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
     /// where the slot's owner holds `value`'s class: one owner lookup, one class test, the
-    /// encoded write. False changes nothing, for the joining store. The barrier is not tested
+    /// write. False changes nothing, for the joining store. The barrier is not tested
     /// here: the caller runs `object_store_logs` and calls this only for a store it did not log.
     ///
     /// # Safety
@@ -4880,9 +4889,9 @@ impl Heap {
     #[inline(always)]
     pub(crate) unsafe fn held_arena_store(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
         // SAFETY: the caller's contract.
-        let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
+        if !unsafe { self.properties.held_slot_admits(shape, usize::from(slot), value) } {
             return false;
-        };
+        }
         // SAFETY: as above; the barrier admitted the write.
         let record = unsafe { &*self.unlogged_object_record(record_id) };
         // A marked object's store retires its readers first (`store_exact_slot`).
@@ -4891,7 +4900,7 @@ impl Heap {
         }
         let start = record.proved_arena_start();
         // SAFETY: the run holds the shape's slots.
-        unsafe { self.properties.set_flat_at(start, usize::from(slot), value, ty) };
+        unsafe { self.properties.set_flat_at(start, usize::from(slot), value) };
         true
     }
 
@@ -4945,7 +4954,6 @@ impl Heap {
             return false;
         }
         let stored = store_exact_slot(data, properties, slot, value, layout);
-        self.settle_widened();
         if !stored {
             return false;
         }
@@ -4982,7 +4990,6 @@ impl Heap {
             append_property(data.record(), properties, slot, value, shape, 0);
             slot
         };
-        self.settle_widened();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, _slot + 1);
     }
@@ -5007,7 +5014,6 @@ impl Heap {
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
         debug_assert_eq!(slot, properties.len(data.properties()));
         append_property(data, properties, slot, value, shape, want);
-        self.settle_widened();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -5036,7 +5042,6 @@ impl Heap {
         // exclusive, and the barrier logs nothing for this store.
         let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
         data.append_plain(properties, slot, value, shape);
-        self.settle_widened();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
         self.memory_profile.object_slots_changed(value, slot + 1);
@@ -5736,7 +5741,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
     }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
-        properties.push(&mut vector, value, shape, want);
+        properties.push(&mut vector, value, want);
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {
@@ -5782,12 +5787,10 @@ unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize)
 }
 
 /// Whether a store that `widened` its slot's owner is left to the caller: a native-preserving
-/// store declines it, and so does one where Number slots hold raw doubles, whose widening may change
-/// the encoding of the words of other objects, which the caller's generic path recodes
-/// (`Heap::settle_widened`) before it stores.
+/// store declines it, before it changes anything.
 #[inline(always)]
-fn declines_widening(widened: bool, layout: PropertyStoreLayout, properties: &ValueArena) -> bool {
-    widened && (layout == PropertyStoreLayout::PreserveNative || properties.float_slots())
+fn declines_widening(widened: bool, layout: PropertyStoreLayout) -> bool {
+    widened && layout == PropertyStoreLayout::PreserveNative
 }
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
@@ -5798,8 +5801,8 @@ fn declines_widening(widened: bool, layout: PropertyStoreLayout, properties: &Va
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot outside dictionary storage.
     // SAFETY: the caller matched the exact shape, which holds the slot.
-    let (widened, ty) = unsafe { properties.note_exact_slot_word(data.shape(), slot, value) };
-    if declines_widening(widened, layout, properties) { return false; }
+    let widened = unsafe { properties.note_exact_slot_word(data.shape(), slot, value) };
+    if declines_widening(widened, layout) { return false; }
     // Code that held the object's values as constants retires before the write
     // (`Object::note_constant_write`); the exact shape a cache records leaves the mark out.
     data.note_constant_write();
@@ -5808,12 +5811,12 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     if let Some(start) = data.plain_arena_start() {
         debug_assert!(matches!(data.exact_storage(), ExactStorage::Plain(plain) if plain == start));
         // SAFETY: as below.
-        unsafe { properties.set_flat_at(start, slot, value, ty) };
+        unsafe { properties.set_flat_at(start, slot, value) };
         return true;
     }
     match data.exact_storage() {
         // SAFETY: as above.
-        ExactStorage::Plain(start) => unsafe { properties.set_flat_at(start, slot, value, ty) },
+        ExactStorage::Plain(start) => unsafe { properties.set_flat_at(start, slot, value) },
         // An object without extras was never a prototype: its store moves no epoch.
         ExactStorage::PackedInline => {
             if !data.store_packed_narrow(slot, value.to_narrow()) {
@@ -5829,7 +5832,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
         ExactStorage::Extended { inline } => {
             data.note_value_write(slot);
             // SAFETY: as above.
-            unsafe { store_extended_slot(data, properties, (slot, ty), value, inline) };
+            unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }
         // A narrow run takes a narrow value in place; another value widens it first.
         ExactStorage::Narrow => match value.to_narrow() {
@@ -5853,12 +5856,12 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
 /// # Safety
 /// As `store_exact_slot`.
 #[inline(always)]
-unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, (slot, ty): (usize, crate::typed_ir::SlotType), value: Value, inline: bool) {
+unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, inline: bool) {
     if inline {
         data.store_extended_inline(slot, value);
     } else {
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { properties.set_flat_unchecked(data.properties(), slot, value, ty) };
+        unsafe { properties.set_flat_unchecked(data.properties(), slot, value) };
     }
 }
 

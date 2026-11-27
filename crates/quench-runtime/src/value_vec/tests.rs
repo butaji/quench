@@ -30,7 +30,7 @@ fn metadata_is_compact_and_ranges_preserve_values() {
     let mut values = ValueVec::new();
     for value in 0..9 {
         arena.register_shape(value + 1, value as usize + 1);
-        arena.push(&mut values, Value::number(f64::from(value)), value + 1, 0);
+        arena.push(&mut values, Value::number(f64::from(value)), 0);
         values.set_auxiliary(value + 1);
     }
     assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
@@ -58,7 +58,7 @@ fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
     let mut arena = ValueArena::default();
     arena.register_shape(1, 3);
     let values = |n: f64| [Value::number(n), Value::number(n + 0.5), Value::number(n + 0.25), Value::UNDEFINED];
-    let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3, 1).unwrap(), auxiliary: 1 };
+    let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3).unwrap(), auxiliary: 1 };
     let ordinary = arena.with_values(1, &values(9.0)[..3]);
     let mut runs: Vec<ValueVec> = (0..8).map(|n| young(&mut arena, f64::from(n))).collect();
     assert!(runs.iter().all(|run| arena.holds_young_run(*run)));
@@ -288,14 +288,14 @@ fn snapshot_preserves_offsets_free_ranges_and_value_bits_after_compaction() {
 
 /// The calls that reach arena words without a decode: a flat read or write at a run's start, the
 /// arena's base address, or the address of a slot. Outside `staged` and `value_vec`, each is a
-/// second reader of the encoding `encode_slot` and `decode_slot` own.
+/// second reader of the arena's words, which `staged` reads (`decode_staged_word`).
 const RAW_WORD_ACCESS: &[&str] = &[
     "get_flat_at(", "set_flat_at(", "set_flat_unchecked(", "flat_mut_ptr_unchecked(", "values_base(",
     "native_values(", "native_property_values(", "arena_values_base(",
 ];
 
 /// Raw arena word accesses per production file outside `staged` and `value_vec`. The counts only
-/// go down; a new access belongs in `staged` or `value_vec`, or goes through `decode_slot`.
+/// go down; a new access belongs in `staged` or `value_vec`.
 const RAW_WORD_ACCESS_ALLOWED: &[(&str, usize)] = &[
     ("heap.rs", 5),
     ("heap/access.rs", 2),
@@ -339,44 +339,12 @@ fn raw_arena_word_accesses_outside_staged_and_value_vec_only_shrink() {
     for (file, count) in &found {
         let limit = allowed.get(file.as_str()).copied().unwrap_or(0);
         assert!(*count <= limit, "{file} reads or writes arena words raw {count} times (allowed {limit}): \
-            go through `decode_slot` and `encode_slot`, or `staged`");
+            go through `staged`");
     }
     for (file, limit) in &allowed {
         let count = found.get(*file).copied().unwrap_or(0);
         assert!(count >= *limit, "{file} now makes {count} raw word accesses: lower its line in RAW_WORD_ACCESS_ALLOWED to {count}");
     }
-}
-
-/// Every value a slot of owner type `ty` holds, per type: encoding then decoding returns the value.
-#[test]
-fn a_slot_word_decodes_to_the_value_it_encodes() {
-    let numbers = [0.0, -0.0, 1.0, -1.0, 0.5, 2_147_483_647.0, 2_147_483_648.0, -2_147_483_648.0, -2_147_483_649.0,
-        1e300, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MIN_POSITIVE, 4_503_599_627_370_496.0];
-    let integers = [0, 1, -1, i32::MAX, i32::MIN, 1 << 30];
-    for ty in SlotType::ALL.iter().copied() {
-        let values = numbers.map(Value::number).into_iter().chain(integers.map(Value::integer))
-            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::direct_string(3), Value::DELETED]);
-        for value in values.filter(|value| crate::typed_ir::Type::immediate(*value).is_subtype(ty.ty()) || ty == SlotType::Tagged) {
-            assert_eq!(decode_slot(ty, encode_slot(ty, value)), value, "{ty:?} {value:?}");
-        }
-    }
-    // A NaN carrying a payload is no word a Number slot holds: the canonical NaN is.
-    assert!(encode_slot(SlotType::Number, Value::number(f64::from_bits(0xfff8_dead_beef_0001))).as_number().is_some_and(f64::is_nan));
-}
-
-/// A Number slot holds the IEEE double of its Number, an integer as the integral double.
-#[test]
-fn a_number_slot_holds_raw_doubles_that_keep_their_identity_when_read() {
-    let word = encode_slot(SlotType::Number, Value::integer(7));
-    assert_eq!(word.to_bits(), 7.0_f64.to_bits());
-    assert_eq!(decode_slot(SlotType::Number, word), Value::integer(7));
-    assert_ne!(Value::number(-0.0).to_bits(), Value::integer(0).to_bits());
-    assert_eq!(decode_slot(SlotType::Number, encode_slot(SlotType::Number, Value::number(-0.0))).to_bits(), (-0.0_f64).to_bits());
-    // 2^31 is no int32: it stays a double through the round trip, and an integral double that is
-    // one comes back as the int32 every other Number slot holds, so `===` and index tests agree.
-    assert_eq!(decode_slot(SlotType::Number, Value::number(2_147_483_648.0)).as_int(), None);
-    assert_eq!(decode_slot(SlotType::Number, Value::number(3.0)).as_int(), Some(3));
-    assert_eq!(decode_slot(SlotType::Number, Value::from_bits(3.0_f64.to_bits())).as_int(), Some(3));
 }
 
 #[test]
@@ -387,14 +355,14 @@ fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
     }
     // No nursery yet: a reservation never grows the arena.
     assert_eq!(arena.young_reserved_run(10), None);
-    let _first = arena.young_run_padded(&[Value::number(0.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+    let _first = arena.young_run_padded(&[Value::number(0.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1).unwrap();
     let start = arena.young_reserved_run(10).unwrap();
     let mut run = ValueVec { start, auxiliary: 0 };
     // A run taken after it: growth cannot bump the nursery's top in place.
-    let _next = arena.young_run_padded(&[Value::number(1.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+    let _next = arena.young_run_padded(&[Value::number(1.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1).unwrap();
     for slot in 0..10 {
         assert!(arena.reserved_room(run, slot + 1));
-        arena.push(&mut run, Value::number(slot as f64), slot as u32 + 1, 0);
+        arena.push(&mut run, Value::number(slot as f64), 0);
         run.set_auxiliary(slot as u32 + 1);
         assert_eq!(run.start(), start as usize, "the run grows within its reservation");
     }
@@ -405,7 +373,7 @@ fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
         assert_eq!(arena.get(run, slot).unwrap().as_number(), Some(slot as f64));
     }
     // Past the reservation the run moves, as any growth does.
-    arena.push(&mut run, Value::number(10.0), 11, 0);
+    arena.push(&mut run, Value::number(10.0), 0);
     run.set_auxiliary(11);
     assert_ne!(run.start(), start as usize);
     assert_eq!(arena.get(run, 10).unwrap().as_number(), Some(10.0));
@@ -416,7 +384,7 @@ fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
     assert!(arena.reserved_room(ValueVec { start: again, auxiliary: 0 }, 10));
     arena.finish_young_cycle();
     while arena.young_runs().top <= again as usize {
-        arena.young_run_padded(&[Value::number(2.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+        arena.young_run_padded(&[Value::number(2.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1).unwrap();
     }
     assert!(arena.holds_young_run(ValueVec { start: again, auxiliary: 0 }));
     assert!(!arena.reserved_room(ValueVec { start: again, auxiliary: 0 }, 5));

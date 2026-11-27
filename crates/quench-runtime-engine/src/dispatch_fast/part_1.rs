@@ -92,13 +92,12 @@ pub(crate) const fn store_formed_site(site: u8) -> bool {
 }
 
 /// The store row of opcode `OP` at the instance of the storage form `form` (`own_form_index`): the flat run's
-/// (`1` untagged, `6` tagged, one instance since a store writes the same word either way) or packed inline
-/// values'. Extras and narrow runs have none: their stores stay plain.
+/// or packed inline values'. Extras and narrow runs have none: their stores stay plain.
 pub(super) fn store_formed_handler<const OP: u16>(form: usize) -> Option<Handler> {
     match form {
-        1 | 6 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_FLAT)) }
+        3 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_FLAT)) }
             else { generated_row!(OP, ACC_NONE, own_site(false, STORE_FLAT)) }),
-        3 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_INLINE)) }
+        1 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_INLINE)) }
             else { generated_row!(OP, ACC_NONE, own_site(false, STORE_INLINE)) }),
         _ => None,
     }
@@ -188,8 +187,8 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
 /// hint's form through `own_form_index`.
 pub(super) fn nested_hop_class(layout: u32) -> Option<usize> {
     match own_form_index(Some(layout)) {
-        6 => Some(0),
-        3 => Some(1),
+        3 => Some(0),
+        1 => Some(1),
         _ => None,
     }
 }
@@ -323,46 +322,27 @@ pub(crate) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 =
 pub(crate) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
-    else if index == OWN_FORMS.len() + 7 { quench_runtime::staged::TAGGED_SLOTS }
-    else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM | quench_runtime::staged::TAGGED_SLOTS }
+    else if index == OWN_FORMS.len() + 7 { 0 }
+    else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM }
     else if index == STORE_FLAT { 0 }
     else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
     else { HINTED_FORM }
 }
 
-/// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
-/// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
-pub(crate) const fn own_site_decodes(site: u8) -> bool {
-    // A formed nested read's hops are flat runs of tagged words or packed values (`nested_hop_class`).
-    if nested_site(site) && site != NESTED_SITE { return false; }
-    if held_site(site) || site == STRING_SITE || site == NUMBER_SITE || inherited_site(site) || own_constant_site(site) || length_site(site)
-        || host_read_site(site) || private_field_site(site) || cached_field_site(site) { return false; }
-    let form = own_site_form(site);
-    form == HINTED_FORM || (form & quench_runtime::staged::TAGGED_SLOTS == 0 && form != quench_runtime::value_vec::INLINE_FORM
-        && form != quench_runtime::value_vec::NARROW_FORM)
-}
-
-/// The value of slot word `word` an own-field read at a decoding site took: a fixed form decodes as a
-/// Number untested (`decode_float_word`, the identity on tagged words); an unfixed form takes the staged decode.
-#[inline(always)]
-pub(crate) fn own_site_decode(site: u8, word: u64) -> Value {
-    if own_site_form(site) == HINTED_FORM { quench_runtime::value_vec::decode_staged_word(word) } else { quench_runtime::value_vec::decode_float_word(word) }
-}
-
 /// The `OWN_FORMS` index of the storage form layout id `hint` names (`0`, the hinted form, for none).
 /// A narrow run's hint names neither inline values nor extras, so those tests fold away. Record slots are
-/// all tagged words (no arena word is raw), so a flat run, extras or inline form decodes nothing.
+/// all tagged words (invariant I), so a flat run, extras or inline form decodes nothing.
 pub(super) fn own_form_index(hint: Option<u32>) -> usize {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
     match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
-        Some(hint) if hint & NARROW_FORM != 0 => 5,
+        Some(hint) if hint & NARROW_FORM != 0 => 2,
         Some(hint) => match hint & (INLINE_FORM | EXTRAS_FORM) {
-            0 => 6,
-            EXTRAS_FORM => 7,
-            INLINE_FORM => 3,
-            _ => 8,
+            0 => 3,
+            EXTRAS_FORM => 4,
+            INLINE_FORM => 1,
+            _ => 5,
         },
     }
 }
@@ -794,7 +774,7 @@ pub(super) unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip
         return;
     }
     // Each hop's class is its object's layout's (a flat run of tagged words or packed inline values,
-    // `nested_hop_class`), whose words the row then reads with no decode (`own_site_decodes`).
+    // `nested_hop_class`), whose words the row then reads with no decode (`decode_staged_word`).
     let Some(base) = (unsafe { field_base_in_lane(cx, r, site.base) }) else { return };
     let Some(base_record) = machine.heap_reads().record_object_value(base) else { return };
     let second_layout = record.layout_id();

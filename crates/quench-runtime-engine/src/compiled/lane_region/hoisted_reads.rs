@@ -20,7 +20,7 @@ impl Lowering<'_, '_> {
             return;
         }
         if representation == Representation::Float64 {
-            // A field carried as a raw double (`carries_number`): the register takes the word.
+            // A Number read carried as its binary64 word: the register takes the word.
             self.set_number(state, instruction.result_register(), raw);
             self.native += 1;
             return;

@@ -816,8 +816,8 @@ impl Vm {
     /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
-    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, quench_runtime::typed_ir::Type, bool)>) -> bool {
-        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
+    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, quench_runtime::typed_ir::Type)>) -> bool {
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
     }
 }
 

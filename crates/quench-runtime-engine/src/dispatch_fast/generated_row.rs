@@ -119,8 +119,6 @@ view_handler! {
             let read = LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0);
             match read {
                 Some(value) => {
-                    // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
-                    let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value.to_bits()) } else { value };
                     r.set(i.a, value);
                     next!(script, r, following(ip), Carried::script_in(script, view))
                 }
@@ -315,7 +313,7 @@ view_handler! {
                 frame.plan = Some(if form == HINTED_FORM {
                     RecordPlan::own_other(hint.receiver, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 } else {
-                    RecordPlan::own_other_formed(hint.receiver, form & !quench_runtime::staged::TAGGED_SLOTS, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
+                    RecordPlan::own_other_formed(hint.receiver, form, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 });
             } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
                 // One object's own constant: its record's address, then the watch on its values.
@@ -397,7 +395,7 @@ view_handler! {
             if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
             let hint = i.field_hint();
             let form = const { crate::dispatch_fast::own_site_form(FLAG) };
-            let fixed = (form != HINTED_FORM).then_some(form & !quench_runtime::staged::TAGGED_SLOTS);
+            let fixed = (form != HINTED_FORM).then_some(form);
             // A fixed form is the hint's layout's own (`own_formed_handler` chose the row by it),
             // stated so the read takes it as a constant, not from the layout table.
             if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == form) } }
@@ -448,13 +446,12 @@ view_handler! {
             Step::Value(value) if property && const { crate::dispatch_fast::returning_field_site(FLAG) } => {
                 // A returning read's value completes its activation as a returning record does
                 // (`lane_return_value!`), so it writes no register.
-                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value) } else { Value::from_bits(value) };
+                let value = Value::from_bits(value);
                 let script: *mut LaneContext = view.memory.bytes.cast();
                 lane_return_value!(script, ip, value, crate::dispatch_fast::returning_leaf(FLAG))
             }
             Step::Value(value) if property => {
-                // The read's value, a slot word decoded where the form may hold a raw double.
-                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value) } else { Value::from_bits(value) };
+                let value = Value::from_bits(value);
                 let script: *mut LaneContext = view.memory.bytes.cast();
                 // A sinking read stores its value to `this` before its register is written: a refused
                 // store repeats the read from the registers as they were.
@@ -545,8 +542,6 @@ view_handler! {
         };
         match read {
             Some(value) => {
-                // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
-                let value = if const { crate::dispatch_fast::own_site_decodes(FLAG) } { crate::dispatch_fast::own_site_decode(FLAG, value.to_bits()) } else { value };
                 r.set(i.a, value);
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }

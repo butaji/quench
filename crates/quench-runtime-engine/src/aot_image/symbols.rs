@@ -482,13 +482,13 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
         eprintln!("aot-lanes: guard {key:#x} ({access:?}) resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
     }
     let shape = shape?;
-    // A store's class joins the slot's type before the store is exposed (`Vm::admit_slot_writes_as`),
+    // A store's class joins the slot's type before the store is exposed (`Vm::admit_slot_writes`),
     // as a JIT body's writer's domain does: a field the construction made `null` holds objects
     // once the run stores one, which the image's store does in place from its first run. A
     // widening retires the slot's readers; one that would make the words raw refuses below.
     // A typed read admits the class its field's stores write, as their guards do: the slot then holds
     // that class from its first store, and a read resolves only where it holds nothing wider.
-    if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
+    if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes(shape, usize::from(slot), stored); }
     let ty = vm.tagged_slot_type(shape, slot)?;
     (access.stored().is_none_or(|stored| stored.is_subtype(ty)) && access.read().is_none_or(|read| ty.is_subtype(read))).then_some((shape, slot, ty))
 }

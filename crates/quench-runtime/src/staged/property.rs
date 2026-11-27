@@ -126,19 +126,13 @@ pub enum FieldPlan<'a> {
 /// One own data slot a store site proved: objects of exact `shape` keep the field at `slot`.
 /// `holds` is `None` where the value stored is of a type the slot's type holds. Otherwise it
 /// is the type the row tests the value for before it stores in place, so the slot's
-/// representation never widens under the raw write; a value of any other type stores through
-/// the VM, which joins the slot's type. `raw_double` marks a slot whose arena word is a raw
-/// double (`Representation::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
-/// never its tagged one, so a Number keeps no integer canonical form on its way in.
+/// representation never widens under the in-place write; a value of any other type stores through
+/// the VM, which joins the slot's type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub holds: Option<Type>,
-    pub(crate) raw_double: bool,
-    /// Whether the site left the record's storage form open (`Form::Either`): a raw store
-    /// then tests the inline flag at run time, which a proven arena run skips.
-    pub(crate) unformed: bool,
     /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
     /// its guard compares the record's own word, which proves the form, so the store tests none.
     pub layout: bool,
@@ -150,25 +144,14 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false, layout: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, layout: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false, layout: false })
-    }
-
-    /// `StoreArm::of` for a slot whose arena words are raw doubles where `raw_double`: only a
-    /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
-    /// only into a shape whose values its `form` leaves an arena run (a packed slot holds narrow
-    /// values, whatever its owner's type); an open form is tested when the store runs.
-    pub fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
-        let arm = Self::of(at, slot_ty, fact)?;
-        if !raw_double { return Some(arm); }
-        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
-            .then_some(Self { raw_double: true, unformed: form == super::Form::Either, ..arm })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), layout: false })
     }
 
     /// This arm guarded by the layout id `shape` names (`layout`), where it stores a tagged word.
     pub fn as_layout(self) -> Self {
-        Self { layout: !self.raw_double, ..self }
+        Self { layout: true, ..self }
     }
 }
 
@@ -280,11 +263,6 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     /// int32) and tests the rest dynamically.
     #[inline(always)]
     fn value_fact(&self, _register: Register) -> Type { Type::ANY }
-
-    /// The binary64 word of `register`, a Number by its fact, which a raw-double slot stores
-    /// (`StoreArm::raw_double`); `None` where the frame keeps no such view, so the store leaves.
-    #[inline(always)]
-    fn stored_number(&mut self, _stage: &mut S, _register: Register, _miss: S::Miss) -> Option<S::Word> { None }
 
     /// The base of the object record table, which prototype reads and stores address.
     #[inline(always)]
@@ -455,11 +433,6 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     /// a frame that made the projection (`StorePlan::Entry`) addresses; a failure leaves at `miss`.
     #[inline(always)]
     fn entry_slot_store(&mut self, _stage: &mut S, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
-
-    /// Whether the slot a loop's entry projected for this store keeps raw doubles: the store
-    /// then hands `entry_slot_store` the value's binary64 word, not its tagged one.
-    #[inline(always)]
-    fn entry_slot_raw(&self) -> bool { false }
 
     /// Continues where the run admits a direct store of the atom the access names (no method
     /// cache names it); a frame whose run changes that between accesses tests it here.
