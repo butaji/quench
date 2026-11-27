@@ -2602,15 +2602,6 @@ impl ProgramStore {
         }
     }
 
-    /// `LaneView::rewrite_handlers` on every lane view of every program.
-    pub fn rewrite_lane_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
-        for entry in self.programs.iter().flatten() {
-            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
-                view.rewrite_handlers(map);
-            }
-        }
-    }
-
     /// A program's lane views by function, derived on first use.
     pub fn views_in_lane(
         &self,

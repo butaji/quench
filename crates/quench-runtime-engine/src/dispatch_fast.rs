@@ -790,10 +790,6 @@ impl LaneView {
 
 
 
-/// `this` trust (`Vm::this_trust`): trusted from the start, retired for good.
-const THIS_TRUSTED: u8 = 1;
-const THIS_RETIRED: u8 = 2;
-
 /// The generated rows of the hot `this` sites (a `this` own read, a formed `this` store, a `this`
 /// nested read's first hop) and their trusted forms (`lane_frame::trusted_this_rows`).
 const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
@@ -801,6 +797,29 @@ const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
     (generated_row!(62, ACC_NONE, 42), lane_frame::trusted_this_rows::generated_row::<62, ACC_NONE, 42>),
     (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
 ];
+
+/// Whether `function`'s `this` is a direct object in every activation, by the solve's receiver cell
+/// (`FactKey::Receiver`): the function's rows and code take it as one, with no tag test. A live receiver
+/// (`AotFacts::live`: new code may call the function with any `this`) is never trusted, since no edge
+/// retires a trusted row; a closed receiver never changes, so nothing subscribes to it.
+pub(crate) fn receiver_trusted(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) -> bool {
+    let key = quench_runtime::typed_ir::FactKey::Receiver(function);
+    // A cell no value reaches (`Type::NEVER`) is no fact: a function the host enters directly has none.
+    facts.is_some_and(|facts| !facts.live(key) && facts.cell(key).is_some_and(|cell| cell.ty != quench_runtime::typed_ir::Type::NEVER
+        && cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY)))
+}
+
+/// The trusted form of a row that reads `this` (`TRUSTED_THIS_ROWS`), `None` for a row with no trusted form.
+pub(crate) fn trusted_this_form(handler: *const ()) -> Option<*const ()> {
+    TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler).map(|(_, trusted)| *trusted as *const ())
+}
+
+/// Gives each row of a view whose receiver is trusted (`receiver_trusted`) its trusted form.
+pub(crate) fn trust_this_rows(records: &mut [quench_runtime::vm::engine_types::LaneInstruction]) {
+    for record in records.iter_mut() {
+        if let Some(trusted) = trusted_this_form(record.handler) { record.handler = trusted; }
+    }
+}
 
 
 
@@ -4590,7 +4609,6 @@ impl Vm {
             (*cx).root = LaneRoot::Frame(caller);
             (*cx).registers = registers;
             let this = self.frame_lane_this(caller);
-            note_frame_this(cx, self, caller, this);
             registers.set_this(this);
             registers.set_env(Value::DELETED);
             (*cx).instance = Value::DELETED;
@@ -8465,7 +8483,6 @@ impl Vm {
                     (*cx).root = LaneRoot::Frame(caller);
                     (*cx).registers = frame_registers;
                     let this = self.frame_lane_this(caller);
-                    note_frame_this(cx, self, caller, this);
                     frame_registers.set_this(this);
                     frame_registers.set_env(Value::DELETED);
                     (*cx).registers.set_capture(std::ptr::null());

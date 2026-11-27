@@ -2197,10 +2197,6 @@ pub struct Vm {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     pub with_scope_entered: bool,
-    /// Whether the lane's rows may trust every activation's `this` as a direct object
-    /// (`dispatch_fast::note_lane_this`): 1 trusted from the start (every tier checks the `this` it binds
-    /// once, `CallFrame::call_this_bound`, and the lane each frame it takes over), 2 retired for good.
-    pub this_trust: std::cell::Cell<u8>,
     /// What lane reads of names past an eval's scope rely on (`name_scope`).
     pub scope_names: name_scope::DynamicScopeNames,
     test262_agent: Test262AgentState,

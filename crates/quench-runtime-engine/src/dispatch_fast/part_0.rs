@@ -92,7 +92,10 @@ pub(super) fn requicken(ip: Ip, handler: Handler) {
             (*ip.cast_mut()).handler = general_step_in_lane as Handler as *const ();
             return;
         }
-        (*ip.cast_mut()).handler = trusted_this_handler(handler) as *const ();
+        // A trusted row stays trusted: its view's `this` trust was fixed at derivation (`receiver_trusted`).
+        let trusted = trusted_this_form((*ip).handler).is_some();
+        let next = match trusted_this_form(handler as *const ()) { Some(form) if trusted => form, _ => handler as *const () };
+        (*ip.cast_mut()).handler = next;
     }
 }
 
@@ -121,53 +124,6 @@ pub(crate) unsafe fn pc_in_view(base: Ip, ip: Ip) -> usize {
     }
     // SAFETY: the function's contract.
     unsafe { ip.offset_from(base) as usize }
-}
-
-/// The handler a record takes for `handler`: its trusted form while the lane trusts `this`: every
-/// activation's `this` is one a tier bound and checked once (`note_lane_this`, `CallFrame::call_this_bound`).
-#[inline]
-pub(super) fn trusted_this_handler(handler: Handler) -> Handler {
-    let Some(&(_, trusted)) = TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler as *const ()) else { return handler };
-    let cx = context_in_lane();
-    if cx.is_null() { return handler; }
-    // SAFETY: the running lane's context.
-    let vm = unsafe { vm(cx) };
-    if vm.this_trust.get() == THIS_TRUSTED { trusted } else { handler }
-}
-
-/// The check once per activation of the `this` the lane binds for it (N4): a `this` that is no direct
-/// object retires the trust for good, and every trusted row takes its checked form
-/// (`retire_this_trust`). Every lane binding of an activation's `this` makes it.
-/// `this_rows` is whether the activation's view has `this` sites (`LaneView::this_rows`), `true` where it is not known.
-#[inline(always)]
-pub(crate) fn note_lane_this(vm: &Vm, this: Value, this_rows: impl FnOnce() -> bool) {
-    if this.direct_object_index().is_none() && vm.this_trust.get() != THIS_RETIRED && this_rows() {
-        retire_this_trust(vm);
-    }
-}
-
-/// `note_lane_this` for the general loop's frame `frame` the lane resumes, its view found in the context's table.
-#[inline]
-pub(super) fn note_frame_this(cx: *mut LaneContext, vm: &Vm, frame: usize, this: Value) {
-    note_lane_this(vm, this, || {
-        let function = vm.frames[frame].function;
-        // SAFETY: the context's table lives as long as its program entry.
-        unsafe { (*cx).views.as_ref() }.and_then(|views| views.get(function as usize)).and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .is_none_or(|view| view.this_rows)
-    });
-}
-
-/// Retires the lane's `this` trust (`note_lane_this`): every view's trusted rows take their checked forms.
-/// A linked ahead image retires it too: its bodies run compiled under `--no-jit` and hand activations
-/// back to the lane (`CompiledAheadImagesVm::load_ahead_images`).
-#[cold]
-#[inline(never)]
-pub(crate) fn retire_this_trust(vm: &Vm) {
-    vm.this_trust.set(THIS_RETIRED);
-    quench_runtime::tier_surface::retire_this_holders();
-    vm.programs.rewrite_lane_handlers(&|handler| {
-        TRUSTED_THIS_ROWS.iter().find(|(_, trusted)| *trusted as *const () == handler).map(|(plain, _)| *plain as *const ())
-    });
 }
 
 /// The header word `index` (a `staged::frame` `CONTEXT_*`) of the window at `registers`: the words count

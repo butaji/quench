@@ -161,6 +161,8 @@ pub(crate) fn derive_lane_view<'live>(
     tiers: &'static Tiers,
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
 ) -> LaneView {
+    // The receiver fact picks the trusted forms of the rows that read `this` (`receiver_trusted`, `trust_this_rows`).
+    let this_trusted = receiver_trusted(facts, function_id);
     let loop_tier = plan.loop_sites;
     // A returning call is admitted by its function and host (`returning_call_admitted`), both fixed here.
     let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(proper_tail_calls, function.strict);
@@ -527,21 +529,9 @@ pub(crate) fn derive_lane_view<'live>(
     };
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
+    if this_trusted { trust_this_rows(&mut records); }
     let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     seed_declared_feedback(function, &records);
-    // Whether a record may read a field through `this`: the trusted rows' sites (`note_lane_this`).
-    let this_rows = decoded.iter().any(|instruction| {
-        matches!(instruction.op(), quench_runtime::bytecode::Op::SetThisField | quench_runtime::bytecode::Op::SetThisFieldStrict | quench_runtime::bytecode::Op::CallThisMethod)
-            || match instruction.field_lookup() {
-                Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) => base == quench_runtime::bytecode::FieldBase::THIS,
-                Some(quench_runtime::bytecode::FieldLookup::Site(index)) => sites.get(index).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS),
-                None => false,
-            }
-            || [instruction.a(), instruction.b(), instruction.c()].into_iter().any(|word| {
-                let operand = Operand(word);
-                operand.kind() == Some(quench_runtime::bytecode::OperandKind::Field) && sites.get(usize::from(operand.payload())).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS)
-            })
-    });
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.
     let mut loop_at_backedge: Vec<(u32, u32)> = loops.iter().enumerate().map(|(index, site)| (site.backedge, index as u32)).collect();
@@ -553,7 +543,6 @@ pub(crate) fn derive_lane_view<'live>(
         tiers,
         memory_register,
         activation,
-        this_rows,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: string_case_filters,
         environment_window,
@@ -1787,8 +1776,6 @@ pub(super) fn install_entry_in_lane(cx: *mut LaneContext, entry: &PreparedEntry,
     }
     // The callback family's context row (`staged::call_callback::install_callback`).
     let context = entry.context();
-    // SAFETY: the running lane's context; the program store keeps the view alive.
-    note_lane_this(unsafe { vm(cx) }, Value::from_bits(context.this), || unsafe { (*entry.view).this_rows });
     quench_runtime::staged::call_callback::install_callback(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, context,
     );

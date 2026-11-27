@@ -47,8 +47,6 @@ pub(crate) struct StableUses {
     specialized_loops: Vec<(usize, usize)>,
     /// The PC a run of the body starts at.
     pub(crate) start: usize,
-    /// Whether the code took the receiver as a direct object under the lane's `this` trust (`VmFacts::this_trusted`).
-    pub(crate) this_trust: bool,
     /// The live cell keys the code trusts (`StableFacts::cells`), each once.
     pub(crate) cells: BTreeSet<quench_runtime::typed_ir::FactKey>,
 }
@@ -63,7 +61,7 @@ impl StableUses {
             layouts: self.layouts.take(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
             instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take(),
-            views: self.views.take(), this_trust: std::mem::take(&mut self.this_trust),
+            views: self.views.take(),
             cells: std::mem::take(&mut self.cells).into_iter().collect() }
     }
 }
