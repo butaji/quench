@@ -190,6 +190,8 @@ pub(crate) struct LoweringJob<'p> {
     helpers: LaneHelpers,
     /// The VM's static facts (`Vm::vm_facts`); its online ones are the fields below.
     facts: VmFacts<'static>,
+    /// The active program's AOT facts (`ProgramStore::aot_facts`), shared with every lowering of it.
+    aot: Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>>,
     method_cache_atoms: quench_runtime::vm::method_cache::AtomBits,
     invalidation: usize,
     constants: Vec<Value>,
@@ -211,7 +213,8 @@ impl LoweringJob<'_> {
         let construct_plans = |function: u32, pc: u32| self.tables.construct_plan(function, pc);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans), ..self.facts };
+            names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans),
+            facts: self.aot.as_deref(), ..self.facts };
         let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default() }).compiled()?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads, self.views, admitted)
@@ -489,7 +492,7 @@ impl Vm {
         number_reads.extend(typed);
         number_reads.sort_by_key(|read| read.pc);
         LoweringJob { views: super::body_views::body_views(self, function, unit), function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
-            helpers: Self::process_helpers(), facts: self.vm_facts(), method_cache_atoms: self.method_cache_atoms.bits().clone(),
+            helpers: Self::process_helpers(), facts: self.vm_facts(), aot: self.programs.aot_facts(self.active_program), method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, number_reads, entry, program }
     }
 
@@ -662,7 +665,7 @@ impl Vm {
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
+        let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
             generic: generic.len(), direct: direct.len(), budget, observed, closed, plan_us });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
@@ -704,7 +707,6 @@ impl Vm {
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        self.keep_slot_representations();
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
         let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());

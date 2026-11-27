@@ -214,7 +214,7 @@ pub(crate) struct UnitFacts {
     pub(crate) called_by_bodies: bool,
     /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
     pub(crate) indexes_typed: bool,
-    /// The Cranelift function tiers run in this VM (`Vm::tier_may_run`), for `UnitKind::Entry`.
+    /// The Cranelift function tiers run in this VM (`vm_may_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
     /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
     pub(crate) wasm_first_entry: bool,
@@ -405,7 +405,90 @@ pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
 
 /// Whether loop regions take the stencil tier in place of Cranelift (`jit_mode::base_regions`).
 #[inline]
-pub(crate) fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+fn stencil_regions() -> bool { quench_runtime::jit_mode::base_regions() }
+
+/// Whether every loop region is a stencil region: no region ever leaves for Cranelift.
+#[inline]
+pub(crate) fn every_region_is_base() -> bool { stencil_regions() }
+
+/// The `base` flag a region keeps: its own pick, cleared wherever every region is a stencil one (there none is
+/// promoted or kept as a u-jit region).
+#[inline]
+pub(crate) fn default_mode_picks_base(base: bool) -> bool { base && !stencil_regions() }
+
+/// Whether the default mode promotes a b-jit region to u-jit once it has run long enough.
+#[inline]
+pub(crate) fn regions_promote_to_ultra() -> bool { !stencil_regions() }
+
+/// Whether a site BaseJIT declined compiles again as a u-jit region: never where every region is a stencil one, and
+/// only where UltraJIT runs.
+#[inline]
+pub(crate) fn declined_regions_recompile_ultra() -> bool { !stencil_regions() && tier_runs(&[Tier::Ultra]) }
+
+/// Whether any of `tiers` runs in this VM: compiled execution, a memory policy that compiles them
+/// (`tier_policy::tier_may_run`), and a JIT mode that allows one. A build whose profiles count
+/// interpreted work exactly runs none.
+#[inline]
+pub(crate) fn vm_may_run(vm: &Vm, tiers: &[Tier]) -> bool {
+    !cfg!(quench_profiled)
+        && vm.execution_mode == quench_runtime::ExecutionMode::Compiled
+        && quench_runtime::vm::tier_policy::tier_may_run(vm.memory_policy(), tiers)
+}
+
+/// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
+#[inline]
+pub(crate) fn lane_bodies_enrolled(vm: &Vm) -> bool { vm.programs.js_jit_lane_methods_enabled() }
+
+/// Whether the JIT diagnostics (`QUENCH_TRACE=js-jit`) record their counters. Diagnostics only: no tier
+/// decision reads it.
+#[inline]
+pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabled() }
+
+/// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
+pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
+    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() }).compiled()
+}
+
+/// The unit of a loop region this VM may compile (`region_unit_under` of its memory policy).
+pub(crate) fn region_unit(vm: &Vm) -> Option<CompiledUnit> { region_unit_under(vm.memory_policy()) }
+
+/// Whether a loop region compiles in this VM (`region_unit`).
+#[inline]
+pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() }
+
+/// Whether a Cranelift tier runs (QuickJIT or UltraJIT): the tiers that compile what BaseJIT does not build.
+#[inline]
+fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
+
+/// Whether a loop's kernel takes a recurrence pass: a recurrence the pass interprets per iteration is routed to the
+/// loop's stencils where the stencil tier is the only tier, which run it faster (crc); folds and chains stay with the kernel.
+#[inline]
+pub(crate) fn kernel_takes_recurrence(interprets: bool) -> bool { !(stencil_only() && interprets) }
+
+/// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
+/// inlining region), so they are analyzed only where a Cranelift tier runs.
+#[inline]
+pub(crate) fn inlining_regions_route_to_cranelift() -> bool { cranelift_runs() }
+
+/// Whether a region BaseJIT does not build is declined rather than left to Cranelift: where no Cranelift tier runs,
+/// nothing compiles it.
+#[inline]
+pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
+
+/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
+#[inline]
+pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
+
+/// Whether a lane body's start takes the tier below u-jit first: the default mode's rule, which an
+/// `admits_all` run and a body that does not start on the stencil tier do not take.
+#[inline]
+pub(crate) fn starts_base_first(starting: bool, starts_on_base: bool, tiers: &Tiers) -> bool {
+    starting && starts_on_base && !tiers.admits_all && stencil_below()
+}
+
+/// Whether a body that u-jit refused or left goes back to the stencil tier it was promoted from.
+#[inline]
+pub(crate) fn returns_to_base(left: bool, promoted: bool) -> bool { left && promoted && stencil_below() }
 
 /// How a function's interpreter records specialize (`dispatch_fast::derive_lane_view`): the
 /// interpreter's own projection of the function, decided here as every compiled unit is.
@@ -419,7 +502,7 @@ pub(crate) struct RecordPlan {
     pub(crate) speculates: bool,
 }
 
-/// The record plan of a function whose tiers may run (`tiers_run`: `Vm::tier_may_run`, any tier).
+/// The record plan of a function whose tiers may run (`tiers_run`: `vm_may_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
 }
@@ -453,8 +536,8 @@ pub(crate) enum LaneRoute {
 pub(crate) struct LaneRouteFacts {
     /// The function's program has a loaded AOT image.
     pub(crate) ahead_image: bool,
-    /// The process runs the stencil tier only (`jit_mode::base_only`).
-    pub(crate) base_only: bool,
+    /// A start the default mode gives the stencil tier first (`starts_base_first`).
+    pub(crate) base_first: bool,
     /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
     pub(crate) callees_compiling: bool,
 }
@@ -462,7 +545,7 @@ pub(crate) struct LaneRouteFacts {
 /// The route of a function's lane body: the specializer decides it, as it decides each unit after.
 pub(crate) fn route_for_lane(facts: LaneRouteFacts) -> LaneRoute {
     if facts.ahead_image { LaneRoute::Ahead }
-    else if facts.base_only { LaneRoute::Base }
+    else if stencil_only() || facts.base_first { LaneRoute::Base }
     else if facts.callees_compiling { LaneRoute::Deferred }
     else { LaneRoute::Lane }
 }

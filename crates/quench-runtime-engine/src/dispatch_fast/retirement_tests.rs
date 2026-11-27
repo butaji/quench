@@ -55,7 +55,6 @@ fn direct_slot_fixture() -> (Vm, quench_runtime::ResidualProgram, Value, ScriptC
     let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     vm.programs.enable_js_lane_methods();
-    vm.keep_slot_representations();
     let leaf_atom = vm.intern_atom("leaf");
     let root_atom = vm.intern_atom("root");
     let leaf = vm.own_property(vm.realm.globals, leaf_atom).unwrap();
@@ -99,7 +98,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), caller_base: unsafe { &*root_target.view }.records().addr(),
         cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
-        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals), lexical: false,
+        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
         capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None, bound: Default::default(),
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,

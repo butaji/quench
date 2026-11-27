@@ -13,7 +13,7 @@ mod int_type;
 mod lattice;
 mod representation;
 pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
-pub use representation::Representation;
+pub use representation::{repr, Representation};
 mod slot_type;
 pub use slot_type::SlotType;
 #[allow(unused_imports)]

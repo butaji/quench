@@ -662,7 +662,7 @@ pub(super) fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Ca
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
     // A body warming between attempts has nothing to enter: the entry is counted and its first record runs.
-    if let Some(own) = own && vm.programs.js_jit_lane_methods_enabled() && own.counted_between_attempts(false) { return Resumed::At(r, base, Carried::script_in(cx, view)); }
+    if let Some(own) = own && crate::compiled::admission::lane_bodies_enrolled(vm) && own.counted_between_attempts(false) { return Resumed::At(r, base, Carried::script_in(cx, view)); }
     // A function of a program with a loaded AOT image enters the image's body at its first entry.
     // SAFETY: the prologue is this record, written when the tier claimed the function (`claim_for_tier`).
     if let Some(own) = own && vm.images_run_in_lane() && vm.programs.ahead_images(unsafe { (*cx).program }, unsafe { &*(*cx).code }).is_some() {
@@ -694,14 +694,6 @@ pub(super) const fn body_entry_row() -> Handler {
     protocol_row!({ quench_runtime::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 })
 }
 
-/// Whether an activation of the function whose records start at `records` calls the newest
-/// activation, within `RECURSION_DEPTH` calls of it less `nearer` (those the caller already
-/// looked at): each activation's caller base is its caller's records.
-pub(super) fn activation_reentered(vm: &Vm, records: Ip, nearer: usize) -> bool {
-    use crate::compiled::tier_policy::RECURSION_DEPTH;
-    vm.lane_stack.activations().iter().rev().take(RECURSION_DEPTH - nearer).any(|activation| activation.caller_base() == records)
-}
-
 /// The receiver word a body is entered with: the activation's `this` (bound by `direct_call_this_in_lane`)
 /// where the body reads it (`LaneView::binds_this`), else `DELETED`, at which its `LoadThis` leaves.
 #[inline(always)]
@@ -713,8 +705,7 @@ pub(super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this: bool) -> 
 /// Where the lane continues after a run of `method`, `own`'s body, that ran on the
 /// activation `cx` holds, with registers `r`, and ended at `exit`: a returned run completes
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
-/// where it names (`body_left_in_lane`); `started` is the audit's clock for this entry, read once
-/// the run's leave is resolved.
+/// where it names (`body_left_in_lane`).
 #[inline(always)]
 pub(super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit, function: u32) -> Resumed {
     let base = unsafe { (*cx).base };
@@ -772,7 +763,7 @@ pub(super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, own: Optio
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    if vm.programs.js_jit_lane_methods_enabled() && let Some(own) = own {
+    if crate::compiled::admission::lane_bodies_enrolled(vm) && let Some(own) = own {
         if !specialize_in_lane(cx, own, function, false, parameters, None) { own.release_from_tier(); }
         return None;
     }
@@ -1092,7 +1083,7 @@ pub(super) fn leave_counts_in_lane(cx: *mut LaneContext, exit: crate::compiled::
 /// With diagnostics, counts a leave of `own`'s body into a warming callee, which
 /// `leave_counts_in_lane` keeps from its feedback, in the view's report.
 pub(super) fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
-    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+    if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
         own.tier().body_stats.warming_leaves.set(own.tier().body_stats.warming_leaves.get() + 1);
     }
 }
@@ -1102,7 +1093,7 @@ pub(super) fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
 pub(super) fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
     crate::compiled::fallback_sites::body_ended(cx, method, exit);
     method.exits.cross(exit);
-    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+    if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
     }
 }
@@ -1120,7 +1111,7 @@ pub(super) fn note_body_end_in_lane(cx: *mut LaneContext, own: &LaneView, exit: 
 #[cold]
 pub(super) fn body_refused_in_lane(vm: &Vm, own: &LaneView) {
     vm.programs.tier_events().record(Event::Refused);
-    if vm.programs.js_jit_diagnostics_enabled() {
+    if crate::compiled::admission::diagnosing(vm) {
         own.tier().body_stats.refused.set(own.tier().body_stats.refused.get() + 1);
     }
 }
@@ -1379,12 +1370,6 @@ pub(super) fn enter_cell_body_in_lane(
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;
-    // Most entries of a published body come through its cell: one of the audit's interpreted
-    // epoch activates the call as the lane's own would (`lane_body_audit`).
-    // SAFETY: the running context; its records are the caller's.
-    if own.audit_entry(false, || unsafe { (*cx).base } == own.records() || activation_reentered(vm, own.records(), 1)) {
-        return None;
-    }
     let window = fill_window_in_lane(vm, target, passed, argc);
     if !body_admits_in_lane(cx, method, CALLEE_ACTIVATION_PENDING) {
         // SAFETY: the window starts at the stack's top, which the fill moved.
@@ -1601,7 +1586,7 @@ pub(super) fn enter_plain_window(
     );
     // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
     // tier's diagnostics count entries: then this cold branch does, so they observe the same path.
-    if vm.programs.js_jit_diagnostics_enabled() { count_proved_entry_in_lane(vm, target); }
+    if crate::compiled::admission::diagnosing(vm) { count_proved_entry_in_lane(vm, target); }
     (callee_registers, unsafe { (*target.view).start() })
 }
 

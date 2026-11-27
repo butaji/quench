@@ -166,7 +166,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     let fields = fields::guessed_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), facts: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of),
         // An image runs only in a VM whose host makes no IsHTMLDDA object (`install_ahead_body`), so `== null`
         // decides by the word: an object of any record family is not nullish.
@@ -178,7 +178,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     // cost 5x the whole run as a lane.
     // A member of a global name (`Math.sqrt`) is left out: the helper runs a native in place.
     if calls_through_helper(&code) && calls_script(unit, &proven) {
-        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, unit, &proven, (facts.closed.expect("an image unit's facts"), calls)); }
+        if quench_runtime::trace::Channel::AotLanes.on() { trace_unproven_calls(program, function, unit, &proven, (facts.facts.expect("an image unit's facts"), calls)); }
         return Err("calls through the VM's helper");
     }
     // A lane body that polls and makes a call the closed world does not prove enters its callee's body
@@ -428,7 +428,7 @@ impl AheadImages {
 fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
     let Some(body) = program.function_get(callee as usize) else { return false };
     let this = super::base_region::callees::ThisForm::of(body);
-    direct.sloppy.is_some() == this.sloppy && direct.lexical == this.lexical && plain_cell(direct, body.registers)
+    direct.sloppy.is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
 }
 
 /// Whether `callee`'s entry cell holds the facts of a plain activation of `registers` registers, the
@@ -455,7 +455,6 @@ impl Vm {
         // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
         let _ = unit;
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        self.keep_slot_representations();
         let traced = quench_runtime::trace::Channel::AotLanes.on();
         if entry.is_some() || !generic.is_empty() {
             if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
@@ -596,7 +595,7 @@ impl Vm {
     /// with no warm-up. A program with an image already (a staged `.qimg`), or one a recording lowers
     /// itself, gets no second one; a program that lowers no image runs as before.
     pub(crate) fn stage_images_at_load(&mut self, id: quench_runtime::vm::ProgramId, program: &ResidualProgram) {
-        if self.execution_mode != quench_runtime::vm::engine_types::ExecutionMode::Compiled || !self.programs.js_jit_lane_methods_enabled()
+        if self.execution_mode != quench_runtime::vm::engine_types::ExecutionMode::Compiled || !crate::compiled::admission::lane_bodies_enrolled(self)
             || recorded().is_some() || self.programs.ahead_images(id, program).is_some() { return; }
         #[cfg(feature = "jit")]
         match AheadImages::compile(program) {

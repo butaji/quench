@@ -1,5 +1,5 @@
 //! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
-use super::{Representation, Type, TypeKind};
+use super::{repr, Representation, Type, TypeKind};
 use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,13 +124,7 @@ impl SlotType {
     /// How an arena word holds a value of this type: an int32 as the tagged word, a Number as the
     /// IEEE double (`encode_slot`), anything else as the `Value`. A projection, not a stored fact.
     #[inline(always)]
-    pub(crate) const fn rep(self) -> Representation {
-        match self {
-            Self::Int32 => Representation::Int32,
-            Self::Number => Representation::Float64,
-            _ => Representation::Tagged,
-        }
-    }
+    pub(crate) fn rep(self) -> Representation { repr(self.ty()) }
 
     pub(crate) fn label(self) -> &'static str {
         match self {

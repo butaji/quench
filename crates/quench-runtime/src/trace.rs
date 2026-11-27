@@ -202,9 +202,6 @@ setting! {
         /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
         /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
         IrMark = "ir-mark",
-        /// No compiled body is audited against the interpreter (`lane_body_audit`): every entry runs the
-        /// body, so a profile measures the body itself.
-        KeepBodies = "keep-bodies",
         /// Every expensive fallback (a refused compile, a helper call, a deopt, an opaque native
         /// in compiled code) stops the process naming its operation and source location;
         /// `=report` lists them all at exit instead, `=deopt+helper-call` stops at those kinds

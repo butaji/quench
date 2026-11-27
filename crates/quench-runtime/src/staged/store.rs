@@ -4,7 +4,7 @@
 
 use super::narrow::{narrow_form, packed_form, storable_form, UPPER_WORD};
 use super::object::{inline_storage, HALF_BYTES};
-use super::slot_store::{admitted_payload, gate_open, store_flat};
+use super::slot_store::{admitted_payload, gate_open, store_fact, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -26,7 +26,8 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
         let packed = super::ic::layout_form(shape) & OBJECT.inline_form != 0;
         return own_store_formed(stage, (record, payload, slot), value, packed, miss);
     }
-    own_store_with(stage, (record, payload, slot), (value, Type::ANY), miss)
+    let fact = store_fact(stage, value, Type::ANY);
+    own_store_with(stage, (record, payload, slot), (value, fact), miss)
 }
 
 /// `own_store_with` of a record whose form the caller knows and of a value nothing is proved
@@ -38,7 +39,8 @@ fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, 
         store_flat(stage, payload, slot, (value, Representation::Tagged));
         return Some(());
     }
-    let narrow = narrow_form(stage, value, Type::ANY);
+    let fact = store_fact(stage, value, Type::ANY);
+    let narrow = narrow_form(stage, value, fact);
     let narrow = storable_form(stage, narrow, miss)?;
     let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
     let address = stage.add_imm(record, half);
@@ -54,6 +56,7 @@ fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, 
 pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
     value: (S::Word, Type), miss: S::Miss) -> Option<()> {
     // The arm proved the slot's type holds `value` (`fact`): the store observes nothing.
+    let value = (value.0, store_fact(stage, value.0, value.1));
     super::slot_store::held_gate_open(stage, record_id, value, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     own_store_with(stage, (record, payload, slot), value, miss)
@@ -64,6 +67,7 @@ pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_
 #[inline(always)]
 pub(crate) fn own_store_flat_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
     value: (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let value = (value.0, store_fact(stage, value.0, value.1));
     super::slot_store::held_gate_open(stage, record_id, value, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     store_flat(stage, payload, slot, (value.0, Representation::Tagged));
@@ -109,6 +113,7 @@ pub(crate) fn own_store_raw<S: Stage>(stage: &mut S, record: S::Word, slot: u16,
 #[inline(always)]
 pub fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let fact = store_fact(stage, value, fact);
     gate_open(stage, record_id, (value, fact), miss)?;
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
     Some(())
@@ -119,6 +124,7 @@ pub fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S:
 #[inline(always)]
 pub fn bound_packed_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let fact = store_fact(stage, value, fact);
     let narrow = narrow_form(stage, value, fact);
     let narrow = storable_form(stage, narrow, miss)?;
     gate_open(stage, record_id, (value, fact), miss)?;
@@ -175,7 +181,8 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
             // Packed: the value's narrow form into its half of the payload word, behind the gate.
             let record = record as u64;
             let mut stage = super::Concrete::storing(heap);
-            if gate_open(&mut stage, u64::from(record_id), (value.to_bits(), Type::ANY), ()).is_none() {
+            let fact = store_fact(&stage, value.to_bits(), Type::ANY);
+            if gate_open(&mut stage, u64::from(record_id), (value.to_bits(), fact), ()).is_none() {
                 return false;
             }
             return own_store_formed(&mut stage, (record, 0, slot), value.to_bits(), true, ()).is_some();

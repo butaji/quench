@@ -176,7 +176,8 @@ impl Lowering<'_, '_> {
         // A fused chain can consume an existing first-slot proof, but its guest
         // result names the final slot. Do not retain a new anonymous intermediate
         // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| single) {
+        if let Some((owner, atom)) = field.filter(|_| single)
+            && let Some(owner) = self.owner_word(state, owner) {
             let read = FieldValue { owner, atom, value, ty };
             match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                 Some(field) => *field = read,
@@ -243,7 +244,7 @@ impl Lowering<'_, '_> {
     /// (`NativeFieldLoad::closed_typed`): the closed world's field type, which the image's slot
     /// dependencies hold (`ahead_images::guard_dependencies`), retiring it where a store widens one.
     fn closed_typed_read(&self, instruction: WideInstruction) -> bool {
-        self.vm.closed.is_some() && self.helpers.links()
+        self.vm.facts.is_some() && self.helpers.links()
             && last_read_site(self.program, instruction).and_then(|last| site_loads(self.fields, last))
                 .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.closed_typed()))
     }

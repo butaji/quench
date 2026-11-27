@@ -22,7 +22,7 @@ fn lowered_entered(source: &str, name: &str, entering: Option<IntRange>) -> ir::
         None => (Coverage::Full, Vec::new()),
         Some(range) => {
             let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
-                successors(pc, *instruction).into_iter().find(|target| *target <= pc).map(|target| (target, pc)))
+                { let mut back = None; quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| if target <= pc && back.is_none() { back = Some(target) }); back.map(|target| (target, pc)) })
                 .expect("the function has a loop");
             (Coverage::Loop { header, backedge, poll: false }, (0..unit.registers).map(|register| (register, range)).collect())
         }

@@ -350,3 +350,26 @@ fn a_64_bit_integer_view_holds_the_integers_a_number_holds_exactly() {
     assert!(held.verified().is_some());
     assert!(Fact { ty: Type::int(IntRange::WORD), ..held }.verified().is_none());
 }
+
+#[test]
+fn a_types_representation_is_the_narrowest_view_that_accepts_it() {
+    use super::representation::repr;
+    let exact = Type::int(IntRange::EXACT);
+    let wide = Type::int(IntRange::WORD);
+    let cases = [
+        (Type::INT32, Representation::Int32),
+        (Type::int(IntRange::singleton(7)), Representation::Int32),
+        (exact, Representation::Int64),
+        (Type::int(IntRange { min: i64::from(i32::MAX), max: 1 << 40 }), Representation::Int64),
+        (wide, Representation::Float64),
+        (Type::NUMBER, Representation::Float64),
+        (Type::NUMBER.join(Type::INT32), Representation::Float64),
+        (Type::INT32.join(Type::language(ValueType::BigInt)), Representation::Tagged),
+        (Type::ANY, Representation::Tagged),
+        (Type::NEVER, Representation::Tagged),
+    ];
+    for (ty, expected) in cases {
+        assert_eq!(repr(ty), expected, "{ty:?}");
+    }
+    assert_eq!(repr(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
+}

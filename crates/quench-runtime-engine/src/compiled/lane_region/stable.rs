@@ -182,10 +182,21 @@ impl Lowering<'_, '_> {
         self.read_invalidation(state, exit);
     }
 
+    /// Whether the Stable facts this lowering holds can change while its code runs, so that holding them needs
+    /// an invalidation point. The online division's facts always can. An AOT image's can only where its world
+    /// is not closed: a closed world's `AotFacts::live` is false for every key, and a global key is live in
+    /// every other world, so its probe answers for the whole world. Nothing can change a settled fact, so the
+    /// hold builds no word read, no guard and no exit.
+    pub(crate) fn fact_may_change(&self) -> bool {
+        self.vm.online.is_some() || self.vm.facts.is_none_or(|facts| !facts.closed())
+    }
+
     /// The invalidation point of `hold_stable`, made here: the online division's word, or an AOT
-    /// image's, whose closed-world facts (`VmFacts::closed`) are its dependencies.
+    /// image's, whose closed-world facts (`VmFacts::facts`) are its dependencies. Nothing where
+    /// `fact_may_change` is false.
     pub(crate) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
-        let closed = self.vm.closed.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
+        if !self.fact_may_change() { return; }
+        let closed = self.vm.facts.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
         let live = self.vm.online.map(|online| online.invalidation).or(closed).expect("only a division with Stable facts reads the word");
         read_invalidation_word(&mut self.builder, self.helpers, live, state, exit);
     }
@@ -373,8 +384,12 @@ impl Lowering<'_, '_> {
         let inside = header..=end;
         // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
-                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
+            !inside.contains(&pc) && {
+                let mut enters_within_block = false;
+                quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target|
+                    enters_within_block |= (target > header && target <= end) || (target == header && pc > end));
+                enters_within_block
+            });
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 

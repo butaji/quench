@@ -1075,6 +1075,9 @@ concept_runs successor-table 5
 concept_twin length-int32-guard 1
 concept_twin math-imul 2
 concept_twin packed-instruction-decode 2
+concept_twin cfg-leaders 2
+concept_twin cfg-reachable 7
+concept_twin cfg-successors 7
 concept_twin string-order 0
 concept_twin to-int32 1
 concept_twin to-uint8-clamp 0
@@ -5149,7 +5152,6 @@ inline_always_lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm::complete
 inline_always_lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm::push_wasm_frame_over 42
 inline_always_lines crates/quench-runtime/src/vm/dispatch_frame/interpreter_frame.rs::InterpreterFrame<'_>::allocate_value 59
 inline_always_lines crates/quench-runtime/src/vm/environment.rs::Vm::walked_capture_slots 42
-inline_always_lines crates/quench-runtime/src/vm/lane_body_audit.rs::LaneView::audit_entry 45
 inline_always_lines crates/quench-runtime/src/vm/object.rs::Vm::cached_inherited_field_value 78
 inline_always_lines crates/quench-runtime/src/vm/object.rs::Vm::fact_accessor 46
 inline_always_lines crates/quench-runtime/src/vm/object.rs::Vm::polymorphic_field_entries_hit 79

@@ -249,7 +249,6 @@ impl Lowering<'_, '_> {
             fact.tagged = TaggedView::Value(this);
             state.values[index] = fact;
             state.proofs.homed.remove(index);
-            if let Some(header) = state.proofs.headers.get_mut(index) { *header = None; }
         }
     }
 

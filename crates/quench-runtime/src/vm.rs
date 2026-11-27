@@ -13,7 +13,6 @@ pub mod engine_calls2;
 pub(crate) use engine_calls2::*;
 #[cfg(feature = "native-execution")]
 pub use engine_calls::{define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
-pub mod lane_body_audit;
 pub mod intl_core;
 pub mod layer_hooks;
 pub mod realm_table;
@@ -359,9 +358,6 @@ pub struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     pub with_objects: Vec<Value>,
     pub with_base: usize,
-    /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
-    /// Excludes compile work, native execution, suspended and exceptional exits.
-    pub js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -448,7 +444,6 @@ impl Frame {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
-            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }
@@ -3589,17 +3584,6 @@ impl Vm {
         }
     }
 
-    /// Only native code (Cranelift's, `--b-jit`'s stencils, or an AOT image's) reads slot representations, so only a
-    /// runtime that runs native bodies keeps them, from its shape table and what its live objects hold: from its first
-    /// compile or image install on (each such entry asks; the first call starts them), so a run that never compiles
-    /// never pays for them. No mode decides it: an image's typed field reads under `--no-jit` stand on the slots'
-    /// types as a JIT body's do, and a slot nobody tracks has no type for them to stand on.
-    pub fn keep_slot_representations(&mut self) {
-        if !self.heap.tracks_slot_representations() {
-            let layouts = self.shape_layouts();
-            self.heap.track_slot_representations(&layouts);
-        }
-    }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),

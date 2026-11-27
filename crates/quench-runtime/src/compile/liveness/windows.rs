@@ -52,7 +52,7 @@ pub(super) fn masked(
         let shift = (window * width) as u32;
         let shifted: Vec<_> = transfers.iter().map(|&(read, written)| (read >> shift, written >> shift)).collect();
         let observable = parameters >> shift;
-        let mut live = analyze_graph(&shifted, successors.starts(), successors.targets(), successors.edges(), |_| observable);
+        let mut live = analyze_graph(&shifted, &successors, |_| observable);
         add_suspended_exception_roots(function, &mut live);
         for (pc, set) in live.into_iter().enumerate() {
             masks[pc * windows + window] = set;

@@ -42,3 +42,11 @@ impl Representation {
             }
     }
 }
+
+/// The narrowest representation that accepts every value of `ty`: `Tagged` for `NEVER` and for any
+/// type no unboxed view holds.
+#[inline]
+pub fn repr(ty: Type) -> Representation {
+    [Representation::Int32, Representation::Int64, Representation::Float64]
+        .into_iter().find(|representation| representation.accepts(ty)).unwrap_or(Representation::Tagged)
+}

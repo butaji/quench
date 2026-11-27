@@ -258,10 +258,40 @@ pub(crate) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool
     bare && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
 }
 
-/// The slots of `from` in `into`.
-fn union(into: &mut Held, from: &Held) {
-    for slot in from.iter() {
-        into.insert(slot);
+/// The backward problem of `entry_reads`: a row's state is the slots live on entry to the rows after it, and its
+/// edges are the rows it follows (its predecessors), which `solve` gives the row's live-in.
+struct LiveIn<F> {
+    edges: Vec<Vec<usize>>,
+    /// A row's live-in from its live-out: the slots it writes end, the slots it reads begin.
+    step: F,
+}
+
+impl<F: Fn(usize, &Held) -> Held> quench_runtime::dataflow::Dataflow for LiveIn<F> {
+    type State = Held;
+
+    fn blocks(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edges[block]
+    }
+
+    /// Every row is entered with nothing live after it, so each one runs.
+    fn entry_state(&self, _block: usize) -> Option<Held> {
+        Some(Held::new())
+    }
+
+    fn join(&self, into: &mut Held, incoming: &Held) -> bool {
+        let mut grew = false;
+        for slot in incoming.iter() {
+            grew |= into.insert(slot);
+        }
+        grew
+    }
+
+    fn transfer(&mut self, block: usize, state: &Held) -> Held {
+        (self.step)(block, state)
     }
 }
 
@@ -272,32 +302,30 @@ pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds
     let count = decoded.len();
     let capacity = homes.orig.len().max(1);
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
-    let mut live: Vec<Held> = vec![Held::with_capacity(capacity); count];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for k in (0..count).rev() {
-            let row = &decoded[k];
-            let mut before = Held::with_capacity(capacity);
-            for next in row.successors(k, count, span) {
-                if let Next::Row(n) = next {
-                    union(&mut before, &live[n]);
-                }
-            }
-            for written in [row.dst, row.also].into_iter().flatten() {
-                before.remove(slot(written));
-            }
-            if !self_checking(row, kinds.get(k).and_then(Option::as_ref)) {
-                for read in row.registers() {
-                    before.insert(slot(read));
-                }
-            }
-            if !before.iter().eq(live[k].iter()) {
-                live[k] = before;
-                changed = true;
+    let mut edges = vec![Vec::new(); count];
+    for (k, row) in decoded.iter().enumerate() {
+        for next in row.successors(k, count, span) {
+            if let Next::Row(n) = next {
+                edges[n].push(k);
             }
         }
     }
+    let live_in = |k: usize, live_out: &Held| {
+        let row = &decoded[k];
+        let mut before = live_out.clone();
+        for written in [row.dst, row.also].into_iter().flatten() {
+            before.remove(slot(written));
+        }
+        if !self_checking(row, kinds.get(k).and_then(Option::as_ref)) {
+            for read in row.registers() {
+                before.insert(slot(read));
+            }
+        }
+        before
+    };
+    let mut problem = LiveIn { edges, step: live_in };
+    let states = quench_runtime::dataflow::solve(&mut problem);
+    let live = states.into_iter().enumerate().map(|(k, live_out)| (problem.step)(k, &live_out.unwrap_or_default())).collect();
     EntryReads { numbers: slots(capacity, span.number_registers().iter().copied()), kept: slots(capacity, kept.iter().copied()), live }
 }
 

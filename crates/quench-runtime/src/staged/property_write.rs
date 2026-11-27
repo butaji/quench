@@ -256,6 +256,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
         stage.guard(admitted, miss)?;
     }
     let id = stage.and_imm(object, u64::from(u32::MAX));
+    let fact = super::slot_store::store_fact(stage, value, fact);
     super::slot_store::held_gate_open(stage, id, (value, fact), miss)?;
     super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
     Some(())

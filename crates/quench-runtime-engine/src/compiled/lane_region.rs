@@ -21,7 +21,7 @@ use crate::ext_traits::*;
 use crate::compiled::regions;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
-use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
+use quench_runtime::typed_ir::{repr, BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
 pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
 use quench_runtime::dataflow::BitSet;
+pub(crate) use quench_runtime::bytecode::instruction_leaders as leaders;
 use cranelift_codegen::entity::EntityRef;
 
 #[path = "lane_region/known_branches.rs"]
@@ -147,13 +148,13 @@ fn loop_carries(instructions: &[WideInstruction], leaders: &BitSet, start: usize
         if target > pc { entry.0 += 1 } else { entry.1 = Some(entry.1.map_or(pc, |last: usize| last.max(pc))) }
     };
     for (pc, instruction) in instructions.iter().enumerate() {
-        for target in successors(pc, *instruction) { add(pc, target); }
+        quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| add(pc, target));
     }
     // A latch whose loop's header is a test repeats it (`edges::rotated_bodies`): its edges are the test's, from the latch.
     for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         let Some(&test) = instructions.get(header) else { continue };
         if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump) { continue; }
-        for target in successors(header, test) { add(latch, target); }
+        quench_runtime::bytecode::for_each_instruction_successor(header, test, |target| add(latch, target));
     }
     edges.into_iter().filter_map(|(pc, (forward, last))| Some((pc, (forward, last?)))).collect()
 }
@@ -206,6 +207,9 @@ impl RegisterFact {
             .expect("semantic operation's result type matches its representation")
     }
 
+    /// A definition held in the narrowest representation its type takes (`repr`).
+    fn narrowest(ty: Type) -> Self { Self::definition(ty, repr(ty)) }
+
     fn canonical() -> Self {
         Self::admit(Fact::tagged(BindingTime::Location, Proof::CanonicalValue))
             .expect("canonical tagged value")
@@ -236,8 +240,8 @@ struct State {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldValue {
-    /// Receiver home until its next definition (`None` is the fixed `this`).
-    owner: Option<Register>,
+    /// The resolved tagged word of the receiver the read named: a fact of the object, so every register holding it shares it.
+    owner: ir::Value,
     atom: Atom,
     value: ir::Value,
     ty: Type,
@@ -247,9 +251,10 @@ struct FieldValue {
 /// belong to the shared dataflow analysis and need no duplicate snapshots.
 #[derive(Clone, Default)]
 struct LocalProofs {
-    /// Direct-object proofs by owner, until an effect that may change the object retires
-    /// them: a register's, and in the final entry fixed `this`'s.
-    headers: Vec<Option<ObjectHeader>>,
+    /// Direct-object proofs by the resolved tagged word they prove, until an effect that may change the object
+    /// retires them. A register's redefinition names a new word, so it retires nothing. The flag is whether the
+    /// proof was a read's (`readable`, which may name a function's object).
+    headers: smallvec::SmallVec<[(ir::Value, ObjectHeader, bool); INLINE_FIELD_BINDINGS]>,
     /// The record each proved value names (`ObjectRecord`), by the tagged word (resolved), and whether
     /// the proof was a read's (`readable`, which may name a function's object): a fact of the value, which
     /// no effect changes (records stay put in a run, and the reservation's base is the run's), so it
@@ -257,9 +262,6 @@ struct LocalProofs {
     /// (a copy, an inlined frame's `this`). A later header of any of them reads its shape through it, with
     /// no family test and no record lookup: the untagged view of a proven object (R2, facts on values).
     records: smallvec::SmallVec<[(ir::Value, ObjectRecord, bool); INLINE_FIELD_BINDINGS]>,
-    /// The owners of `headers` whose proof a read made, which may name a function's record
-    /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
-    readable: BitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
@@ -318,10 +320,6 @@ impl LocalProofs {
         self.admitted_captures.push((callee, view));
     }
 
-    fn set_readable(&mut self, owner: usize, readable: bool) {
-        if readable { self.readable.insert(owner); } else { self.readable.remove(owner); }
-    }
-
     /// An admitted existing own-slot write changes only this name. Retire it for every receiver, since distinct receiver values may alias.
     fn write_field(&mut self, atom: Atom) {
         self.fields.retain(|field| field.atom != atom);
@@ -348,7 +346,7 @@ impl State {
 
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
-            headers: vec![None; registers + 1], records: smallvec::SmallVec::new(), readable: BitSet::with_capacity(registers + 1),
+            headers: smallvec::SmallVec::new(), records: smallvec::SmallVec::new(),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
@@ -366,23 +364,16 @@ impl State {
         }
     }
 
-    /// The `headers` index of an owner: a register, or fixed `this` (`None`).
-    fn header_index(&self, owner: Option<Register>) -> usize {
-        owner.map_or(self.values.len(), usize::from)
-    }
-
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
         self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
-        self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
         self.proofs.keep_typed_views();
         // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
         self.proofs.admitted_captures.clear();
-        self.proofs.headers.fill(None);
-        self.proofs.readable.clear();
+        self.proofs.headers.clear();
         self.proofs.layouts.clear();
         self.proofs.global = None;
         self.proofs.stable = false;
@@ -944,7 +935,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
-        self.define(state, register, bits, RegisterFact::definition(Type::ANY, Representation::Tagged));
+        self.define(state, register, bits, RegisterFact::narrowest(Type::ANY));
     }
 
     /// The tagged Boolean a predicate `holds` selects.
@@ -953,15 +944,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn set_boolean(&mut self, state: &mut State, register: Register, boolean: ir::Value) {
-        self.define(state, register, boolean, RegisterFact::definition(Type::language(quench_runtime::ValueType::Boolean), Representation::Tagged));
+        self.define(state, register, boolean, RegisterFact::narrowest(Type::language(quench_runtime::ValueType::Boolean)));
     }
 
     fn set_int(&mut self, state: &mut State, register: Register, int: ir::Value) {
-        self.define(state, register, int, RegisterFact::definition(Type::INT32, Representation::Int32));
+        self.define(state, register, int, RegisterFact::narrowest(Type::INT32));
     }
 
     fn set_number(&mut self, state: &mut State, register: Register, number: ir::Value) {
-        self.define(state, register, number, RegisterFact::definition(Type::NUMBER, Representation::Float64));
+        self.define(state, register, number, RegisterFact::narrowest(Type::NUMBER));
     }
 
     /// Prove an exact int32 view once; a Number already in a float register
@@ -1090,16 +1081,14 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
         let Some(arrived) = self.arrived.remove(&pc) else { return };
         let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
-        for (index, header) in state.proofs.headers.iter_mut().enumerate() {
-            *header = first.headers[index].filter(|proof| rest.iter()
-                .all(|other| other.headers[index] == Some(*proof)));
-        }
+        // A header every arrival holds for the same word is the join's, read where any arrival read it.
+        state.proofs.headers = first.headers.iter().filter(|(word, header, _)| rest.iter()
+            .all(|other| other.headers.iter().any(|(known, proof, _)| known == word && proof == header)))
+            .map(|(word, header, _)| (*word, *header, arrived.iter()
+                .any(|other| other.headers.iter().any(|(known, _, readable)| known == word && *readable))))
+            .collect();
         state.proofs.records = first.records.iter().copied().filter(|record| rest.iter()
             .all(|other| other.records.contains(record))).collect();
-        state.proofs.readable.clear();
-        for arrived in &arrived {
-            for owner in arrived.readable.iter() { state.proofs.readable.insert(owner); }
-        }
         state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
         state.proofs.global = first.global.filter(|kept| rest.iter().all(|other| other.global == Some(*kept)));
@@ -1191,9 +1180,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if let Some(shape) = ty.object_shape() && !state.values[index].value.ty.is_subtype(ty) {
             let exit = self.guard_exit(state, target as u32);
             let header = self.object_header(state, Some(register), false, exit);
-            headers::prove_header_shape(&mut self.builder, state, Some(register), header, shape, exit);
+            let word = self.register_word(state, register);
+            headers::prove_header_shape(&mut self.builder, state, word, header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+                ..RegisterFact::narrowest(Type::direct_object(shape)) };
         }
     }
 
@@ -1276,6 +1266,42 @@ impl<'a, 'f> Lowering<'a, 'f> {
             state.values[index] = fact;
         }
         state
+    }
+
+    /// The solver's type of each register at unit PC `pc` (`AotFacts::block_entry`, the cell every register
+    /// of the block starts with), by unit register: the origin's function and PC (an inlined frame's registers
+    /// sit at its `base`). Empty where no facts were given, where the origin's block starts no solved block, or
+    /// where a covered function's key is live (new code may move it, and nothing subscribes to it here).
+    fn cell_types(&self, pc: usize) -> Vec<Option<Type>> {
+        let Some(facts) = self.vm.facts else { return Vec::new() };
+        let covered = std::iter::once(self.function_id).chain(self.unit.frames.iter().map(|frame| frame.target.function));
+        if covered.clone().any(|function| facts.function_facts(function).dependencies().iter().any(|key| facts.live(*key))) { return Vec::new(); }
+        let (function, at, base) = match self.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Caller(at)) => (self.function_id, *at, 0),
+            Some(super::lane_unit::Origin::Inlined { frame, pc: at }) => {
+                let call = &self.unit.frames[*frame];
+                (call.target.function, *at, usize::from(call.base))
+            }
+            None => return Vec::new(),
+        };
+        let Some(cells) = facts.function_facts(function).block_entry(at) else { return Vec::new() };
+        (0..usize::from(self.unit.registers)).map(|register| register.checked_sub(base)
+            .and_then(|own| cells.get(own)).map(|cell| cell.ty).filter(|ty| *ty != Type::NEVER)).collect()
+    }
+
+    /// Narrows each register's fact of `state` at unit PC `pc` to its solved type (`cell_types`), where the
+    /// solved type is narrower and the held representation still holds it (a tagged fact, or an unboxed one
+    /// of the same machine representation). A fact is never widened; a register the solve holds nothing for stays.
+    fn narrow_to_cells(&self, state: &mut State, pc: usize) {
+        for (index, cell) in self.cell_types(pc).into_iter().enumerate() {
+            let Some(ty) = cell else { continue };
+            let Some(fact) = state.values.get(index).copied() else { continue };
+            let held = fact.value.representation;
+            let narrower = ty != fact.value.ty && ty.is_subtype(fact.value.ty);
+            if narrower && (held == Representation::Tagged || number_domains::target_representation(ty) == held) {
+                state.values[index] = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, held) };
+            }
+        }
     }
 
     /// The live caller registers a once-entered region entry loaded from their frame slots.
@@ -1402,25 +1428,6 @@ struct PendingUnit {
     unit: ir::Value,
     constant: u16,
     negated: bool,
-}
-
-/// The PCs that begin basic blocks: the entry, every jump target and every instruction
-/// after a jump.
-pub(crate) fn leaders(instructions: &[WideInstruction]) -> BitSet {
-    let mut leaders = BitSet::with_capacity(instructions.len());
-    if !instructions.is_empty() { leaders.insert(0); }
-    for (pc, instruction) in instructions.iter().enumerate() {
-        let layout = instruction.op().control_flow_layout();
-        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
-            // Every successor of a branch (a branch table's `Jump` rows included) starts a block,
-            // and so does the instruction after a jump.
-            let jump = layout.jumps().then_some(pc + 1);
-            for target in successors(pc, *instruction).into_iter().chain(jump).filter(|t| *t < instructions.len()) {
-                leaders.insert(target);
-            }
-        }
-    }
-    leaders
 }
 
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
@@ -1660,13 +1667,6 @@ struct LoopField {
     store_ranges: smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]>,
 }
 
-/// The successors of `instruction` at `pc`: a branch table's entries, else its fall-through and jump target.
-fn successors(pc: usize, instruction: WideInstruction) -> smallvec::SmallVec<[usize; 2]> {
-    let mut targets = smallvec::SmallVec::new();
-    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| targets.push(target));
-    targets
-}
-
 /// Forward must-alias analysis through inline argument copies and branch joins.
 /// Only a single backedge is admitted, so every incoming state is complete when
 /// visited. Unknown writes decline promotion; no runtime alias cache is needed.
@@ -1675,8 +1675,11 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
     let mut fields: Vec<LoopField> = Vec::new();
     for &(header, back) in loops {
         if loops.iter().any(|&(other, end)| (other, end) != (header, back) && other <= back && header <= end)
-            || (header..=back).any(|pc| successors(pc, unit.instructions[pc]).into_iter()
-                .any(|target| target <= pc && (pc, target) != (back, header)))
+            || (header..=back).any(|pc| {
+                let mut back_edge = false;
+                quench_runtime::bytecode::for_each_instruction_successor(pc, unit.instructions[pc], |target| back_edge |= target <= pc && (pc, target) != (back, header));
+                back_edge
+            })
             || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
                 (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
         let mut written: BitSet = BitSet::with_capacity(usize::from(unit.registers));
@@ -1721,7 +1724,9 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
             let copied = (matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. }))).then(|| aliases[usize::from(instruction.register_b())]).flatten();
             for register in writes(instruction) { aliases[usize::from(register)] = None; }
             if matches!(super::decoded(instruction), Some(quench_runtime::staged::Operation::Move { .. })) { aliases[usize::from(instruction.result_register())] = copied; }
-            let mut targets = successors(pc, instruction).into_iter().filter(|target| *target > pc && *target <= back).peekable();
+            let mut forward_targets = smallvec::SmallVec::<[usize; 2]>::new();
+            quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| if target > pc && target <= back { forward_targets.push(target) });
+            let mut targets = forward_targets.into_iter().peekable();
             while let Some(target) = targets.next() {
                 // Linear control transfers ownership of its flat state; only a
                 // branch needs a second copy for the second successor.
@@ -2323,6 +2328,7 @@ pub(crate) fn lower(
             }
             proven_types = entered.into_boxed_slice();
         }
+        lowering.narrow_to_cells(&mut state, pc);
         lowering.entry_conform(&mut state, pc, coverage);
         // A region whose sole entry is this loop header has no earlier source
         // edge on which to hoist its invariant reads. Admit them on the native
@@ -2364,6 +2370,7 @@ pub(crate) fn lower(
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
+            lowering.narrow_to_cells(&mut state, pc);
             lowering.carry_typed_views(&mut state, pc);
             lowering.seed_loop_shapes(&mut state, pc);
             reachable = true;
@@ -2602,6 +2609,7 @@ impl Lowering<'_, '_> {
         if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; declined("a kept receiver reaches a join", pc); }
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.proofs.headers.retain(|header| incoming.proofs.headers.contains(header));
         state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
@@ -2615,6 +2623,8 @@ impl Lowering<'_, '_> {
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
+                // Arms that hold one view keep it, as both define it; arms holding different views meet in the
+                // tagged view (`repr(joined)` may be Float64, which the int32 arm never defines).
                 let representation = if current.value.representation == incoming.value.representation {
                     current.value.representation
                 } else {
@@ -2712,7 +2722,7 @@ impl Lowering<'_, '_> {
     /// Guards and termination leave without publishing a result.
     fn finish_number_returns(&mut self) -> NativeNumberResult {
         let ty = self.number_returns.iter().fold(Type::NEVER, |ty, returned| ty.join(returned.fact.ty));
-        let format = if ty != Type::NEVER && ty.is_subtype(Type::INT32) {
+        let format = if repr(ty) == Representation::Int32 {
             NativeNumberResult::Int32
         } else { NativeNumberResult::Float64 };
         for returned in std::mem::take(&mut self.number_returns) {
@@ -3526,12 +3536,12 @@ impl Lowering<'_, '_> {
             let bits = self.tagged(state, source);
             let index = self.helper_call(LaneHelper::TypeofIndex, &[bits]);
             let int = self.raw_unary(Unary::Narrow(Lane::I32), index);
-            self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
+            self.define(state, instruction.result_register(), int, RegisterFact::narrowest(Type::INT32));
             return Some(true);
         };
         let index = quench_runtime::bytecode::typeof_name_index(quench_runtime::vm::coercion::typeof_text(kind)).expect("a language typeof name");
         let int = self.raw_const(Lane::I32, i64::try_from(index).expect("index fits i64"));
-        self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
+        self.define(state, instruction.result_register(), int, RegisterFact::narrowest(Type::INT32));
         Some(true)
     }
 
@@ -3690,10 +3700,11 @@ impl Lowering<'_, '_> {
     fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
         let inlined = self.unit.frames[frame];
         let receiver = self.tagged(state, inlined.receiver);
+        let word = self.builder.func.dfg.resolve_aliases(receiver);
         // A numeric body has no entry facts: only a dominating proof admits its receiver.
         let entry = self.entry.as_ref();
         let admitted = entry.is_some_and(|entry| entry.call_receivers.contains(frame))
-            || state.proofs.headers[usize::from(inlined.receiver)].is_some()
+            || state.proofs.headers.iter().any(|(known, ..)| *known == word)
             || entry.is_some_and(|entry| entry.records[usize::from(inlined.receiver)].is_some()
                 || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some()));
         let callee = self.program.function(inlined.target.function as usize);
@@ -3754,7 +3765,7 @@ impl Lowering<'_, '_> {
         }
         if let Some(ty) = proved {
             state.values[callee_index] = RegisterFact::admit(Fact {
-                ty, representation: Representation::Tagged,
+                ty, representation: repr(ty),
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
             }).expect("an admitted callee and its dominating check");
         }
@@ -4056,7 +4067,7 @@ impl Lowering<'_, '_> {
             let TaggedView::Value(value) = fact.tagged else { continue };
             if self.builder.func.dfg.resolve_aliases(value) == bits && !fact.value.ty.is_direct_object_family() {
                 *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(fact.value.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY), Representation::Tagged) };
+                    ..RegisterFact::narrowest(fact.value.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY)) };
             }
         }
     }
@@ -4370,7 +4381,7 @@ impl Lowering<'_, '_> {
                     ty = admitted;
                 }
             }
-            let representation = if int32 { Representation::Int32 } else if number { Representation::Float64 } else { Representation::Tagged };
+            let representation = repr(ty);
             let raw = match representation {
                 Representation::Int32 => self.raw_unary(Unary::Narrow(Lane::I32), value),
                 Representation::Float64 => {
@@ -4807,8 +4818,11 @@ impl Lowering<'_, '_> {
         {
             return Some(true);
         }
-        let known = field.and_then(|(owner, atom)| state.proofs.fields.iter().copied()
-            .find(|field| field.owner == owner && field.atom == atom));
+        let known = match field {
+            Some((owner, atom)) => self.owner_word(state, owner)
+                .and_then(|word| state.proofs.fields.iter().copied().find(|field| field.owner == word && field.atom == atom)),
+            None => None,
+        };
         #[cfg(test)] if known.is_some() { record_field_forward(first.1); }
         let held = HeldRead { known: known.map(|field| field.value), ..HeldRead::default() };
         let value = self.field_value(state, (base, lookup), &parts, held, exit)?;
@@ -4939,6 +4953,16 @@ impl Lowering<'_, '_> {
         headers::object_header(&mut self.builder, &mut self.registers, state, (entry, self.payload), owner, read, exit)
     }
 
+    /// The resolved word a register holds: the value its proofs are keyed by (`headers::register_word`).
+    fn register_word(&mut self, state: &mut State, register: Register) -> ir::Value {
+        headers::register_word(&mut self.builder, &mut self.registers, state, register)
+    }
+
+    /// The resolved word of `owner`, a register's or fixed `this`'s; `None` for `this` where the entry has none.
+    fn owner_word(&mut self, state: &mut State, owner: Option<Register>) -> Option<ir::Value> {
+        headers::owner_word(&mut self.builder, &mut self.registers, state, self.entry.as_ref().map(|entry| entry.this), owner)
+    }
+
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
         if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
@@ -5009,9 +5033,10 @@ impl Lowering<'_, '_> {
 
     /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
     /// store's object is the record the projection addresses.
-    fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
-        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(slot.domain)
-            && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
+    fn projected_slot(&mut self, state: &mut State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
+        let slot = self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(slot.domain))?;
+        let word = self.owner_word(state, register)?;
+        state.proofs.headers.iter().any(|(known, header, _)| *known == word && header.record == slot.header.record).then_some(slot)
     }
 
     /// The named store of `operation` through its site's plan: `ty` is the stored value's type,

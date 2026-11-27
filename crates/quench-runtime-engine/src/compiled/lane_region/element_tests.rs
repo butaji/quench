@@ -144,7 +144,7 @@ fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::
     let program = quench_runtime::Engine::specialize(source, "index-math.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
-        successors(pc, *instruction).into_iter().find(|target| *target <= pc).map(|target| (target, pc)))
+        { let mut back = None; quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| if target <= pc && back.is_none() { back = Some(target) }); back.map(|target| (target, pc)) })
         .expect("the function has a loop");
     let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, entering)).collect();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();

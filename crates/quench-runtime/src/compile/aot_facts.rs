@@ -102,6 +102,12 @@ impl AotFacts {
         self.world.live(key)
     }
 
+    /// Whether no code can be added to the program (`World::Closed`): no key is live, so a unit that
+    /// trusts these facts reads no invalidation word and keeps no exit for them.
+    pub fn closed(&self) -> bool {
+        self.world == World::Closed
+    }
+
     /// The names stored into `function`'s `prototype`, each once, in the order the program's code
     /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
     /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).

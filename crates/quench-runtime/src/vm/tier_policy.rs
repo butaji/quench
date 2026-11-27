@@ -186,14 +186,6 @@ pub struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub compile_poll_interval: u16,
-    /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
-    /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
-    pub(crate) audit_period: u32,
-    /// The epochs each side needs before the verdict (`LaneView::audit_verdict`).
-    pub(crate) audit_samples: u16,
-    /// How much shorter, per thousand, the body's median epoch must be than the interpreter's
-    /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
-    pub(crate) audit_margin_permille: u64,
 }
 
 /// The per-function JavaScript tier: the numeric optimizing tier.
@@ -217,8 +209,8 @@ pub struct Wasm {
     /// `promotion_entries` such stretches.
     pub backedges_per_entry: u32,
     /// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry
-    /// rather than starting in the interpreter: compiling it costs about what
-    /// `WasmModuleCompile::after` would have spent interpreting it, so waiting buys nothing.
+    /// rather than starting in the interpreter: compiling it costs about what the work budget
+    /// (`WASM_MODULE_WORK_BUDGET`) would have spent interpreting it, so waiting buys nothing.
     /// Whole compiles take 3-7 us a bytecode (Linux x86_64): quicksort-wasm, 2,412, compiles in
     /// 16 ms and lost 13% of its JetStream Score waiting; source-map's module, 12,971, takes
     /// 67 ms, which its one short parse never repays.
@@ -309,7 +301,7 @@ impl crate::vm::Vm {
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -405,9 +397,6 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         max_inlined_instructions: 96,
         compile_poll_interval: 64,
-        audit_period: 64,
-        audit_samples: 16,
-        audit_margin_permille: 20,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
@@ -475,6 +464,25 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
 #[inline]
 pub fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
+}
+
+/// Whether a compile may start at all: some compiling tier is allowed.
+pub fn may_compile() -> bool {
+    crate::jit_mode::tiers_allowed(Tier::ANY)
+}
+
+/// Whether `tier` may publish a body: a tier the mode allows, with QuickJIT only where it is the only Cranelift tier.
+pub fn may_publish(tier: Tier) -> bool {
+    match tier {
+        Tier::Quick => crate::jit_mode::quick_only(),
+        tier => crate::jit_mode::tiers_allowed(&[tier]),
+    }
+}
+
+/// Whether QuickJIT is the only Cranelift tier (`--q-jit`): every Cranelift compile is `CompileLevel::Quick`, and a
+/// published lane body is a QuickJIT body.
+pub fn quick_only() -> bool {
+    crate::jit_mode::quick_only()
 }
 
 /// What `policy` lets the tiers compile.
@@ -674,10 +682,10 @@ pub(crate) const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 
 pub(crate) const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-pub(crate) const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
+/// The work (entries and loop backedges, `TIERS.wasm.backedges_per_entry`) a selective Wasm
+/// module observes before its whole-module compile is due: a module that runs this long gets
+/// the code eager compilation would have made at its first entry.
+pub(crate) const WASM_MODULE_WORK_BUDGET: u32 = 4096;
 
 pub(crate) const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 
@@ -759,13 +767,9 @@ mod tests {
 }
 
 /// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
-/// more functions than this as straight-line code, and the audit counts an entry made within this
-/// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
+/// more functions than this as straight-line code.
 pub const RECURSION_DEPTH: usize = 4;
 
-/// The uncounted entries other bodies make while one body's audit runs, after which that audit,
-/// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.
-pub(crate) const AUDIT_LEASE_ENTRIES: u32 = 1 << 16;
 /// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
 /// exits: what a unit's instruction budget (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) is
 /// derived from its code-size budget by.

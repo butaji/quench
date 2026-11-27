@@ -25,7 +25,7 @@ use quench_runtime::vm::ProgramId;
 pub(crate) fn view_in_lane<'a>(vm: &Vm, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
-        crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
+        crate::compiled::admission::record_plan(crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY)),
         vm.programs.reports_on_drop(), vm.host.proper_tail_calls(), vm.programs.tiers());
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }

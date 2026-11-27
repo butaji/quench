@@ -3,8 +3,8 @@
 //! (`EntryCell::publish`/`withdraw`) happens only here, as the effect of a transition.
 //!
 //! Whether a tier may run at all is a separate fact with one home: `tier_policy::tier_may_run`
-//! (memory policy and JIT mode). The machine reads the mode half of it (`jit_mode::tiers_allowed`)
-//! to admit `Compile` and `Publish`.
+//! (memory policy and JIT mode). The machine asks `tier_policy::may_compile` and `may_publish` to
+//! admit `Compile` and `Publish`, and reads no mode itself.
 //!
 //! ```text
 //! from        event            to
@@ -25,7 +25,8 @@
 use super::engine_types::EntryCell;
 use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
-use crate::jit_mode::{quick_only, tiers_allowed, Tier};
+use super::tier_policy;
+use crate::jit_mode::Tier;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TierState {
@@ -82,9 +83,8 @@ const TRANSITIONS: &[(TierState, TierEvent, TierState)] = &[
 /// allows, and QuickJIT only where it is the only Cranelift tier (`--q-jit`).
 fn admitted(event: TierEvent) -> bool {
     match event {
-        Compile => tiers_allowed(Tier::ANY),
-        Publish(Tier::Quick) => quick_only(),
-        Publish(tier) => tiers_allowed(&[tier]),
+        Compile => tier_policy::may_compile(),
+        Publish(tier) => tier_policy::may_publish(tier),
         _ => true,
     }
 }
@@ -136,7 +136,7 @@ mod tests {
             assert!(TRANSITIONS[i + 1..].iter().all(|b| (a.0, a.1) != (b.0, b.1)), "{a:?}");
         }
         assert_eq!(transition(Interpreter, Warm), Some(Warming));
-        assert_eq!(transition(Compiling, Publish(Tier::Quick)).is_some(), quick_only());
+        assert_eq!(transition(Compiling, Publish(Tier::Quick)).is_some(), tier_policy::may_publish(Tier::Quick));
         assert_eq!(transition(Declined, Warm), None);
     }
 }

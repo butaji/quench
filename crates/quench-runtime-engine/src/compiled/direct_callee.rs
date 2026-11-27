@@ -63,7 +63,7 @@ pub(crate) fn rebind_closure(cx: *mut quench_runtime::vm::engine_types::LaneCont
     for direct in sites {
         if direct.bound.callee.get() == word { planned = true; continue; }
         let Some(fresh) = fresh.get_or_insert_with(|| crate::dispatch_fast::direct_callee_in_lane(vm, caller, function, pc as usize, argc, *target)).as_ref() else { return planned };
-        if fresh.call != call || (fresh.cell, fresh.sloppy, fresh.lexical, fresh.registers, fresh.capture_len, fresh.capture_stores) != (direct.cell, direct.sloppy, direct.lexical, direct.registers, direct.capture_len, direct.capture_stores) { continue; }
+        if fresh.call != call || (fresh.cell, fresh.sloppy, fresh.registers, fresh.capture_len, fresh.capture_stores) != (direct.cell, direct.sloppy, direct.registers, direct.capture_len, direct.capture_stores) { continue; }
         direct.bound.callee.set(word);
         direct.bound.captures.set(fresh.capture_word());
         planned = true;
@@ -153,12 +153,15 @@ fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
 /// `argc` arguments, where the lane would activate it in place.
 pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
-    // Only BaseJIT's direct row binds an arrow's `this`; an arrow that never reads it calls as strict.
-    let (sloppy, lexical) = match target.this_binding {
-        ThisBinding::Sloppy => (Some(vm.realm.globals), false),
-        ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
-        ThisBinding::Lexical => vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize))).map(|_| (None, false))?,
+    // No tier's direct row binds an arrow's lexical `this` (Cranelift cannot), so an arrow calls direct only where it
+    // never reads `this`, and as strict.
+    let sloppy = match target.this_binding {
+        ThisBinding::Sloppy => Some(vm.realm.globals),
+        ThisBinding::Strict => None,
+        ThisBinding::Lexical => {
+            vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize)))?;
+            None
+        }
         _ => return None,
     };
     (target.admission.current(vm.lane_stack.admission)
@@ -171,7 +174,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
         .unwrap_or((std::ptr::null(), 0));
     Some(crate::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
         bound: quench_runtime::vm::engine_types::BoundClosure::new(target.callee.to_bits(), crate::compiled::entry_cell::capture_word(capture_values, capture_len, capture_stores(target.capture).is_some())),
     })
 }

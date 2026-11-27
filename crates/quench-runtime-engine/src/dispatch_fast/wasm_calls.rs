@@ -324,7 +324,7 @@ impl WasmActivation for LaneCall<'_> {
         let vm = unsafe { vm(cx) };
         // A tier that may run the callee enters it natively from the general call, which a
         // lane activation would bypass.
-        if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || vm.tier_may_run(crate::compiled::admission::Tier::ANY) {
+        if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY) {
             return None;
         }
         let plan = js_import_of(vm, r.get(i.b))?;

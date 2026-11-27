@@ -53,8 +53,6 @@ struct JsJitCounters {
     captured_store_fast_entries: u64,
     numeric_find_fast_entries: u64,
     fallback_entries: u64,
-    interpreter_completions: u64,
-    interpreter_inclusive_ns: u64,
     opcode_counts: Vec<(u16, u32)>,
     call_sites: Vec<JsJitCallSiteCounters>,
     code_bytes: usize,
@@ -70,8 +68,6 @@ struct JsJitCallSiteCounters {
     alternate_target_calls: u64,
     other_target_calls: u64,
     outcomes: [u64; JsJitCallOutcome::COUNT],
-    sampled_calls: u64,
-    sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
 }
 
 #[cfg(feature = "native-execution")]
@@ -98,9 +94,6 @@ impl JsJitCallSiteCounters {
         }
     }
 }
-
-#[cfg(feature = "native-execution")]
-const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -140,7 +133,7 @@ impl JsJitCallOutcome {
     }
 }
 
-use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MODULE_CLOCK_INTERVAL, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
+use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_MODULE_WORK_BUDGET, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -156,29 +149,25 @@ const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
 pub(super) struct WasmModuleCompile {
     /// The work (`WasmModuleTier::Selective`) at which the module compiles.
     work: u32,
-    /// The time since the module's first work after which its next entry compiles it, for a
-    /// module whose work the counts undersell.
-    after: std::time::Duration,
 }
 
 impl WasmModuleCompile {
     /// The default (npm's adaptive policy). source-map 0.7.4, one parse and lookups through
     /// its Wasm consumer, best CPU ms of 3, eager / this / selective without escalation:
     /// 100 mappings 160 / 38 / 38; 300: 171 / 154 / 45; 2,000: 266 / 261 / 151 (its module,
-    /// 13k bytecodes, compiles whole in 67 ms, which a short parse never repays; work alone,
-    /// without the time bound, compiles it at 300 mappings too). JetStream 3 --jit, eager
+    /// 13k bytecodes, compiles whole in 67 ms, which a short parse never repays; the work
+    /// budget alone compiles it at 300 mappings too). JetStream 3 --jit, eager
     /// (one round) / this (median of 3): argon2 55.9 / 51.5, gcc-loops 78.0 / 68.3, quicksort
     /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
-    pub(super) const ADAPTIVE: Self =
-        Self { work: 4096, after: std::time::Duration::from_millis(20) };
+    pub(super) const ADAPTIVE: Self = Self { work: WASM_MODULE_WORK_BUDGET };
     /// Never compile whole: hot roots only (`QUENCH_DEV=wasm-selective`, for A/B runs).
-    const NEVER: Self = Self { work: u32::MAX, after: std::time::Duration::MAX };
+    const NEVER: Self = Self { work: u32::MAX };
     /// Compile at the first entry, as eager compilation does: a conformance run that
     /// exercises every module's compiled code, and tests of module-wide code.
-    pub(super) const EAGER: Self = Self { work: 1, after: std::time::Duration::ZERO };
+    pub(super) const EAGER: Self = Self { work: 1 };
 
-    fn due(self, work: u32, since_first: std::time::Duration) -> bool {
-        work >= self.work || since_first >= self.after
+    fn due(self, work: u32) -> bool {
+        work >= self.work
     }
 }
 
@@ -360,9 +349,8 @@ impl WasmTiers {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WasmModuleTier {
     /// The work observed so far: entries from the VM (interpreted calls, and host calls into
-    /// the module), and interpreted loop work as entries (`TIERS.wasm.backedges_per_entry`);
-    /// and when the first came.
-    Selective { work: u32, first: Option<std::time::Instant> },
+    /// the module), and interpreted loop work as entries (`TIERS.wasm.backedges_per_entry`).
+    Selective { work: u32 },
     /// The whole-module compile was claimed, eagerly or by escalation; its result is the
     /// program's `compiled`.
     Whole,
@@ -374,7 +362,7 @@ enum WasmModuleTier {
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
-        Self::Selective { work: 0, first: None }
+        Self::Selective { work: 0 }
     }
 }
 
@@ -560,18 +548,9 @@ impl JitTierManager {
     /// whole-module compile is due (claimed by `claim_wasm_module_escalation`).
     fn note_wasm_module_work(&mut self, work: u32, policy: WasmModuleCompile) -> bool {
         match self.wasm_tiers_mut().map(|tiers| &mut tiers.module) {
-            Some(WasmModuleTier::Selective { work: observed, first }) => {
-                let first = *first.get_or_insert_with(std::time::Instant::now);
-                let before = *observed;
+            Some(WasmModuleTier::Selective { work: observed }) => {
                 *observed = observed.saturating_add(work);
-                // A passed time bound counts as the work bound from then on, so every later
-                // entry, whichever path observes it, finds the compile due.
-                if *observed / WASM_JIT_MODULE_CLOCK_INTERVAL != before / WASM_JIT_MODULE_CLOCK_INTERVAL
-                    && policy.due(0, first.elapsed())
-                {
-                    *observed = (*observed).max(policy.work);
-                }
-                policy.due(*observed, std::time::Duration::ZERO)
+                policy.due(*observed)
             }
             Some(WasmModuleTier::Whole | WasmModuleTier::Declined) | None => false,
         }
@@ -683,6 +662,8 @@ struct ProgramEntry {
     raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
+    /// The program's AOT facts, solved once on the first lowering that reads them (`aot_facts`).
+    aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -923,6 +904,13 @@ impl ProgramStore {
                 Rc::new(facts)
             }
         })))
+    }
+
+    /// The AOT facts of program `id` (`compile::aot_facts::analyze`), solved on its first call and
+    /// shared by every lowering of the program after it.
+    pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
+        let entry = self.entry(id)?;
+        Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
     }
 
     pub fn len(&self) -> usize {
@@ -1339,6 +1327,7 @@ impl ProgramStore {
             views_in_lane,
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
+            aot_facts: std::cell::OnceCell::new(),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),
@@ -1847,10 +1836,10 @@ impl ProgramStore {
         self.wasm_module_compile = WasmModuleCompile::NEVER;
     }
 
-    /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
+    /// Compile a Wasm module whole at `work`: a deterministic test policy.
     #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
     pub(super) fn compile_wasm_modules_after_work(&mut self, work: u32) {
-        self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
+        self.wasm_module_compile = WasmModuleCompile { work };
     }
 
     /// Record that the program's whole-module compile was claimed at its first call (eager
@@ -2441,7 +2430,6 @@ impl ProgramStore {
         opcode: crate::bytecode::Op,
         direct_target: Option<(u32, u32)>,
         outcome: JsJitCallOutcome,
-        sampled_call_ns: Option<u64>,
     ) {
         let Some(counters) = self
             .js_jit_diagnostics
@@ -2476,42 +2464,6 @@ impl ProgramStore {
         site.note_target(direct_target);
         let outcome_count = &mut site.outcomes[outcome as usize];
         *outcome_count = outcome_count.saturating_add(1);
-        if let Some(elapsed_ns) = sampled_call_ns {
-            site.sampled_calls = site.sampled_calls.saturating_add(1);
-            let outcome_elapsed = &mut site.sampled_call_ns[outcome as usize];
-            *outcome_elapsed = outcome_elapsed.saturating_add(elapsed_ns);
-        }
-    }
-
-    /// Sample the first call and then one in each interval at a static call site.
-    /// The attempt count is advanced by `record_js_jit_call_site` after the call.
-    #[cfg(feature = "native-execution")]
-    pub fn should_sample_js_jit_call_site(
-        &self,
-        id: ProgramId,
-        function: u32,
-        pc: usize,
-        opcode: crate::bytecode::Op,
-    ) -> bool {
-        let Some(counters) = self
-            .js_jit_diagnostics
-            .as_ref()
-            .and_then(|diagnostics| diagnostics.get(&(id.raw(), function)))
-        else {
-            return false;
-        };
-        let Ok(pc) = u32::try_from(pc) else {
-            return false;
-        };
-        let key = (pc, opcode as u16);
-        let attempts = match counters
-            .call_sites
-            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
-        {
-            Ok(index) => counters.call_sites[index].attempts,
-            Err(_) => 0,
-        };
-        attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
     #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
@@ -2528,8 +2480,6 @@ impl ProgramStore {
         u64,
         u64,
         u64,
-        u64,
-        [u64; JsJitCallOutcome::COUNT],
     )>> {
         self.js_jit_diagnostics
             .as_ref()?
@@ -2548,8 +2498,6 @@ impl ProgramStore {
                             site.direct_target_calls,
                             site.alternate_target_calls,
                             site.other_target_calls,
-                            site.sampled_calls,
-                            site.sampled_call_ns,
                         )
                     })
                     .collect()
@@ -2563,24 +2511,6 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.fallback_entries = counters.fallback_entries.saturating_add(1);
-        }
-    }
-
-    pub(super) fn record_js_jit_interpreter_completion(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        inclusive_ns: u64,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.interpreter_completions = counters.interpreter_completions.saturating_add(1);
-            counters.interpreter_inclusive_ns = counters
-                .interpreter_inclusive_ns
-                .saturating_add(inclusive_ns);
         }
     }
 
@@ -3235,15 +3165,14 @@ mod jit_code_cache_tests {
     };
 
     #[test]
-    fn wasm_module_compiles_whole_once_its_work_or_time_says_it_runs_long() {
+    fn wasm_module_compiles_whole_once_its_work_budget_is_spent() {
         use super::WasmModuleCompile as Policy;
         let policy = Policy::ADAPTIVE;
-        assert!(!policy.due(1, std::time::Duration::ZERO));
-        assert!(!policy.due(policy.work - 1, policy.after / 2));
-        assert!(policy.due(policy.work, std::time::Duration::ZERO));
-        assert!(policy.due(1, policy.after));
-        assert!(Policy::EAGER.due(1, std::time::Duration::ZERO));
-        assert!(!Policy::NEVER.due(u32::MAX - 1, std::time::Duration::MAX / 2));
+        assert!(!policy.due(1));
+        assert!(!policy.due(policy.work - 1));
+        assert!(policy.due(policy.work));
+        assert!(Policy::EAGER.due(1));
+        assert!(!Policy::NEVER.due(u32::MAX - 1));
     }
 
     #[test]

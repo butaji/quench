@@ -173,9 +173,9 @@ impl LoopTier {
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(crate) fn may_run(&self, tiers: &Tiers, policy: quench_runtime::MemoryPolicy) -> bool {
+    pub(crate) fn may_run(&self, tiers: &Tiers, vm: &Vm) -> bool {
         self.is_published()
-            || (self.compilations < tiers.loops.max_compilations && crate::compiled::loop_tier_compiles(policy))
+            || (self.compilations < tiers.loops.max_compilations && crate::compiled::admission::loop_regions_compile(vm))
     }
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
@@ -306,11 +306,10 @@ pub(crate) fn loop_compile_in_lane(
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     // Native code reads slot representations, which the runtime keeps from its first compile on.
-    machine.keep_slot_representations();
     // The tier of this compile: b-jit first, u-jit once the loop's native iterations repay it (`base_region`).
     // A loop whose iterations leave natively takes the stencil tier alone (`LoopRegion::stencil_only`), never promoted.
     let base = compiles_base(machine.programs.tiers(), site, region, tier);
-    tier.base = base && !crate::compiled::admission::stencil_regions();
+    tier.base = crate::compiled::admission::default_mode_picks_base(base);
     let _mark = quench_runtime::trace::CompileMark::begin(if base { "b-jit" } else { "u-jit" }, "region", site.function(), u32::from(region.header), || site.span() as usize);
     tier.promote_at = promotion_at(machine.programs.tiers(), site, region, tier);
     let program = machine.programs.get(machine.active_program);
@@ -345,14 +344,13 @@ pub(crate) fn loop_compile_in_lane(
     let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds, typed_rows: &typed_rows,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
-    let policy = machine.heap_reads().memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
     let calls = program.as_deref().map(|program| if base { region_calls(cx, machine, program, function) }
         else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
-    let admitted = crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Region(policy), facts: Default::default() }).compiled();
+    let admitted = crate::compiled::admission::region_unit(machine);
     let started = program.as_deref().zip(admitted).and_then(|(program, admitted)| crate::compiled::start_osr_region(region, tier.views,
         &observation, machine.programs.tiers(), program, function, helpers,
         &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base, admitted,
@@ -391,8 +389,8 @@ fn promotion_at(tiers: &quench_runtime::vm::tier_policy::Tiers, site: &LoopSite,
 /// Whether a site whose b-jit region BaseJIT declined compiles again as a u-jit region: in the default mode, once
 /// (`LoopTier::stencil_declined`, which it sets), where the loop is not the stencil tier's alone.
 fn recompiles_ultra(region: &crate::compiled::LoopRegion, tier: &mut LoopTier, [base, unstarted, admitted]: [bool; 3]) -> bool {
-    use crate::compiled::admission::{stencil_regions, tier_runs, Tier};
-    let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined && !stencil_regions() && tier_runs(&[Tier::Ultra]);
+    let recompiles = base && unstarted && admitted && !region.stencil_only && !tier.stencil_declined
+        && crate::compiled::admission::declined_regions_recompile_ultra();
     tier.stencil_declined |= recompiles;
     recompiles
 }
@@ -447,8 +445,8 @@ fn native_field_loads(machine: &Vm, own: Option<&super::LaneView>, region: &crat
     let (properties_base, properties_len) = machine.heap_reads().native_property_values();
     let available = machine.heap_reads().object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
     // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
-    // which code that embeds its shapes guards whole. Base regions read the live cache instead,
-    // whose entries name no form (the caller passes no view for one).
+    // which code that embeds its shapes guards whole. Only Cranelift's guarded loads lower the
+    // form (`formed_id`); a base region's reads ignore it.
     let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
         .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()

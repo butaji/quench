@@ -153,7 +153,7 @@ pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &
     let variable = register_int(builder, registers, index);
     builder.def_var(variable, int.word());
     state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-        ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+        ..RegisterFact::narrowest(Type::INT32) };
     int
 }
 

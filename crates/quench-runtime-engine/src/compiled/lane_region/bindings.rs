@@ -1,7 +1,7 @@
 //! The admission of an inlined callee bound by its function (`CalleeBinding::Function`):
 //! the VM's cached in-loop call target answers inline, its binding helper otherwise; in an AOT
 //! image whose closed world proves the call's target (`AotFacts::call_target`), nothing: the fact
-//! is a dependency of the image (`closed_call`).
+//! is a dependency of the image where its world can change it (`closed_call`).
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -9,8 +9,8 @@ use crate::compiled::regions;
 
 impl Lowering<'_, '_> {
     /// Whether the closed world proves that inlined `frame`'s call always calls its target: its
-    /// admission then compares nothing, and the block holds the fact under the image's invalidation
-    /// word instead (`hold_stable`), read once, never per call.
+    /// admission then compares nothing. The block holds the fact under the image's invalidation word
+    /// (`hold_stable`), read once, never per call; a closed world has no word to read (`fact_may_change`).
     pub(crate) fn closed_call(&mut self, state: &mut State, exit: ir::Block, frame: usize) -> bool {
         let proved = self.closed_proves(frame);
         if proved { self.hold_stable(state, exit); }
@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the closed world proves inlined `frame`'s target (`closed_call`), which no entry admits either.
     pub(crate) fn closed_proves(&self, frame: usize) -> bool {
-        let Some(closed) = self.vm.closed else { return false };
+        let Some(closed) = self.vm.facts else { return false };
         let call = self.unit.frames[frame];
         let caller = call.parent.map_or(self.function_id, |parent| self.unit.frames[parent].target.function);
         call.target.callee == CalleeBinding::Function && closed.function_facts(caller).proven_call_target(call.call) == Some(call.target.function)

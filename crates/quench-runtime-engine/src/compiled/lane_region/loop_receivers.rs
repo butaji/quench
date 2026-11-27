@@ -71,7 +71,8 @@ impl Lowering<'_, '_> {
             if !(online.shape_stable)(shape) { continue; }
             let exit = self.guard_exit_for(state, header as u32, ExitFact::Shape);
             let proof = self.object_header(state, Some(register), false, exit);
-            headers::prove_header_shape(&mut self.builder, state, Some(register), proof, shape, exit);
+            let word = self.register_word(state, register);
+            headers::prove_header_shape(&mut self.builder, state, word, proof, shape, exit);
             state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
             let held = LoopShape { header, end, register, shape };
