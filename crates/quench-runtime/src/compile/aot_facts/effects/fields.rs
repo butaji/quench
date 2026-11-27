@@ -8,7 +8,7 @@ use crate::bytecode::WideInstruction;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing;
 use crate::staged::{Operation, Protocol};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Sites, Type, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Sites, Type, View};
 
 /// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
 /// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
@@ -87,7 +87,7 @@ fn length_change(class: ElementClass) -> (Key, Word) {
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
-/// key that is no Number may name any property (`Events::wild_member`).
+/// key that is no Number may name any property, into the holders of its base (`Events::wild`).
 pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
     events.computed_store |= writes_global_name(operation.as_ref(), state);
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { mode, value }), .. }) = operation {
@@ -105,7 +105,7 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
     match operation {
         // A store into the array `base` names (`SetIndex`): its value joins the elements of the array's element class
         // (`Key::Element`), and the class's length changes unless the key is a Number within the length it has. A key
-        // that is no Number may name a property (`wild_member`) or the length, so its store changes the length.
+        // that is no Number may name a property (`wild`) or the length, so its store changes the length.
         Some(Operation::ElementWrite { value, base, key, .. }) => {
             let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
             let length = settled(ctx, array).elements.length;
@@ -117,23 +117,24 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, sites: stored.cell.sites, global: stored.cell.global })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
-            events.wild_member |= !index.is_number();
+            if !index.is_number() { events.wild = events.wild.join(Holders::of(array.cell)); }
         }
         // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) names no array: it may store
         // any value into an array of any class and change any length, so every class's elements are any (`wild_elements`).
         Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => {
-            events.wild_member = true;
+            events.wild = Holders::ANY;
             events.wild_elements = true;
         }
         // `delete base[key]` keeps the values the elements hold and changes the length of `base`'s class (a hole, or the
-        // last element removed); it may name a property (`wild_member`).
+        // last element removed); it may name a property, in the holders of its base (`wild`).
         Some(Operation::Delete { base, .. }) => {
-            events.wild_member = true;
+            events.wild = events.wild.join(Holders::of(state[usize::from(base)].cell));
             events.writes.push(length_change(state[usize::from(base)].elements_key()));
         }
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
             let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
+            events.member_bases.push((atom, Holders::of(owner.cell)));
             if ctx.scope.length == Some(atom) {
                 events.writes.push(length_change(owner.elements_key()));
             }
@@ -155,12 +156,15 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Word::UNKNOWN));
+            // The base of a store whose operands the decode does not name is unknown, so the name's object may be any.
+            events.member_bases.push((atom, Holders::ANY));
             events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
             // A length store through an object the analysis does not name may resize an array of any class.
             events.wild_elements |= ctx.scope.length == Some(atom);
         }
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
             events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
+            events.member_bases.push((instruction.atom_index(), Holders::ANY));
             events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
             events.wild_elements |= ctx.scope.length == Some(instruction.atom_index());
         }

@@ -7,7 +7,7 @@ use super::flow::FunctionFlow;
 use super::gate::World;
 use super::phase::Fold;
 use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Classes, ElementClass, FactKey};
+use crate::typed_ir::{Classes, ElementClass, FactKey, Holders, Sites};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The most closures a method read's closed set may hold (`candidates`): a test per arm.
@@ -90,8 +90,11 @@ pub(super) struct Census {
     global_wild: bool,
     /// Per function, whether a write it cannot follow reaches its own slots.
     wild_owner: Vec<bool>,
-    /// Whether a store through a key the analysis cannot name may write a named property.
-    member_wild: bool,
+    /// The objects a store under a name the analysis cannot list may write into, joined over the flows (`FunctionFlow::wild`).
+    wild: Holders,
+    /// Per named property, the holders of the objects its stores write on (`FunctionFlow::member_bases`), joined: a name is
+    /// wild only where one of these may be a wild holder.
+    member_bases: BTreeMap<u32, Holders>,
     /// Per named property, the closures its stores of closures write: a method read's closed set of callees.
     members: BTreeMap<u32, BTreeSet<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
@@ -129,9 +132,14 @@ impl Census {
                 _ => {}
             }
         }
+        let mut member_bases: BTreeMap<u32, Holders> = BTreeMap::new();
+        for &(atom, holders) in flows.iter().flat_map(|flow| &flow.member_bases) {
+            member_bases.entry(atom).and_modify(|joined| *joined = joined.join(holders)).or_insert(holders);
+        }
         let mut census = Self {
             world,
-            member_wild: flows.iter().any(|flow| flow.member_wild),
+            wild: flows.iter().fold(Holders::NONE, |wild, flow| wild.join(flow.wild)),
+            member_bases,
             members,
             members_on,
             writes,
@@ -177,20 +185,23 @@ impl Census {
 
     /// Whether a write the analysis cannot follow may reach `key`: a global written by code it cannot name
     /// (`global_wild`), a slot of a function whose frame it cannot follow (`wild_owner`), or a named property
-    /// written through a computed key (`member_wild`). The keys with no such write are never wild.
+    /// whose object may be a wild holder (`wild`, `member_bases`). The keys with no such write are never wild.
     pub(super) fn wild(&self, key: Key) -> bool {
         match key {
             Key::Global(_) => self.global_wild,
             Key::Slot { owner, .. } => self.wild_owner.get(owner as usize).copied().unwrap_or(true),
-            Key::Member(_) => self.member_wild,
+            Key::Member(atom) => match self.member_bases.get(&atom) {
+                Some(bases) => bases.overlaps(self.wild),
+                None => !self.wild.is_none(),
+            },
             Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => false,
         }
     }
 
-    /// Whether a named property is written through a computed key the analysis cannot name (`member_wild`): such a store may
-    /// write any object's property, instances' included.
-    pub(super) fn member_wild(&self) -> bool {
-        self.member_wild
+    /// Whether a store under an unknown name may write an instance of class `class`: one of the wild holders may be an object
+    /// of that class (`Holders::overlaps`), so the class's instances cannot be listed.
+    pub(super) fn wild_reaches_instances(&self, class: u32) -> bool {
+        self.wild.overlaps(Holders { classes: Classes::one(class, false), sites: Sites::Never })
     }
 
     /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
@@ -237,7 +248,7 @@ impl Census {
             Origin::Binding(key) => self.single(key),
             // A method read: the one closure every store of its name writes. The call's record still guards the
             // callee it reaches (a builtin's property of that name, a closure made again, a store through a computed
-            // key, `member_wild`), so the proof only picks the callee its direct row tries first.
+            // key, `wild`), so the proof only picks the callee its direct row tries first.
             Origin::Member(atom) => self.members.get(&atom).filter(|set| set.len() == 1).and_then(|set| set.first().copied()),
             Origin::MemberOn { class, instance, atom, .. } => self.members_on.get(&(class, instance, atom)).copied().flatten(),
             _ => None,

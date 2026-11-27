@@ -19,7 +19,7 @@ use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
-use crate::typed_ir::{Cell, Classes, ElementClass, Representation, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Representation, WIDENING_ROUNDS};
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
@@ -72,8 +72,12 @@ pub(super) struct FunctionFlow {
     pub(super) plain_calls: Vec<Option<u32>>,
     /// Whether the function reads its `this` (a load, a store or a field read of it, or a method of it).
     pub(super) reads_this: bool,
-    /// Whether a store through a key the analysis cannot name may write a named property.
-    pub(super) member_wild: bool,
+    /// The objects a store under a name the analysis cannot list may write into: a computed-key store's base, a copy's
+    /// destination from a source whose names are unknown (`copies::expand`). `Holders::NONE` where there is none.
+    pub(super) wild: Holders,
+    /// Per named property a store of this function writes, the holders of the object it stores on (`Holders::of` of the
+    /// base). A read of the name is wild only where such a holder may be a wild holder (`Census::wild`).
+    pub(super) member_bases: Vec<(u32, Holders)>,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
