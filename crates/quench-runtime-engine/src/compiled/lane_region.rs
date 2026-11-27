@@ -3579,9 +3579,7 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default(),
-            // A call's bound `this` is the callee's: the lowered function's receiver fact does not decide it, so none is guarded.
-            this_trust: None };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default() };
         super::record_boxed_numbers();
         let step = quench_runtime::staged::step_apart(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
