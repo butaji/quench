@@ -1812,11 +1812,34 @@ impl Heap {
             panic!("object records exhausted: the object space holds 2^30 records");
         };
         // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
-        unsafe { self.object_records.record_ptr(record_id).write(object) };
-        let value = Value::direct_object(record_id);
+        unsafe { self.object_records.record_ptr(record_id).write(OrdinaryRecord { object, stub: 0 }) };
+        let value = self.publish_object_record(record_id);
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(value);
         value
+    }
+
+    /// Publishes object record `record_id`, whose record is written: claims its stub in region 0,
+    /// writes the stub's header (the record id, `departed_header`), stores the granule in the record,
+    /// and returns the direct object `Value` the granule names. A record claimed but not yet written
+    /// (`claim_object_record`) may be published first: only its stub field is written here.
+    #[inline(always)]
+    pub(crate) fn publish_object_record(&mut self, record_id: u32) -> Value {
+        let granule = self
+            .class_space
+            .claim_stub(record_id, &mut self.allocated)
+            .expect("class space stubs exhausted: region 0 holds the stubs of every ordinary object");
+        let record = self.object_records.record_ptr(record_id);
+        // SAFETY: `record_id` is a claimed record in the object space; only its stub field is written.
+        unsafe { std::ptr::addr_of_mut!((*record).stub).write(granule) };
+        Value::direct_object(granule)
+    }
+
+    /// The direct object `Value` of the live object record `record_id`: its stub granule.
+    #[inline(always)]
+    pub(crate) fn object_value(&self, record_id: u32) -> Value {
+        // SAFETY: the caller names a live object record, whose stub is set by `publish_object_record`.
+        Value::direct_object(unsafe { self.object_records.get_live(record_id) }.stub)
     }
 
     /// Admit initial named properties before any object-bearing cell or record
@@ -2403,7 +2426,7 @@ impl Heap {
         } = self;
         for (_, owner) in owners {
             let object = if let Some(object_ref) = owner.direct_object_index() {
-                let record_id = class_space.record_of(object_ref.raw());
+                let record_id = class_space.record_of(object_ref.granule());
                 // SAFETY: direct owners were collected from live marked records.
                 Some(&mut unsafe { object_records.get_live_mut_unbarriered(record_id) }.object)
             } else if let Some(record_id) = owner.direct_array_index() {
@@ -2706,7 +2729,7 @@ impl Heap {
                     Some(object_ref) => {
                         let record_id = self.record_id(object_ref);
                         // Its stub is withheld with its record: the granule names no other object either.
-                        self.class_space.withhold_stub(object_ref.raw());
+                        self.class_space.withhold_stub(object_ref.granule());
                         withheld = self.object_records.withhold(record_id);
                     }
                     None => died_unrecorded = true,
@@ -5002,7 +5025,8 @@ impl Heap {
         data.append_plain(properties, slot, value, shape);
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
-        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        let value = self.object_value(record_id);
+        self.note_object_slots(value, slot + 1);
         true
     }
 

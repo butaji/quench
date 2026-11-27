@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, OrdinaryRecord, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -30,7 +30,7 @@ pub(super) trait TraceRecord {
     fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
-pub(super) type ObjectRecordSpace = RecordSpace<Object, OBJECT_RECORD_CAPACITY>;
+pub(super) type ObjectRecordSpace = RecordSpace<OrdinaryRecord, OBJECT_RECORD_CAPACITY>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;

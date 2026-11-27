@@ -112,6 +112,19 @@ impl ClassSpace {
         stub_record_at(self.base, g)
     }
 
+    /// Claims a region 0 stub for object record `record`: the cell's header is `departed_header(record)`,
+    /// so its granule names the record through `record_of`. The stub is claimed from region 0's cursor
+    /// (`RecordSpace::bump_id`), charged as an allocation. `None` where the space is full.
+    pub(super) fn claim_stub(&mut self, record: u32, allocated: &mut usize) -> Option<u32> {
+        if !self.ensure_reserved() {
+            return None;
+        }
+        let local = self.regions.0.bump_id(allocated)?;
+        // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
+        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
+        Some(granule(0, local))
+    }
+
     /// Frees region 0's stub `g` with its dead record (the record sweep's dispose). Region 0 is never
     /// swept on its own: its stubs die only here.
     pub(super) fn release_stub(&mut self, g: u32) {
