@@ -227,6 +227,20 @@ fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &quench_runtime::vm::
         .map(|(shape, slot, ty)| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
 }
 
+/// The exact shapes of the holders whose values `code` took as constants when it linked
+/// (`RelocKind::HolderValue`, `symbols::holder_constant`): its publication subscribes to their
+/// prototype-value watch (`StableFacts::holders`), so a write of a method it took retires it.
+fn holder_dependencies(image: &AotImage, vm: &mut Vm, code: &quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode) -> Box<[u32]> {
+    let mut keys: Vec<u32> = code.relocations.iter().filter(|relocation| relocation.namespace == super::lane_region::relocs::RelocKind::HolderValue as u32)
+        .map(|relocation| relocation.key).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let mut shapes: Vec<u32> = keys.into_iter().filter_map(|key| aot_image::symbols::holder_constant(image, vm, key)).map(|(shape, _, _)| shape).collect();
+    shapes.sort_unstable();
+    shapes.dedup();
+    shapes.into_boxed_slice()
+}
+
 /// Whether `unit` may enter another body through the VM's call: a call of any form or a construction
 /// that it neither inlines (a call whose frame the unit holds runs in the body; its alternatives' last
 /// leaves at the call, as any guard does) nor calls through a proven record (`proven`).
@@ -502,6 +516,7 @@ impl Vm {
         // Number slots its guessed field reads read as tagged words retire it where they widen to
         // raw doubles (`fields`).
         let slots = guard_dependencies(&images.image, self, &lane.code);
+        let holders = holder_dependencies(&images.image, self, &lane.code);
         // The leaves the image's lowering laid out, each inlined one with the values it stores.
         let exits = ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
             crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() };
@@ -510,7 +525,7 @@ impl Vm {
         // proven calls of other image bodies enter. A body with any other call takes the VM's helper there.
         let closed = !crosses_bodies(&unit, |pc| !proven_sites(program, &unit, function, &images.image.calls, pc).is_empty());
         let facts = lane_compile::LaneMethodFacts {
-            unit, stable: lane_region::StableFacts { roots, slots, ..Default::default() }, fields: Vec::new(),
+            unit, stable: lane_region::StableFacts { roots, slots, holders, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
             tiers: self.programs.tiers(), fault_poll, exits, summary: None, clif: None,
             proven_calls: images.image.calls.iter().any(|site| site.function == function),

@@ -93,6 +93,12 @@ pub trait Stage: crate::projection::Sealed {
     /// lowering a shape id tagged `ic::SYMBOLIC_SHAPE` names the image's shape recipe of that
     /// number, which the Cranelift stage emits as the symbol its loader resolves.
     fn shape_site(&mut self, shape: u32) -> Self::Imm { self.site(u64::from(shape)) }
+    /// A word of an ahead image's link (`ImageWord`) for holder guard key `key`, as this stage's
+    /// `Imm`: the symbol the image's loader resolves. Only an ahead image's lowering, the
+    /// Cranelift stage, is handed an op that names one (`ic::IcOp::HolderConstant`).
+    fn image_word(&mut self, word: ImageWord, key: u32) -> Self::Imm {
+        unreachable!("only an ahead image's lowering reads {word:?} of holder {key}")
+    }
     fn constant(&mut self, bits: u64) -> Self::Word;
     /// The loads and stores say which alias region they touch and whether it can change while
     /// code runs (`Access`): a specializer tags the access so Cranelift may reorder and hoist
@@ -380,3 +386,14 @@ pub enum Table {
     Layouts,
 }
 
+
+/// The words an ahead image's loader resolves for a prototype method read, by its holder guard
+/// key (`ic::IcOp::HolderConstant`): proven when the image links, retired by the prototype-value
+/// watch of the holder's exact shape (`heap::subscribe_prototype_values`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageWord {
+    /// The prototype link (`ProtoLink::bits`) of the holder: the receivers whose prototype it is.
+    HolderLink,
+    /// The value the holder's slot holds at link.
+    HolderValue,
+}

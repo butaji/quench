@@ -115,12 +115,10 @@ const CODE_MAPPING: &str = "r-xp";
 /// code at nearly every lazy compilation, 2-5x Node's minor faults. At this interval (no-JIT,
 /// x86_64, 2026-11-07): minor faults Air 43.6K -> 13.6K, ML 87K -> 16K, octane-code-load
 /// 36K -> 15K, Babylon 18K -> 12K; max RSS +0-2 MB (ML 12 -> 14), scores within noise.
+/// The interval is engine work (`quench_runtime::clock::now_work`), not wall time, so a run
+/// releases at the same points on every run and host.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
-/// When the read-only pages were last released.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+const LOAD_RELEASE_INTERVAL: u64 = 100_000_000;
 
 /// Releases the read-only pages after a library load unless they were released less than
 /// `LOAD_RELEASE_INTERVAL` ago.
@@ -159,10 +157,8 @@ pub fn release_read_only_pages_at_boundary() {
 /// its pace the refaults stay bounded however large the heap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_read_only_pages_weighed(weighed: bool) {
-    if let Ok(mut last) = LAST_RELEASE.lock() {
-        *last = Some(std::time::Instant::now());
-    }
     LAST_RELEASE_WORK.store(quench_runtime::clock::now_work(), std::sync::atomic::Ordering::Relaxed);
+    RELEASED_ONCE.store(true, std::sync::atomic::Ordering::Relaxed);
     NEW_HIGH.collections_since_release.store(0, std::sync::atomic::Ordering::Relaxed);
     if weighed && !file_pages_weigh() {
         return;
@@ -553,6 +549,10 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
         quench_runtime::CompilePhase::Encoding => {
             release_once_per_interval(CompileRelease::Encoding, release_read_only_code_and_data)
         }
+        quench_runtime::CompilePhase::NativeCodeDone => {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            release_read_only_pages_at_boundary();
+        }
     }
 }
 
@@ -653,7 +653,7 @@ fn file_pages_weigh() -> bool {
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; CompileRelease::COUNT]> =
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<u64>; CompileRelease::COUNT]> =
     std::sync::Mutex::new([None; CompileRelease::COUNT]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -662,10 +662,11 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    let now = quench_runtime::clock::now_work();
+    if last.is_some_and(|last| now.saturating_sub(last) < LOAD_RELEASE_INTERVAL) {
         return;
     }
-    *last = Some(std::time::Instant::now());
+    *last = Some(now);
     drop(releases);
     action();
 }
@@ -754,11 +755,16 @@ fn released_within_pace() -> bool {
     quench_runtime::clock::now_work().saturating_sub(last) < RUN_CODE_RELEASE_WORK
 }
 
-/// Whether the read-only pages left, by any release, less than `interval` ago.
+/// Whether the read-only pages left, by any release, less than `interval` of engine work ago.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn released_within(interval: std::time::Duration) -> bool {
-    LAST_RELEASE.lock().ok().and_then(|last| *last).is_some_and(|last| last.elapsed() < interval)
+fn released_within(interval: u64) -> bool {
+    let last = LAST_RELEASE_WORK.load(std::sync::atomic::Ordering::Relaxed);
+    RELEASED_ONCE.load(std::sync::atomic::Ordering::Relaxed) && quench_runtime::clock::now_work().saturating_sub(last) < interval
 }
+
+/// Whether the read-only pages have left once.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static RELEASED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the process's release pace (`LOAD_RELEASE_INTERVAL`) has passed since the
 /// read-only pages last left, by any release.

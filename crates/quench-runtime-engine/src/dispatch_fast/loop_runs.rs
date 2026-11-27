@@ -26,10 +26,10 @@ impl super::LoopSite {
 
     /// Weighs a native run that took `backedges` backward jumps against the entry it paid; `left` where it left inside
     /// the loop (`LoopTier::weigh_run`).
-    pub(crate) fn note_run(&self, backedges: u64, left: bool, timed_ns: Option<u64>) {
+    pub(crate) fn note_run(&self, backedges: u64, left: bool) {
         self.declines_in_row.set(0);
         let mut tier = self.tier.borrow_mut();
-        tier.weigh_run(self.tiers, self.span(), backedges, left, timed_ns);
+        tier.weigh_run(self.tiers, backedges, left);
         self.settle(&mut tier);
     }
 

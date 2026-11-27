@@ -4423,3 +4423,17 @@ diff -ruN -x Cargo.lock -x .cargo_vcs_info.json -x README.md -x QUENCH.patch -x 
              self.egraph_pass(isa, ctrl_plane)?;
          }
  
+--- cranelift-codegen-0.137.1/src/opts/remat.isle	2026-11-27 16:38:51.960492194 +0000
++++ b/src/opts/remat.isle	2026-11-27 16:38:51.962043584 +0000
+@@ -25,6 +25,11 @@
+       (remat x))
+ (rule (simplify x @ (iconst _ _))
+       (remat x))
++;; Quench: a symbol's address (a relocated immediate, such as an ahead image's
++;; resolved shape id or linked method) is as cheap as an iconst to make again, so
++;; it is made in each block that uses it rather than held, or spilled, across loops.
++(rule (simplify x @ (symbol_value _ _))
++      (remat x))
+ (rule (simplify x @ (f32const _ _))
+       (remat x))
+ (rule (simplify x @ (f64const _ _))

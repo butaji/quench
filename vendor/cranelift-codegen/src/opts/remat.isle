@@ -25,6 +25,11 @@
       (remat x))
 (rule (simplify x @ (iconst _ _))
       (remat x))
+;; Quench: a symbol's address (a relocated immediate, such as an ahead image's
+;; resolved shape id or linked method) is as cheap as an iconst to make again, so
+;; it is made in each block that uses it rather than held, or spilled, across loops.
+(rule (simplify x @ (symbol_value _ _))
+      (remat x))
 (rule (simplify x @ (f32const _ _))
       (remat x))
 (rule (simplify x @ (f64const _ _))
