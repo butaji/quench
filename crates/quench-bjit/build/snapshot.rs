@@ -60,32 +60,54 @@ impl Snapshot {
     /// A function that is its file's own item is named `module::name` for each module the crate mounts the file as
     /// (`module_names`), which a shard's reach lists as the last two segments of the symbol paths it holds
     /// (`reach::mono_items`); any other function (a method, one inside a `mod` or a macro) by its bare name.
+    ///
+    /// An edit of a type, a constant or another named item (`edits::changed_items_typed`) changes every function that
+    /// names it, and every item that names it changes in turn: those functions are the edit's too, found by name
+    /// through every watched file to a fixpoint (`edits::mentions`), with the changed names themselves, which a
+    /// shard's reach lists where a method of the type is in it.
     pub fn changed_functions(&self, paths: &BTreeSet<PathBuf>) -> Option<BTreeSet<String>> {
         let mut names = BTreeSet::new();
         let mut modules = None;
+        let mut insert = |names: &mut BTreeSet<String>, path: &Path, name: String, free: bool| {
+            if !free {
+                names.insert(name);
+                return;
+            }
+            let mounts = modules.get_or_insert_with(|| module_names(paths));
+            for module in mounts.get(&canonical(path)).into_iter().flatten() {
+                names.insert(format!("{module}::{name}"));
+            }
+            // The file's own stem: the module a plain `mod stem;` names, or the crate root's path for
+            // `lib.rs`, `main.rs` and `mod.rs`, whose items carry no such segment.
+            match path.file_stem().and_then(|stem| stem.to_str()) {
+                Some("lib" | "main" | "mod") | None => { names.insert(name); }
+                Some(stem) => { names.insert(format!("{stem}::{name}")); }
+            }
+        };
+        let mut types = BTreeSet::new();
         for path in paths.iter().filter(|path| path.is_file()) {
             let now = fs::read(path).ok()?;
             let was = self.files.get(path)?;
             if *was != now {
                 let (was, now) = (std::str::from_utf8(was).ok()?, std::str::from_utf8(&now).ok()?);
-                for (name, free) in crate::edits::changed_items(was, now)? {
-                    if !free {
-                        names.insert(name);
-                        continue;
-                    }
-                    let mounts = modules.get_or_insert_with(|| module_names(paths));
-                    for module in mounts.get(&canonical(path)).into_iter().flatten() {
-                        names.insert(format!("{module}::{name}"));
-                    }
-                    // The file's own stem: the module a plain `mod stem;` names, or the crate root's path for
-                    // `lib.rs`, `main.rs` and `mod.rs`, whose items carry no such segment.
-                    match path.file_stem().and_then(|stem| stem.to_str()) {
-                        Some("lib" | "main" | "mod") | None => { names.insert(name); }
-                        Some(stem) => { names.insert(format!("{stem}::{name}")); }
-                    }
-                }
+                let (functions, changed) = crate::edits::changed_items_typed(was, now)?;
+                for (name, free) in functions { insert(&mut names, path, name, free); }
+                types.extend(changed);
             }
         }
+        if types.is_empty() { return Some(names); }
+        let texts: Vec<(&PathBuf, String)> = paths.iter().filter(|path| path.is_file())
+            .map(|path| Some((path, String::from_utf8(fs::read(path).ok()?).ok()?))).collect::<Option<_>>()?;
+        loop {
+            let mut grew = false;
+            for (path, text) in &texts {
+                let (functions, named) = crate::edits::mentions(text, &types)?;
+                for (name, free) in functions { insert(&mut names, path, name, free); }
+                for name in named { grew |= types.insert(name); }
+            }
+            if !grew { break; }
+        }
+        names.extend(types);
         Some(names)
     }
 }
