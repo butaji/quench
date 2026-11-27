@@ -161,6 +161,32 @@ macro_rules! arithmetic_operators {
     };
 }
 
+/// The relational operators a returning constant-right `Binary` decides per operator
+/// (`returning_operator_row`, its Number relation): `$pick!(OPERATOR)` of `$operator`'s, else
+/// `None`; or with `all`, the array of every operator's `$pick!`. Their miss is the general step
+/// (`returning_operator_miss_of` names arithmetic alone).
+macro_rules! relation_operators {
+    (@with $form:ident ($($args:tt)*)) => {{
+        use quench_runtime::vm::operations::binary_operator as operator;
+        const EQUALITY: u32 = operator::Equality;
+        const INEQUALITY: u32 = operator::Inequality;
+        const STRICT_EQUALITY: u32 = operator::StrictEquality;
+        const STRICT_INEQUALITY: u32 = operator::StrictInequality;
+        const LESS_THAN: u32 = operator::LessThan;
+        const LESS_EQUAL: u32 = operator::LessEqualThan;
+        const GREATER_THAN: u32 = operator::GreaterThan;
+        const GREATER_EQUAL: u32 = operator::GreaterEqualThan;
+        $form!($($args)*; EQUALITY, INEQUALITY, STRICT_EQUALITY, STRICT_INEQUALITY, LESS_THAN, LESS_EQUAL, GREATER_THAN,
+            GREATER_EQUAL)
+    }};
+    (all $pick:ident) => {
+        relation_operators!(@with arithmetic_all ($pick))
+    };
+    ($operator:expr, $pick:ident) => {
+        relation_operators!(@with arithmetic_match ($operator, $pick))
+    };
+}
+
 macro_rules! arithmetic_match {
     ($operator:expr, $pick:ident; $($op:ident),*) => {
         match $operator {
@@ -421,7 +447,8 @@ impl LaneView {
                     (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
-                returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
+                returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten())
+                    .chain(relation_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
         }
         let forms = match form {
@@ -18069,7 +18096,9 @@ fn specialize_returning_operator(instruction: WideInstruction, constants: &[Valu
             if int32 { returning_operator_row_of!($op, NOT_LEAF, true) } else { returning_operator_row_of!($op, NOT_LEAF, false) }
         };
     }
-    let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
+    let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick)
+        .or_else(|| relation_operators!(instruction.binary_operator(), pick))
+    else {
         return;
     };
     record.handler = handler as *const ();

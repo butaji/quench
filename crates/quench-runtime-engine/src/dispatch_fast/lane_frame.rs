@@ -4050,9 +4050,17 @@ script_handler! {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         }
         let destination = i.a & quench_runtime::bytecode::REGISTER_MASK;
-        let (left, right) = (Operand::register(i.b), Operand(i.c));
+        // The register's payload and the one constant the record holds (`Reads::of_jump`'s immediate),
+        // stated as such, so the step decodes neither operand's kind.
+        let left = Operand::register(i.b & Operand::PAYLOAD_MASK);
+        let right = Operand::constant(0).expect("constant index 0 fits an operand");
         let number = if INT32 {
-            quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right)
+            // A relation to an int32 constant compares int32s: any other left operand leaves at the miss.
+            match quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right) {
+                Some(NumberOperation::RelationValue { destination, left, right, relation, .. }) => Some(NumberOperation::RelationValue {
+                    destination, left, right, relation, domain: quench_runtime::staged::Domain::Int32 }),
+                other => other,
+            }
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, destination, left, right)
         };
