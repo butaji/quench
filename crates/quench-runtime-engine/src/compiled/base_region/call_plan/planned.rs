@@ -19,11 +19,10 @@ pub(crate) fn inlines(plan: &SitePlan) -> bool {
 }
 
 /// The plans of the call sites of `function`, whose code has `len` instructions. None where the program's facts or
-/// their signatures are not settled, so every site keeps only its helper row. A callee is inlinable where its body
-/// fits `max_instructions` (the stitch policy).
-pub(crate) fn of(program: &ResidualProgram, facts: Option<&AotFacts>, function: u32, len: usize, max_instructions: usize) -> SitePlans {
+/// their signatures are not settled, so every site keeps only its helper row. A callee is inlinable where `inlinable`
+/// admits it (the inlining rule, `tier_policy::inlines`).
+pub(crate) fn of(program: &ResidualProgram, facts: Option<&AotFacts>, function: u32, len: usize, inlinable: &dyn Fn(u32) -> bool) -> SitePlans {
     let mut plans: SitePlans = vec![None; len];
-    let inlinable = |callee: u32| program.function_get(callee as usize).is_some_and(|body| body.instructions().count() <= max_instructions);
     if let Some(facts) = facts && let Some(signatures) = facts.signatures() {
         for (pc, plan) in call_plans(program, facts, signatures, function, inlinable) {
             if let Some(slot) = plans.get_mut(pc as usize) {

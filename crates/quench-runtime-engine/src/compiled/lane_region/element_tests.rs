@@ -17,7 +17,7 @@ fn region(source: &str, left: bool) -> ir::Function {
 /// `region` over the element `views`.
 fn region_over(source: &str, left: bool, views: ElementViews) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let at = |class: Class| -> Vec<usize> { unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| instruction.op().class().eq(&class)).map(|(pc, _)| pc).collect() };
@@ -123,7 +123,7 @@ const MATMUL: &str = "function mm(a, b, c, n) { for (var i = 0; i < n; i++) for 
 /// is, over typed `views`, every register an int32 of the range `entering` there (`int_entries`).
 fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "index-math.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
         { let mut back = None; quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| if target <= pc && back.is_none() { back = Some(target) }); back.map(|target| (target, pc)) })
         .expect("the function has a loop");
@@ -235,7 +235,7 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
 /// loop's entry proves no index.
 fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, entry_bounds: bool) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "element-rows.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let header = quench_runtime::bytecode::back_edges_of(unit.instructions.iter().copied()).map(|(_, header)| header).min().unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();

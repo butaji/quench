@@ -16,7 +16,7 @@ const HOT_LOOP_BLOCKS: usize = 4;
 fn sum_loop() -> (ir::Function, usize) {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(SUM, "loop-shape.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
         (instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc)
             .then(|| (instruction.jump_target() as usize, pc))).expect("the function has a loop");

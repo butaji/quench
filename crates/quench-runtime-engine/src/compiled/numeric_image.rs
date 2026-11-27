@@ -17,7 +17,7 @@ struct NumericLowering {
 fn lower_numeric_region(program: &ResidualProgram, function_id: u32, admitted: crate::compiled::admission::CompiledUnit) -> Option<NumericLowering> {
     use quench_runtime::vm::specializer::Specializer;
     let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
+    let unit = lane_unit::unit(program, None, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = quench_runtime::vm::jit_backend::target_isa()?;
     let region = lane_region::RegionSpecializer { function_id, unit: &unit, admitted,
         helpers: LaneHelpers::Numeric, fields: &[],

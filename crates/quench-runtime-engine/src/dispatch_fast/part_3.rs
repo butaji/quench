@@ -833,19 +833,6 @@ pub(super) fn unit_targets_in_lane(cx: *mut LaneContext, function: u32, pc: u32)
     site_targets_in_lane(unsafe { vm(cx) }, view, pc)
 }
 
-/// The mean trips of the loop at `header` of any function of the running program per native
-/// run of it (`LoopTier::mean_trip`): what its call sites are weighed by (`lane_unit::with_trips`).
-pub(super) fn unit_trips_in_lane(cx: *mut LaneContext, function: u32, header: u32) -> Option<u64> {
-    // SAFETY: the program's views outlive the lane run.
-    let view = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
-    for site in &view.loops {
-        if site.header == header {
-            return site.tier.borrow().mean_trip();
-        }
-    }
-    None
-}
-
 /// The dense capture slots of `callee`'s environment (`Vm::callee_capture_slots`).
 pub(super) fn callee_captures_in_lane(cx: *mut LaneContext, callee: Value) -> (usize, usize) {
     unsafe { vm(cx) }.callee_capture_slots(callee)

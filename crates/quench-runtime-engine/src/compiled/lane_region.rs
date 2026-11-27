@@ -2068,7 +2068,7 @@ pub(crate) fn lower(
         poll_latches: super::SecondaryMap::new(),
         shared_headers,
         global_reads,
-        plans: bindings::CallPlans::new(program, vm.facts),
+        plans: bindings::CallPlans::new(program, vm.facts, vm.graph),
         vm,
         stable: Default::default(),
         generic,

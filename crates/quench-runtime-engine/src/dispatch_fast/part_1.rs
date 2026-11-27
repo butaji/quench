@@ -1418,7 +1418,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
         crate::compiled::admission::LaneRoute::Lane => {}
     }
-    let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
+    let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc), &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
     if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
         if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
     }

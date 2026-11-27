@@ -178,7 +178,7 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, looped: Some((site.span(), site.body_iterations())), called: false, caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
-        &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
+&|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     // A body its iterations have not paid for waits until they would at its planned size.
     if matches!(outcome, LaneBodyOutcome::Unpaid) { site.body_wait.set(body_due(vm, site).saturating_sub(site.body_iterations())); }
     *body = LoopBody::after(outcome, stuck, attempts);

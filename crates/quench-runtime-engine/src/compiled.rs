@@ -1546,6 +1546,9 @@ pub(crate) struct VmFacts<'a> {
     /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    /// The call graph of the program a lane body lowers (`ProgramStore::call_graph`), which the inlining rule
+    /// (`tier_policy::inlines`) reads to decide the callees a call plan's arms inline; None where no program is.
+    pub(crate) graph: Option<&'a quench_runtime::compile::call_graph::CallGraph>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
@@ -1564,7 +1567,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1572,7 +1575,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }
 

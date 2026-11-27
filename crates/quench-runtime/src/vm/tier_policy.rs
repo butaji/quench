@@ -5,7 +5,11 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
+use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
+use crate::compile::call_graph::CallGraph;
 use crate::jit_mode::Tier;
+use crate::staged::meaning::{means, Meaning};
+use crate::staged::Operation;
 
 /// The thresholds every tier controller reads.
 pub struct Tiers {
@@ -43,11 +47,8 @@ pub(crate) const TIER0_RUNS: u8 = 4;
 pub(crate) const TIER0_BLOCKED_RUNS: u8 = 16;
 
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
-/// (`base_region::inline_plan`).
+/// (`base_region::inline_plan`). Which callees inline is `inlines`; this is the stitch's room.
 pub struct Stitch {
-    /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
-    /// costs more than their work.
-    pub max_instructions: usize,
     /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
     /// bodies' worth.
     pub max_total_instructions: usize,
@@ -152,10 +153,6 @@ pub struct LaneBody {
     /// runs: total Ir -2%, richards unchanged; Nov 18).
     pub max_callee_recompiles: u8,
     pub late_call_calls: u32,
-    /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
-    /// costs code and compile time at every call site, and short bodies (accessors, field updates)
-    /// are where a call costs most relative to its work.
-    pub max_inlined_instructions: usize,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
@@ -223,11 +220,6 @@ pub struct Speculation {
 /// instructions of the leave.
 pub const SPECULATION: Speculation =
     Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
-/// The trips a loop is assumed to take, in weighing the call sites it holds (`lane_unit`'s
-/// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
-/// outweighs one outside it, and that nesting orders deeper sites first.
-pub const ASSUMED_LOOP_TRIP: u64 = 8;
-
 #[cfg(any(test, feature = "test-support"))]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
@@ -359,13 +351,11 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_recompiles: 1,
         late_call_calls: 4096,
-        max_inlined_instructions: 96,
         compile_poll_interval: 64,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
     stitch: Stitch {
-        max_instructions: 24,
         max_total_instructions: 96,
         window_registers: 32,
         max_depth: 3,
@@ -511,9 +501,54 @@ pub const AHEAD_BODY_MAX_CODE_BYTES: usize = 4 * LANE_BODY_MAX_CODE_BYTES;
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
 /// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
-/// sites by weight per instruction (`weights::select`).
+/// sites in program order, each within what the budget has left.
 pub const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
     LANE_BODY_MAX_CODE_BYTES / LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+
+/// The longest body a callee with no call in it inlines: an accessor, an arithmetic helper. Its copy costs code at
+/// each site, and its call costs most relative to its work, the same bound the lane body's inlining has always used.
+pub const INLINE_LEAF_MAX_INSTRUCTIONS: usize = 96;
+
+/// The longest body a callee with exactly one call site in the closed world inlines. That one site takes the one copy
+/// the body makes, so its bound is the compile time a unit may spend on one body, not the code its copies cost.
+pub const INLINE_SINGLE_SITE_MAX_INSTRUCTIONS: usize = 256;
+
+/// The longest body an accessor-shaped callee inlines (`accessor_shaped`): a field read, compare or store of `this`
+/// and the moves and returns around them, whose call is the whole of its cost.
+pub const INLINE_ACCESSOR_MAX_INSTRUCTIONS: usize = 32;
+
+/// Whether the callee `callee` of `program` inlines at a call site the planner has proved a single target for
+/// (its call plan's one arm, or the one callee a site linked). The one rule every tier asks, and it reads only static
+/// facts: the body's size and shape, and the program's call graph (`CallGraph::single_call_site`). A callee inlines
+/// where (a) it is a leaf, with no call, under `INLINE_LEAF_MAX_INSTRUCTIONS`; or (b) it has exactly one call site in
+/// the closed world, under `INLINE_SINGLE_SITE_MAX_INSTRUCTIONS`; or (c) it is accessor-shaped, under
+/// `INLINE_ACCESSOR_MAX_INSTRUCTIONS`. Size is the instruction count of the callee's body.
+pub fn inlines(graph: &CallGraph, program: &ResidualProgram, callee: u32) -> bool {
+    let Some(body) = program.function_get(callee as usize) else { return false };
+    let size = body.instructions().count();
+    let leaf = !body.instructions().any(|instruction| means(instruction, Meaning::Call) || means(instruction, Meaning::Construct));
+    (leaf && size <= INLINE_LEAF_MAX_INSTRUCTIONS)
+        || (graph.single_call_site(callee) && size <= INLINE_SINGLE_SITE_MAX_INSTRUCTIONS)
+        || (size <= INLINE_ACCESSOR_MAX_INSTRUCTIONS && accessor_shaped(body))
+}
+
+/// Whether `body` is accessor-shaped: it reads or writes a field of `this` (a `FieldLookup::Atom` on `FieldBase::THIS`),
+/// and every other instruction is a number operation, a move, a constant, a `this` load, or a `Return`.
+fn accessor_shaped(body: &Function) -> bool {
+    let mut touches_this = false;
+    let shaped = body.instructions().all(|instruction| match Operation::<u64, ()>::of(instruction) {
+        Some(Operation::GetField { .. } | Operation::SetField { .. }) => match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) if base == FieldBase::THIS => {
+                touches_this = true;
+                true
+            }
+            _ => false,
+        },
+        Some(Operation::Number(_) | Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadThis { .. } | Operation::Return { .. }) => true,
+        _ => false,
+    });
+    shaped && touches_this
+}
 
 // Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
 /// The backward jumps a JavaScript activation takes in the general path before its function's
