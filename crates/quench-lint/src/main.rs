@@ -6,7 +6,8 @@
 //! second run (`concepts`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
 //! code tests a function's address for identity (`fn_identity`), when a fast path carries its
-//! slow path inline (`fast_paths`), or when statements are packed
+//! slow path inline (`fast_paths`), when a fact type is declared outside its one home
+//! (`fact_types`), or when statements are packed
 //! onto long lines (`line_packing`, reported by `--packing`, never gating).
 //!
 //! usage: quench-lint [--update | --lower] [--packing] [ROOT...]   |   quench-lint --census [--update-census]
@@ -19,6 +20,7 @@ mod census_metrics;
 mod data_layout;
 mod decision_trees;
 mod duplicates;
+mod fact_types;
 mod fast_paths;
 mod fn_identity;
 mod fingerprints;
@@ -33,6 +35,7 @@ mod test_paths;
 pub(crate) use test_paths::in_test_path;
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -88,7 +91,11 @@ fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn scan(files: &[PathBuf], packed: &mut shape::Measures) -> Result<(duplicates::Duplicates, shape::Measures, decision_trees::DecisionTrees), String> {
+fn scan(
+    files: &[PathBuf],
+    packed: &mut shape::Measures,
+    facts: &mut BTreeSet<String>,
+) -> Result<(duplicates::Duplicates, shape::Measures, decision_trees::DecisionTrees), String> {
     let mut repeated = duplicates::Duplicates::default();
     let mut oversized = shape::Measures::new();
     let mut trees = decision_trees::DecisionTrees::default();
@@ -100,6 +107,7 @@ fn scan(files: &[PathBuf], packed: &mut shape::Measures) -> Result<(duplicates::
         repeated.scan(&file, &syntax);
         line_packing::scan(&file, &source, &syntax, packed);
         shape::scan(&file, &source, &syntax, &mut oversized, &mut trees);
+        fact_types::record(&file, &syntax, facts);
     }
     Ok((repeated, oversized, trees))
 }
@@ -160,7 +168,8 @@ fn main() -> ExitCode {
     files.sort();
     test_paths::declare(&files);
     let mut packed = shape::Measures::new();
-    let (repeated, mut oversized, trees) = match scan(&files, &mut packed) {
+    let mut facts = BTreeSet::new();
+    let (repeated, mut oversized, trees) = match scan(&files, &mut packed, &mut facts) {
         Ok(found) => found,
         Err(error) => {
             eprintln!("quench-lint: cannot read {error}");
@@ -172,7 +181,7 @@ fn main() -> ExitCode {
     if request.packing {
         line_packing::report(&packed);
     }
-    let violations = repeated.report() + trees.report() + settle(&oversized, &request);
+    let violations = repeated.report() + trees.report() + settle(&oversized, &request) + fact_types::compare(&facts);
     if violations == 0 {
         return ExitCode::SUCCESS;
     }

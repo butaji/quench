@@ -14,6 +14,7 @@ entry_kinds 8
 untagged_memory_accesses 32
 stencil_opcodes 0
 fact_homes 44
+fact_types 46
 epoch_fields 27
 guest_reentries 147
 wall_clock_reads 36
