@@ -91,6 +91,14 @@ impl RegisterCells {
         self.lookup(pc, register).map(|(cell, _)| cell)
     }
 
+    /// The cell `register` holds just after the instruction at `pc`: the cell it writes there, else what it held before:
+    /// none where no path reaches `pc`.
+    pub fn after(&self, pc: u32, register: u16) -> Option<Cell> {
+        let written = self.writes.binary_search_by_key(&pc, |(at, _)| *at).ok()
+            .and_then(|at| self.writes[at].1.iter().find(|(written, ..)| *written == register).map(|&(_, cell, _)| cell));
+        written.or_else(|| self.at(pc, register))
+    }
+
     /// The source of the value `register` holds just before the instruction at `pc`: none where no path reaches `pc`.
     pub fn source_at(&self, pc: u32, register: u16) -> Option<Source> {
         self.lookup(pc, register).map(|(_, source)| source)
