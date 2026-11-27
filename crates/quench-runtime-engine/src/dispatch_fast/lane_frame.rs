@@ -3093,8 +3093,14 @@ macro_rules! row_decode {
             compare_fields($fields)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE, quench_runtime::bytecode::Op::NumericAdd | quench_runtime::bytecode::Op::NumericMultiply | quench_runtime::bytecode::Op::ToPropertyKey) } {
             operator_fields($fields)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE, quench_runtime::bytecode::Op::IntCaseIndex) } {
+            // A pure read of the record's fields: the case slot's registers and the label range.
+            Operation::decode_int_case(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Generic)) } {
-            // `Binary` (its operator is a field no instance fixes) and `IntCaseIndex`.
+            // `Binary` only, and only where no operator row was given it: its operator is still a field the row decodes
+            // per run. `specialize_plain_operators` gives every other `Binary` its operator's row, so the records left
+            // here are those it skips (a result flag, a numeric local target) and the accumulator-carrying `**`, `in`
+            // and `instanceof`, which have no accumulator form of their value row.
             Operation::decode_generic(quench_runtime::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::WasmInt)) } {
             Operation::decode_wasm_int(quench_runtime::staged::Fields::wide($fields))
@@ -4198,15 +4204,15 @@ pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
 pub(crate) const OPERANDS_GUARDED: u8 = 7;
 
 script_handler! {
-    /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
-    /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
-    /// instantiation rather than a field the row decodes and dispatches on. `FORM` (`OPERANDS_*`) states
-    /// the operand kinds the view proved, so the row's operand tests fold, and whether an operand is an
-    /// int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
-    /// `numeric::binary_operation`'s, over the record's own operands. Any step but a value hands the
-    /// record to its generated row for good (`requicken`), which decides every operand pair.
+    /// The lane handler of a plain `Binary` of Number operator `OPERATOR` (a `BinaryOperator`'s value: arithmetic,
+    /// bitwise, or a loose equality or relation) whose accumulator field is `ACC`: `generated_row`'s row with the
+    /// operator a parameter of the instantiation rather than a field the row decodes and dispatches on. `FORM`
+    /// (`OPERANDS_*`) states the operand kinds the view proved, so the row's operand tests fold, and whether an
+    /// operand is an int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
+    /// `numeric::binary_operation`'s, over the record's own operands. A step that is not a value widens the record
+    /// to the form below it, and at the bottom to `binary_operator_miss` of the same operator, which decides the
+    /// operands' value or leaves the pair to the general step: the record never returns to the operator-reading row.
     pub(crate) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, FORM: u8>(cx, r, ip, i, view) {
-        let generic: Handler = generated_row!(OP, ACC, FLAG_UNREAD);
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
             if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 || FORM == OPERANDS_GUARDED } {
@@ -4238,9 +4244,11 @@ script_handler! {
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
         };
+        // A Number operator always has a Number operation, so this is the operator's own pure row (`binary_operator_miss`).
         let Some(number) = number else {
-            requicken(ip, generic);
-            sibling!(generic, r, ip, view)
+            let value: Handler = crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler;
+            requicken(ip, value);
+            sibling!(value, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);

@@ -40,8 +40,9 @@ impl<W, P> Operation<W, P> {
     }
 
     #[cfg(not(stencil_build))]
-    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
-    fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
+    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`. A pure read of the
+    /// record's fields, so a lane row calls it directly rather than dispatching on the opcode (`decode_generic`).
+    pub fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
         let count = instruction.element_count();
         if count == 0 { return None; }
         let minimum = instruction.imm() as i32;
