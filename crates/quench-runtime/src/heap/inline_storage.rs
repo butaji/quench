@@ -9,19 +9,21 @@ impl Heap {
     /// cannot hold does, so each slot has an address native code can write
     /// (`flat_property_mut_ptr_unchecked`). It may grow the arena: take no slot address first.
     pub fn spill_inline_properties(&mut self, object: Value) {
-        let Some((data, properties)) = self.object_and_arena_mut(object) else { return };
-        let length = properties.len(data.properties());
-        let Some(values) = data.inline_properties().filter(|_| length > 0) else { return };
-        widen_inline_storage(data, properties, data.shape(), length, 0, values[0]);
+        let Some((mut data, properties)) = self.object_and_arena_mut_ref(object) else { return };
+        let length = properties.len(data.record().properties());
+        let Some(values) = data.record().inline_properties().filter(|_| length > 0) else { return };
+        let shape = data.shape();
+        widen_inline_storage(data.record(), properties, shape, length, 0, values[0]);
     }
 
     #[cold]
     pub(super) fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
+        let (mut data, properties) = self
+            .object_and_arena_mut_ref(object)
             .expect("property owner is an object");
-        let length = properties.len(data.properties());
-        widen_inline_storage(data, properties, data.shape(), length, slot, value);
+        let length = properties.len(data.record().properties());
+        let shape = data.shape();
+        widen_inline_storage(data.record(), properties, shape, length, slot, value);
     }
 }
 
