@@ -945,8 +945,7 @@ impl Vm {
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::Array
-            Native::Object | Native::Array | Native::Map | Native::Set => {
+            Native::Array | Native::Map | Native::Set => {
                 self.construct_native(p, native, args)
             }
             Native::ThrowTypeError => {

@@ -152,7 +152,7 @@ impl Heap {
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
-        self.note_object_slots(value, slot + 1);
+        self.memory_profile.object_slots_changed(value, slot + 1);
         true
     }
 

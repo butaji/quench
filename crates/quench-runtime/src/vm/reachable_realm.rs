@@ -61,7 +61,7 @@ static COMPLETE_REALM: BuiltinTable = BuiltinTable::ALL;
 /// Computes what `programs` (the entry first, then its units) reach of the build-time realm.
 pub fn reachable_realm(programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<ReachableRealm, JsError> {
     let (entry, _) = programs.split_first().ok_or_else(|| JsError("the closed world needs an entry program".into()))?;
-    let mut vm = Vm::new_static_with_builtins(SystemHost, &COMPLETE_REALM);
+    let mut vm = Vm::new_static_with_builtins(crate::SystemHost, &COMPLETE_REALM, &ExecutionTable::ALL);
     vm.initialize_shared(&Rc::new((*entry).clone()), RealmScope::Complete)?;
     vm.close_world(entry, programs, roots)
 }
@@ -165,8 +165,9 @@ impl Vm {
             self.root_constants(entry, &mut closure, program)?;
             self.admit_program(program, &mut closure);
         }
+        let eval = programs.iter().any(|program| program.kind == ProgramKind::Eval);
         // Code of a program that is itself eval code names any global.
-        if programs.iter().any(|program| program.kind == ProgramKind::Eval) {
+        if eval {
             self.enqueue(&mut closure, self.realm.globals);
             make_wild(&mut closure);
         }
