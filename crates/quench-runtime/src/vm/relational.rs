@@ -131,8 +131,8 @@ impl Vm {
                     }
                     if let Some(atom) = key_atom
                         && vm
-                            .object_data(current)
-                            .is_some_and(Object::is_module_namespace)
+                            .heap.object(current)
+                            .is_some_and(|object| object.is_module_namespace())
                     {
                         vm.evaluate_deferred_namespace_for_key(
                             p,
@@ -385,7 +385,7 @@ impl Vm {
                 if !self.shape_is_dictionary(shape) {
                     self.instanceof_constructor_layouts[instanceof_layout_index(shape)] = Some((shape, slot));
                 }
-                self.heap.property_get(self.object_data(constructor)?, slot)?
+                self.heap.property_get_ref(self.heap.object(constructor)?, slot)?
             }
         };
         if !self.inherits_native_has_instance(holder) {

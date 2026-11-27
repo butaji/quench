@@ -372,14 +372,14 @@ impl Vm {
             if let Some(native) = native {
                 self.reach_native(closure, native);
             }
-            let Some(shape) = self.object_data(holder).map(|data| data.shape()) else { continue };
+            let Some(shape) = self.heap.object(holder).map(|data| data.shape()) else { continue };
             // Materialize the lazy members the closure exposes before the keys are read.
             for key in self.shape_keys(shape) {
                 if self.admitted(closure, holder, key) && self.is_pending_lazy_data_property(holder, key) {
                     self.materialize_lazy_data_property(entry, holder, key)?;
                 }
             }
-            let shape = self.object_data(holder).map_or(shape, |data| data.shape());
+            let shape = self.heap.object(holder).map_or(shape, |data| data.shape());
             for key in self.shape_keys(shape) {
                 if self.admitted(closure, holder, key) {
                     for value in self.own_values(holder, key) {
@@ -391,7 +391,7 @@ impl Vm {
                     }
                 }
             }
-            if let Some(proto) = self.object_data(holder).map(|data| data.proto()) {
+            if let Some(proto) = self.heap.object(holder).map(|data| data.proto()) {
                 self.enqueue(closure, proto);
             }
         }

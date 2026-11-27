@@ -107,6 +107,16 @@ impl<'a> ObjectMut<'a> {
         }
     }
 
+    /// The record view of the object for a mutation that needs record data (extras, arena runs, record
+    /// flags). R4-C4 departs a cell first: on a cell this takes the departure edge, so the record is the whole object.
+    #[inline(always)]
+    pub fn record_mut_departing(&mut self) -> &mut Object {
+        match self {
+            ObjectMut::Record(object) => &mut **object,
+            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+        }
+    }
+
     // Reads share `ObjectRef`'s methods through `as_shared`.
     #[inline(always)]
     pub fn layout_id(&self) -> u32 {

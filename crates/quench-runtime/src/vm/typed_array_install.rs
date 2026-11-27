@@ -17,7 +17,7 @@ impl Vm {
 
         for &crate::heap::TypedArrayRow { kind, native, name, .. } in &crate::heap::TYPED_ARRAYS {
             let constructor = self.native_with_realm(native, Value::NULL, global);
-            self.object_data_mut(constructor)
+            self.heap.object_mut(constructor)
                 .expect("typed array constructor")
                 .set_proto(typed_array);
             self.set_builtin_function_name(constructor, name)?;
@@ -64,7 +64,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let constructor = self.native_value(native);
         let typed_array = self.native_value(Native::TypedArray);
-        self.object_data_mut(constructor)
+        self.heap.object_mut(constructor)
             .expect("typed array constructor")
             .set_proto(typed_array);
         let proto = self

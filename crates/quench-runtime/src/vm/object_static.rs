@@ -12,7 +12,7 @@ impl Vm {
     /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
     /// object nor `null`.
     pub fn object_create(&mut self, proto: Value) -> Option<Value> {
-        if !proto.is_null() && self.object_data(proto).is_none() && !self.is_wasm_gc_object(proto) {
+        if !proto.is_null() && self.heap.object(proto).is_none() && !self.is_wasm_gc_object(proto) {
             return None;
         }
         Some(self.heap.alloc_object(Self::empty_object(proto)))
@@ -388,10 +388,10 @@ impl Vm {
     /// The enumerability of `object`'s own key `atom` at `slot`, read from the slot's attributes.
     /// A slot without attributes of its own is a side descriptor, or enumerable by default.
     pub(super) fn own_slot_enumerable(&self, object: Value, atom: Atom, slot: usize) -> bool {
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return true;
         };
-        match self.slot_attributes(data, slot) {
+        match self.slot_attributes(data.record(), slot) {
             Some(attributes) => attributes.enumerable,
             None => self
                 .side_descriptor(object, PropertyKey::string(atom))
@@ -684,7 +684,7 @@ impl Vm {
             .symbol_value()
             .is_some_and(|symbol| self.is_host_private_symbol(symbol));
         let extensible =
-            host_private || self.object_data(target).is_some_and(Object::is_extensible);
+            host_private || self.heap.object(target).is_some_and(|object| object.is_extensible());
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }
@@ -696,7 +696,7 @@ impl Vm {
         if descriptor_accessor {
             if is_new
                 && !matches!(key, PropertyKey::Private(..))
-                && let Some(shape) = self.object_data(target).map(Object::shape)
+                && let Some(shape) = self.heap.object(target).map(|object| object.shape())
                 && self.property_shape_slot(shape, key).is_none()
             {
                 self.create_shape_accessor_property(target, key, attributes)?;
@@ -714,7 +714,7 @@ impl Vm {
         if is_new
             && !matches!(key, PropertyKey::Private(..))
             && let Some(data) = DataAttributes::of(attributes)
-            && self.object_data(target).is_some()
+            && self.heap.object(target).is_some()
         {
             self.create_shape_data_property(target, key, value, data)?;
             return Ok(true);
