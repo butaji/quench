@@ -133,6 +133,9 @@ pub struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub holds: Option<Type>,
+    /// The slot's type (`slot_ty` of `StoreArm::of`): a Number slot's words are raw doubles, so a
+    /// store writes `slot_store::class_word(class, value)` whether or not `holds` tests the value.
+    pub(crate) class: Type,
     /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
     /// its guard compares the record's own word, which proves the form, so the store tests none.
     pub layout: bool,
@@ -144,9 +147,9 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, layout: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, class: slot_ty, layout: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), layout: false })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), class: slot_ty, layout: false })
     }
 
     /// This arm guarded by the layout id `shape` names (`layout`), where it stores a tagged word.

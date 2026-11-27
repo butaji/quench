@@ -117,7 +117,9 @@ impl Heap {
         if values.len() > region_capacity(granule) as usize {
             return false;
         }
-        for (slot, &value) in values.iter().enumerate() {
+        // The fields' words under `shape`: a Number-typed field holds its raw double (`stored_words`).
+        let words = self.properties.stored_words(shape, values);
+        for (slot, &value) in words.iter().enumerate() {
             self.class_cell_store(granule, slot, value);
         }
         self.class_space.delete_slack(granule, values.len());
@@ -135,7 +137,9 @@ impl Heap {
         if slot >= region_capacity(granule) as usize {
             return false;
         }
-        self.class_cell_store(granule, slot, value);
+        // The field's word under the after-shape, the shape the add's slot belongs to.
+        let word = self.properties.stored_word(after, slot, value);
+        self.class_cell_store(granule, slot, word);
         let class = header_class(self.class_space.header(granule));
         debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
         let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class));

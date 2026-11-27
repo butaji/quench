@@ -2211,11 +2211,12 @@ impl Heap {
     ) {
         // A live class cell whose capacity holds the values takes them in place, under the class of
         // `shape` (`class_cell_initialize`): a preshaped receiver or a built object stays a cell.
-        if let Some(granule) = self.live_class_cell(owner)
-            && self.class_cell_initialize(granule, shape, values)
-        {
+        // Observe the values first: the cell's stores write the slots' words, which depend on the observed types.
+        if let Some(granule) = self.live_class_cell(owner) {
             self.properties.note_shape_values(shape, values);
-            return;
+            if self.class_cell_initialize(granule, shape, values) {
+                return;
+            }
         }
         // Otherwise replacing storage is a record edit: the cell departs first, so the owner is a record.
         self.depart_for_mutation(owner);
@@ -4721,6 +4722,7 @@ impl Heap {
         for (slot, value) in values.into_iter().enumerate() {
             self.note_value_slot(object, slot, value);
         }
+        let values: [Value; INLINE_PROPERTY_COUNT] = std::array::from_fn(|slot| self.stored_slot_word(object, slot, values[slot]));
         if let Some(granule) = self.live_class_cell(object) {
             for (slot, value) in values.into_iter().enumerate() {
                 self.class_cell_store(granule, slot, value);
@@ -4768,6 +4770,20 @@ impl Heap {
         }
     }
 
+    /// The word a store of `value` writes at `slot` of `object` (`ValueArena::stored_word` of the
+    /// object's exact shape), read after `note_value_slot` observed `value`.
+    #[inline(always)]
+    fn stored_slot_word(&self, object: Value, slot: usize, value: Value) -> Value {
+        if !self.properties.tracks() { return value; }
+        match self.object(object) {
+            Some(data) => {
+                let shape = data.exact_shape();
+                if slot < self.properties.shape_length(shape) { self.properties.stored_word(shape, slot, value) } else { value }
+            }
+            None => value,
+        }
+    }
+
     /// `property_set` of a primitive `value` over a primitive in `slot` of a cell object
     /// (`HeapReference::LegacySlot`, as a RegExp's `lastIndex`): with no reference stored or
     /// overwritten no barrier applies, so the cell is found by one slot read rather than the
@@ -4791,7 +4807,8 @@ impl Heap {
         data.note_value_write(slot);
         let vector = data.properties();
         if !vector.has_inline_property_storage() {
-            properties.set(vector, slot, value);
+            let word = properties.stored_word(data.exact_shape(), slot, value);
+            properties.set(vector, slot, word);
         } else if !data.store_inline_narrow(slot, value) {
             self.property_set(object, slot, value);
         }
@@ -4799,6 +4816,7 @@ impl Heap {
 
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
+        let value = self.stored_slot_word(object, slot, value);
         if let Some(granule) = self.live_class_cell(object) {
             self.class_cell_store(granule, slot, value);
             return;
@@ -4852,6 +4870,7 @@ impl Heap {
         value: Value,
     ) {
         self.note_value_slot(object, slot, value);
+        let value = self.stored_slot_word(object, slot, value);
         if let Some(granule) = self.live_class_cell(object) {
             self.class_cell_store(granule, slot, value);
             return;
@@ -4989,6 +5008,8 @@ impl Heap {
         if !unsafe { self.properties.held_slot_admits(shape, usize::from(slot), value) } {
             return false;
         }
+        // A Number-typed slot admits an int32 and holds its raw double (`ValueArena::stored_word`).
+        let value = self.properties.stored_word(shape, usize::from(slot), value);
         // SAFETY: as above; the barrier admitted the write.
         let record = unsafe { &*self.unlogged_object_record(record_id) };
         // A marked object's store retires its readers first (`store_exact_slot`).
@@ -5842,7 +5863,8 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
     }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
-        properties.push(&mut vector, value, want);
+        let word = properties.stored_word(shape, slot, value);
+        properties.push(&mut vector, word, want);
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {
@@ -5904,6 +5926,8 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     // SAFETY: the caller matched the exact shape, which holds the slot.
     let widened = unsafe { properties.note_exact_slot_word(data.shape(), slot, value) };
     if declines_widening(widened, layout) { return false; }
+    // The observed slot's word: the raw double of a Number-typed slot (`ValueArena::stored_word`).
+    let value = properties.stored_word(data.shape(), slot, value);
     // Code that held the object's values as constants retires before the write
     // (`Object::note_constant_write`); the exact shape a cache records leaves the mark out.
     data.note_constant_write();
