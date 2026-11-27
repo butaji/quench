@@ -625,6 +625,7 @@ impl Vm {
 
     /// `realm`'s `Object.prototype`: the VM field for the active realm, which follows it
     /// (`REALM_FOLLOWING_PROTOTYPES`), and the intrinsics table for any other.
+    #[inline]
     pub fn realm_object_prototype(&self, realm: Value) -> Value {
         if realm == self.realm.globals {
             return self.object_proto;

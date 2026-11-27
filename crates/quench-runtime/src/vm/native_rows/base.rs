@@ -17,7 +17,7 @@ row_table! {
     (ArrayPrototype, "unshift", ArrayUnshift, 1),
     (ArrayPrototype, "splice", ArraySplice, 2),
     (ArrayPrototype, "fill", ArrayFill, 1),
-    (ArrayPrototype, "at", ArrayAt, 1),
+    (ArrayPrototype, "at", ArrayAt, 1, LANE_METHOD),
     (ArrayPrototype, "lastIndexOf", ArrayLastIndexOf, 1),
     (ArrayPrototype, "indexOf", ArrayIndexOf, 1),
     (ArrayPrototype, "copyWithin", ArrayCopyWithin, 2),
