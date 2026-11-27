@@ -91,7 +91,7 @@ impl Vm {
     /// its hint again too often, or for another receiver. The prototype is marked first, so a
     /// change to its values retires the hint's watch.
     pub fn hold_getter_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, slot: u16, limit: u16) -> Option<u16> {
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let receiver = self.heap.object_record_by_id(self.heap.record_id(object.direct_object_index()?));
         let (guard, prototype) = (receiver.guard_word(), receiver.proto());
         let owned = owned.filter(|&index| usize::from(index) < self.holder_hints.getter.len());
         let remakes = owned.map_or(0, |index| self.holder_hints.getter[usize::from(index)].remakes + 1);
@@ -119,7 +119,7 @@ impl Vm {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn own_constant_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
         let hint = self.holder_hints.own.get(usize::from(index))?;
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let receiver = self.heap.object_record_by_id(self.heap.record_id(object.direct_object_index()?));
         // SAFETY: the hint's watch is live as long as the hint.
         (hint.atom == atom).then(|| unsafe {
             concrete_own_constant_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), hint.value)
@@ -134,7 +134,7 @@ impl Vm {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn hold_own_constant_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_own_constant(object)?;
-        let record = self.heap.object_record_by_id(object.direct_object_index()?);
+        let record = self.heap.object_record_by_id(self.heap.record_id(object.direct_object_index()?));
         let (guard, shape) = (record as *const crate::heap::Object as u64, record.exact_shape());
         let watch = crate::heap::watch_prototype_values(shape)?;
         let hint = HolderHint { guard, atom, holder: object, value, watch };

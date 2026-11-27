@@ -682,7 +682,7 @@ impl Vm {
         let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
         // A holder up the chain that is an object record: its id, plus one; any other holder
         // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
-        let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
+        let holder = if depth > 0 { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) } else { 0 };
         match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
             Some(entry) => {
                 self.hold_fact(entry, &subjects);
@@ -768,7 +768,7 @@ impl Vm {
         };
         if kind != KIND_GETTER {
             // An own accessor's holder is each receiver itself, never the one recorded.
-            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
+            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |r| self.heap.record_id(r) + 1) };
             self.symbol_load_proofs.record_accessor(layout, key32, depth, slot, kind, holder_id);
         }
     }

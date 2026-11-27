@@ -273,7 +273,7 @@ impl Vm {
         if prototype.is_deleted() {
             return None;
         }
-        ProtoLink::object_record(prototype.direct_object_index()?)
+        ProtoLink::object_record(self.heap.record_id(prototype.direct_object_index()?))
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
@@ -287,7 +287,7 @@ impl Vm {
             return None;
         }
         let target = proof.1;
-        let Some(record) = value.direct_object_index() else {
+        let Some(record) = value.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
         };
         let mut object = self.heap.object_record_by_id(record);
