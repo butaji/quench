@@ -47,6 +47,9 @@ impl Type {
 
     /// `self` joined with `next`, where an integer range that grew settles at int32's span.
     pub fn widen(self, next: Self) -> Self {
+        if let (Some(known), Some(incoming)) = (self.string_fact(), next.string_fact()) {
+            return Self::from_string(known.widen(incoming));
+        }
         match (self.0, next.0) {
             (TypeKind::Int(known), TypeKind::Int(incoming)) => Self::int(known.widen(incoming)),
             _ => self.join(next),

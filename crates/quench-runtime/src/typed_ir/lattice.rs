@@ -21,6 +21,96 @@ pub enum TypeKind {
     DirectObjectShape { shape: u32, nullish: u16 },
     FunctionIdentity(Value),
     FunctionBody(u32),
+    /// A string refined by its interned atoms and its length (`StringFact`). Never the full range with no atom: that is
+    /// `Language(String)`, so equal types keep equal representations.
+    String(StringFact),
+}
+
+/// The most interned atoms a string fact names. A value that may be one of more atoms than this is any string of its
+/// length range (`StringFact::join`), so the lattice stays finite and a fixpoint over concatenations terminates.
+pub const MAX_STRING_ATOMS: usize = 4;
+
+/// The UTF-16 length range of a string, inclusive: `FULL` is any length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StringLength {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl StringLength {
+    pub const FULL: Self = Self { min: 0, max: u32::MAX };
+
+    /// The hull of two length ranges.
+    pub fn join(self, other: Self) -> Self {
+        Self { min: self.min.min(other.min), max: self.max.max(other.max) }
+    }
+}
+
+/// A string value's fact: the program atoms it may be, and the range of its length. An atom is an interned string, so
+/// two values that are both one atom are the same string object, and `===` between such values is a pointer compare.
+/// `count == 0` names no atom: the value is any string of `length`. Atoms are sorted and distinct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StringFact {
+    atoms: [u32; MAX_STRING_ATOMS],
+    count: u8,
+    length: StringLength,
+}
+
+impl StringFact {
+    /// Any string: `Type::language(String)`.
+    pub const ANY: Self = Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length: StringLength::FULL };
+
+    /// The fact of a string that is one of `atoms` (sorted and deduplicated here), of length `length`. More atoms than
+    /// `MAX_STRING_ATOMS` name none: the fact is any string of that length.
+    fn new(atoms: &[u32], length: StringLength) -> Self {
+        let mut ids = [0u32; MAX_STRING_ATOMS];
+        let mut count = 0usize;
+        for &atom in atoms {
+            if ids[..count].contains(&atom) { continue; }
+            if count == MAX_STRING_ATOMS { return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length }; }
+            ids[count] = atom;
+            count += 1;
+        }
+        ids[..count].sort_unstable();
+        Self { atoms: ids, count: count as u8, length }
+    }
+
+    /// The atoms the string may be, sorted; empty where it names none.
+    pub fn atoms(&self) -> &[u32] {
+        &self.atoms[..usize::from(self.count)]
+    }
+
+    /// The one atom the string is, where its set holds exactly one.
+    pub fn atom(&self) -> Option<u32> {
+        (self.count == 1).then_some(self.atoms[0])
+    }
+
+    /// The range of the string's UTF-16 length.
+    pub fn length(&self) -> StringLength {
+        self.length
+    }
+
+    /// The hull of two facts: the union of their atoms where both name atoms and the union fits `MAX_STRING_ATOMS`, else
+    /// no atom; the hull of their lengths.
+    pub fn join(self, other: Self) -> Self {
+        let length = self.length.join(other.length);
+        if self.count == 0 || other.count == 0 {
+            return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length };
+        }
+        let atoms: Vec<u32> = self.atoms().iter().chain(other.atoms()).copied().collect();
+        Self::new(&atoms, length)
+    }
+
+    /// `join`, where a bound that `self` did not reach jumps to the length's own bound (0 or `u32::MAX`), so a loop that
+    /// grows a string (`s += "x"`) reaches a fixed length range in finitely many joins.
+    pub fn widen(self, next: Self) -> Self {
+        let joined = self.join(next);
+        let length = StringLength {
+            min: if joined.length.min < self.length.min { 0 } else { joined.length.min },
+            max: if joined.length.max > self.length.max { u32::MAX } else { joined.length.max },
+        };
+        Self { length, ..joined }
+    }
 }
 
 /// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
@@ -126,6 +216,33 @@ impl Type {
             TypeKind::DirectObjectShape { nullish, .. } => language_bit(ValueType::Object) | nullish,
             TypeKind::NullableDirectObjectFamily(nullish) => language_bit(ValueType::Object) | nullish,
             TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => language_bit(ValueType::Function),
+            TypeKind::String(_) => language_bit(ValueType::String),
+        }
+    }
+
+    /// A string that is one of the interned `atoms` (none: any string), whose UTF-16 length lies in `min..=max`. The caller
+    /// gives the hull of the atoms' lengths. More than `MAX_STRING_ATOMS` atoms, or none, is any string of that length.
+    pub fn string_atoms(atoms: &[u32], min: u32, max: u32) -> Self {
+        Self::from_string(StringFact::new(atoms, StringLength { min, max }))
+    }
+
+    /// A string of any content whose UTF-16 length lies in `min..=max`.
+    pub fn string_length(min: u32, max: u32) -> Self {
+        Self::string_atoms(&[], min, max)
+    }
+
+    /// A string as its fact, normalized: the full range with no atom is `language(String)`, never `String`.
+    pub(super) fn from_string(fact: StringFact) -> Self {
+        if fact == StringFact::ANY { Self::language(ValueType::String) } else { Self(TypeKind::String(fact)) }
+    }
+
+    /// The string fact of a type all of whose language types are strings: a refined string, or any string. `None` for
+    /// a type that may hold anything else, and for `NEVER`.
+    pub fn string_fact(self) -> Option<StringFact> {
+        match self.0 {
+            TypeKind::String(fact) => Some(fact),
+            TypeKind::Language(kinds) if kinds == language_bit(ValueType::String) => Some(StringFact::ANY),
+            _ => None,
         }
     }
 
@@ -277,6 +394,9 @@ impl Type {
             return if kinds == 0 { Self::DIRECT_OBJECT_FAMILY }
                 else { Self(TypeKind::NullableDirectObjectFamily(kinds)) };
         }
+        if let (Some(left), Some(right)) = (self.string_fact(), other.string_fact()) {
+            return Self::from_string(left.join(right));
+        }
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
@@ -299,6 +419,7 @@ impl Type {
                 shape == other_shape && nullish == other_nullish,
             (TypeKind::FunctionIdentity(left), TypeKind::FunctionIdentity(right)) => left == right,
             (TypeKind::FunctionBody(left), TypeKind::FunctionBody(right)) => left == right,
+            (TypeKind::String(left), TypeKind::String(right)) => left == right,
             _ => false,
         }
     }
@@ -320,5 +441,6 @@ impl Type {
                 if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
                     || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
+            || matches!((self.string_fact(), expected.string_fact()), (Some(known), Some(allowed)) if known.join(allowed) == allowed)
     }
 }

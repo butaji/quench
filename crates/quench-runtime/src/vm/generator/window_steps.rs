@@ -218,9 +218,11 @@ impl Vm {
 
     /// Resumes a chain `capture_chain` captured: its frames go back on the frame stack bottom
     /// first, each with the state its record kept. A top frame parked in a native call makes that
-    /// call again through the ordinary call path (`call_value`), delivers its result to the call
-    /// instruction's destination and continues after it; the frames below wait for the run.
-    /// No production caller yet: the build-time input capture (C4b) resumes a parked chain here.
+    /// call again through the ordinary path (`call_value`, or `construct_value_with_new_target`
+    /// when the parked call is a `new`), delivers its result to the call instruction's destination
+    /// and continues after it; the frames below wait for the run.
+    /// No production caller yet: the build-time input capture (MEM, c5-capture-at-input.md) resumes
+    /// a parked chain here.
     #[allow(dead_code)]
     pub fn resume_chain(&mut self, mut chain: Box<FrameRecord>) -> Result<(), JsError> {
         let parked = chain.parked.take();
@@ -234,7 +236,10 @@ impl Vm {
         let p = unsafe { &*p };
         let call_pc = parked.call_pc as usize;
         let destination = p.function(function as usize).instruction_at(call_pc).result_register();
-        let value = self.call_value(p, parked.callee, parked.this, &parked.args)?;
+        let value = match parked.new_target {
+            Some(new_target) => self.construct_value_with_new_target(p, parked.callee, new_target, &parked.args)?,
+            None => self.call_value(p, parked.callee, parked.this, &parked.args)?,
+        };
         self.frames[top].pc = call_pc + 1;
         self.frames[top].pc_is_resume = true;
         if let Some(slot) = self.frames[top].registers.get_mut(usize::from(destination)) {
@@ -244,13 +249,21 @@ impl Vm {
     }
 
     /// Captures the chain down to `base_depth` (`capture_chain`) at a native's edge, with the native
-    /// call its top frame is parked in: the top frame's pc is the call instruction. One call, so the
-    /// parked values go straight from the native's arguments into the traced record.
+    /// call its top frame is parked in: the top frame's pc is the call instruction. `new_target` is
+    /// `None` for a call and `Some` for a construction. One call, so the parked values go straight
+    /// from the native's arguments into the traced record.
     #[allow(dead_code)]
-    pub fn capture_chain_parked(&mut self, base_depth: usize, callee: Value, this: Value, args: Box<[Value]>) -> Box<FrameRecord> {
+    pub fn capture_chain_parked(
+        &mut self,
+        base_depth: usize,
+        callee: Value,
+        this: Value,
+        args: Box<[Value]>,
+        new_target: Option<Value>,
+    ) -> Box<FrameRecord> {
         let call_pc = self.frames.last().expect("a native is parked in a frame").pc as u32;
         let mut top = self.capture_chain(base_depth);
-        top.parked = Some(ParkedNative { callee, this, args, call_pc });
+        top.parked = Some(ParkedNative { callee, this, args, call_pc, new_target });
         top
     }
 

@@ -82,7 +82,8 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
-            constant_types: program.constants.iter().map(constant_type).collect(),
+            constant_types: program.constants.iter().zip(constant_atoms(program))
+                .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             global_objects: program
                 .atoms
                 .iter()
@@ -117,10 +118,7 @@ impl Scope {
                 .collect(),
             array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
             typed_arrays: TYPED_ARRAY_CONSTRUCTORS.iter().filter_map(|(name, kind)| atom_named(program, name).map(|atom| (atom, *kind))).collect(),
-            constant_atoms: program.constants.iter().map(|constant| match constant {
-                Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
-                _ => None,
-            }).collect(),
+            constant_atoms: constant_atoms(program),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
             builtins: BUILTINS.iter().filter_map(|builtin| {
@@ -195,16 +193,33 @@ fn atom_named(program: &ResidualProgram, text: &str) -> Option<u32> {
     }).map(|atom| atom as u32)
 }
 
+/// Each constant's atom, by constant index: a String constant whose text the program names interns to that atom.
+fn constant_atoms(program: &ResidualProgram) -> Vec<Option<u32>> {
+    program.constants.iter().map(|constant| match constant {
+        Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
+        _ => None,
+    }).collect()
+}
+
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
-/// a string's, a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
-pub fn constant_type(constant: &Constant) -> Type {
+/// a string's exact length, which is an atom's (`atom`) where the program names its text, so the string is that atom;
+/// a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
+pub fn constant_type(constant: &Constant, atom: Option<u32>) -> Type {
     match constant {
         Constant::Number(value) => crate::value::exact_int32(*value)
             .map_or(Type::NUMBER, |int| Type::int(IntRange::singleton(i64::from(int)))),
         Constant::Null => Type::language(ValueType::Null),
         Constant::Undefined => Type::language(ValueType::Undefined),
         Constant::Boolean(_) => Type::language(ValueType::Boolean),
-        Constant::String(_) | Constant::StringUnits(_) => Type::language(ValueType::String),
+        Constant::String(text) => {
+            let length = u32::try_from(text.encode_utf16().count()).unwrap_or(u32::MAX);
+            let atoms: Vec<u32> = atom.into_iter().collect();
+            Type::string_atoms(&atoms, length, length)
+        }
+        Constant::StringUnits(units) => {
+            let length = u32::try_from(units.len()).unwrap_or(u32::MAX);
+            Type::string_length(length, length)
+        }
         Constant::BigInt(_) => Type::language(ValueType::BigInt),
         _ => Type::ANY,
     }

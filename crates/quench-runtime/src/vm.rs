@@ -2987,7 +2987,8 @@ impl Vm {
         };
         let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
-        if drain_jobs {
+        // A captured run stops at its native call: its jobs wait for the run that resumes it.
+        if drain_jobs && !result.as_ref().is_err_and(JsError::is_captured) {
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;
