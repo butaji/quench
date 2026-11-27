@@ -12,7 +12,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
+use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
 use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
@@ -137,19 +137,15 @@ impl Lowering<'_, '_> {
         }).map(|(pc, _)| pc).collect()
     }
 
-    /// The element reads the entry observed to yield Numbers (`observed`), and the reads of a
-    /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
-    /// type: an integer kind's range, a typed-array load being its elements' own integers.
-    fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
-        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::performed(**instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })))
+    /// The reads of a hoisted typed array of a fixed kind, each of which yields a Number of the kind's element type: an
+    /// integer kind's range, a typed-array load being its elements' own integers. The kind is the view's (`ElementViews`), so
+    /// the element type is the kind's: the solve keeps no typed-array element class to prove it from (no solver fact).
+    fn typed_reads(&self, instructions: &[WideInstruction]) -> Vec<TypedRead> {
+        instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::performed(**instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
-                Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type(), kind: None })
-            }).collect();
-        let mut reads: Vec<ObservedRead> = self.observed.0.iter().filter(|read| read.ty != quench_runtime::typed_ir::Type::ANY && typed.iter().all(|seed| seed.pc != read.pc))
-            .copied().chain(typed.iter().copied()).collect();
-        reads.sort_by_key(|read| read.pc);
-        reads
+                Some((pc, array.views.observed_kind().and_then(NativeKind::new)?.element_type()))
+            }).collect()
     }
 
     /// The entering ranges (`entering`) the loop keeps: those still narrower than int32 at the
@@ -162,9 +158,9 @@ impl Lowering<'_, '_> {
         let dense = |pc: usize| self.hoisted_access(pc);
         let typed = |pc: usize| self.typed_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
-        let reads = self.element_reads(instructions);
+        let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls, raises: &self.raises };
@@ -180,9 +176,9 @@ impl Lowering<'_, '_> {
         let dense = |pc: usize| self.hoisted_access(pc);
         let typed = |pc: usize| self.typed_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
-        let reads = self.element_reads(instructions);
+        let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, entering: &self.entering, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls, raises: &self.raises };

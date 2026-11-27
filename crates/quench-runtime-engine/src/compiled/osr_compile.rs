@@ -94,7 +94,6 @@ struct LoopInput {
     span: (usize, usize),
     generic: Vec<usize>,
     global_reads: quench_runtime::vm::global_facts::GlobalReads,
-    number_reads: Vec<super::facts::ObservedRead>,
     sites: super::lane_region::DirectSites,
 }
 
@@ -163,7 +162,7 @@ impl LoopJob {
                 names: Some(&names), own_constant: &own_constant, root_constant: &root_constant });
             super::lane_region::RegionSpecializer {
                 admitted: self.admitted,
-                number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
+                kinds: &[], int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
                 typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures, typed_kinds: &self.facts.typed_kinds,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), online, ..VmFacts::STATIC }, generic: &plan.generic,
@@ -309,36 +308,6 @@ impl OsrFacts {
     }
 }
 
-/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
-/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
-/// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
-    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
-    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| {
-            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
-            let read = matches!(crate::compiled::decoded_completed(*instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }));
-            read && !abandoned.contains(pc)
-        })
-        .filter_map(|(pc, instruction)| {
-            let register = instruction.operand_b().register_index()?;
-            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
-            // An inlined callee's reads are Numbers whatever the entry showed: its registers
-            // hold nothing at entry that the sample could have seen. So is a read that left
-            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
-            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
-            Some(super::facts::ObservedRead { pc, ty, kind: None })
-        }).collect();
-    // A register's `length` read defines an int32: the region reads it as one
-    // (`Lowering::array_length`), leaving where it is not.
-    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
-        && instruction.result_flags() == 0
-        && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
-        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
-    reads.sort_by_key(|read| read.pc);
-    reads
-}
-
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
 /// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
@@ -379,10 +348,9 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads, widened: &[usize],
     unit_calls: &[DirectCandidates], (fields, mut online): (&[Option<Vec<NativeFieldLoad>>], Option<&mut OsrOnline<'_>>)) -> (Vec<LoopInput>, Vec<Box<[DirectCallee]>>) {
     let mut input = |unit: lane_unit::Unit, entry_fields: Vec<Option<u32>>, span: (usize, usize), generic: Vec<usize>, sites| {
-        let number_reads = observed_reads(program, &unit, observation.number_arrays, observation.abandoned, &generic);
         let global_reads = global_reads(&unit, GlobalTable::Lane);
         let tables = online.as_mut().map(|online| (online.tables)(&unit, fields, &global_reads));
-        LoopInput { unit, tables, entry_fields, span, generic, global_reads, number_reads, sites }
+        LoopInput { unit, tables, entry_fields, span, generic, global_reads, sites }
     };
     let (mut plans, mut directs) = (Vec::new(), Vec::new());
     if let Some((unit, fields)) = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten() {

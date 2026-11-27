@@ -294,7 +294,6 @@ pub(crate) fn loop_compile_in_lane(
     site: &LoopSite,
     region: &crate::compiled::LoopRegion,
     tier: &mut LoopTier,
-    number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
     int_entries: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::IntRange)],
     typed_captures: &[u16],
     int_captures: &[u16],
@@ -341,7 +340,7 @@ pub(crate) fn loop_compile_in_lane(
     // A construction site's plan, where the region may keep its receiver as its field values.
     let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
-    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds, typed_rows: &typed_rows,
+    let observation = crate::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, int_entries, typed_captures, int_captures, typed_kinds: &typed_kinds, typed_rows: &typed_rows,
         entry_types: &types, string_entries: &strings, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     // A BaseJIT region inlines the calls its sites recorded.
@@ -368,7 +367,7 @@ pub(crate) fn loop_compile_in_lane(
     // u-jit region's own inputs (its online facts, its direct callees), never the b-jit region's.
     if recompiles_ultra(region, tier, [base, started.is_none(), admitted.is_some()]) {
         drop(_mark);
-        return ultra_compile_when_due(cx, r, site, region, tier, (number_arrays, int_entries), (typed_captures, int_captures));
+        return ultra_compile_when_due(cx, r, site, region, tier, int_entries, (typed_captures, int_captures));
     }
     tier.start(started, machine, site);
 }
@@ -405,13 +404,13 @@ fn ultra_compile_when_due(
     site: &LoopSite,
     region: &crate::compiled::LoopRegion,
     tier: &mut LoopTier,
-    (number_arrays, int_entries): (&[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)], &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::IntRange)]),
+    int_entries: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::IntRange)],
     (typed_captures, int_captures): (&[u16], &[u16]),
 ) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let due = crate::compiled::loop_model::ultra_region_taken(unsafe { vm(cx) }.programs.tiers(), site.span());
     if u64::from(site.taken.get()) >= due {
-        return loop_compile_in_lane(cx, r, site, region, tier, number_arrays, int_entries, typed_captures, int_captures);
+        return loop_compile_in_lane(cx, r, site, region, tier, int_entries, typed_captures, int_captures);
     }
     site.needed.set(u32::try_from(due).unwrap_or(u32::MAX));
 }
@@ -639,44 +638,9 @@ fn is_capture_load(instruction: &quench_runtime::bytecode::WideInstruction) -> b
     )
 }
 
-/// How many elements of an entry array are sampled for Numbers.
-const SAMPLED_ELEMENTS: usize = 64;
-
-/// The registers of `region`'s arrays whose first elements, sampled on entry, are all int32s or all
-/// Numbers (int32 or double, no hole), with that type: an observation (a guess the code checks at
-/// every read), not a proof.
-pub(crate) fn number_arrays(vm: &Vm, r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::Type)> {
-    region.arrays.iter().filter(|array| array.field.is_none())
-        .filter_map(|array| sample_array(vm, r.get(array.register)).map(|ty| (array.register, ty))).collect()
-}
-
-/// The type the first elements of the array `value` all have, int32 or Number (no hole), sampled:
-/// an observation (a guess the code checks at every read), not a proof.
-/// The array-typed values among `values` (register order), sampled: what a lane body's loops read typed.
-pub(crate) fn sampled_arrays(vm: &Vm, values: impl Iterator<Item = Value>) -> Vec<(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)> {
-    values.enumerate().filter_map(|(register, value)| sample_array(vm, value).map(|ty| (register as quench_runtime::bytecode::Register, ty))).collect()
-}
-
-pub(crate) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::typed_ir::Type> {
-    use quench_runtime::typed_ir::Type;
-    // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
-    if let Some(kind) = vm.typed_array_kind(value) {
-        use quench_runtime::tier_surface::TypedArrayKind as Kind;
-        return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
-    }
-    let elements = vm.heap_reads().record_array(value)?.elements();
-    if elements.len() == 0 { return None; }
-    // A double backing's form is its element kind: Numbers where it holds no hole, read off
-    // its header with no element touched (decoding it whole would cost a copy per entry).
-    if elements.is_double() { return elements.packed_double_values().map(|_| Type::NUMBER); }
-    let sample = || (0..elements.len().min(SAMPLED_ELEMENTS)).map(|index| elements.get(index).unwrap_or(Value::DELETED));
-    if sample().all(|value| value.as_int().is_some()) { Some(Type::INT32) }
-    else { sample().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
-}
-
 /// The registers of the running activation that hold int32s at entry and that the loop writes,
 /// each with the range its value gives the entry (`IntRange::entering`): an observation the
-/// compiled code's entry contract checks, as `number_arrays`'.
+/// compiled code's entry contract checks.
 pub(crate) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, quench_runtime::typed_ir::IntRange)> {
     region.entry_registers().filter_map(|register| r.get(register).as_int()
         .map(|value| (register, quench_runtime::typed_ir::IntRange::entering(value)))).collect()
