@@ -72,6 +72,9 @@ lane_handler! {
                 }
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::THIS.0);
+                } else if const { crate::dispatch_fast::nested_site(FLAG) } {
+                    // A nested record's lookup is its site (`set_field_lookup_site`): `b` names the nested base, `c` is zero.
+                    std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::NESTED && i.c == 0);
                 } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
                     // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
