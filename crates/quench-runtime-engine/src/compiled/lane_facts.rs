@@ -4,6 +4,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+use quench_runtime::jit_mode::Tier;
+use quench_runtime::vm::tier_policy::PredictedTier;
 use std::collections::BTreeMap;
 
 /// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
@@ -68,8 +70,8 @@ pub(crate) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) ->
 /// leaf never pays: a loop, an inlined call, a call of itself (its recursion runs natively inside
 /// the entry), or length (`Tiers::amortizing_instructions`, which counts the inlined callees'
 /// instructions too, as they are in `unit.instructions`).
-pub(crate) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
+pub(crate) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee], tier: Tier) -> bool {
+    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier)
 }
 
 /// Whether a body of `function` calls itself directly: one entry then runs a native call tree
@@ -117,11 +119,13 @@ impl std::fmt::Write for Fnv {
     }
 }
 
-/// The tier `function`'s lane body runs in (`tier_policy::predicted_tier`), where `called_by_loop` is a loop
-/// region's call of it. The floor row (`admits_all`) compiles every body optimized, as it always has.
-pub(crate) fn body_pick(tiers: &Tiers, program: &ResidualProgram, graph: &quench_runtime::compile::call_graph::CallGraph, function: u32, called_by_loop: bool) -> quench_runtime::vm::tier_policy::PredictedTier {
-    if tiers.admits_all { return quench_runtime::vm::tier_policy::PredictedTier::Ultra; }
-    quench_runtime::vm::tier_policy::predicted_tier(graph, program, function, called_by_loop)
+/// The predicted tier of `function`'s lane body (design decision 4.9): the one input of every lane tier pick, read from
+/// the program's table (`ProgramStore::predicted_tiers`; `called_by_loop` picks its column). An AOT program's
+/// predicted tier is Ultra for every function, and so is every function under the floor row (`admits_all`), which
+/// compiles every body optimized. A program not running has no table and no body.
+pub(crate) fn body_pick(tiers: &Tiers, aot: bool, predicted: &[[PredictedTier; 2]], function: u32, called_by_loop: bool) -> PredictedTier {
+    if tiers.admits_all || aot { return PredictedTier::Ultra; }
+    predicted.get(function as usize).map_or(PredictedTier::Interpreter, |row| row[usize::from(called_by_loop)])
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
@@ -134,35 +138,9 @@ pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fas
     }
 }
 
-/// What a u-jit compile lowers: a lane body (its unit's bytecodes) or a loop region (its loop's span).
-#[derive(Clone, Copy)]
-pub(crate) enum Lowers { Body, Region }
-
-/// The IR instructions and bytecodes of the u-jit compiles so far, per `Lowers` (`note_lane_compile`).
-static COMPILED: [[std::sync::atomic::AtomicU64; 2]; 2] = [const { [const { std::sync::atomic::AtomicU64::new(0) }; 2] }; 2];
-
-/// The bytecodes of evidence the prior `Loops::ir_per_bytecode` counts as, against the compiles' measured ratio.
-const PRIOR_BYTECODES: u64 = 256;
-
-/// Notes a u-jit compile of `bytecodes` that lowered to `ir` IR instructions: what prices the next compile of its
-/// kind before its plan (`unplanned_ir`). Work, not time, so a run repeats under callgrind (TOD-2194).
-pub(crate) fn note_lane_compile(lowers: Lowers, bytecodes: usize, ir: usize) {
-    let [ir_seen, bytecodes_seen] = &COMPILED[lowers as usize];
-    ir_seen.fetch_add(ir as u64, std::sync::atomic::Ordering::Relaxed);
-    bytecodes_seen.fetch_add(bytecodes as u64, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The IR a lane body of `bytecodes` unit instructions lowers to before its plan: the measured ratio of the
-/// compiles so far, the prior weighing `PRIOR_BYTECODES` (bodies lowered 85-108 IR per bytecode against the
-/// prior's 8 on the data-structure suite, so their compiles were priced at a tenth).
+/// The IR a lane body of `bytecodes` unit instructions lowers to before its plan: `Loops::ir_per_bytecode` each.
 pub(crate) fn unplanned_ir(loops: &tier_policy::Loops, bytecodes: u64) -> usize {
-    usize::try_from(bytecodes.saturating_mul(measured_ir_per_bytecode(loops, Lowers::Body))).unwrap_or(usize::MAX)
-}
-
-/// `unplanned_ir`'s IR per bytecode, for compiles of `lowers`.
-pub(crate) fn measured_ir_per_bytecode(loops: &tier_policy::Loops, lowers: Lowers) -> u64 {
-    let [ir, seen] = COMPILED[lowers as usize].each_ref().map(|count| count.load(std::sync::atomic::Ordering::Relaxed));
-    ((PRIOR_BYTECODES * loops.ir_per_bytecode + ir) / (PRIOR_BYTECODES + seen)).max(1)
+    usize::try_from(bytecodes.saturating_mul(loops.ir_per_bytecode)).unwrap_or(usize::MAX)
 }
 
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).

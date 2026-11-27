@@ -7686,8 +7686,10 @@ impl Vm {
         // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
+        // The claim is at the function's entry, so its pick is the entry's (not a loop's); an interpreted pick claims nothing.
         let lane_claims = admission::lane_bodies_enrolled(self)
-            && program.function_get(function as usize).is_some_and(|body| body_may_amortize_in_lane(self.programs.tiers(), body));
+            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some_and(|tier|
+                program.function_get(function as usize).is_some_and(|body| body_may_amortize(self.programs.tiers(), body, tier)));
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
@@ -9308,14 +9310,9 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
+/// Whether a lane body of `body` in `tier` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::bytecode::Function) -> bool {
-    body_may_amortize(tiers, body, tier_policy::body_tier_in_lane())
-}
-
-/// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
 pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: crate::compiled::admission::Tier) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))

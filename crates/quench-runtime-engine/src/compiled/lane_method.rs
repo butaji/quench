@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::lane_compile::LaneDependencies;
 use super::lane_facts::amortizes_entry;
+use quench_runtime::jit_mode::Tier;
 
 /// What a lane body's plan and lowering established: everything `finish_lane_method` holds but
 /// its code. An image body linked at its run address has the same facts without a lowering.
@@ -17,6 +18,8 @@ pub(crate) struct LaneMethodFacts {
     pub(crate) function: u32,
     pub(crate) invalidation: quench_runtime::code_dependencies::Invalidation,
     pub(crate) tiers: &'static Tiers,
+    /// The tier the body was picked for (`lane_body_tier`), whose entry threshold its amortization reads.
+    pub(crate) tier: Tier,
     pub(crate) fault_poll: bool,
     pub(crate) exits: ExitTable,
     pub(crate) summary: Option<lane_region::TypeSummary>,
@@ -30,8 +33,8 @@ pub(crate) struct LaneMethodFacts {
 /// a freshly compiled body and by an image body, so installing an image never constructs the
 /// lowering or its machine IR.
 pub(crate) fn finish_lane_method(memory: CodeMemory, scalar: Option<usize>, proven: Option<(usize, Box<[quench_runtime::typed_ir::Type]>)>, facts: LaneMethodFacts) -> Option<LaneMethod> {
-    let LaneMethodFacts { unit, stable, fields, direct, closed, function, invalidation, tiers, fault_poll, exits, summary, clif, proven_calls } = facts;
-    let amortizes = amortizes_entry(tiers, &unit, function, &direct);
+    let LaneMethodFacts { unit, stable, fields, direct, closed, function, invalidation, tiers, tier, fault_poll, exits, summary, clif, proven_calls } = facts;
+    let amortizes = amortizes_entry(tiers, &unit, function, &direct, tier);
     let (dependencies, recovery_space) = (LaneDependencies::of(fields.iter().flatten().flatten().copied(), &direct), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
     let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
     let names_shapes = !fields.is_empty() || !direct.is_empty();

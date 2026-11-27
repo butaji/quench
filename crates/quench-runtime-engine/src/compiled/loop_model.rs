@@ -10,7 +10,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::tier_model::{compile_wall_permille, future_count, interpreted_ns, net_gain_ns};
+use super::tier_model::{future_count, interpreted_ns, net_gain_ns};
 use super::tier_policy::{Loops, Priors, Tiers, PER_MILLE};
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, over the interpreter.
@@ -44,7 +44,7 @@ fn required_taken(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: 
 /// pays, at the compile cost of the priors; under `tier-stress` the warm-up alone.
 pub(crate) fn admission_taken(tiers: &Tiers, span: u64) -> u32 {
     if tiers.admits_all { return tiers.loops.warmup_taken; }
-    required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
+    required_taken(&tiers.priors, &tiers.loops, span, tiers.priors.compile_ns_per_ir, tiers.priors.compile_wall_permille)
 }
 
 /// What `iterations` over `entries` of the loop's native code (runs and declined entries) save
@@ -87,7 +87,7 @@ fn body_required_taken(priors: &Priors, saved: u64, outlay: u64) -> u64 {
 /// inlines the loop's calls, so an iteration does the work of its instructions
 /// (`ir_per_bytecode` each), and of the loop's span at least.
 fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
-    span.max(ir as u64 / super::lane_facts::measured_ir_per_bytecode(loops, super::lane_facts::Lowers::Body))
+    span.max(ir as u64 / loops.ir_per_bytecode)
 }
 
 /// `body_required_taken` at the costs of `tiers`; under `tier-stress` none.
@@ -139,8 +139,8 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
     let gain = saved_per_iteration(priors, span).checked_sub(base_saved_per_iteration(priors, span)).filter(|gain| *gain > 0)?;
     // The b-jit region already runs, so the u-jit compile is all extra work, charged whole whichever thread runs it
     // (TOD-2194: savings over the remaining runs against the whole compile), not at the second core's wall share.
-    // Its IR is the region compiles' measured ratio over the span (`lane_facts::measured_ir_per_bytecode`).
-    let outlay = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
+    // Its IR is `Loops::ir_per_bytecode` over the span.
+    let outlay = span.saturating_mul(tiers.loops.ir_per_bytecode).saturating_mul(priors.compile_ns_per_ir);
     Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
 }
 
@@ -151,7 +151,7 @@ pub(crate) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
 pub(crate) fn ultra_region_taken(tiers: &Tiers, span: u64) -> u64 {
     if tiers.admits_all { return 0; }
     let priors = &tiers.priors;
-    let compile = span.saturating_mul(super::lane_facts::measured_ir_per_bytecode(&tiers.loops, super::lane_facts::Lowers::Region)).saturating_mul(priors.compile_ns_per_ir);
+    let compile = span.saturating_mul(tiers.loops.ir_per_bytecode).saturating_mul(priors.compile_ns_per_ir);
     body_required_taken(priors, saved_per_iteration(priors, span), entry_ns(priors).saturating_add(compile))
 }
 

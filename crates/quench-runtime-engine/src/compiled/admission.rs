@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
-use quench_runtime::vm::tier_policy::PredictedTier;
+use quench_runtime::vm::tier_policy::{lane_body_tier, PredictedTier};
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::dispatch_fast::LaneView;
@@ -217,8 +217,6 @@ pub(crate) struct UnitFacts {
     pub(crate) root_ok: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
     pub(crate) compiles_left: bool,
-    /// Lane phase A: the tier the body is predicted to run in (`lane_facts::body_pick`).
-    pub(crate) pick: Option<PredictedTier>,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
     /// Lane phase A: the looped iterations pay for the body at its planned size (`loop_model::body_taken`).
@@ -334,13 +332,9 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program && facts.root_ok,
-        // Phase A: the compile bound, then the pick, then the looped iterations.
+        // Phase A: the compile bound, then the looped iterations (the pick decided the tier before this gate).
         UnitKind::LanePlan => {
             if !facts.compiles_left { return Decision::Declined; }
-            match facts.pick {
-                Some(PredictedTier::Interpreter) if !facts.called_by_regions => { record(Refusal::NotAmortized); return Decision::Unpaid; }
-                _ => {}
-            }
             facts.looped_taken
         }
         // Phase B, during planning: the entry gate.
@@ -474,7 +468,9 @@ pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
 pub(crate) enum LaneRoute {
     /// The program's loaded AOT image serves it (`install_ahead_lane_body`): no warm-up, no runtime tier.
     Ahead,
-    /// The stencil tier stitches it at once (`--b-jit`).
+    /// Its predicted tier is the interpreter: no body is compiled.
+    Interpreted,
+    /// The stencil tier stitches it at once (its predicted tier is b-jit).
     Base,
     /// It waits for callees that still compile, to call their bodies by their entries.
     Deferred,
@@ -483,21 +479,27 @@ pub(crate) enum LaneRoute {
 }
 
 /// The facts `route_for_lane` reads.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct LaneRouteFacts {
     /// The function's program has a loaded AOT image.
     pub(crate) ahead_image: bool,
+    /// The function's predicted tier (`lane_facts::body_pick`).
+    pub(crate) pick: PredictedTier,
     /// A start whose direct callees still compile (`body_tier_in_lane::callees_compiling`).
     pub(crate) callees_compiling: bool,
 }
 
-/// The route of a function's lane body, a pure function of its facts: an image body is served by the image; under
-/// `--b-jit` the stencil tier stitches it; otherwise the lane body tier plans it, after its callees still compiling.
+/// The route of a function's lane body, a pure function of its facts: an image body is served by the image; otherwise
+/// its predicted tier, through the policy (`lane_body_tier`), picks the stencil route, the lane tier after its callees
+/// still compiling, or none.
 pub(crate) fn route_for_lane(facts: LaneRouteFacts) -> LaneRoute {
-    if facts.ahead_image { LaneRoute::Ahead }
-    else if stencil_only() { LaneRoute::Base }
-    else if facts.callees_compiling { LaneRoute::Deferred }
-    else { LaneRoute::Lane }
+    if facts.ahead_image { return LaneRoute::Ahead; }
+    match lane_body_tier(facts.pick) {
+        None => LaneRoute::Interpreted,
+        Some(Tier::Base) => LaneRoute::Base,
+        Some(_) if facts.callees_compiling => LaneRoute::Deferred,
+        Some(_) => LaneRoute::Lane,
+    }
 }
 
 /// How a callee would run: inlined into a lane unit under the call's `CalleeBinding`, or called

@@ -329,16 +329,20 @@ impl Priors {
     }
 }
 
-/// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
-/// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
-pub fn body_tier_in_lane() -> Tier {
-    if crate::jit_mode::base_only() {
-        Tier::Base
-    } else if crate::jit_mode::quick_only() {
-        Tier::Quick
-    } else {
-        Tier::Ultra
+/// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
+/// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, where it
+/// allows no other: `--b-jit` runs Base alone, `--q-jit` Quick alone, `--u-jit` Ultra alone, and a mode that
+/// leaves Base out (aarch64's default) runs Ultra for a Base pick.
+pub fn lane_body_tier(pick: PredictedTier) -> Option<Tier> {
+    let wanted = match pick {
+        PredictedTier::Interpreter => return None,
+        PredictedTier::Base => Tier::Base,
+        PredictedTier::Ultra => Tier::Ultra,
+    };
+    if crate::jit_mode::tiers_allowed(&[wanted]) {
+        return Some(wanted);
     }
+    [Tier::Ultra, Tier::Base, Tier::Quick].into_iter().find(|tier| crate::jit_mode::tiers_allowed(&[*tier]))
 }
 
 /// The base a share in percent is a share of.
@@ -559,7 +563,7 @@ fn accessor_shaped(body: &Function) -> bool {
     shaped && touches_this
 }
 
-// Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
+// Lane bodies: history, recurrence and loop views (lane_body_tier, dispatch_frame, program_store)
 /// The backward jumps a JavaScript activation takes in the general path before its function's
 /// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
 /// costs some hundreds of instructions per instruction of the function; a module body that
@@ -599,6 +603,12 @@ pub const UJIT_IR_PER_OP: u64 = 4;
 pub const BJIT_COMPILE_IR_PER_OP: u64 = 60;
 /// IR instructions the u-jit's one-time compile of a body spends per bytecode of the body.
 pub const UJIT_COMPILE_IR_PER_OP: u64 = 3000;
+/// IR instructions an interpreted call of a function spends on its frame, per call.
+pub const ENTRY_IR_INTERPRETER: u64 = 40;
+/// IR instructions a b-jit body's entry spends per call: the stencil crossing and its lane frame.
+pub const ENTRY_IR_BJIT: u64 = 150;
+/// IR instructions a u-jit body's entry spends per call: its entry record and its prologue.
+pub const ENTRY_IR_UJIT: u64 = 300;
 
 // The tier order is locked: each compiled tier runs a bytecode for less IR than the one before it, and compiles for more.
 const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
@@ -607,17 +617,19 @@ const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
 /// The tier a function runs in: the argmin over the three tiers of its predicted IR. A run of the function costs its
 /// work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in) times its static
 /// frequency (`CallGraph::frequency`) times the tier's cost per bytecode; a compiled tier adds its one-time compile
-/// over the bytecodes. `called_by_loop` is a loop region's call of the function, one loop more. Ties go to the tier
-/// that compiles less: the interpreter, then the b-jit. Pure: no count and no clock.
+/// over the bytecodes; each call of the function pays its tier's entry (`ENTRY_IR_*`). `called_by_loop` is a loop
+/// region's call of the function, one loop more. Ties go to the tier that compiles less: the interpreter, then the
+/// b-jit. Pure: no count and no clock.
 pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32, called_by_loop: bool) -> PredictedTier {
     let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
     let frequency = graph.frequency(function).saturating_mul(if called_by_loop { LOOP_WEIGHT } else { 1 });
     let work = graph.loop_work(function);
     let run = |per_op: u64| frequency.saturating_mul(work).saturating_mul(per_op);
     let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
-    let interpreter = run(INTERPRETER_IR_PER_OP);
-    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP));
-    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP));
+    let entry = |per_call: u64| frequency.saturating_mul(per_call);
+    let interpreter = run(INTERPRETER_IR_PER_OP).saturating_add(entry(ENTRY_IR_INTERPRETER));
+    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_BJIT));
+    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_UJIT));
     if interpreter <= base && interpreter <= ultra {
         PredictedTier::Interpreter
     } else if base <= ultra {
