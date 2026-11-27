@@ -9,7 +9,7 @@ use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
 use super::scope::Scope;
 use super::shape::Shape;
-use super::value::{Key, Origin, Word};
+use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{ControlEdge, Function, Operand, OperandKind, Successors, WideInstruction, used_registers};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
@@ -25,6 +25,10 @@ pub(super) enum Target {
     Register,
     Known(u32),
     Method(u32),
+    /// A named access of `atom` on the receiver: its getter (a read), or its setter with the stored value as the argument
+    /// (`setter`). Its callees are the accessors the census proves for the receiver's classes (`types::targets`); none where
+    /// it proves none, and then the access is no call.
+    Accessor { atom: u32, setter: bool },
 }
 
 /// A call or a `new` a function makes, with its callee's fact and its arguments' facts.
@@ -65,6 +69,10 @@ pub(super) struct FunctionFlow {
     pub(super) numbers: Box<[Option<Representation>]>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// Per element access (a read or a store), by PC, the view of the array its base holds (`typed_ir::View`).
+    pub(super) element_views: std::collections::BTreeMap<u32, crate::typed_ir::View>,
+    /// The capture slots the function reads from its parent's environment, as (owner, slot) (`Record::observe`).
+    pub(super) captures: std::collections::BTreeSet<(u32, u16)>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
     /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,
@@ -103,6 +111,13 @@ pub(super) struct FunctionFlow {
     pub(super) bounds: Vec<(Key, i64)>,
     /// The length relations each pc holds before its instruction (`lengths::Settled`), where any holds.
     pub(super) lengths: lengths::Settled,
+    /// Per pc of an element store, the array it writes and the indices it touches (`record::ElementStore`).
+    pub(super) element_stores: std::collections::BTreeMap<u32, super::record::ElementStore>,
+    /// The accessors the function defines, in PC order (`accessors::accessor_definition`); each names its object's class where proven.
+    pub(super) accessors: Vec<Accessor>,
+    /// The `extends` links the function makes: `(class, parent)` for each intrinsic `setPrototypeOf` that links two class
+    /// prototypes (`accessors::heritage_link`). `types::Types::holder` walks them.
+    pub(super) parents: Vec<(u32, u32)>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.

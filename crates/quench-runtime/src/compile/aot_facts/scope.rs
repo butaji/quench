@@ -1,7 +1,8 @@
 //! What the functions of a program share: each function's parent, the Number constants, and the
 //! atoms that name the global object.
 
-use crate::bytecode::{Constant, ResidualProgram};
+use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
+use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS};
@@ -22,6 +23,19 @@ const ARRAY_BUILTINS: [&str; 12] = ["push", "pop", "shift", "unshift", "splice",
 /// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
 /// object, which the closed world must treat as changed (`shape::of_call`).
 const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
+/// The typed-array constructors whose kind has a native element (`TypedArrayKind::has_native_element`): a call of one
+/// allocates a typed array of that kind (`effects::typed_array_constructed`).
+const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
+    ("Uint8Array", TypedArrayKind::Uint8),
+    ("Uint8ClampedArray", TypedArrayKind::Uint8Clamped),
+    ("Uint16Array", TypedArrayKind::Uint16),
+    ("Uint32Array", TypedArrayKind::Uint32),
+    ("Int8Array", TypedArrayKind::Int8),
+    ("Int16Array", TypedArrayKind::Int16),
+    ("Int32Array", TypedArrayKind::Int32),
+    ("Float32Array", TypedArrayKind::Float32),
+    ("Float64Array", TypedArrayKind::Float64),
+];
 
 /// The program-wide tables the per-function analyses read.
 pub(super) struct Scope {
@@ -37,12 +51,17 @@ pub(super) struct Scope {
     pub(super) prototype: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
     pub(super) length: Option<u32>,
+    /// The atom the intrinsic `Object.setPrototypeOf` class heritage calls is bound under, if the program names it
+    /// (`accessors::heritage_link`).
+    pub(super) set_prototype: Option<u32>,
     /// The atoms of `ARRAY_MUTATORS` the program names.
     mutators: Vec<u32>,
     /// The atoms of `ARRAY_BUILTINS` the program names.
     array_builtins: Vec<u32>,
     /// The atom `Array` interns to, if the program names it: `new Array(n)` and `Array(n)` construct an array.
     array: Option<u32>,
+    /// The atoms of the native typed-array constructors the program names, with their kinds (`TYPED_ARRAY_CONSTRUCTORS`).
+    typed_arrays: Vec<(u32, TypedArrayKind)>,
     /// Each String constant's atom, by constant index.
     pub(super) constant_atoms: Vec<Option<u32>>,
     /// Each constant's type, by constant index (`constant_type`).
@@ -81,6 +100,7 @@ impl Scope {
             this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
+            set_prototype: atom_named(program, INTRINSIC_SET_PROTOTYPE_OF_BINDING),
             mutators: program
                 .atoms
                 .iter()
@@ -96,6 +116,7 @@ impl Scope {
                 .map(|(atom, _)| atom as u32)
                 .collect(),
             array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
+            typed_arrays: TYPED_ARRAY_CONSTRUCTORS.iter().filter_map(|(name, kind)| atom_named(program, name).map(|atom| (atom, *kind))).collect(),
             constant_atoms: program.constants.iter().map(|constant| match constant {
                 Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
                 _ => None,
@@ -135,6 +156,14 @@ impl Scope {
     /// Whether `origin` is the global `Array`, whose call allocates an array (`effects::array_constructed`).
     pub(super) fn is_array_constructor(&self, origin: Option<Origin>) -> bool {
         matches!(origin, Some(Origin::Binding(Key::Global(atom))) if self.array == Some(atom))
+    }
+
+    /// The native kind of the typed-array constructor `origin` is the global binding of, if it is one.
+    pub(super) fn typed_array_kind(&self, origin: Option<Origin>) -> Option<TypedArrayKind> {
+        match origin {
+            Some(Origin::Binding(Key::Global(atom))) => self.typed_arrays.iter().find(|(named, _)| *named == atom).map(|(_, kind)| *kind),
+            _ => None,
+        }
     }
 
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).

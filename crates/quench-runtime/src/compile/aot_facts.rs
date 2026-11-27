@@ -14,6 +14,7 @@
 //! The analyses run over the bytecode (`flow`, `effects`) and reuse its dataflow driver
 //! (`dataflow.rs`), its successor table and its register uses. Owner: AOT facts.
 
+mod accessors;
 mod blocks;
 mod census;
 mod class_layout;
@@ -37,13 +38,15 @@ use std::collections::BTreeMap;
 
 use crate::bytecode::ResidualProgram;
 use crate::staged::effects::{CallForm, Effects, Signature};
-use crate::typed_ir::Representation;
+use crate::staged::effects::ElementWrites;
+use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
-use super::signatures::{self, Signatures};
+use super::signatures::{self, Argument, CallSite, Signatures};
 use census::Census;
 use class_layout::ClassLayouts;
 use flow::FunctionFlow;
 use readers::Readers;
+use record::ElementStore;
 use scope::Scope;
 pub use gate::World;
 pub use registers::{RegisterCells, Source};
@@ -91,9 +94,21 @@ pub struct AotFacts {
     pub(crate) lengths: BTreeMap<u32, lengths::Settled>,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
+    /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
+    /// (`typed_ir::View::One`) → that kind (`FunctionFacts::element_view`).
+    pub(crate) element_views: BTreeMap<(u32, u32), crate::heap::TypedArrayKind>,
+    /// Per function, the capture slots it reads from its parent's environment, as (owner, slot), in slot order
+    /// (`FunctionFacts::capture_cells`).
+    pub(crate) captures: BTreeMap<u32, Box<[(u32, u16)]>>,
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
     /// that key: what a call plan's miss subscribes to (`call_plan::Miss::Edge`).
     pub(crate) call_keys: BTreeMap<(u32, u32), (Option<u32>, crate::typed_ir::FactKey)>,
+    /// `(function, pc)` of a call → what it passes its callee (`CallSite`): each argument's array class and the caller's
+    /// parameter it is on entry. The call's writes are lifted through it (`signatures::solve`).
+    pub(crate) call_sites: BTreeMap<(u32, u32), CallSite>,
+    /// `(function, pc)` of an element store → the array class it writes and the indices it touches (`ElementStore`), where
+    /// the settled solve keeps the store.
+    pub(crate) element_stores: BTreeMap<(u32, u32), ElementStore>,
     /// The composed effect signatures of the program's functions and call forms, solved over the settled facts
     /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
     pub(crate) signatures: Option<Signatures>,
@@ -123,7 +138,11 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             dependencies: BTreeMap::new(),
+            element_views: BTreeMap::new(),
+            captures: BTreeMap::new(),
             call_keys: BTreeMap::new(),
+            call_sites: BTreeMap::new(),
+            element_stores: BTreeMap::new(),
             signatures: None,
             layouts: ClassLayouts::default(),
             readers: None,
@@ -186,6 +205,13 @@ impl AotFacts {
         self.cells.get(&key).copied()
     }
 
+    /// The settled cell of captured slot `slot` of the environment of function `owner` (`FactKey::Slot`): the join of what its
+    /// owner and every closure that captures it store, so a read of the slot from an inner function takes the owner's cell.
+    /// `Cell::ANY` where the solve did not settle.
+    pub fn captured_slot_cell(&self, owner: u32, slot: u16) -> crate::typed_ir::Cell {
+        self.cell(crate::typed_ir::FactKey::Slot { owner, slot }).unwrap_or(crate::typed_ir::Cell::ANY)
+    }
+
     /// The keys of every element class `key`'s class shares (`element_classes`): a store through any array of the class
     /// moves all of them, so an edge retires them together. Empty where `key` is no element class.
     pub fn element_class_keys(&self, key: crate::typed_ir::FactKey) -> Box<[crate::typed_ir::FactKey]> {
@@ -212,6 +238,14 @@ impl AotFacts {
     /// layout reads it too (`aot_image::symbols`).
     pub fn prototype_layout(&self, class: u32) -> Option<&[u32]> {
         self.layouts.prototypes.get(&class).map(|fields| &**fields)
+    }
+
+    /// Whether two element classes are apart: no link of the program joins them, so an array of one class is never an array
+    /// of the other (`element_classes`, each class's listed members). A class no link names is apart from every other.
+    /// False where the solve did not settle, so no two classes are taken apart from nothing.
+    pub fn element_classes_distinct(&self, first: ElementClass, second: ElementClass) -> bool {
+        self.signatures.is_some() && first != second
+            && !self.element_classes.get(&crate::typed_ir::FactKey::Elements(first)).is_some_and(|members| members.contains(&crate::typed_ir::FactKey::Elements(second)))
     }
 
     /// The functions some construction (`new`) always constructs.
@@ -260,6 +294,19 @@ fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSe
     }).collect()
 }
 
+/// What the call `call` of `function` passes its callee (`CallSite`): each argument's array class, and the caller's parameter
+/// the argument is on entry.
+fn call_site(function: u32, call: &flow::Call) -> CallSite {
+    let argument = |word: &value::Word| Argument {
+        class: word.elements_key(),
+        parameter: match word.origin {
+            Some(value::Origin::Parameter { function: owner, index }) if owner == function => Some(index),
+            _ => None,
+        },
+    };
+    CallSite { receiver: call.receiver.elements_key(), arguments: call.arguments.iter().map(argument).collect() }
+}
+
 /// The facts of one function.
 pub struct FunctionFacts<'a> {
     facts: &'a AotFacts,
@@ -291,6 +338,21 @@ impl<'a> FunctionFacts<'a> {
     /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
     pub fn field_owner(&self, pc: u32) -> Option<u32> {
         self.access_classes(pc).single().map(|(class, _)| class)
+    }
+
+    /// The kind of typed array the element access (a read or a store) at `pc` reads or stores, where its base holds typed
+    /// arrays of one native kind and no other array (`typed_ir::View::One`). The element is that kind's: an access may
+    /// read it as the kind's element type with no conversion of the stores (`typed_ir::view_element_type`).
+    pub fn element_view(&self, pc: u32) -> Option<crate::heap::TypedArrayKind> {
+        self.facts.element_views.get(&(self.function, pc)).copied()
+    }
+
+    /// The capture slots this function reads from its parent's environment (depth 0), as the engine's capture seeds name them
+    /// (`int_captures`, `typed_captures`): each slot with its settled cell (`AotFacts::captured_slot_cell`).
+    pub fn capture_cells(&self) -> Vec<(u16, crate::typed_ir::Cell)> {
+        self.facts.captures.get(&self.function).map_or_else(Vec::new, |slots| {
+            slots.iter().map(|&(owner, slot)| (slot, self.facts.captured_slot_cell(owner, slot))).collect()
+        })
     }
 
     /// The cell register `register` holds just before the instruction at `pc` in the settled solve
@@ -385,6 +447,33 @@ impl<'a> FunctionFacts<'a> {
     /// register holds (`index = base + k`) is proven through its base.
     pub fn below_length_offset(&self, pc: u32, index: u16, array: u16, offset: u32) -> bool {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
+    }
+
+    /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
+    pub(crate) fn call_site(&self, pc: u32) -> Option<&'a CallSite> {
+        self.facts.call_sites.get(&(self.function, pc))
+    }
+
+    /// The array element store at `pc` writes and the indices it touches (`AotFacts::element_stores`), where the solve kept it.
+    pub(crate) fn element_store(&self, pc: u32) -> Option<ElementStore> {
+        self.facts.element_stores.get(&(self.function, pc)).copied()
+    }
+
+    /// Whether the arguments `first` and `second` of the call at `pc` are arrays of apart classes (`AotFacts::element_classes_distinct`):
+    /// a write through one leaves the other's elements, and the facts about them, valid across the call. False where the
+    /// call is none the solve read.
+    pub fn arguments_distinct(&self, pc: u32, first: usize, second: usize) -> bool {
+        match self.call_site(pc).map(|site| (site.arguments.get(first).copied(), site.arguments.get(second).copied())) {
+            Some((Some(Argument { class: a, .. }), Some(Argument { class: b, .. }))) => self.facts.element_classes_distinct(a, b),
+            _ => false,
+        }
+    }
+
+    /// Whether the step at `pc` may write an element of an array of class `array`: its graded writes (`site_effects`)
+    /// are any, or name a class that is not apart from `array`. A step the solve did not settle may write any.
+    pub fn may_write_elements_of(&self, pc: u32, array: ElementClass) -> bool {
+        let writes = self.site_effects(pc).elements;
+        writes == ElementWrites::Any || writes.entries().iter().any(|write| !self.facts.element_classes_distinct(write.class, array))
     }
 
     /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
@@ -496,6 +585,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             let id = id as u32;
             reads.insert(id, std::mem::take(&mut flow.reads));
             for call in &flow.calls {
+                facts.call_sites.insert((id, call.pc), call_site(id, call));
+            }
+            facts.element_stores.extend(flow.element_stores.iter().map(|(&pc, &store)| ((id, pc), store)));
+            for call in &flow.calls {
                 let keyed = match call.callee.origin {
                     Some(value::Origin::Binding(key)) => Some((None, census::fact_key(key))),
                     Some(value::Origin::Member(atom)) => Some((Some(atom), crate::typed_ir::FactKey::AnyField(atom))),
@@ -504,6 +597,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
                 };
                 if let Some(keyed) = keyed { facts.call_keys.insert((id, call.pc), keyed); }
             }
+            for (&pc, &view) in &flow.element_views {
+                if let Some(kind) = view.kind() { facts.element_views.insert((id, pc), kind); }
+            }
+            facts.captures.insert(id, flow.captures.iter().copied().collect());
             for (&pc, &classes) in &flow.field_owners {
                 if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }

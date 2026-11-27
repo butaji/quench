@@ -6,6 +6,159 @@
 
 use super::{Allocation, CallOperation, Operation};
 pub use super::region::Region;
+use crate::typed_ir::ElementClass;
+
+/// The most element classes a row names before its element writes are `ElementWrites::Any`: the classes a
+/// composed signature keeps apart, the same bound as a closed union of receiver classes (`typed_ir::MAX_CLASSES`).
+pub const MAX_WRITE_CLASSES: usize = 4;
+
+/// An affine index over the parameters of a function: the parameter `param` (its value on entry) plus a constant, or
+/// the constant alone where `param` is `None`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Affine {
+    pub param: Option<u16>,
+    pub offset: i64,
+}
+
+impl Affine {
+    /// Parameter `index`'s value on entry.
+    pub const fn parameter(index: u16) -> Self {
+        Self { param: Some(index), offset: 0 }
+    }
+
+    /// The constant `offset`.
+    pub const fn constant(offset: i64) -> Self {
+        Self { param: None, offset }
+    }
+
+    /// This index as a caller sees it: each parameter `p` names the caller's parameter `parameter(p)` (the argument's
+    /// own parameter), or nothing where the argument is no parameter of the caller. None where a parameter names nothing.
+    fn substitute(self, parameter: &dyn Fn(u16) -> Option<u16>) -> Option<Self> {
+        match self.param {
+            None => Some(self),
+            Some(index) => parameter(index).map(|param| Self { param: Some(param), offset: self.offset }),
+        }
+    }
+}
+
+/// Which indices of an array an element write touches: any index (`Whole`), or the indices `start .. start + len`
+/// with both bounds affine over the function's parameters. A `Span` is a superset of what its write touches, so a
+/// store the solve cannot bound is `Whole`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Indices {
+    Whole,
+    Span { start: Affine, len: Affine },
+}
+
+impl Indices {
+    /// The indices either names: equal spans stay, any other pair is `Whole`.
+    pub fn join(self, other: Self) -> Self {
+        if self == other { self } else { Self::Whole }
+    }
+
+    /// The indices both name, where a bound is known: `Whole` gives way to the other, and two different spans, which
+    /// have no common span, stay `Whole` (a sound superset of both).
+    pub fn meet(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Whole, rest) | (rest, Self::Whole) => rest,
+            _ => self.join(other),
+        }
+    }
+
+    /// The indices as a caller sees them (`Affine::substitute`): `Whole` where a parameter names no caller parameter.
+    pub fn substitute(self, parameter: &dyn Fn(u16) -> Option<u16>) -> Self {
+        match self {
+            Self::Whole => Self::Whole,
+            Self::Span { start, len } => match (start.substitute(parameter), len.substitute(parameter)) {
+                (Some(start), Some(len)) => Self::Span { start, len },
+                _ => Self::Whole,
+            },
+        }
+    }
+}
+
+/// The indices of one array class an element write touches.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ClassWrite {
+    pub class: ElementClass,
+    pub indices: Indices,
+}
+
+impl ClassWrite {
+    const NONE: Self = Self { class: ElementClass::Unnamed, indices: Indices::Whole };
+}
+
+/// Which array elements a row writes, by the class of the array (`ElementClass`): nothing (bottom), up to
+/// `MAX_WRITE_CLASSES` classes each with its indices, or any element of any array (top). The classes are sorted and
+/// distinct, and `Classes` holds at least one, so equal writes are equal values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ElementWrites {
+    #[default]
+    Nothing,
+    Classes { len: u8, writes: [ClassWrite; MAX_WRITE_CLASSES] },
+    Any,
+}
+
+impl ElementWrites {
+    /// The writes of `entries`: a class listed twice joins its indices, and more classes than `MAX_WRITE_CLASSES` is `Any`.
+    pub fn of(entries: impl IntoIterator<Item = ClassWrite>) -> Self {
+        let mut writes = [ClassWrite::NONE; MAX_WRITE_CLASSES];
+        let mut len = 0;
+        for entry in entries {
+            match writes[..len].iter().position(|write| write.class == entry.class) {
+                Some(at) => writes[at].indices = writes[at].indices.join(entry.indices),
+                None if len == MAX_WRITE_CLASSES => return Self::Any,
+                None => {
+                    writes[len] = entry;
+                    len += 1;
+                }
+            }
+        }
+        if len == 0 {
+            return Self::Nothing;
+        }
+        writes[..len].sort_by_key(|write| write.class);
+        Self::Classes { len: len as u8, writes }
+    }
+
+    /// The listed classes, none for `Nothing` or `Any`.
+    pub fn entries(&self) -> &[ClassWrite] {
+        match self {
+            Self::Classes { len, writes } => &writes[..usize::from(*len)],
+            Self::Nothing | Self::Any => &[],
+        }
+    }
+
+    /// The writes either row makes.
+    pub fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Any, _) | (_, Self::Any) => Self::Any,
+            (Self::Nothing, rest) | (rest, Self::Nothing) => rest,
+            (Self::Classes { .. }, Self::Classes { .. }) => Self::of(self.entries().iter().chain(other.entries()).copied()),
+        }
+    }
+
+    /// The writes both rows allow: a class only one lists is not written, and a class both list keeps the indices both
+    /// name (`Indices::meet`). A kind row's `Any` gives way to the facts' writes.
+    pub fn meet(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Nothing, _) | (_, Self::Nothing) => Self::Nothing,
+            (Self::Any, rest) | (rest, Self::Any) => rest,
+            (Self::Classes { .. }, Self::Classes { .. }) => Self::of(self.entries().iter().filter_map(|write| {
+                other.entries().iter().find(|kept| kept.class == write.class)
+                    .map(|kept| ClassWrite { class: write.class, indices: write.indices.meet(kept.indices) })
+            })),
+        }
+    }
+
+    /// The writes with each class and index `lift` maps to the caller's: a callee's writes seen from a call site.
+    pub fn map(self, lift: impl Fn(ClassWrite) -> ClassWrite) -> Self {
+        match self {
+            Self::Classes { .. } => Self::of(self.entries().iter().map(|&write| lift(write))),
+            other => other,
+        }
+    }
+}
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -37,6 +190,9 @@ impl RegionSet {
 pub struct Effects {
     pub(crate) reads: RegionSet,
     pub(crate) writes: RegionSet,
+    /// The elements of which arrays the row writes (`ElementWrites`). A row that writes the `Elements` region names its
+    /// arrays here: `Any` where the kind row cannot name them, narrowed by the settled facts where they can.
+    pub(crate) elements: ElementWrites,
     pub(crate) may_alloc: bool,
     pub(crate) may_collect: bool,
     pub(crate) may_call_js: bool,
@@ -44,7 +200,7 @@ pub struct Effects {
 }
 
 impl Effects {
-    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
+    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE, elements: ElementWrites::Nothing,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
     pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
@@ -52,19 +208,20 @@ impl Effects {
     pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region. The top of every grade.
-    pub(crate) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub(crate) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 
     /// A row that touches every region and runs nothing: no guest code, throw, collection or allocation. The settled
     /// facts grade a site with it where they prove it cannot leave and allocates nothing (`signatures::facts_grade`).
     /// Met with a kind row (`meet`) it clears those flags and keeps the kind's regions.
-    pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: false,
+    pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: false,
         may_collect: false, may_call_js: false, may_throw: false };
 
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
-    pub(crate) const fn join(self, other: Self) -> Self {
+    pub(crate) fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
+            elements: self.elements.join(other.elements),
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
     }
@@ -82,7 +239,7 @@ impl Effects {
 
     /// Whether a row with this effect reads and nothing else: it writes no region, runs no guest code and allocates nothing.
     pub const fn reads_alone(self) -> bool {
-        self.writes.0 == RegionSet::NONE.0 && !self.may_call_js && !self.may_alloc
+        self.writes.0 == RegionSet::NONE.0 && matches!(self.elements, ElementWrites::Nothing) && !self.may_call_js && !self.may_alloc
     }
 
     /// Whether a row with this effect may rewrite the run's stores word: guest code may run in a nested run and specialize or
@@ -94,8 +251,9 @@ impl Effects {
     /// The meet of a kind row with a grade: a region is read or written only if both allow it, and a flag holds
     /// only if both do. A grade can clear what its kind row may do and never adds an effect, so a site's effects
     /// are its operation's kind row met with what the settled facts prove of the site: the one place a grade is computed.
-    pub(crate) const fn meet(self, other: Self) -> Self {
+    pub(crate) fn meet(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 & other.reads.0), writes: RegionSet(self.writes.0 & other.writes.0),
+            elements: self.elements.meet(other.elements),
             may_alloc: self.may_alloc && other.may_alloc, may_collect: self.may_collect && other.may_collect,
             may_call_js: self.may_call_js && other.may_call_js, may_throw: self.may_throw && other.may_throw }
     }
@@ -166,7 +324,7 @@ impl Signature {
     pub const ANY: Self = Self { leaves: Leaves::Materialize, effects: Effects::ANY };
 
     /// The component-wise join: the larger leave and the union of the effect rows.
-    pub const fn join(self, other: Self) -> Self {
+    pub fn join(self, other: Self) -> Self {
         Self { leaves: self.leaves.join(other.leaves), effects: self.effects.join(other.effects) }
     }
 
@@ -188,7 +346,7 @@ impl Signature {
                 }
             };
             signature = signature.join(Self { leaves, effects });
-            written |= effects.writes != RegionSet::NONE || effects.may_alloc;
+            written |= effects.writes != RegionSet::NONE || effects.elements != ElementWrites::Nothing || effects.may_alloc;
         }
         signature
     }
@@ -281,10 +439,10 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::IndexWrite { .. } => Effects::writes(Region::Elements),
+            Self::IndexWrite { .. } => Effects { elements: ElementWrites::Any, ..Effects::writes(Region::Elements) },
             Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::ElementWrite { .. } => Effects::ANY,
-            Self::DefineElement { .. } => Effects::writes(Region::Elements),
+            Self::DefineElement { .. } => Effects { elements: ElementWrites::Any, ..Effects::writes(Region::Elements) },
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
@@ -356,6 +514,41 @@ mod tests {
         let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2, strict: false }, Operation::IndexWrite { index: 0, value: 0, proof: () },
             Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
+    }
+
+    #[test]
+    fn element_writes_join_by_class_and_widen_past_the_bound() {
+        let whole = |class| ClassWrite { class, indices: Indices::Whole };
+        let span = |class| ClassWrite { class, indices: Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) } };
+        let written = ElementWrites::of([whole(ElementClass::Global(3)), span(ElementClass::Parameter { function: 2, index: 0 })]);
+        assert_eq!(written.entries().len(), 2);
+        assert_eq!(written.join(ElementWrites::Nothing), written);
+        assert_eq!(written.join(ElementWrites::Any), ElementWrites::Any);
+        // The same class twice joins its indices: equal spans stay, different ones widen to `Whole`.
+        let joined = ElementWrites::of([span(ElementClass::Unnamed), span(ElementClass::Unnamed)]);
+        assert_eq!(joined.entries()[0].indices, Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) });
+        let widened = ElementWrites::of([span(ElementClass::Unnamed), whole(ElementClass::Unnamed)]);
+        assert_eq!(widened.entries()[0].indices, Indices::Whole);
+        let many = (0..=MAX_WRITE_CLASSES as u32).map(|function| whole(ElementClass::Return(function)));
+        assert_eq!(ElementWrites::of(many), ElementWrites::Any);
+        assert_eq!(ElementWrites::of(std::iter::empty()), ElementWrites::Nothing);
+    }
+
+    #[test]
+    fn a_grade_narrows_element_writes_and_keeps_its_flags() {
+        let store = ElementWrites::of([ClassWrite { class: ElementClass::Field(4), indices: Indices::Whole }]);
+        let graded = Effects::ANY.meet(Effects { elements: store, ..Effects::ANY });
+        assert_eq!(graded.elements, store);
+        assert!(graded.may_call_js && graded.may_throw && graded.may_collect, "an element store's grade clears no flag");
+        assert_eq!(Effects::NONE.meet(Effects::ANY).elements, ElementWrites::Nothing);
+    }
+
+    #[test]
+    fn a_callee_index_is_read_through_the_arguments_parameters() {
+        let index = Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) };
+        let kept = index.substitute(&|param: u16| (param == 1).then_some(0_u16));
+        assert_eq!(kept, Indices::Span { start: Affine::parameter(0), len: Affine::constant(1) });
+        assert_eq!(index.substitute(&|_: u16| None::<u16>), Indices::Whole, "an argument that is no parameter of the caller widens the index");
     }
 
     #[test]

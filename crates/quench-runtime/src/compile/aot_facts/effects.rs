@@ -1,8 +1,9 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
+use super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};
+use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
 use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -55,6 +56,8 @@ pub(super) struct Events {
     pub(super) wild_elements: bool,
     /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
     pub(super) shape: Option<super::shape::Shape>,
+    /// The accessors the instruction defines on a proven class object (`accessor_definition`).
+    pub(super) accessors: Vec<Accessor>,
 }
 
 /// The cell `word` holds as the settled solve reads it: its elements joined with those of its element class
@@ -156,7 +159,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -205,7 +208,10 @@ fn value_of(
         }
         let cell = member_type(ctx, base_fact(ctx, base, state), atom);
         return match owner.and_then(Word::class_site) {
-            Some((owner, instance, guess)) => Word { cell, ..Word::member_on(owner, instance, atom, guess) },
+            Some(site) => {
+                let (holder, instance, guess) = site_holder(ctx, site, atom);
+                Word { cell, ..Word::member_on(holder, instance, atom, guess) }
+            }
             None => Word::member(atom, cell),
         };
     }
@@ -222,6 +228,9 @@ fn value_of(
     }
     if ctx.types.is_some() && let Some(array) = array_constructed(ctx, pc, instruction, state) {
         return array;
+    }
+    if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
+        return typed;
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
@@ -248,7 +257,7 @@ fn value_of(
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
+            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -300,7 +309,27 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any },
+        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
+}
+
+/// The typed array a call of a native typed-array constructor (`new Float64Array(...)`) allocates at `pc`. Whatever its
+/// arguments, its kind is the constructor's, so its elements are that kind's (`View::One`) and its length is not fixed
+/// (a resizable buffer's view may change length). Its element class is its own, as an array's is.
+fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    let kind = ctx.scope.typed_array_kind(state[usize::from(register)].origin)?;
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements {
+            ty: crate::typed_ir::view_element_type(kind),
+            classes: Classes::Never,
+            length: Length::Any,
+            view: View::One(kind),
+        },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -313,7 +342,10 @@ fn member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
     let named = types.cell(Key::Member(atom));
     // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
     if owner.is_some_and(|owner| owner.cell.classes == Classes::Never) { return Cell { classes: Classes::Never, ..named }; }
-    owner.and_then(Word::class_site).and_then(|(class, instance, _)| types.cell_on(class, instance, atom)).unwrap_or(named)
+    owner.and_then(Word::class_site).and_then(|site| {
+        let (class, instance, _) = site_holder(ctx, site, atom);
+        types.cell_on(class, instance, atom)
+    }).unwrap_or(named)
 }
 
 /// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
@@ -338,7 +370,7 @@ pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[
 }
 
 /// The fact of a field lookup's base: its register's, or the function's own `this`.
-fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
+pub(super) fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
     match base.register_index() {
         Some(register) => state.get(usize::from(register)).copied(),
         None if base == crate::bytecode::FieldBase::THIS && !ctx.is_root => Some(this_fact(ctx)),
@@ -385,7 +417,7 @@ impl Abstract for Before<'_, '_> {
 /// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
 /// changes an array, an index store past the length, a `delete`.
 fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
     (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
@@ -401,18 +433,23 @@ fn writes(
 ) {
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
-    member_stores(ctx, instruction, operation, state, events);
+    member_stores(ctx, pc, instruction, operation, state, events);
 }
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
-fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
+fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
     events.computed_store |= writes_global_name(operation.as_ref(), state);
-    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
+    if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { mode, value }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
-        if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
-            events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+        match accessor_mode(mode) {
+            Some(setter) => accessor_definition(pc, setter, target, key, state[usize::from(value)], events),
+            None => {
+                if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
+                    events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
+                }
+            }
         }
     }
     match operation {
@@ -424,7 +461,7 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             let length = settled(ctx, array).elements.length;
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));

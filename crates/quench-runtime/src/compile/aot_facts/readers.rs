@@ -100,7 +100,8 @@ impl Readers {
             facts,
             scope,
             masks: program.register_root_masks(function),
-            calls: flow.calls.iter().map(|call| (call.pc, call)).collect(),
+            // A field access is no call here (`Target::Accessor`): its instruction keeps the reads and escapes of a field access.
+            calls: flow.calls.iter().filter(|call| !matches!(call.target, Target::Accessor { .. })).map(|call| (call.pc, call)).collect(),
         };
         program.with_record(function as usize, |code| {
             for pc in 0..code.code.len() {
@@ -249,6 +250,8 @@ impl Readers {
             Target::Register if proven(cx, key) => {}
             Target::Register => self.open(call),
             Target::Method(atom) => self.method(cx, call, atom),
+            // Left out of `Scan::calls` (`scan`): an accessor access is read as the field access it is.
+            Target::Accessor { .. } => {}
         }
     }
 

@@ -2,16 +2,36 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
 use super::lengths::Settled;
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
-use super::value::{Key, Origin, Word};
+use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
+use crate::staged::effects::{Affine, Indices};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type, View};
+
+/// The array an element store writes and the indices it touches, read before the store: the array's class as the census
+/// keys the store (`Key::Element`), and the indices (`indices_of`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ElementStore {
+    pub(crate) class: ElementClass,
+    pub(crate) indices: Indices,
+}
+
+/// The indices an element store through `index` touches in `function`. A Number that is parameter `p` on entry
+/// (`Origin::Parameter`, which a write to the register retires, and a join with any other origin drops) is the one
+/// index `p`: `Span { start: p, len: 1 }`. Any other index may be any index: `Whole`.
+pub(super) fn indices_of(function: u32, index: Word) -> Indices {
+    match index.origin {
+        Some(Origin::Parameter { function: owner, index: parameter }) if owner == function && index.is_number() =>
+            Indices::Span { start: Affine::parameter(parameter), len: Affine::constant(1) },
+        _ => Indices::Whole,
+    }
+}
 
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
@@ -29,6 +49,10 @@ pub(super) struct Record {
     /// Per register, whether a read saw a value that is not a Number.
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// Per element access (a read or a store), by PC, the view of the array its base holds before it (`settled`).
+    element_views: std::collections::BTreeMap<u32, View>,
+    /// The capture slots the function reads from its parent's environment (depth 0), as (owner, slot).
+    captures: std::collections::BTreeSet<(u32, u16)>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
     links: Vec<(ElementClass, ElementClass)>,
@@ -42,6 +66,10 @@ pub(super) struct Record {
     pub(super) bounds: Vec<(Key, i64)>,
     /// The length relations each pc holds before its instruction (`lengths::Settled`).
     pub(super) lengths: Settled,
+    /// Per pc of an element store (`ElementWrite`), the array it writes and the indices it touches (`ElementStore`).
+    element_stores: std::collections::BTreeMap<u32, ElementStore>,
+    accessors: Vec<Accessor>,
+    parents: Vec<(u32, u32)>,
 }
 
 impl Record {
@@ -59,6 +87,8 @@ impl Record {
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
+            element_views: std::collections::BTreeMap::new(),
+            captures: std::collections::BTreeSet::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             links: Vec::new(),
@@ -70,6 +100,9 @@ impl Record {
             quiet: Vec::new(),
             bounds: Vec::new(),
             lengths: Settled::default(),
+            element_stores: std::collections::BTreeMap::new(),
+            accessors: Vec::new(),
+            parents: Vec::new(),
         }
     }
 
@@ -93,9 +126,36 @@ impl Record {
                 self.unsafe_reads[usize::from(register)] = true;
             }
         }
+        // An element store writes the elements of its array's class, at the indices its index register holds.
+        if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
+            let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx.id, index) });
+        }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
             self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
+        }
+        // An element access (a read or a store) keeps the view of the array its base holds, so a tier reads a typed array's
+        // element by its kind (`FunctionFacts::element_view`).
+        let element_base = match decoded(instruction) {
+            Some(crate::staged::Operation::ElementWrite { base, .. }) => Some(base),
+            _ if instruction.op() == crate::bytecode::Op::GetIndex => Some(instruction.register_b()),
+            _ => None,
+        };
+        if let Some(base) = element_base {
+            let view = settled(ctx, state[usize::from(base)]).elements.view;
+            let joined = self.element_views.entry(pc as u32).or_insert(View::None);
+            *joined = joined.join(view);
+        }
+        // A capture of the parent's environment reads the parent's slot: its cell is the slot's settled cell, which the
+        // function depends on as a `Key::Slot` (`AotFacts::captured_slot_cell`).
+        if let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = decoded(instruction)
+            && let Some(owner) = ctx.scope.owner(ctx.id, depth)
+        {
+            self.reads.insert(Key::Slot { owner, slot });
+            if depth == 0 {
+                self.captures.insert((owner, slot));
+            }
         }
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
@@ -139,7 +199,7 @@ impl Record {
             // length (`Scope::is_array_mutator`).
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
-                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
@@ -155,7 +215,7 @@ impl Record {
                 self.plain_calls.push(match call.target {
                     Target::Known(function) => Some(function),
                     Target::Register => call.callee.cell.ty.body_index(),
-                    Target::Method(_) => None,
+                    Target::Method(_) | Target::Accessor { .. } => None,
                 });
             }
             if method.is_some_and(|atom| ctx.scope.passes_this(atom)) {
@@ -165,7 +225,14 @@ impl Record {
             if let Some(proof) = quiet::of_call(ctx.scope, &call) {
                 self.quiet.push((pc as u32, proof));
             }
+            if let Some(link) = super::accessors::heritage_link(ctx, &call) {
+                self.parents.push(link);
+            }
             self.calls.push(call);
+        }
+        // A named field read or store may run the accessor its receiver's class defines for the name (`Target::Accessor`).
+        if let Some(access) = super::accessors::accessor_call(ctx, pc as u32, instruction, state) {
+            self.calls.push(access);
         }
     }
 
@@ -179,6 +246,7 @@ impl Record {
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
+        self.accessors.extend(events.accessors);
         self.shapes.extend(events.shape);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -244,6 +312,8 @@ impl Record {
             wild_elements: self.wild_elements,
             numbers,
             field_owners: self.field_owners,
+            element_views: self.element_views,
+            captures: self.captures,
             registers: self.registers,
             reads: self.reads,
             links: self.links,
@@ -257,6 +327,9 @@ impl Record {
             closures: self.closures,
             bounds: self.bounds,
             lengths: self.lengths,
+            element_stores: self.element_stores,
+            accessors: self.accessors,
+            parents: self.parents,
         }
     }
 }
