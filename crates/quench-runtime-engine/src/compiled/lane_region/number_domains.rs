@@ -9,10 +9,7 @@ use super::*;
 /// a Number type, tagged bits for any other. Entry states and edges both take it from the
 /// target's fact (`facts.at`), so an edge conforms to exactly what its target reads.
 pub(crate) fn target_representation(ty: Type) -> Representation {
-    let ty = ty.machine();
-    if ty == Type::INT32 { Representation::Int32 }
-    else if ty == Type::NUMBER { Representation::Float64 }
-    else { Representation::Tagged }
+    repr(ty.machine())
 }
 
 /// `index`'s tagged bits boxed from its unboxed view in `representation`: the one boxing of a

@@ -25,7 +25,7 @@ impl Lowering<'_, '_> {
         {
             let value = self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits());
             self.define(state, instruction.result_register(), value,
-                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
+                RegisterFact::narrowest(super::super::facts::constant_type(constant)));
             return Some(true);
         }
         if super::super::facts::immediate(constant).is_none()
@@ -39,7 +39,7 @@ impl Lowering<'_, '_> {
             let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
             let value = self.raw_load(Lane::I64, regions::constant(), address, 0);
             self.define(state, instruction.result_register(), value,
-                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
+                RegisterFact::narrowest(super::super::facts::constant_type(constant)));
             return Some(true);
         }
         self.constant_value(index).map(|(value, ty)| {
@@ -77,7 +77,7 @@ impl Lowering<'_, '_> {
         let made = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, made, exit);
         self.allocated(state);
-        self.define(state, instruction.result_register(), value, RegisterFact::definition(ty, Representation::Tagged));
+        self.define(state, instruction.result_register(), value, RegisterFact::narrowest(ty));
         Some(true)
     }
 
@@ -110,7 +110,7 @@ impl Lowering<'_, '_> {
         let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
         let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
         emit_js_guard(&mut self.builder, holds, exit);
-        self.define(state, register, bits, RegisterFact::definition(ty, Representation::Tagged));
+        self.define(state, register, bits, RegisterFact::narrowest(ty));
         true
     }
 }

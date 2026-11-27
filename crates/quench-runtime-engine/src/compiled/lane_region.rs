@@ -21,7 +21,7 @@ use crate::ext_traits::*;
 use crate::compiled::regions;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
-use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
+use quench_runtime::typed_ir::{repr, BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
@@ -206,6 +206,9 @@ impl RegisterFact {
             proof: Proof::Definition, projection: Projection::Exact })
             .expect("semantic operation's result type matches its representation")
     }
+
+    /// A definition held in the narrowest representation its type takes (`repr`).
+    fn narrowest(ty: Type) -> Self { Self::definition(ty, repr(ty)) }
 
     fn canonical() -> Self {
         Self::admit(Fact::tagged(BindingTime::Location, Proof::CanonicalValue))
@@ -944,7 +947,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
-        self.define(state, register, bits, RegisterFact::definition(Type::ANY, Representation::Tagged));
+        self.define(state, register, bits, RegisterFact::narrowest(Type::ANY));
     }
 
     /// The tagged Boolean a predicate `holds` selects.
@@ -953,15 +956,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn set_boolean(&mut self, state: &mut State, register: Register, boolean: ir::Value) {
-        self.define(state, register, boolean, RegisterFact::definition(Type::language(quench_runtime::ValueType::Boolean), Representation::Tagged));
+        self.define(state, register, boolean, RegisterFact::narrowest(Type::language(quench_runtime::ValueType::Boolean)));
     }
 
     fn set_int(&mut self, state: &mut State, register: Register, int: ir::Value) {
-        self.define(state, register, int, RegisterFact::definition(Type::INT32, Representation::Int32));
+        self.define(state, register, int, RegisterFact::narrowest(Type::INT32));
     }
 
     fn set_number(&mut self, state: &mut State, register: Register, number: ir::Value) {
-        self.define(state, register, number, RegisterFact::definition(Type::NUMBER, Representation::Float64));
+        self.define(state, register, number, RegisterFact::narrowest(Type::NUMBER));
     }
 
     /// Prove an exact int32 view once; a Number already in a float register
@@ -1193,7 +1196,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             let header = self.object_header(state, Some(register), false, exit);
             headers::prove_header_shape(&mut self.builder, state, Some(register), header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+                ..RegisterFact::narrowest(Type::direct_object(shape)) };
         }
     }
 
@@ -2594,6 +2597,8 @@ impl Lowering<'_, '_> {
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
+                // Arms that hold one view keep it, as both define it; arms holding different views meet in the
+                // tagged view (`repr(joined)` may be Float64, which the int32 arm never defines).
                 let representation = if current.value.representation == incoming.value.representation {
                     current.value.representation
                 } else {
@@ -2691,7 +2696,7 @@ impl Lowering<'_, '_> {
     /// Guards and termination leave without publishing a result.
     fn finish_number_returns(&mut self) -> NativeNumberResult {
         let ty = self.number_returns.iter().fold(Type::NEVER, |ty, returned| ty.join(returned.fact.ty));
-        let format = if ty != Type::NEVER && ty.is_subtype(Type::INT32) {
+        let format = if repr(ty) == Representation::Int32 {
             NativeNumberResult::Int32
         } else { NativeNumberResult::Float64 };
         for returned in std::mem::take(&mut self.number_returns) {
@@ -3505,12 +3510,12 @@ impl Lowering<'_, '_> {
             let bits = self.tagged(state, source);
             let index = self.helper_call(LaneHelper::TypeofIndex, &[bits]);
             let int = self.raw_unary(Unary::Narrow(Lane::I32), index);
-            self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
+            self.define(state, instruction.result_register(), int, RegisterFact::narrowest(Type::INT32));
             return Some(true);
         };
         let index = quench_runtime::bytecode::typeof_name_index(quench_runtime::vm::coercion::typeof_text(kind)).expect("a language typeof name");
         let int = self.raw_const(Lane::I32, i64::try_from(index).expect("index fits i64"));
-        self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
+        self.define(state, instruction.result_register(), int, RegisterFact::narrowest(Type::INT32));
         Some(true)
     }
 
@@ -3733,7 +3738,7 @@ impl Lowering<'_, '_> {
         }
         if let Some(ty) = proved {
             state.values[callee_index] = RegisterFact::admit(Fact {
-                ty, representation: Representation::Tagged,
+                ty, representation: repr(ty),
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
             }).expect("an admitted callee and its dominating check");
         }
@@ -4035,7 +4040,7 @@ impl Lowering<'_, '_> {
             let TaggedView::Value(value) = fact.tagged else { continue };
             if self.builder.func.dfg.resolve_aliases(value) == bits && !fact.value.ty.is_direct_object_family() {
                 *fact = RegisterFact { tagged: fact.tagged,
-                    ..RegisterFact::definition(fact.value.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY), Representation::Tagged) };
+                    ..RegisterFact::narrowest(fact.value.ty.direct_object_part().unwrap_or(Type::DIRECT_OBJECT_FAMILY)) };
             }
         }
     }
@@ -4349,7 +4354,7 @@ impl Lowering<'_, '_> {
                     ty = admitted;
                 }
             }
-            let representation = if int32 { Representation::Int32 } else if number { Representation::Float64 } else { Representation::Tagged };
+            let representation = repr(ty);
             let raw = match representation {
                 Representation::Int32 => self.raw_unary(Unary::Narrow(Lane::I32), value),
                 Representation::Float64 => {
