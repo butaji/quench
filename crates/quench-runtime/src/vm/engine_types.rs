@@ -307,8 +307,6 @@ pub struct LaneView {
     /// it closes: a leave finds its loop by a binary search over the few loops, where a table
     /// over every instruction cost 4 bytes per instruction of every view.
     pub loop_at_backedge: Box<[(u32, u32)]>,
-    /// The loop kernels whose test records name them (`loop_kernel`).
-    pub _loop_kernels: Box<[Box<dyn std::any::Any>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     pub start: std::cell::Cell<Ip>,

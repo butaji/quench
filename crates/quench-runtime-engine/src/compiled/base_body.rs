@@ -39,32 +39,6 @@ fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register)
     })
 }
 
-/// The PCs a previous body left at: its rows there take the general (tagged) semantics.
-/// A loop's interpreter kernel, run on the loop's entry edge (`LaneHelper::KernelStep`, `base_region::kernel_entries`): the
-/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the running activation's
-/// registers, as the interpreter's head does, and the body's rows continue the loop from where it left them. A body
-/// running as a native callee runs it in its own frame, which the helper makes the context's
-/// (`native_frames::in_innermost_frame`), as every helper of a native callee does. A head the kernel stood down from,
-/// and a body running as a frameless leaf (whose records are its caller's), runs nothing here: the rows run the loop.
-pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
-    // SAFETY: the payload holds the running lane context, live while the body runs.
-    if !unsafe { (*cx).leaf.call }.is_null() {
-        return super::LANE_CALL_COMPLETED;
-    }
-    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
-        // SAFETY: the context's records and registers are the running activation's (`in_innermost_frame`), and its
-        // view holds `call_pc`.
-        let ip = unsafe { (*cx).base.add(call_pc as usize) };
-        // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
-        let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
-        // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
-        // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
-        // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
-        if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
-    })
-}
-
 /// The `throw` at `call_pc` of the running body (`LaneHelper::ThrowStep`): the error of the value in its register
 /// (`Vm::thrown_error`), raised where the record runs (`in_place_in_lane` stashes it for the general path, which the row
 /// then leaves to at the record); `LANE_CALL_MISSED` always, as for any raise.
@@ -125,18 +99,6 @@ pub(super) unsafe extern "C" fn value_step(_vm: u64, _residual: u64, context: u6
     // SAFETY: the running lane's; the operator may have run guest code, which allocates.
     unsafe { crate::dispatch_fast::refresh_body_bases(context); crate::dispatch_fast::refresh_region_bases_of(context) };
     status
-}
-
-/// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
-/// says runs it in fewer instructions than the tier asking: its back jump lands before it, on a
-/// header whose loop the kernel takes.
-pub(super) fn kernel_loop(code: &[WideInstruction], constants: &[Value], function: &quench_runtime::bytecode::Function, live: Option<&RegisterMasks>,
-    cheaper: impl Fn(&crate::dispatch_fast::loop_kernel::recur::Recurrence) -> bool) -> bool {
-    code.iter().enumerate().any(|(backedge, jump)| {
-        matches!(quench_runtime::staged::Operation::<(), ()>::decode(*jump, quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump))
-            && (jump.jump_target() as usize) < backedge
-            && crate::dispatch_fast::loop_kernel::LoopKernel::recurrence(code, constants, function, (jump.jump_target() as usize, backedge), live).is_some_and(|recurrence| cheaper(&recurrence))
-    })
 }
 
 fn widened(generic: &[LaneExit]) -> Vec<usize> {

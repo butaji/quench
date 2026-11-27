@@ -205,8 +205,7 @@ pub(crate) enum UnitKind {
 /// request so proven facts can flow through the same path.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitFacts {
-    /// The body's rows cover the stencil tier (`base_region::covers`). A loop with an interpreter
-    /// kernel runs the kernel on its entry edge (`base_region::kernel_entries`).
+    /// The body's rows cover the stencil tier (`base_region::covers`).
     pub(crate) covers: bool,
     /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
     pub(crate) amortizes: bool,
@@ -451,11 +450,6 @@ pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() 
 /// Whether a Cranelift tier runs (QuickJIT or UltraJIT): the tiers that compile what BaseJIT does not build.
 #[inline]
 fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
-
-/// Whether a loop's kernel takes a recurrence pass: a recurrence the pass interprets per iteration is routed to the
-/// loop's stencils where the stencil tier is the only tier, which run it faster (crc); folds and chains stay with the kernel.
-#[inline]
-pub(crate) fn kernel_takes_recurrence(interprets: bool) -> bool { !(stencil_only() && interprets) }
 
 /// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
 /// inlining region), so they are analyzed only where a Cranelift tier runs.

@@ -82,9 +82,6 @@ pub(super) fn requicken(ip: Ip, handler: Handler) {
             (*site).header_handler.set(handler as *const ());
             return;
         }
-        if loop_kernel::requicken_kernel(ip, handler) {
-            return;
-        }
         // A record whose result carries flags keeps its edge's general step (`derive_lane_view`).
         if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
             return;

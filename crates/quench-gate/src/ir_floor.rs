@@ -72,8 +72,6 @@ pub fn write(config: &Config, before: &str, rows: &BTreeMap<String, Floor>) -> R
 /// The layer that owns a handler's instructions, by the first name part it holds (the thread
 /// ownership of `/mnt/project-files/rebalance/plan-2026-11-18b.md`).
 const OWNERS: &[(&str, &str)] = &[
-    ("loop_kernel", "Specialize u-jit on facts"),
-    ("LoopKernel", "Specialize u-jit on facts"),
     ("jit code", "Specialize u-jit on facts"),
     ("{closure", "Cut calls and frames to C"),
     ("regexp", "Cut builtin library code to C"),

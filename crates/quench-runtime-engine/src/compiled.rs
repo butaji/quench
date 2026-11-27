@@ -1167,8 +1167,6 @@ lane_helper_inventory! {
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
     /// (`dispatch_fast::lane_body_step_packed`).
     StepPacked => crate::dispatch_fast::lane_body_step_packed,
-    /// A loop's interpreter kernel on the loop's entry edge, which the b-jit plans before its head (`base_region::kernel_entries`).
-    KernelStep => base_body::kernel_step_in_lane,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
@@ -7951,7 +7949,7 @@ impl Vm {
         let residual = self.programs.get(program_id)?;
         let compile_started = admission::diagnosing(self).then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
+        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);

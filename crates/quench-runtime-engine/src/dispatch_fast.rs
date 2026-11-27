@@ -7948,7 +7948,6 @@ use crate::jit_routes::handler_in_lane;
 
 
 
-pub(crate) mod loop_kernel;
 pub(crate) mod int_kinds; pub(crate) mod int_steps;
 
 

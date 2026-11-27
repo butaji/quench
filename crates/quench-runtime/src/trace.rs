@@ -111,8 +111,6 @@ setting! {
         JitCoverage = "jit-coverage",
         /// Whether a startup snapshot was restored, and why not.
         StartupSnapshot = "startup-snapshot",
-        /// No-JIT loop kernels: each loop's kernel or the reason it has none.
-        LoopKernel = "loop-kernel",
         /// Every run of a lane body that ends anywhere but its completion: function and exit.
         BodyLeave = "body-leave",
         /// Each AOT image compile: how many functions got a lane body, and why each other did not.
