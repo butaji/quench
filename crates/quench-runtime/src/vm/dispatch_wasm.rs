@@ -14,7 +14,7 @@ use crate::staged::wasm_call::Call;
 use crate::staged::wasm_exception::Exception;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_float::{convert, float_binary};
-use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_instance::{Instance, InstanceWasmInstanceExt};
 use crate::staged::wasm_memory_bytes::write_memory;
 use crate::staged::wasm_machine::ConcreteMemory;
 use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};

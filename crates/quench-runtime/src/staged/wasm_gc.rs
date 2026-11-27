@@ -455,7 +455,7 @@ const fn read_signed(access: GcFieldAccess) -> Option<bool> {
 #[inline(always)]
 pub const fn gc_value_op(op: Op) -> bool {
     GcStep::of(op).is_some()
-        || matches!(super::wasm_call::Call::of(op), Some(super::wasm_call::Call::IndirectTarget | super::wasm_call::Call::RefFunc))
+        || matches!(super::wasm_call::call_of(op), Some(super::wasm_call::Call::IndirectTarget | super::wasm_call::Call::RefFunc))
 }
 
 impl GcStep {

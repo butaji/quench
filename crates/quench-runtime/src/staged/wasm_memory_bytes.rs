@@ -3,7 +3,7 @@
 //! `wasm_memory_vector`), and `read_at`/`write_at` are their unchecked forms over raw bytes.
 
 use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
-use super::wasm_memory::{Access, AccessWasmMemoryExt, WasmMemory, WasmMemoryWrite};
+use super::wasm_memory::{Access, AccessWasmMemoryExt, WasmMemory, WasmMemoryWrite, access_of_load, access_of_store};
 use super::wasm_memory_vector::{lane, load_lane, load_vector, store_vector};
 use crate::wasm::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStore};
 use crate::{WasmTrap, WasmType, WasmValue};
@@ -26,7 +26,7 @@ impl MemoryLoad {
         // SAFETY: the caller keeps `width` bytes readable.
         let memory = unsafe { std::slice::from_raw_parts(at, self.width()) };
         let mut stage = ConcreteBytes { memory };
-        match Access::of_load(self) {
+        match access_of_load(self) {
             Some(access) => WasmValue::from_bits(access.ty, stage.memory_load(access, 0, 0)),
             None if matches!(self, Self::V128Load) => WasmValue::V128(stage.memory_load_vector(0, 0)),
             None => self.vector_of_word(stage.memory_load(lane(self.width()), 0, 0)),
@@ -43,7 +43,7 @@ pub fn read_memory(bytes: &[u8], operator: MemoryLoad, address: u64) -> Result<W
     if matches!(operator, MemoryLoad::V128Load) {
         return load_vector(&mut ConcreteBytes { memory: bytes }, address, 0, false).map(WasmValue::V128);
     }
-    let Some(access) = Access::of_load(operator) else {
+    let Some(access) = access_of_load(operator) else {
         let word = load_lane(&mut ConcreteBytes { memory: bytes }, operator.width(), address, 0, false)?;
         return Ok(operator.vector_of_word(word));
     };
@@ -59,7 +59,7 @@ pub fn write_memory(bytes: &mut [u8], operator: MemoryStore, address: u64, value
         let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
         return store_vector(&mut ConcreteMemory { memory: bytes }, address, 0, word, false);
     }
-    Access::of_store(operator).write(bytes, address, value)
+    access_of_store(operator).write(bytes, address, value)
 }
 
 impl MemoryStore {
@@ -82,7 +82,7 @@ impl MemoryStore {
             let memory = unsafe { std::slice::from_raw_parts_mut(at, self.width()) };
             return ConcreteMemory { memory }.memory_store_vector(0, 0, word);
         }
-        let access = Access::of_store(self);
+        let access = access_of_store(self);
         // SAFETY: the caller keeps `width` bytes writable.
         let memory = unsafe { std::slice::from_raw_parts_mut(at, access.bytes) };
         ConcreteMemory { memory }.memory_store(access, 0, 0, value.word());

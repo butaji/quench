@@ -43,7 +43,7 @@ loads! {
     }
 }
 
-/// The stores of the scalar rows run `staged::wasm_memory`'s access (`Access::of_store`); the
+/// The stores of the scalar rows run `staged::wasm_memory`'s access (`access_of_store`); the
 /// vector store is `staged::wasm_memory_vector::store_vector`.
 macro_rules! stores {
     (scalar { $($scalar:ident, $swidth:ty, $variant:ident;)+ } vector { $($name:ident, $word:ty;)+ }) => {

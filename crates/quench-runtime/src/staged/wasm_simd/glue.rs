@@ -5,24 +5,23 @@ use crate::staged::{DecodeContext, Fields, Operation};
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::wasm::simd::SimdKernel;
 
-impl Simd {
-    /// The vector step `op` is, with `tag` its selector where the opcode takes one: a selector
-    /// or access the tiers do not run is none.
-    pub const fn of(op: Op, tag: u32) -> Option<Self> {
-        match op.class() {
-            Class::WasmSimd if SimdKernel::of(tag).is_some() => Some(Self::Operator { selector: tag }),
-            Class::WasmSimdShuffle => Some(Self::Shuffle),
-            Class::WasmMemoryAddress => Some(Self::Address),
-            Class::WasmMemoryLoad => match MemoryLoad::from_tag(tag) {
-                Some(MemoryLoad::V128Load) => Some(Self::Load),
-                _ => None,
-            },
-            Class::WasmMemoryStore => match MemoryStore::from_tag(tag) {
-                Some(MemoryStore::V128Store) => Some(Self::Store),
-                _ => None,
-            },
+/// The vector step `op` is, with `tag` its selector where the opcode takes one: a selector or
+/// access the tiers do not run is none. A const fn, so a free fn: an inherent impl of `Simd`
+/// cannot live outside quench-staged.
+pub const fn simd_of(op: Op, tag: u32) -> Option<Simd> {
+    match op.class() {
+        Class::WasmSimd if SimdKernel::of(tag).is_some() => Some(Simd::Operator { selector: tag }),
+        Class::WasmSimdShuffle => Some(Simd::Shuffle),
+        Class::WasmMemoryAddress => Some(Simd::Address),
+        Class::WasmMemoryLoad => match MemoryLoad::from_tag(tag) {
+            Some(MemoryLoad::V128Load) => Some(Simd::Load),
             _ => None,
-        }
+        },
+        Class::WasmMemoryStore => match MemoryStore::from_tag(tag) {
+            Some(MemoryStore::V128Store) => Some(Simd::Store),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

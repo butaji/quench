@@ -3,6 +3,9 @@
 use super::{WasmTrap, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
+use crate::staged::wasm_memory::{
+    memory_load_direct_op, memory_store_direct_op, memory_store_from_direct_op,
+};
 use std::ops::Range;
 
 /// One linear memory's backing store. The memory type decides the variant:
@@ -377,10 +380,10 @@ pub(super) fn direct_access(
     operator: &wasmparser::Operator<'_>,
 ) -> Option<(crate::bytecode::Op, wasmparser::MemArg)> {
     MemoryLoad::from_wasm(operator)
-        .and_then(|(load, memarg)| Some((load.direct_op()?, memarg)))
+        .and_then(|(load, memarg)| Some((memory_load_direct_op(load)?, memarg)))
         .or_else(|| {
             MemoryStore::from_wasm(operator)
-                .and_then(|(store, memarg)| Some((store.direct_op()?, memarg)))
+                .and_then(|(store, memarg)| Some((memory_store_direct_op(store)?, memarg)))
         })
 }
 
@@ -508,7 +511,7 @@ impl super::Lowering<'_> {
         let offset = u32::try_from(memarg.offset).map_err(|_| {
             crate::Diagnostic::unsupported(self.name, "Wasm memory32 offset out of range")
         })?;
-        if MemoryStore::from_direct_op(op).is_some() {
+        if memory_store_from_direct_op(op).is_some() {
             let value = self.pop()?;
             let address = self.pop()?;
             self.emit(op, value, memory, address, offset)?;
