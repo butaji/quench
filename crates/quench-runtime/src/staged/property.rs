@@ -141,7 +141,7 @@ pub struct StoreArm {
     pub(crate) unformed: bool,
     /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
     /// its guard compares the record's own word, which proves the form, so the store tests none.
-    pub(crate) layout: bool,
+    pub layout: bool,
 }
 
 impl StoreArm {
@@ -618,7 +618,7 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *rep, *storage_len), miss);
     }
     if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return slots::image_layout_slot(stage, frame, (owner, direct), &at, *key, (*slot, *rep, *storage_len), miss);
+        return slots::image_layout_slot(stage, frame, (owner, true), &at, *key, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest

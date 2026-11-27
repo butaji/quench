@@ -5024,7 +5024,10 @@ impl Lowering<'_, '_> {
             let (admitted, split) = self.store_atom_admission(state, atom, exit);
             (Some(admitted), split.filter(|_| !arms.is_empty()))
         } else { (None, None) };
-        let leaves = join == StoreJoin::Host && self.store_leaves();
+        // A store whose one arm is an ahead image's layout (`StoreArm::layout`) is of the class the closed world
+        // gives its site: a miss leaves, so the layout's proof holds past the store.
+        let layout = matches!(&arms[..], [arm] if arm.layout);
+        let leaves = join == StoreJoin::Host && (self.store_leaves() || layout);
         state.proofs.write_field(atom);
         self.store_step(state, operation, (plan, HeldRead { admitted, split, leaves, ..HeldRead::default() }), exit)?;
         if leaves { return Some(()); }
