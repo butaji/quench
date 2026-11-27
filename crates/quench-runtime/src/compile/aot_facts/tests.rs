@@ -989,3 +989,24 @@ fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_e
     let program = program("var a = new Array(3); a[0] = 1; a[1];");
     assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
 }
+
+#[test]
+fn a_global_stored_once_at_the_root_before_its_reader_is_frozen() {
+    let program = program("var K = 3; function f() { return K; } f();");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_some(), "the one store dominates f's read");
+}
+
+#[test]
+fn a_global_read_before_its_store_is_not_frozen() {
+    let program = program("function f() { return K; } f(); var K = 3;");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "f runs before the store");
+}
+
+#[test]
+fn a_global_stored_twice_is_not_frozen() {
+    let program = program("var K = 3; K = 4; function f() { return K; } f();");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "two stores write the key");
+}
