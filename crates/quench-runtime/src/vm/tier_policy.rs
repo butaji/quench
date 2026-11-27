@@ -133,12 +133,6 @@ pub struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub max_compilations: u32,
-    /// The entries after which a site whose native runs complete only `min_trip_per_entry`
-    /// iterations each stops entering: a loop that leaves after a handful of iterations pays its
-    /// entry and exit more often than those iterations save (ML's short-trip loops, 33M entries
-    /// of 2-20 iterations after a loop admission).
-    pub trip_check_entries: u32,
-    pub min_trip_per_entry: u32,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -395,8 +389,7 @@ pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16,
-        trip_check_entries: 64, min_trip_per_entry: 4 },
+    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16 },
     lane_body: LaneBody {
         warmup_entries: 400,
         base_entries: 8,
