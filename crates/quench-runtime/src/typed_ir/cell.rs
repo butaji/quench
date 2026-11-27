@@ -229,8 +229,13 @@ pub enum FactKey {
     Global(u32),
     /// Slot `slot` of the environment or frame of function `owner`.
     Slot { owner: u32, slot: u16 },
-    /// The elements of the arrays field `atom` holds.
+    /// The elements of the arrays field `atom` holds: the elements of `atom`'s element class (every store into an
+    /// array of that class writes them, `census::ElementClasses`), joined with the array's own cell.
     Elements(u32),
+    /// The elements of the arrays of the unnamed class (`UNNAMED_ARRAYS`): the arrays no field names, and every array
+    /// that flowed between one and a field. A store through an alias of such an array writes this cell, so a
+    /// subscriber of it retires on that store. Joined with the array's own cell, as `Elements` is.
+    UnnamedElements,
     /// Parameter `index` of function `function`.
     Parameter { function: u32, index: u16 },
     /// The `this` of function `0`.

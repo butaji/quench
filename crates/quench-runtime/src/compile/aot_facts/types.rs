@@ -16,7 +16,7 @@
 //! else, by any tier, widens the slot and retires the code: the fact is proven where the slot is
 //! written, never at the read.
 
-use super::census::Census;
+use super::census::{Census, ElementClasses};
 use super::flow::FunctionFlow;
 use super::value::{Key, Origin, UNNAMED_ARRAYS};
 use crate::typed_ir::{Cell, Classes, Elements, WIDENING_ROUNDS};
@@ -49,13 +49,16 @@ pub(crate) struct Types {
     /// The cell of a key no write of has been seen yet: none (`Cell::NEVER`) in the solve's first pass
     /// (`bottom`), any value once the passes stop.
     unseen: Cell,
+    /// The element classes the flows' links make (`ElementClasses`): which element keys name the same arrays.
+    elements: ElementClasses,
 }
 
 impl Types {
     /// The cells `flows` store and return, with each call typed by the callees `facts` prove or
     /// guess for it, the parameters of each function, and the bindings.
     pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
-        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY };
+        let elements = ElementClasses::of(flows.iter().flat_map(|flow| &flow.links));
+        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY, elements };
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let joined = types.cells.entry(key).or_insert(Cell::NEVER);
             *joined = joined.join(fact.cell);
@@ -122,24 +125,31 @@ impl Types {
         Some(self.with_elements(atom, cell))
     }
 
-    /// `cell` with the elements the stores into field `atom`'s arrays made (`Key::Element(atom)`): their type and
-    /// classes, and the length, which an edge that may change it made `Length::Any`. A field's cell so names what
-    /// its arrays hold, whichever store put the array there.
+    /// `cell` with the elements of field `atom`'s class (`stored_elements`): a field's cell so names what its arrays
+    /// hold, whichever store put the array there, and whichever key a store through an alias wrote.
     fn with_elements(&self, atom: u32, cell: Cell) -> Cell {
-        Cell { elements: cell.elements.join(self.stored_elements(Key::Element(atom))), ..cell }
+        Cell { elements: cell.elements.join(self.stored_elements(atom)), ..cell }
     }
 
-    /// The elements the writes of `key` (`Key::Element`) name: the type and classes of the values stored, and the
-    /// length they leave (`Elements::length`), none where no such write is seen.
-    fn stored_elements(&self, key: Key) -> Elements {
-        let stored = self.cells.get(&key).copied().unwrap_or(Cell::NEVER);
-        Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length }
+    /// The elements the stores into the class of `atom`'s arrays write (`Key::Element` of every key of the class,
+    /// `ElementClasses::members`): the type and classes of the values stored, and the length they leave
+    /// (`Elements::length`). A store into any array of the class is a store into each of its keys, so the join is
+    /// over the class; `Elements::NEVER` where no store of the class is seen.
+    pub(super) fn stored_elements(&self, atom: u32) -> Elements {
+        self.elements.members(atom)
+            .filter_map(|member| self.cells.get(&Key::Element(member)))
+            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length }))
     }
 
-    /// The elements every array may hold that no field names (`UNNAMED_ARRAYS`): an element read joins them, since
-    /// an alias may store through an array the field read does not name.
+    /// The elements of the arrays of the unnamed class (`UNNAMED_ARRAYS`): an array no field names, and every array a
+    /// field holds that flowed from one. An element read of an array with no field origin joins them.
     pub(super) fn unnamed_elements(&self) -> Elements {
-        self.stored_elements(Key::Element(UNNAMED_ARRAYS))
+        self.stored_elements(UNNAMED_ARRAYS)
+    }
+
+    /// The element keys of `atom`'s class (`ElementClasses::members`): a read of the class's elements depends on each.
+    pub(super) fn element_members(&self, atom: u32) -> impl Iterator<Item = u32> + '_ {
+        self.elements.members(atom)
     }
 
     /// Widens the integer ranges `self` found against the pass before (`previous`), so the solve settles
@@ -176,16 +186,15 @@ impl Types {
             Key::Global(atom) => (FactKey::Global(atom), self.cell(*key)),
             Key::Slot { owner, slot } => (FactKey::Slot { owner, slot }, self.cell(*key)),
             Key::Element(UNNAMED_ARRAYS) => return None,
-            Key::Element(atom) => {
-                let elements = self.with_elements(atom, Cell::NEVER).elements;
-                (FactKey::Elements(atom), Cell { ty: elements.ty, classes: elements.classes, elements })
-            }
+            Key::Element(atom) => (FactKey::Elements(atom), elements_cell(self.stored_elements(atom))),
             Key::Member(_) => return None,
         }));
+        // The unnamed class is a key of its own whether or not a store wrote it, so a subscriber always has a cell.
+        let unnamed = std::iter::once((FactKey::UnnamedElements, elements_cell(self.unnamed_elements())));
         let params = self.params.iter().flat_map(|(function, cells)| cells.iter().enumerate()
             .map(move |(index, cell)| (FactKey::Parameter { function: *function, index: index as u16 }, cell.guessed())));
         let receivers = self.receivers.iter().map(|(function, cell)| (FactKey::Receiver(*function), cell.guessed()));
-        keyed.chain(params).chain(receivers)
+        keyed.chain(unnamed).chain(params).chain(receivers)
     }
 
     /// The type of every field name the program stores (`Key::Member`), for the lowering.
@@ -225,6 +234,11 @@ impl Types {
     pub(super) fn param(&self, function: u32, index: u16) -> Cell {
         self.params.get(&function).and_then(|cells| cells.get(usize::from(index))).copied().unwrap_or(Cell::ANY).guessed()
     }
+}
+
+/// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
+fn elements_cell(elements: Elements) -> Cell {
+    Cell { ty: elements.ty, classes: elements.classes, elements }
 }
 
 /// The functions one class alone holds as a method or an own field (`Key::MemberOn`), with that class.

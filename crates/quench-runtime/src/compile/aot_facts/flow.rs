@@ -2,10 +2,10 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Before, Ctx, Events, step};
+use super::effects::{Before, Ctx, Events, settled, step};
 use crate::staged::typing;
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase};
+use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
 use crate::staged::{Comparison, Operation};
@@ -55,9 +55,11 @@ pub(super) struct FunctionFlow {
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
     /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,
-    /// or the name's), element reads of an array field. Its parameters, receiver and callees' returns are
+    /// or the name's), element reads of an array's class. Its parameters, receiver and callees' returns are
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
+    /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
+    pub(super) links: Vec<(u32, u32)>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -122,7 +124,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut record = Record::new(ctx.registers);
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
-            record.registers.entries.push((blocks.ranges[block].start as u32, state.iter().map(|word| word.cell).collect()));
+            record.registers.entries.push((blocks.ranges[block].start as u32, state.iter().map(|word| settled(&ctx, *word)).collect()));
             solver.replay(block, state, &mut record);
         }
     }
@@ -345,7 +347,7 @@ impl Solver<'_> {
             record.observe(self.ctx, instruction, pc, &state);
             let events = step(self.ctx, pc, instruction, &mut state);
             record.commit(instruction, &state, events);
-            let written: Box<[_]> = instruction.written_registers().map(|register| (u16::from(register), state[usize::from(register)].cell)).collect();
+            let written: Box<[_]> = instruction.written_registers().map(|register| (u16::from(register), settled(self.ctx, state[usize::from(register)]))).collect();
             if !written.is_empty() { record.registers.writes.push((pc as u32, written)); }
         }
     }
@@ -366,6 +368,7 @@ struct Record {
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    links: Vec<(u32, u32)>,
 }
 
 impl Record {
@@ -382,6 +385,7 @@ impl Record {
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            links: Vec::new(),
         }
     }
 
@@ -392,11 +396,9 @@ impl Record {
                 self.unsafe_reads[usize::from(register)] = true;
             }
         }
-        // An element read of an array a field holds reads that field's elements (`Key::Element`).
-        if instruction.op() == crate::bytecode::Op::GetIndex
-            && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
-        {
-            self.reads.insert(Key::Element(atom));
+        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
+        if instruction.op() == crate::bytecode::Op::GetIndex {
+            self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
         }
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
@@ -441,6 +443,8 @@ impl Record {
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
             }
+            self.links.extend(receiver.link(UNNAMED_ARRAYS));
+            self.links.extend(arguments.iter().filter_map(|argument| argument.link(UNNAMED_ARRAYS)));
             self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
         }
     }
@@ -450,6 +454,7 @@ impl Record {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
+        self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
         self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
@@ -488,6 +493,7 @@ impl Record {
             field_owners: self.field_owners,
             registers: self.registers,
             reads: self.reads,
+            links: self.links,
             arity,
         }
     }

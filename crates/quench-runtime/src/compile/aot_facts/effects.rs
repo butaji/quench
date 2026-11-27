@@ -44,6 +44,21 @@ pub(super) struct Events {
     pub(super) wild_member: bool,
     /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
     pub(super) prototype_write: Option<(PrototypeBase, u32)>,
+    /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
+    /// element, whose array joins the unnamed class its element reads come back with.
+    pub(super) links: Vec<(u32, u32)>,
+}
+
+/// The cell `word` holds as the settled solve reads it: its elements joined with those of its element class
+/// (`Types::stored_elements`). A store into any array of the class is a store into every array of it, so an array
+/// read through another register, a field or a closure keeps the length and element types the class's stores leave.
+/// A value that holds no array (`Elements::NEVER`) is its own cell, as is every value before the types exist.
+pub(super) fn settled(ctx: &Ctx<'_>, word: Word) -> Cell {
+    match ctx.types {
+        Some(types) if word.cell.elements != Elements::NEVER =>
+            Cell { elements: word.cell.elements.join(types.stored_elements(word.elements_key())), ..word.cell },
+        _ => word.cell,
+    }
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -185,7 +200,7 @@ fn value_of(
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
     if instruction.op() == crate::bytecode::Op::GetIndex {
-        let (base, index) = (state[usize::from(instruction.register_b())].cell, state[usize::from(instruction.register_c())].cell);
+        let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
         return Word::of_cell(typing::element(&before, base, index));
     }
     match operation {
@@ -251,10 +266,11 @@ fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) ->
 }
 
 /// The fact of a read of field `atom` off the function's own `this` (a receiver `this.task` of a method call):
-/// its class's own field where the solve names `this`'s class (`member_type`).
+/// its class's own field where the solve names `this`'s class (`member_type`). It carries the field's origin, so
+/// an array it holds is the field's element class, as a read of the field off any other object is.
 pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
     let this = (!ctx.is_root).then(|| this_fact(ctx));
-    Word::of_cell(member_type(ctx, this, atom))
+    Word::member(atom, member_type(ctx, this, atom))
 }
 
 /// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
@@ -279,7 +295,7 @@ pub(super) struct Before<'a, 'b> {
 }
 
 impl Abstract for Before<'_, '_> {
-    fn register(&self, register: Register) -> Cell { self.state[usize::from(register)].cell }
+    fn register(&self, register: Register) -> Cell { settled(self.ctx, self.state[usize::from(register)]) }
     fn constant(&self, index: usize) -> Cell { Cell::of(self.ctx.scope.constant_type(index)) }
     fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
 }
@@ -317,20 +333,31 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
         }
     }
     match operation {
-        // An indexed store of a Number into the array `base` names (`SetIndex`): its value joins the elements of the
-        // field the array was read from (`Key::Element`), and its length becomes unknown unless the index is within it.
-        Some(Operation::ElementWrite { value, base, key, .. }) if state[usize::from(key)].is_number() => {
+        // A store into the array `base` names (`SetIndex`): its value joins the elements of the array's element class
+        // (`Key::Element`), and the class's length changes unless the key is a Number within the length it has. A key
+        // that is no Number may name a property (`wild_member`) or the length, so its store changes the length.
+        Some(Operation::ElementWrite { value, base, key, .. }) => {
             let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
-            let length = array.cell.elements.length;
-            let length = if length == Length::Never || typing::within_length(length, index.cell.ty) { Length::Never } else { Length::Any };
+            let length = settled(ctx, array).elements.length;
+            let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
+            let length = if in_bounds { Length::Never } else { Length::Any };
             let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
+            // The stored value is an element of the array, which reads it back with the unnamed class.
+            events.links.extend(stored.link(UNNAMED_ARRAYS));
+            events.wild_member |= !index.is_number();
         }
-        // A store through a computed key that is no Number, a helper or a `delete` may store any value into any array
-        // and change its length: every element read joins the cell of the arrays no field names.
-        Some(Operation::ElementWrite { .. } | Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => {
+        // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) may store any value into any array
+        // and change any length: every element read joins the cell of the unnamed class.
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => {
             events.wild_member = true;
             events.writes.push((Key::Element(UNNAMED_ARRAYS), Word::of_cell(Cell::ANY)));
+        }
+        // `delete base[key]` keeps the values the elements hold and changes the length of `base`'s class (a hole, or the
+        // last element removed); it may name a property (`wild_member`).
+        Some(Operation::Delete { base, .. }) => {
+            events.wild_member = true;
+            events.writes.push(length_change(state[usize::from(base)].elements_key()));
         }
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));

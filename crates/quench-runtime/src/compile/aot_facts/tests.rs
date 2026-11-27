@@ -1,9 +1,10 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::analyze;
+use super::{analyze, AotFacts};
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Cell, FactKey, Length, Representation, Type};
+use crate::ValueType;
 
 fn program(source: &str) -> ResidualProgram {
     Engine::specialize(source, "aot-facts.js").unwrap()
@@ -77,7 +78,6 @@ fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
         new S().go();");
     let facts = analyze(&program);
     let atom = |name: &str| program.atoms.iter().position(|atom| atom.as_ref() == name).unwrap() as u32;
-    use crate::typed_ir::Type;
     let nullable_object = Type::DIRECT_OBJECT_FAMILY.join(Type::language(crate::ValueType::Null));
     assert!(facts.field_type(atom("count")).is_subtype(Type::INT32));
     assert_eq!(facts.field_type(atom("link")), Type::language(crate::ValueType::Null));
@@ -90,4 +90,38 @@ fn a_field_takes_the_type_of_the_argument_its_constructor_is_called_with() {
     let facts = analyze(&program);
     let v = program.atoms.iter().position(|atom| atom.as_ref() == "v").expect("the field name") as u32;
     assert!(facts.field_type(v).is_subtype(crate::typed_ir::Type::INT32));
+}
+
+/// The cells the registers of function `name` hold before its last instruction (its return), where the solve settled them.
+fn cells_before_return(facts: &AotFacts, program: &ResidualProgram, name: &str) -> Vec<Cell> {
+    let id = function_named(program, name);
+    let (last, registers) = program.with_record(id, |function| (function.code.len() as u32 - 1, usize::from(function.registers)));
+    let function = facts.function_facts(id as u32);
+    (0..registers).filter_map(|register| function.cell_at(last, register as u16)).collect()
+}
+
+#[test]
+fn a_pop_of_a_literal_makes_its_length_any_in_every_register_holding_it() {
+    let program = program("function f() { var a = [1, 2]; var b = a; a.pop(); return b; } f();");
+    let facts = analyze(&program);
+    let cells = cells_before_return(&facts, &program, "f");
+    assert!(!cells.is_empty(), "the function's registers are settled");
+    assert!(cells.iter().all(|cell| cell.elements.length != Length::Fixed(2)), "{cells:?}");
+}
+
+#[test]
+fn a_string_store_into_an_array_makes_the_unnamed_elements_include_string() {
+    let program = program("function f() { var a = [1, 2]; a[0] = 'x'; return a; } f();");
+    let facts = analyze(&program);
+    let cell = facts.cell(FactKey::UnnamedElements).expect("the unnamed elements are a settled cell");
+    assert!(Type::language(ValueType::String).is_subtype(cell.ty), "{cell:?}");
+}
+
+#[test]
+fn an_array_stored_in_a_field_is_mutated_through_the_field_in_the_original_register() {
+    let program = program("function f() { var a = [1, 2]; var o = {}; o.x = a; o.x.pop(); return a; } f();");
+    let facts = analyze(&program);
+    let cells = cells_before_return(&facts, &program, "f");
+    assert!(!cells.is_empty(), "the function's registers are settled");
+    assert!(cells.iter().all(|cell| cell.elements.length != Length::Fixed(2)), "{cells:?}");
 }
