@@ -222,6 +222,25 @@ pub(crate) fn complete_plain_activation_in_lane<const LEAF: u8>(cx: *mut LaneCon
     Some(resumed_script(cx, returned))
 }
 
+/// The completion of a `Return` record of leaf form `LEAF` past its one op (`step_return_past_op_of`),
+/// from the running activation.
+#[inline(always)]
+pub(crate) fn complete_past_op_in_lane<const LEAF: u8>(cx: *mut LaneContext, value: Value) -> Option<Resumed> {
+    let returned = quench_runtime::staged::call_return::step_return_past_op_of(&mut LaneScriptReturn::<LEAF>::running(cx), value)?;
+    Some(resumed_script(cx, returned))
+}
+
+/// The completion of a `Return` record of leaf form `LEAF` in the lane: its one op from the record's
+/// `window` (`step_return_one_op_of`), else past it (`complete_past_op_in_lane`).
+#[inline(always)]
+pub(crate) fn return_record_in_lane<const LEAF: u8>(cx: *mut LaneContext, window: Registers, value: Value) -> Option<Resumed> {
+    let one_op = quench_runtime::staged::call_return::step_return_one_op_of(&mut LaneScriptReturn::<LEAF> { cx, window }, value);
+    match one_op {
+        Some(returned) => Some(resumed_script(cx, returned)),
+        None => complete_past_op_in_lane::<LEAF>(cx, value),
+    }
+}
+
 /// Where a script return continues: its caller's registers and next record, in script memory.
 #[inline(always)]
 pub(crate) fn resumed_script(cx: *mut LaneContext, (registers, next): (Registers, Ip)) -> Resumed {

@@ -41,23 +41,38 @@ pub fn step_return_one_op_of<S: ScriptReturn>(stage: &mut S, value: S::Value) ->
     if stage.leaf() { stage.leaf_header(value) } else { stage.plain_header(value) }
 }
 
-/// The return with `value` of the running script activation: a leaf's record completes the
-/// running leaf first; then the header's plain return; then a run of plain frames that return
-/// their callee's completion (`return f()`), which pops only where it ends in a call that keeps
-/// the value, whose header then returns; else the side record's completion.
+/// The return with `value` of the running script activation past its header: a run of plain frames
+/// that return their callee's completion (`return f()`) pops, which the run proved, and the
+/// outermost one's header returns; else the side record's completion.
 #[inline(always)]
-pub fn step_activation_return_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
-    if stage.leaf() && let Some(returned) = stage.complete_leaf(value) {
-        return Some(returned);
-    }
-    if let Some(returned) = stage.plain_header(value) {
-        return Some(returned);
-    }
+pub fn step_return_past_header_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
     if let Some(above) = stage.returning_run() {
         stage.pop_returning(above);
         return stage.plain_header(value);
     }
     stage.side_return(value)
+}
+
+/// The return with `value` of a record past its one op (`step_return_one_op_of`): a leaf's record
+/// completes the running leaf in full, which also crosses programs where the one op declines; any
+/// other returns past its header.
+#[inline(always)]
+pub fn step_return_past_op_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
+    if stage.leaf() { stage.complete_leaf(value) } else { step_return_past_header_of(stage, value) }
+}
+
+/// The return with `value` of the running script activation: a leaf's record completes the running
+/// leaf; any other returns its header plainly, else past it (`step_return_past_header_of`).
+/// `None`, which changes nothing, leaves the completion to the general returns.
+#[inline(always)]
+pub fn step_activation_return_of<S: ScriptReturn>(stage: &mut S, value: S::Value) -> Option<S::Returned> {
+    if stage.leaf() {
+        return stage.complete_leaf(value);
+    }
+    if let Some(returned) = stage.plain_header(value) {
+        return Some(returned);
+    }
+    step_return_past_header_of(stage, value)
 }
 
 /// What a script frame's completion is to a returning chain (`step_returning_chain_of`).
@@ -155,4 +170,59 @@ pub fn step_cross_return_of<S: ReturningChain>(stage: &mut S, value: S::Value) -
         return None;
     }
     stage.return_crossing(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records each primitive the rules call, in order, and answers with the configured completions.
+    #[derive(Default)]
+    struct Rules {
+        leaf: bool,
+        leaf_header: Option<u32>,
+        complete_leaf: Option<u32>,
+        header: Option<u32>,
+        run: Option<usize>,
+        side: Option<u32>,
+        log: Vec<&'static str>,
+    }
+
+    impl ScriptReturn for Rules {
+        type Value = u32;
+        type Returned = u32;
+        fn leaf(&self) -> bool { self.leaf }
+        fn leaf_header(&mut self, _value: u32) -> Option<u32> { self.log.push("leaf_header"); self.leaf_header }
+        fn complete_leaf(&mut self, _value: u32) -> Option<u32> { self.log.push("complete_leaf"); self.complete_leaf }
+        fn plain_header(&mut self, _value: u32) -> Option<u32> { self.log.push("plain_header"); self.header }
+        fn returning_run(&mut self) -> Option<usize> { self.log.push("returning_run"); self.run }
+        fn pop_returning(&mut self, _above: usize) { self.log.push("pop_returning") }
+        fn side_return(&mut self, _value: u32) -> Option<u32> { self.log.push("side_return"); self.side }
+    }
+
+    #[test]
+    fn a_returning_run_pops_before_its_header_and_a_run_free_return_takes_the_side_record() {
+        let mut run = Rules { run: Some(2), header: Some(7), ..Rules::default() };
+        assert_eq!(step_return_past_header_of(&mut run, 1), Some(7));
+        assert_eq!(run.log, ["returning_run", "pop_returning", "plain_header"]);
+
+        let mut side = Rules { side: Some(9), ..Rules::default() };
+        assert_eq!(step_return_past_header_of(&mut side, 1), Some(9));
+        assert_eq!(side.log, ["returning_run", "side_return"]);
+    }
+
+    #[test]
+    fn a_plain_header_completes_before_any_run_and_a_leaf_completes_alone() {
+        let mut plain = Rules { header: Some(5), run: Some(3), ..Rules::default() };
+        assert_eq!(step_activation_return_of(&mut plain, 1), Some(5));
+        assert_eq!(plain.log, ["plain_header"]);
+
+        let mut leaf = Rules { leaf: true, header: Some(5), complete_leaf: Some(4), ..Rules::default() };
+        assert_eq!(step_activation_return_of(&mut leaf, 1), Some(4));
+        assert_eq!(leaf.log, ["complete_leaf"]);
+
+        let mut past = Rules { leaf: true, complete_leaf: Some(4), ..Rules::default() };
+        assert_eq!(step_return_past_op_of(&mut past, 1), Some(4));
+        assert_eq!(past.log, ["complete_leaf"]);
+    }
 }

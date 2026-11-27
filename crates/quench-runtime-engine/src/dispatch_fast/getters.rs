@@ -286,19 +286,20 @@ pub(crate) fn invoke_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: 
 /// As `plain_call_activation`, `record` the read record at `ip`.
 #[inline(always)]
 unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *const LaneInstruction, target: *const ScriptCallTarget,
-    depth: usize, this: Value) -> (Registers, Ip) {
+    depth: usize, this: Value) -> Resumed {
     let cx = context.cast::<LaneContext>();
     let (vm, target) = unsafe { (vm(cx), &*target) };
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     if leaf_binds_this(target.entry.leaf_form())
-        && let Some(entered) = unsafe { leaf_getter(cx, r, ip, target, this) }
+        && let Some((registers, base)) = unsafe { leaf_getter(cx, r, ip, target, this) }
     {
-        return entered;
+        return Resumed::At(registers, base, Carried::script(cx));
     }
     // No values: every parameter `undefined` (a dangling, aligned pointer, never read for a count of 0).
     let none: &[Value] = &[];
     let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
-    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this)
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
+    Resumed::At(registers, base, Carried::script(cx))
 }
 
 /// A receiver-binding leaf getter `target` (`THIS_LEAF`, `CONTEXT_LEAF`) run as a leaf call with no

@@ -138,8 +138,8 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
 }
 
 /// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
-/// (`script_call_miss`'s proven arm, `lane_plain_activation!`) and the proved leaf call
-/// (`script_call_leaf_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
+/// (`plain_call_activation`) and the proved leaf call
+/// (`script_call_leaf_prove_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
 ///
 /// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
 ///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
@@ -203,13 +203,13 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         if site.receiver == Receiver::Base {
             return getter_entry(call, site);
         }
-        // The form the proved calls make: a callee and a receiver register and a window, a
-        // result defined, not returned (a returning call's admission is the run's,
-        // `returning_call_admitted`, which the miss arm makes).
+        // The form the proved calls make: a callee and a receiver register and a window. A returning
+        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // where `returning_call_admitted` holds for the function); a forwarding call is never.
         let (Callee::Register(_), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
         };
-        if site.returns || site.forwards {
+        if site.returns != call.form.returns || site.forwards {
             return quench_runtime::staged::CallEntry::Helper;
         }
         // SAFETY: the running lane's stack, which nothing below changes.
@@ -220,7 +220,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the masked
         // index lies within it; nothing before the hand-off resolves a target or collects.
         let target = unsafe { entries.get_unchecked(index) };
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_miss`'s `ARGC`.
+        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
         if target.admission != stack.admission
@@ -298,10 +298,9 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.
-        let (registers, start) = unsafe {
+        let resumed = unsafe {
             (call.activate)(call.context, self.registers, call.ip, call.record, call.target.get(), call.depth, Value::from_bits(this))
         };
-        // The callee's view is the caller's script view: the same context, no accumulator.
-        Some(LaneControl::Resumed(Resumed::At(registers, start, Carried { acc: Slot::unset(), ..self.view })))
+        Some(LaneControl::Resumed(resumed))
     }
 }

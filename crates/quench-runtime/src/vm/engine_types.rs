@@ -1179,7 +1179,7 @@ pub struct ScriptCallTarget {
     /// The `this` a plain call (an `undefined` receiver) binds: an arrow's own
     /// (`ThisBinding::Lexical`), found in its environment when it was resolved, the realm's
     /// global object for a sloppy function, `undefined` for any other binding. A plain call
-    /// reads it in one load (`lane_plain_activation`).
+    /// reads it in one load (`plain_call_activation`).
     pub lexical_this: Value,
     /// `TARGET_CONSTRUCTS` where `new` may activate it too (`Vm::inline_constructible`), and
     /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
@@ -1727,7 +1727,7 @@ pub struct LaneBodyStats {
 
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
 /// what the call makes its own and its return restores: the forms of its call
-/// (`script_call_leaf_miss`), its entry (`CallEntry::leaf`) and its return records
+/// (`script_call_leaf_prove_miss`), its entry (`CallEntry::leaf`) and its return records
 /// (`LaneView::specialize_leaf_returns`). `NOT_LEAF` is a record of no leaf's records.
 /// The forms are the staged leaf row's (`staged::call_leaf`), the one definition every tier reads.
 pub type LeafForm = crate::staged::call_leaf::LeafForm;
@@ -3701,7 +3701,7 @@ pub struct LaneContext {
     /// toward one (`body_activate_in_lane`): its caller's leave says nothing of the caller's own
     /// specialization (`leave_counts_in_lane`).
     pub callee_warming: bool,
-    /// The leaf call whose records run (`script_call_leaf_miss`), which holds what its
+    /// The leaf call whose records run (`script_call_leaf_prove_miss`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     pub leaf: LeafCall,
     /// The dispatch payload of the native loop region running on this activation, zero for none
@@ -4227,7 +4227,7 @@ pub enum CallEntry {
     /// (`Completion::SettlesPromise`).
     Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
-    /// a window of the lane stack without an activation (`script_call_leaf_miss`), which
+    /// a window of the lane stack without an activation (`script_call_leaf_prove_miss`), which
     /// anything observing activations makes first (`materialize_leaf_in_lane`). Any other
     /// call activates it as `Activates`.
     Leaf,
@@ -4259,7 +4259,7 @@ impl Admission {
     /// cell body unpublished. Every entry is remembered with it (`ScriptTargets::remember`), and
     /// publishing a body sets it again on every entry of the view (`Vm::unprove_view_entries`).
     /// The lane's admission never carries it, so the proved call's one admission compare
-    /// (`script_call_miss`) also tests the proof; every other test of an entry ignores it
+    /// (`script_call_prove_miss`) also tests the proof; every other test of an entry ignores it
     /// (`Admission::admits`).
     pub const UNPROVEN: u64 = 1 << 61;
 }
