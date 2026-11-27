@@ -12,7 +12,7 @@ use super::aot_facts::AotFacts;
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
 
-/// The call graph of one program, with its call cycles and its loop-or-cycle facts.
+/// The call graph of one program, with its call cycles, its loop-or-cycle facts and its call sites.
 pub struct CallGraph {
     /// Per function, the index into `cycles` of its call cycle, `NO_CYCLE` where it is in none.
     cycle: Box<[u32]>,
@@ -20,6 +20,10 @@ pub struct CallGraph {
     cycles: Box<[Box<[u32]>]>,
     /// Per function, whether a loop or a call cycle reaches it.
     loop_or_cycle: Box<[bool]>,
+    /// Per function, the calls and constructions that name it, each call site once; saturating.
+    sites: Box<[u32]>,
+    /// Whether the facts are closed (`AotFacts::closed`): only then does a site they do not name not exist.
+    closed: bool,
 }
 
 impl CallGraph {
@@ -29,6 +33,7 @@ impl CallGraph {
         let mut callees: Vec<Box<[usize]>> = Vec::with_capacity(count);
         let mut own_loop = vec![false; count];
         let mut called_in_loop = vec![false; count];
+        let mut sites = vec![0u32; count];
         for function in 0..count {
             let mut out: Vec<usize> = Vec::new();
             if let Some(body) = program.function_get(function) {
@@ -37,16 +42,19 @@ impl CallGraph {
                 let calls = facts.function_facts(function as u32);
                 for (pc, instruction) in body.instructions().enumerate() {
                     let at = pc as u32;
-                    let targets: Vec<u32> = if means(instruction, Meaning::Construct) {
+                    let mut targets: Vec<u32> = if means(instruction, Meaning::Construct) {
                         calls.construct_target(at).into_iter().collect()
                     } else if means(instruction, Meaning::Call) {
                         calls.call_targets(at)
                     } else {
                         continue;
                     };
+                    targets.sort_unstable();
+                    targets.dedup();
                     let looped = may_repeat(&backward, pc);
                     for callee in targets.into_iter().map(|callee| callee as usize).filter(|callee| *callee < count) {
                         out.push(callee);
+                        sites[callee] = sites[callee].saturating_add(1);
                         if looped { called_in_loop[callee] = true; }
                     }
                 }
@@ -69,7 +77,15 @@ impl CallGraph {
             cycle: cycle.into_boxed_slice(),
             cycles: members.into_iter().map(Vec::into_boxed_slice).collect(),
             loop_or_cycle,
+            sites: sites.into_boxed_slice(),
+            closed: facts.closed(),
         }
+    }
+
+    /// Whether `function` has exactly one call site in the closed world: one call or construction, of the one
+    /// program, names it. False where the facts are not closed, since a site they name no callee of may call it.
+    pub fn single_call_site(&self, function: u32) -> bool {
+        self.closed && self.sites.get(function as usize) == Some(&1)
     }
 
     /// Whether a loop or a call cycle reaches `function`: it has a back edge, a loop body calls it, it is in a call

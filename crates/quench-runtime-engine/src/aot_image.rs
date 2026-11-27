@@ -71,9 +71,10 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     for index in 0..program.function_count() { program.lowered_function(index); }
     let mut symbols = symbols::SymbolTable::new(program);
     let frozen = crate::compiled::ClosedFrozen::of(program);
+    let graph = quench_runtime::compile::call_graph::CallGraph::of(program, facts);
     let mut sites = std::collections::BTreeMap::new();
     let functions = (0..program.function_count() as u32)
-        .map(|id| lower_function(program, (facts, &frozen), target, id, (&mut symbols, &mut sites)))
+        .map(|id| lower_function(program, (facts, &graph, &frozen), target, id, (&mut symbols, &mut sites)))
         .collect::<Result<Vec<_>, String>>()?;
     if quench_runtime::trace::Channel::AotLanes.on() {
         let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
@@ -180,13 +181,13 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
 #[cfg(feature = "jit")]
 fn lower_function(
     program: &ResidualProgram,
-    (facts, frozen): (&AotFacts, &crate::compiled::ClosedFrozen),
+    (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &crate::compiled::ClosedFrozen),
     target: &ImageTarget,
     id: u32,
     (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32, u32), CallSite>),
 ) -> Result<AotFunction, String> {
     let (mut base, calls) = base::lower(program, target, id, symbols)?;
-    let (mut lane, lane_calls) = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
+    let (mut lane, lane_calls) = join::lower_lane(program, (facts, graph, frozen), target, id, (&base, &calls), symbols)?;
     // A linked body's absolute words become the page references Mach-O can link in text.
     crate::aot_image::page::rewrite(&mut base.code)?;
     if let Some(lane) = &mut lane {

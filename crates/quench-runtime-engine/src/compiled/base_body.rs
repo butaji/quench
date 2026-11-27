@@ -170,6 +170,8 @@ impl Vm {
     /// refused otherwise), and the inlining body proves that realm active at its entry (`RealmProof`).
     fn inlinable_callee(&self, program: &ResidualProgram, callee: Value, function: u32) -> Option<InlineBody> {
         self.same_realm_user_target(callee)?;
+        let graph = self.programs.call_graph(self.active_program)?;
+        if !quench_runtime::vm::tier_policy::inlines(&graph, program, function) { return None; }
         InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function), self.programs.constants(self.active_program))
     }
 
@@ -178,7 +180,9 @@ impl Vm {
     /// callee register (`Vm::stable_callees`).
     pub(crate) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let facts = self.programs.aot_facts(self.active_program);
-        let plans = planned::of(program, facts.as_deref(), function, code.len(), self.programs.tiers().stitch.max_instructions);
+        let graph = self.programs.call_graph(self.active_program);
+        let inlinable = |callee: u32| graph.as_deref().is_some_and(|graph| quench_runtime::vm::tier_policy::inlines(graph, program, callee));
+        let plans = planned::of(program, facts.as_deref(), function, code.len(), &inlinable);
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates, &plans));
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds

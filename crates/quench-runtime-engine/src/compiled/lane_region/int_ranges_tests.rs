@@ -10,7 +10,7 @@ fn lowered(source: &str, name: &str) -> ir::Function {
     let program = quench_runtime::Engine::specialize(source, "int-ranges.cjs").unwrap();
     let caller = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-    let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
+    let unit = super::super::lane_unit::unit(&program, None, caller as u32, program.function(caller),
         &|_, _| Vec::new(), &|id| program.function_get(id as usize)).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();

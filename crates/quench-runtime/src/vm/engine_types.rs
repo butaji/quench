@@ -478,6 +478,8 @@ pub struct AheadImages {
     /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
     /// compile's, or derived once again from the program where the image was read from a file.
     pub facts: std::cell::OnceCell<AotFacts>,
+    /// The call graph of the program the facts describe (`compile::call_graph`), derived with them on first use.
+    pub graph: std::cell::OnceCell<crate::compile::call_graph::CallGraph>,
 }
 
 /// What the tier finds in a function at its entries. Each fact depends only on the function and
@@ -5161,7 +5163,7 @@ impl AheadImages {
     #[inline]
 
     pub fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new() }
+        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new(), graph: std::cell::OnceCell::new() }
     }
 
     /// Whether the image has no functions.

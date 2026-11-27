@@ -20,13 +20,13 @@ use crate::compiled::ClosedFrozen;
 /// (the base body is then the entry).
 pub(crate) fn lower_lane(
     program: &ResidualProgram,
-    (facts, frozen): (&AotFacts, &ClosedFrozen),
+    (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
     target: &ImageTarget,
     id: u32,
     (base, calls): (&BaseImage, &[CallSite]),
     symbols: &mut SymbolTable,
 ) -> Result<(Option<LaneImage>, Vec<CallSite>), String> {
-    let (lane, sites) = crate::compiled::closed_lane_image(program, id, (facts, frozen), (base, calls), symbols, target);
+    let (lane, sites) = crate::compiled::closed_lane_image(program, id, (facts, graph, frozen), (base, calls), symbols, target);
     if quench_runtime::trace::Channel::AotLanes.on() && let Err(reason) = lane {
         eprintln!("aot-lanes: function {id} ({} instructions): base body, {reason}", program.function(id as usize).instructions().count());
     }

@@ -22,7 +22,7 @@ pub(crate) enum Refusal {
     NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
-    /// The unit does not plan from the function's body (`lane_unit::with_trips`).
+    /// The unit does not plan from the function's body (`lane_unit::with_plans`).
     NoUnit,
     /// The unit's call bindings are not the ones the plan keeps.
     InvalidBindings,

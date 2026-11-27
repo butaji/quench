@@ -125,8 +125,8 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
         let site = crate::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
         direct[pc].push(site);
     }
-    let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_, _| None, &|_| (0, 0), &direct, &[],
-        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[], &|_, _, _, _| true).expect("fib plans");
+    let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_| (0, 0), &direct, &[],
+        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &|_, _, _, _| true).expect("fib plans");
     let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
     let clif = scalar.to_string();
     assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");

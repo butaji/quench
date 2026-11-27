@@ -383,7 +383,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         };
         let plan = DirectPlan { kind, identity, sloppy, registers, returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
-        plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), self.tiers.lane_body.max_inlined_instructions)
+        plan_entry(Some(Resolved { plan, binding: BindingTime::Site }), false)
     }
 
     fn call_registers(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
