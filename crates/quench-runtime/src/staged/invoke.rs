@@ -164,6 +164,14 @@ pub trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// Checks the `this` the call bound (`bind_this_with`) once, where the frame's tier holds the lane's
+    /// `this` trust (`Vm::this_trust`): the callee takes it as a direct object, so one that is none leaves at
+    /// `miss`, where the interpreter binds it and retires the trust. Nothing for a frame that holds none.
+    #[inline(always)]
+    fn call_this_bound(&mut self, _stage: &mut S, _this: S::Word, _miss: S::Miss) -> Option<()> {
+        Some(())
+    }
+
     /// The base an accessor's call binds (`Receiver::Base`).
     #[inline(always)]
     fn call_base(&mut self, _stage: &mut S) -> Option<S::Word> {
@@ -369,8 +377,11 @@ pub(super) fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
     let receiver = receiver_word(stage, frame, file, miss, site.receiver)?;
     callee_word(stage, frame, file, miss, (site, plan, Some(receiver)))?;
     let this = plan.bound.map_or(receiver, |bound| stage.constant(bound.this));
-    let global = plan.sloppy.map(|global| move |stage: &mut S| frame.call_global(stage).unwrap_or_else(|| stage.constant(global)));
-    bind_this_with(stage, this, global, miss)
+    let binder = &mut *frame;
+    let global = plan.sloppy.map(|global| move |stage: &mut S| binder.call_global(stage).unwrap_or_else(|| stage.constant(global)));
+    let this = bind_this_with(stage, this, global, miss)?;
+    frame.call_this_bound(stage, this, miss)?;
+    Some(this)
 }
 
 /// The callee's window at `top` of `registers` words, filled from the bound function's arguments
