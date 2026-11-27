@@ -1171,6 +1171,8 @@ pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_o
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
 pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
 pub(super) const NATIVE_FUNCTION_OBJECT_OFFSET: usize = std::mem::offset_of!(FunctionRecord, object);
+pub(super) const NATIVE_COLLECTION_RECORD_SIZE: usize = std::mem::size_of::<CollectionRecord>();
+pub(super) const NATIVE_COLLECTION_OBJECT_OFFSET: usize = std::mem::offset_of!(CollectionRecord, object);
 
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()

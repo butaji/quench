@@ -214,6 +214,12 @@ pub fn is_direct_array<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG)
 }
 
+/// Whether `bits` is a direct Map or Set reference (`Value::direct_collection`).
+#[inline(always)]
+pub fn is_direct_collection<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    family_is(stage, bits, ValueLayout::DIRECT_COLLECTION_TAG)
+}
+
 /// Whether `bits` is a legacy slot reference (`Value::legacy_heap_index`): a heap value of no
 /// record family, whose low half is its slot.
 #[inline(always)]
