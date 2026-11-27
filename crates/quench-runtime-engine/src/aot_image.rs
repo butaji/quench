@@ -56,6 +56,17 @@ pub(crate) fn unbound_callee() -> u64 {
     quench_runtime::Value::DELETED.to_bits()
 }
 
+/// The callee record a site names until a binding (`BoundCalls::bind`): no callee (`unbound_callee`), every other word
+/// zero. Leaked once for the process, so a row reads a live record before and after any binding.
+pub(crate) fn unbound_callee_record() -> u64 {
+    static UNBOUND: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *UNBOUND.get_or_init(|| {
+        let record: &'static quench_bjit::call_record::CalleeRecord =
+            Box::leak(Box::new(quench_bjit::call_record::CalleeRecord { callee: unbound_callee(), ..Default::default() }));
+        std::ptr::from_ref(record).addr()
+    }) as u64
+}
+
 pub(crate) use quench_runtime::vm::engine_types::AotFunction;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneImage;

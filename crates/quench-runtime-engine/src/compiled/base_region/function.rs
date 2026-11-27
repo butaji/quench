@@ -22,7 +22,6 @@ use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use quench_runtime::bytecode::Function;
 use quench_runtime::tier_surface::GlobalFact;
-use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
 
 pub(crate) mod calls;
@@ -43,7 +42,7 @@ pub(crate) struct Body {
     /// Whether it jumps backward: a loop pays an entry's cost over its iterations.
     pub(crate) loops: bool,
     /// The records its direct call rows read, which its code must not outlive.
-    pub(crate) records: Vec<Box<CallRecord>>,
+    pub(crate) records: Vec<crate::compiled::OwnedCallRecord>,
     /// The calls it runs as their callees' rows, by frame.
     pub(crate) frames: Vec<InlinedCall>,
     /// The Stable facts it folded, which its publication subscribes.

@@ -200,7 +200,7 @@ pub(crate) fn class_flags(id: u32) -> u64 {
 }
 
 /// The method vectors of the classes, dense by class id (R4: layout key == class id while `intern_class` is 1:1 for all-tagged
-/// classes). Entry `class` is the address of that class's vector, whose slot `k` is the `CallRecord` address of the method at
+/// classes). Entry `class` is the address of that class's vector, whose slot `k` is the `CalleeRecord` address of the method at
 /// prototype slot `k` (`AotFacts::prototype_layout`). Filled by the loader (`set_class_methods`), read by compiled code at
 /// `class_methods_base()` as the closed-set indirect call's chain: header class id, then `[class]`, then `[slot]`.
 static CLASS_METHODS: [AtomicUsize; LAYOUT_CAPACITY] = [const { AtomicUsize::new(0) }; LAYOUT_CAPACITY];
@@ -216,7 +216,7 @@ pub fn class_methods(class: u32) -> usize {
     CLASS_METHODS.get(class as usize).map_or(0, |entry| entry.load(Ordering::Acquire))
 }
 
-/// Fills class `class`'s method vector at `vector`, whose slots are `CallRecord` addresses and which must outlive the process.
+/// Fills class `class`'s method vector at `vector`, whose slots are `CalleeRecord` addresses and which must outlive the process.
 pub fn set_class_methods(class: u32, vector: usize) {
     assert!((class as usize) < LAYOUT_CAPACITY, "class method table full");
     CLASS_METHODS[class as usize].store(vector, Ordering::Release);

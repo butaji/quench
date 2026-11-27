@@ -4048,14 +4048,18 @@ impl Lowering<'_, '_> {
     }
 
     /// `closed_set_call` as an indirect call through the receiver class's method vector: the receiver's layout id is the
-    /// class id (`layouts::class_methods`), whose vector holds each method's `CallRecord` address at the method's selector
-    /// (`SymbolTable::selector`), and the call reads its callee's words from that record (`DirectSite::Indirect`). Every arm
+    /// class id (`layouts::class_methods`), whose vector holds each method's `CalleeRecord` address at the method's selector
+    /// (`SymbolTable::selector`), and the call reads its callee's words from that record (`DirectSite::Indirect`), while its
+    /// own words come from the site's record, which every arm shares. Every arm
     /// names the one method, so they share the selector. Until the loader fills the vectors, each call is guarded: a
     /// receiver whose class has no vector, or no record for the method, or whose record's callee is not the callee
     /// register's, takes the VM's call. The guard stays at the miss edge only once the fill binds every listed record.
     fn closed_set_indirect(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
         keyed: &[(ProvenCall, u32)], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
-        let Some(selector) = keyed.first().and_then(|(arm, _)| arm.selector) else {
+        let Some(&(site_arm, _)) = keyed.first() else {
+            return self.closed_set_step(state, site, record, None, (completed, missed, raised));
+        };
+        let Some(selector) = site_arm.selector else {
             return self.closed_set_step(state, site, record, None, (completed, missed, raised));
         };
         let Some(selector_at) = i32::try_from(u64::from(selector) * std::mem::size_of::<usize>() as u64).ok() else {
@@ -4076,13 +4080,13 @@ impl Lowering<'_, '_> {
         let has_record = self.raw_compare_imm(Relation::NotEqual, at, 0);
         self.branch_if(has_record, (check, &[]), (vm, &[]));
         self.builder.switch_to_block(check);
-        // The identity guard: the record's callee is the callee register's.
+        // The identity guard: the callee record's callee is the callee register's.
         let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
-        let identity = self.raw_load(Lane::I64, record_flags, at, std::mem::offset_of!(quench_bjit::call_record::CallRecord, callee) as i32);
+        let identity = self.raw_load(Lane::I64, record_flags, at, std::mem::offset_of!(quench_bjit::call_record::CalleeRecord, callee) as i32);
         let matched = self.raw_compare(Relation::Equal, word, identity);
         self.branch_if(matched, (taken, &[]), (vm, &[]));
         self.builder.switch_to_block(taken);
-        self.closed_set_step(state, site, record, Some(DirectSite::Indirect(at)), (completed, missed, raised));
+        self.closed_set_step(state, site, record, Some(DirectSite::Indirect { site: site_arm, callee: at }), (completed, missed, raised));
         self.builder.switch_to_block(vm);
         self.closed_set_step(state, site, record, None, (completed, missed, raised));
     }

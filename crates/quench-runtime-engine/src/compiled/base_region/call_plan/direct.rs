@@ -24,30 +24,35 @@ pub(super) fn argument_places(plan: &CallPlan) -> [u8; PLACED_ARGUMENTS] {
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
 /// argument is passed from (`argument_places`). The row compares the callee register unless a Stable fact holds
 /// it or `unchecked` says the plan's closed arms leave no other callee.
-pub(super) fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64, unchecked: bool) -> Result<(CallPart, Box<CallRecord>), String> {
+pub(super) fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64, unchecked: bool) -> Result<(CallPart, OwnedCallRecord), String> {
     // The callee's plain header: a native frame (NATIVE, as the u-jit's `push_native` writes it) of `argc`
-    // arguments in the callee's function, which `native_frames::link_header` links by its descriptor.
-    let packed = u64::from(facts.function) | PLAIN_FLAG | NATIVE_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
-    let record = Box::new(CallRecord {
-        proven_args,
+    // arguments in the callee's function, which `native_frames::link_header` links by its descriptor. The site's
+    // word is the flags and the argc; the callee's is the function.
+    let packed = PLAIN_FLAG | NATIVE_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
+    let callee = Box::new(CalleeRecord {
         callee: facts.callee,
         cell: facts.cell as u64,
         expected: facts.validity,
-        call: facts.call,
-        caller_base: facts.caller_base,
-        packed,
         captures: facts.captures,
         global_this: facts.global_this.unwrap_or_default(),
-        callee_register: shape.callee,
-        this_register: shape.this,
-        args_register: shape.window,
-        result_register: shape.result,
-        argument_places: arguments,
+        function: u64::from(facts.function),
         descriptor: facts.descriptor,
         env: facts.env,
         capture: facts.capture,
         registers: u64::from(facts.registers),
         sloppy: u64::from(facts.global_this.is_some()),
+    });
+    let record = Box::new(CallRecord {
+        proven_args,
+        call: facts.call,
+        caller_base: facts.caller_base,
+        packed,
+        callee_record: std::ptr::from_ref(&*callee).addr() as u64,
+        callee_register: shape.callee,
+        this_register: shape.this,
+        args_register: shape.window,
+        result_register: shape.result,
+        argument_places: arguments,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -56,7 +61,7 @@ pub(super) fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8
     let mut holes = [0; HOLES];
     holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
     holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
-    Ok((part(stencil, holes, vec![Exit::Status]), record))
+    Ok((part(stencil, holes, vec![Exit::Status]), (record, callee)))
 }
 
 /// A call of the builtin's arity whose callee is that builtin declines the region: the interpreter runs the call in

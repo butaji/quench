@@ -66,7 +66,7 @@ fn resolve_planned_class(vm: &mut Vm, program: ProgramId, class: u32, prototype:
         };
         debug_assert_eq!(target.function, function, "a planned arm's method is the arm's function");
         debug_assert!(target.entry == CallEntry::framed(Framed::Activates), "a framed method call's target activates its body");
-        // The class's method vector entry for the method, where the method has a selector and one call site (`class_method_record`).
+        // The class's method vector entry for the method, where the method has a selector (`class_method_record`).
         if let (true, Some(selector)) = (layout != 0, vm.programs.selectors(program).and_then(|selectors| selectors.get(method))) {
             if let Some(record) = vm.class_method_record(code, program, class, method, function, closure, target) {
                 vm.programs.set_class_method(program, layout, selector, record);

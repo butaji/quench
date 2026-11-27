@@ -33,7 +33,7 @@ use crate::heap::TableWords;
 use super::dispatch_frame::PendingGeneralCall;
 use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
-use quench_bjit::call_record::CallRecord;
+use quench_bjit::call_record::{CalleeRecord, CallRecord};
 use super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
@@ -971,7 +971,7 @@ pub struct LaneMethod {
     /// a body is called directly.
     pub closed: bool,
     /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
-    pub _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    pub _records: Vec<OwnedCallRecord>,
     /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
     /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
     pub constructors: Box<[Value]>,
@@ -2191,7 +2191,7 @@ pub struct ResumeTable {
 pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
     pub direct: Box<[DirectCallee]>,
-    pub records: Vec<Box<CallRecord>>,
+    pub records: Vec<OwnedCallRecord>,
     /// The callees its records were rebound to after their planned closure's guard missed
     /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
     /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
@@ -2826,6 +2826,10 @@ pub struct ShapeRecipe {
     pub fields: Box<[(u32, u8)]>,
 }
 
+/// A direct row's records, owned by the code that reads them: its site record, and the callee record the site names
+/// (`CallRecord::callee_record`).
+pub type OwnedCallRecord = (Box<CallRecord>, Box<CalleeRecord>);
+
 /// A call the closed world proves (`AotFacts::call_target`) that a body makes by its callee's entry:
 /// its site, its callee, and the record its direct row reads, as the plan made it. The record's
 /// run-time words (the callee's identity, cell, descriptor, captures and global) are a closure's,
@@ -2852,10 +2856,12 @@ pub struct BaseImage {
     pub scratch: u32,
 }
 
-/// What the bindings keep: every closure bound, and by key every descriptor the record named.
+/// What the bindings keep: every closure bound, by key every descriptor the record named, and every callee record a
+/// binding made (`CallRecord::callee_record` names one; a closed-set class's vector names one too).
 pub struct Held {
     pub callees: RefCell<FoldedRoots>,
     pub descriptors: Box<[RefCell<Vec<Box<DirectCallee>>>]>,
+    pub records: RefCell<Vec<Box<UnsafeCell<CalleeRecord>>>>,
 }
 
 /// A lane body compiled ahead: its code, and what its lowering proved about the entry ABI.

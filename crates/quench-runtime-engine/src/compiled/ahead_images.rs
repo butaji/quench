@@ -208,7 +208,7 @@ fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, call
             let named = |site: &aot_image::CallSite| site.function == function && site.pc == record && site.callee == callee;
             if calls.iter().any(named) || sites.iter().any(named) { continue; }
             sites.push(aot_image::CallSite { function, pc: record, callee,
-                record: quench_bjit::call_record::CallRecord { callee: aot_image::unbound_callee(), ..Default::default() } });
+                record: quench_bjit::call_record::CallRecord::default() });
         }
     }
     sites
@@ -593,11 +593,12 @@ impl Vm {
     }
 
 
-    /// The `CallRecord` address of the closed-set arm of method `method` on class `class`, function `function`, bound to the
+    /// The `CalleeRecord` address of the closed-set arm of method `method` on class `class`, function `function`, bound to the
     /// closure `closure` (resolved to `target`) at the class-header edge, for the class's method vector (`set_class_method`).
-    /// The record is the image's record of its one call site: a record holds its site's return words, so a record serves
-    /// one site, and only a method that one call site of the program calls on the class has one. `None` where the program
-    /// has no image, the method has another site or none, or the closure's call is not admitted.
+    /// The record is the callee's: its words are the closure's, and each indirect call site of the method reads them from
+    /// this vector and keeps its own site words. The record is the one of the first call site of the program that reaches
+    /// the method on the class with this function. `None` where the program has no image, no site reaches the method on
+    /// the class with this function, or the closure's call is not admitted.
     pub(crate) fn class_method_record(&mut self, code: &ResidualProgram, program: quench_runtime::vm::ProgramId, class: u32, method: u32, function: u32,
         closure: quench_runtime::Value, target: crate::dispatch_fast::ScriptCallTarget) -> Option<usize> {
         let facts = self.programs.aot_facts(program)?;
@@ -610,9 +611,7 @@ impl Vm {
                 }
             }
         }
-        if sites.len() != 1 { return None; }
-        let (caller, pc, argc, arm_function) = sites[0];
-        if arm_function != function { return None; }
+        let (caller, pc, argc, _) = *sites.iter().find(|site| site.3 == function)?;
         let images = self.programs.ahead_images(self.active_program, code)?;
         let live = images.linked.as_ref()?;
         let key = live.calls.key((caller, pc, function))?;
@@ -624,7 +623,7 @@ impl Vm {
             if !admits_proven(code, target.function, &direct) { return None; }
             live.calls.bind(key, direct, self)?;
         }
-        Some(live.calls.records().get(key)?.get().addr())
+        live.calls.callee_record(key).map(|address| address as usize)
     }
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were

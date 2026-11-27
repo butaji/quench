@@ -104,14 +104,14 @@ fn put_call(out: &mut Vec<u8>, call: &CallSite) {
     out.extend(record.argument_places);
 }
 
-/// The call site `put_call` wrote, its record bound to no closure (`super::unbound_callee`).
+/// The call site `put_call` wrote, its record naming no callee (its callee record is set at load: `BoundCalls::of`).
 fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
     let (function, pc, callee) = (words.half()?, words.half()?, words.half()?);
     let packed = words.quad()?;
     let proven_args = words.quad()?;
     let [callee_register, this_register, args_register, result_register] = [words.pair()?, words.pair()?, words.pair()?, words.pair()?];
     let argument_places = words.take()?;
-    let record = quench_bjit::call_record::CallRecord { callee: super::unbound_callee(), packed, proven_args, callee_register, this_register,
+    let record = quench_bjit::call_record::CallRecord { packed, proven_args, callee_register, this_register,
         args_register, result_register, argument_places, ..Default::default() };
     Ok(CallSite { function, pc, callee, record })
 }
