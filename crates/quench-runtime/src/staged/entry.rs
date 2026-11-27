@@ -297,10 +297,11 @@ fn direct_own_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, mi
 /// are one word, so without it an empty entry would match a departed cell.
 #[inline(always)]
 fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<()> {
+    // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives its key
+    // `class | CLASS_KEY`; `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no
+    // stored entry, the empty one included. So the one compare is the class guard: no live test.
     let class = super::object::cell_class(stage, cell);
-    let live = super::object::class_is_live(stage, class);
-    stage.guard(live, miss)?;
-    let key = stage.or_imm(class, u64::from(CLASS_KEY));
+    let key = stage.add_imm(class, u64::from(CLASS_KEY));
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let complement = stage.constant(u64::from(ENTRY.receiver_complement));
     let wanted = stage.sub(complement, key);
