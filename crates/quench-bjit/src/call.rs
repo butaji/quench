@@ -31,6 +31,11 @@ pub enum CallRow {
     /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
     /// came (the exit stub writes the live pinned ones back).
     Here,
+    /// The float leaf of a Number binary operation (`number_power`, `(f64, f64) -> f64`): value holes 0 (the
+    /// destination's frame offset), 1 and 2 (the operands' frame offsets) and 3 (the leaf's address, `NumericLeafHole`);
+    /// successors NEXT (the result is written canonically to the destination) and EXIT0 (an operand that is no Number:
+    /// leave at the pc, nothing written). The planner spills the live pinned registers before it and reloads after it.
+    NumericLeaf,
 }
 
 /// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
@@ -48,6 +53,7 @@ impl CallRow {
             CallRow::Helper => Ok("call_helper".to_string()),
             CallRow::HelperPacked => Ok("call_helper_packed".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
+            CallRow::NumericLeaf => Ok("call_numeric_leaf".to_string()),
             CallRow::Direct { argc, this, checked, pinned } if usize::from(argc) <= MAX_DIRECT_ARGC => {
                 let mode = match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" };
                 let window = if pinned || argc == 0 { "" } else { "_window" };
@@ -77,7 +83,7 @@ mod tests {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
             .flat_map(move |this| [true, false].into_iter().flat_map(move |checked| [true, false].map(move |pinned| CallRow::Direct { argc, this, checked, pinned }))));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        [CallRow::Helper, CallRow::HelperPacked, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
+        [CallRow::Helper, CallRow::HelperPacked, CallRow::Here, CallRow::NumericLeaf].into_iter().chain(direct).chain(pins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -102,6 +108,10 @@ mod tests {
                 CallRow::Direct { .. } => {
                     assert!([NEXT, TAKEN, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.iter().all(|v| *v <= 1), "the record address and the call pc are the value holes: {values:?}");
+                }
+                CallRow::NumericLeaf => {
+                    assert!([NEXT, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");
+                    assert!([0, 1, 2, 3].iter().all(|v| values.contains(v)), "{values:?}");
                 }
                 CallRow::Reload(_) => {
                     assert!(successors.iter().all(|s| *s == NEXT), "{successors:?}");
