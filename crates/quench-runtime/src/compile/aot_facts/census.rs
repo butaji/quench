@@ -15,7 +15,7 @@ pub(super) struct Census {
     wild_owner: Vec<bool>,
     /// Whether a store through a key the analysis cannot name may write a named property.
     member_wild: bool,
-    /// Per named property, the one closure every store of it writes, or `None` where a store writes anything else.
+    /// Per named property, the one closure its stores of closures write, or `None` where they write two.
     members: BTreeMap<u32, Option<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
     members_on: BTreeMap<(u32, bool, u32), Option<u32>>,
@@ -34,9 +34,12 @@ impl Census {
         for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let stored = fact.ty.body_index();
             match key {
-                Key::Member(atom) => {
-                    let entry = members.entry(atom).or_insert(stored);
-                    if *entry != stored { *entry = None; }
+                // A method read's guess is the one closure stored under its name: a store of anything else (an
+                // instance's data field of the same name, `this.queue = q`) is never the callee a call reaches, and the
+                // call's record guards the callee it does reach (`target`).
+                Key::Member(atom) => if let Some(closure) = stored {
+                    let entry = members.entry(atom).or_insert(Some(closure));
+                    if *entry != Some(closure) { *entry = None; }
                 }
                 Key::MemberOn { class, instance, atom } => {
                     let entry = members_on.entry((class, instance, atom)).or_insert(stored);
