@@ -312,23 +312,9 @@ impl LaneInstruction {
     }
 }
 
-pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
 
 
 
-#[quench_macros::ext(LoopSiteOps1)]
-impl LoopSite {
-    /// Counts an attempt that entered nothing for `reason`. Under `QUENCH_TRACE=js-jit` the first
-    /// of each reason on the site is printed.
-    fn count_decline(&self, reason: RegionDecline) {
-        let count = &self.declines[reason.index()];
-        if count.get() == 0 && self.diagnostics {
-            eprintln!("QUENCH_JS_JIT_REGION_DECLINE function={} header={} reason={}", self.function, self.header, reason.name());
-        }
-        count.set(count.get().saturating_add(1));
-    }
-
-}
 
 pub(crate) use quench_runtime::vm::engine_types::LoopSite;
 

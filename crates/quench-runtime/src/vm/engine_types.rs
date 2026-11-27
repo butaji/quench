@@ -1745,49 +1745,6 @@ pub struct ReferenceCallSiteDiagnostics {
     pub targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
 }
 
-/// Why a loop site's compiled region was not entered at its header on one attempt. Each decline is
-/// counted on its site (`LoopSite::declines`) and reported under `QUENCH_TRACE=js-jit`, the first of
-/// each reason as a trace line. An entry-contract decline also feeds back as a leave at the header
-/// (`lane_loop_run`), so the next compile widens the contract that failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RegionDecline {
-    /// The region's code is still awaited: its compile is under way and its poll waits (`LoopTier::awaits_code`).
-    Awaiting,
-    /// This attempt started the region's compile, so the interpreter runs the header meanwhile.
-    Compiling,
-    /// An inlined callee's capture has no environment or no value (`loop_entry_checked_in_lane`).
-    CalleeCapture,
-    /// A capture the region reads has no initialized value at entry.
-    Capture,
-    /// A field the region reads has no cached value for its receiver, or is a private name.
-    Field,
-    /// A dynamic field's entry value is not a Number its representation holds.
-    FieldNumber,
-    /// The entry record has no room left for a field value.
-    EntryFull,
-    /// The arrays do not match the region: a non-dense or prototype-indexed written array, a
-    /// typed array through a field, mixed views, or no record (`loop_tier::lane_loop_arrays`).
-    Array,
-    /// A field store's slot address is not admitted (`lane_loop_field_stores`).
-    FieldStore,
-    /// An inlined call's callee is not activated in place now (`lane_inlined_target`).
-    Inlined,
-    /// The entry's element views differ from the compiled code's, and no compilation remains (`LoopTier::select`).
-    Views,
-    /// The site may not compile here: its compilations ran out, or the memory policy compiles no loop regions (`LoopTier::may_run`).
-    NoCompile,
-    /// The region needs a VM frame the frameless lane lacks (`CompiledOsrRegion::needs_frame`).
-    Frame,
-    /// The lane has no room for the activations the region's calls would make; it grows for the next entry.
-    Room,
-    /// The activation keeps its locals in the window past its registers (`lane_context_locals_in_window`).
-    Locals,
-    /// The code left at its header before any iteration: an entry contract, the entry bounds, the
-    /// call budget or the fault guard failed. Fed back as a leave at the header.
-    EntryContract,
-    /// The region's entry cell held its stub, so its code did not run.
-    Stub,
-}
 
 /// A forwarding constructor whose activation a construction skipped
 /// (`forwarded_construction_in_lane`): what its frame holds when activations become frames,
@@ -2393,44 +2350,6 @@ pub enum Origin {
 
 
 
-impl RegionDecline {
-
-    /// Every decline, in the order the report lists them.
-    pub const ALL: [Self; 17] = [
-        Self::Awaiting, Self::Compiling, Self::CalleeCapture, Self::Capture, Self::Field, Self::FieldNumber,
-        Self::EntryFull, Self::Array, Self::FieldStore, Self::Inlined, Self::Views, Self::NoCompile,
-        Self::Frame, Self::Room, Self::Locals, Self::EntryContract, Self::Stub,
-    ];
-    /// The number of declines.
-    pub const COUNT: usize = Self::ALL.len();
-
-    pub fn index(self) -> usize {
-        self as usize
-    }
-
-    /// The name the report and the trace give this decline.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Awaiting => "awaiting",
-            Self::Compiling => "compiling",
-            Self::CalleeCapture => "callee-capture",
-            Self::Capture => "capture",
-            Self::Field => "field",
-            Self::FieldNumber => "field-number",
-            Self::EntryFull => "entry-full",
-            Self::Array => "array",
-            Self::FieldStore => "field-store",
-            Self::Inlined => "inlined",
-            Self::Views => "views",
-            Self::NoCompile => "no-compile",
-            Self::Frame => "frame",
-            Self::Room => "room",
-            Self::Locals => "locals",
-            Self::EntryContract => "entry-contract",
-            Self::Stub => "stub",
-        }
-    }
-}
 
 
 
@@ -2962,8 +2881,6 @@ pub struct OsrDiagnostics {
     pub entry_guard_misses: u64,
     pub exits: u64,
     pub widenings: u64,
-    /// The attempts that entered no region code, by why, over all sites.
-    pub declines: [u64; RegionDecline::COUNT],
     pub analysis_rejections: Vec<(RegionRejection, usize)>,
     pub sites: Vec<OsrSiteDiagnostics>,
 }
@@ -2987,8 +2904,6 @@ pub struct OsrSiteDiagnostics {
     pub entry_guard_misses: u64,
     pub exits: u64,
     pub widenings: u64,
-    /// The attempts that entered no region code, by why.
-    pub declines: [u64; RegionDecline::COUNT],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4566,7 +4481,6 @@ impl LaneView {
                 entry_guard_misses: site.entry_guard_misses.get(),
                 exits: site.native_exits.get(),
                 widenings: site.widenings.get(),
-                declines: std::array::from_fn(|index| site.declines[index].get()),
             }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
@@ -4584,7 +4498,6 @@ impl LaneView {
             body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
-            declines: std::array::from_fn(|index| self.loops.iter().map(|site| site.declines[index].get()).sum()),
             analysis_rejections: self
                 .osr_rejections
                 .as_deref()
