@@ -158,7 +158,7 @@ pub fn saved_wait(saved: &'static [SavedWait]) -> Option<(usize, &'static SavedW
 /// (`shared_run::run_node_worker`). The exit flushes std's buffered output as std's does.
 pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'static) -> ! {
     quench_runtime::host::begin_process();
-    image_dump::begin();
+    image_dump::begin(node_dump_request());
     let status = match crate::host::process_start::begin_main().and_then(|()| crate::shared_run::run_node_worker(run)) {
         Ok(status) => status,
         Err(error) => {
@@ -167,6 +167,21 @@ pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'stat
         }
     };
     std::process::exit(i32::from(status))
+}
+
+/// The environment a Node image's start refuses to adopt its dump under: a configuration the dump
+/// was not made in (the dump run removes these, `image::dump_saved_waits`).
+const ADOPTION_VARIABLES: [&str; 3] = ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"];
+
+/// Whether this Node start may map its dump: it names none of `ADOPTION_VARIABLES`, and it is not
+/// itself a dump run.
+fn node_may_adopt() -> bool {
+    ADOPTION_VARIABLES.iter().chain(&[image_dump::DUMP_VARIABLE]).all(|name| std::env::var_os(name).is_none())
+}
+
+/// The dump request this Node process was started with, which its environment names.
+fn node_dump_request() -> Option<image_dump::DumpRequest> {
+    std::env::var(image_dump::DUMP_VARIABLE).ok().and_then(|value| image_dump::DumpRequest::parse(&value))
 }
 
 /// Continues a linked entry from `wait`, the saved run `index`: its writes before the wait are
@@ -180,7 +195,8 @@ pub fn resume_native_process_entry(
         prefix::replay(descriptor, bytes);
     }
     type Rest = (crate::shared_run::EntryRuntime, quench_runtime::NativeJsProgram);
-    if let Some(root) = image_dump::adopt(index) {
+    let adopted = if node_may_adopt() { image_dump::adopt(index) } else { None };
+    if let Some(root) = adopted {
         // SAFETY: the dump's root is the `Rest` its run leaked, mapped back at its address.
         // Kept in place: moving the runtime out of its box would copy it whole.
         let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };

@@ -79,7 +79,7 @@ fn uncaught(error: &quench_runtime::JsError) -> String {
 #[unsafe(no_mangle)]
 extern "C" fn main(_: std::ffi::c_int, _: *const *const std::ffi::c_char) -> std::ffi::c_int {
     quench_runtime::host::begin_process();
-    image_dump::begin();
+    image_dump::begin(image_dump::DumpRequest::from_arguments(std::env::args()));
     let status = image_dump::run_on_fixed_stack(|| match run() {
         Ok(code) => code,
         Err(error) => {

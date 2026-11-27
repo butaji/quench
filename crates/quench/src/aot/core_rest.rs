@@ -1,5 +1,9 @@
-//! The core image's rest: the build-time probe that decides what a core build keeps (C5 D1b), and
-//! the dump of the state a non-folding build keeps (C5 D2).
+//! The core image's rest: the closed world a core build names, the build-time probe that decides
+//! what the build keeps (C5 D1b), and the dump of the state a non-folding build keeps (C5 D2).
+//!
+//! The closed world is one construction. `write_closed_world` writes the catalog's `BUILTINS` and
+//! `EXECUTION` text and returns the same values, so the probe runs on exactly the tables the
+//! image's catalog names, and nothing else builds them.
 //!
 //! What a core build keeps is one of two things, decided by `probe` before anything is linked:
 //!
@@ -7,10 +11,10 @@
 //!   host runs its entries under). Nothing about the program is observable at run time, so the
 //!   image is the strict replay image (`strict::fold_image`): no realm, no program, no top level.
 //! * **Realm and program** (`dump`): the state after the realm is installed and the program is
-//!   loaded, before any of its top-level code runs. The linked image runs once more with the dump
-//!   variable set, builds that state on its own closed world, and writes it as the dump it adopts
-//!   at each start (`image_driver_core::start_state`). Every program with an input lands here, as
-//!   does one that fails with no input.
+//!   loaded, before any of its top-level code runs. The linked image runs once more with a dump
+//!   request argument, builds that state on its own catalog's closed world, and writes it as the
+//!   dump it adopts at each start (`image_driver_core::start_state`). Every program with an input
+//!   lands here, as does one that fails with no input.
 //!
 //! # Where a save point can be (the input handler and what it can capture)
 //!
@@ -41,12 +45,20 @@
 
 use super::prefix::{self, Residual};
 use quench_layers::engine::ExecutionTableSpec;
-use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED};
+use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED, DUMP_ARGUMENT};
 use quench_runtime::tier_surface::Native;
-use quench_runtime::{BuiltinFamilies, BuiltinTable, ExecutionTable, ReachableRealm, ResidualProgram, Runtime, SystemHost};
+use quench_runtime::{BuiltinFamilies, BuiltinTable, ExecutionTable, ReachableRealm, ResidualProgram, Runtime};
 use serde_json::{json, Value};
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+
+/// The closed world of a core image, as values: the same tables its catalog names.
+#[derive(Clone, Copy)]
+pub(super) struct ClosedTables {
+    pub(super) builtins: &'static BuiltinTable,
+    pub(super) execution: &'static ExecutionTable,
+}
 
 /// What the build-time probe of a core entry found (`probe`).
 pub(super) enum Reach {
@@ -59,13 +71,96 @@ pub(super) enum Reach {
     Unfinished(String),
 }
 
-/// Runs the core entry at build time on the closed world, up to its first input or its end, and
-/// reports what it reached (`Reach`). The probe's output is discarded (`prefix::Probe`); a fold
-/// makes no output.
-pub(super) fn probe(program: &Path, realm: &ReachableRealm, execution: &ExecutionTableSpec) -> Result<Reach, String> {
+/// Writes the closed world of `realm` and `spec` into `catalog` as the `BUILTINS` and `EXECUTION`
+/// statics, and returns the same values. The only construction of the closed world: the text and
+/// the values come from the same decisions (`builtin_table`, `execution_table`).
+pub(super) fn write_closed_world(catalog: &mut std::fs::File, realm: &ReachableRealm, spec: &ExecutionTableSpec) -> Result<ClosedTables, String> {
+    let (builtins, builtins_text) = builtin_table(realm);
+    let (execution, execution_text) = execution_table(spec);
+    writeln!(catalog, "{builtins_text}\n{execution_text}").map_err(|error| error.to_string())?;
+    // The compile process runs its workers once and exits, so the tables it keeps live for its run.
+    Ok(ClosedTables { builtins: Box::leak(Box::new(builtins)), execution: Box::leak(Box::new(execution)) })
+}
+
+/// The builtin table the closed world keeps, with its catalog text: the families the realm reaches
+/// with their installers, and the natives it reaches (`natives: Some`, every other native `None`).
+fn builtin_table(realm: &ReachableRealm) -> (BuiltinTable, String) {
+    use quench_runtime::BuiltinFamilies as F;
+    let families = realm.families;
+    let all = BuiltinTable::ALL;
+    let natives: Vec<Native> = realm.natives.iter().cloned().collect();
+    let text_natives = natives.iter().map(|native| format!("quench_runtime::tier_surface::Native::{native:?}")).collect::<Vec<_>>().join(", ");
+    let (regexp, regexp_text) = installer(families, F::REGEXP, all.regexp, "REGEXP");
+    let (typed_memory, typed_memory_text) = installer(families, F::TYPED_MEMORY, all.typed_memory, "TYPED_MEMORY");
+    let (collections, collections_text) = installer(families, F::COLLECTIONS, all.collections, "COLLECTIONS");
+    let (date, date_text) = installer(families, F::DATE, all.date, "DATE");
+    let (json, json_text) = installer(families, F::JSON, all.json, "JSON");
+    let (promise, promise_text) = installer(families, F::PROMISE_ASYNC, all.promise, "PROMISE_ASYNC");
+    let (shadow_realm, shadow_realm_text) = installer(families, F::SHADOW_REALM, all.shadow_realm, "SHADOW_REALM");
+    let text = format!("static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), natives: Some(&[{text_natives}]), regexp: {regexp_text}, typed_memory: {typed_memory_text}, collections: {collections_text}, date: {date_text}, json: {json_text}, promise: {promise_text}, shadow_realm: {shadow_realm_text} }};", families.bits());
+    let natives: &'static [Native] = Box::leak(natives.into_boxed_slice());
+    let table = BuiltinTable { families, natives: Some(natives), regexp, typed_memory, collections, date, json, promise, shadow_realm };
+    (table, text)
+}
+
+/// A family's installer and its text where the closed world reaches the family, else `None`.
+fn installer<T>(families: BuiltinFamilies, family: BuiltinFamilies, installer: Option<T>, name: &str) -> (Option<T>, String) {
+    if families.contains(family) {
+        (installer, format!("Some(quench_runtime::vm::builtin_table::installers::{name})"))
+    } else {
+        (None, "None".to_owned())
+    }
+}
+
+/// The engine entries the closed world keeps, with their catalog text: each group the spec reaches
+/// keeps the runtime's own entries, and every other entry is `None` in the text and the value
+/// (`EXECUTION` names only those, and spreads the rest from `ExecutionTable::ALL`).
+fn execution_table(spec: &ExecutionTableSpec) -> (ExecutionTable, String) {
+    let all = ExecutionTable::ALL;
+    let mut unlinked = String::new();
+    let table = ExecutionTable {
+        interpret: linked(spec.interpret, all.interpret, "interpret", &mut unlinked),
+        native_execution_rejections: linked(spec.interpret, all.native_execution_rejections, "native_execution_rejections", &mut unlinked),
+        record_native_execution_rejection: linked(spec.interpret, all.record_native_execution_rejection, "record_native_execution_rejection", &mut unlinked),
+        js_tier_frame_entry: linked(spec.tier_up, all.js_tier_frame_entry, "js_tier_frame_entry", &mut unlinked),
+        offer_compiled: linked(spec.tier_up, all.offer_compiled, "offer_compiled", &mut unlinked),
+        run_offered: linked(spec.tier_up, all.run_offered, "run_offered", &mut unlinked),
+        js_jit_compiled_call: linked(spec.tier_up, all.js_jit_compiled_call, "js_jit_compiled_call", &mut unlinked),
+        tier_may_run: linked(spec.tier_up, all.tier_may_run, "tier_may_run", &mut unlinked),
+        hot_loop_lane_view: linked(spec.tier_up, all.hot_loop_lane_view, "hot_loop_lane_view", &mut unlinked),
+        report_lane_plan: linked(spec.tier_up, all.report_lane_plan, "report_lane_plan", &mut unlinked),
+        prepare_native_script: linked(spec.compile_source, all.prepare_native_script, "prepare_native_script", &mut unlinked),
+        store_native_module_program: linked(spec.compile_source, all.store_native_module_program, "store_native_module_program", &mut unlinked),
+        kept_native_module_program: linked(spec.compile_source, all.kept_native_module_program, "kept_native_module_program", &mut unlinked),
+        stage_images_at_load: linked(spec.link_live, all.stage_images_at_load, "stage_images_at_load", &mut unlinked),
+        attach_native_js: linked(spec.link_live, all.attach_native_js, "attach_native_js", &mut unlinked),
+        load_ahead_images: linked(spec.link_live, all.load_ahead_images, "load_ahead_images", &mut unlinked),
+        install_wasm_instance: linked(spec.wasm, all.install_wasm_instance, "install_wasm_instance", &mut unlinked),
+        bind_wasm_instance: linked(spec.wasm, all.bind_wasm_instance, "bind_wasm_instance", &mut unlinked),
+        run_compiled: linked(spec.wasm, all.run_compiled, "run_compiled", &mut unlinked),
+        wasm_table_step: linked(spec.wasm, all.wasm_table_step, "wasm_table_step", &mut unlinked),
+        wasm_instance_address: linked(spec.wasm, all.wasm_instance_address, "wasm_instance_address", &mut unlinked),
+        compile_wasm_eagerly: linked(spec.wasm, all.compile_wasm_eagerly, "compile_wasm_eagerly", &mut unlinked),
+    };
+    (table, format!("static EXECUTION: quench_runtime::ExecutionTable = quench_runtime::ExecutionTable {{ {unlinked}..quench_runtime::ExecutionTable::ALL }};"))
+}
+
+/// An engine entry where its group is linked; else `None`, named in the text of the unlinked ones.
+fn linked<T>(group: bool, entry: Option<T>, name: &str, unlinked: &mut String) -> Option<T> {
+    if group {
+        entry
+    } else {
+        unlinked.push_str(&format!("{name}: None, "));
+        None
+    }
+}
+
+/// Runs the core entry at build time on the closed world `tables`, up to its first input or its
+/// end, and reports what it reached (`Reach`). The probe's output is discarded (`prefix::Probe`);
+/// a fold makes no output.
+pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, String> {
     let program = ResidualProgram::read_binary(program)?;
-    let (builtins, engine) = closed_tables(realm, execution);
-    let mut runtime = Runtime::new_static_with_builtins(prefix::Probe, builtins, engine);
+    let mut runtime = Runtime::new_static_with_builtins(prefix::Probe, tables.builtins, tables.execution);
     // Watch from before the first instruction: the gate notes every input the run reads.
     quench_runtime::clock::watch_inputs(runtime.execution_interrupt_handle());
     let run = runtime.execute_deferred_jobs(&program).and_then(|()| runtime.run_host_jobs(&program));
@@ -86,9 +181,12 @@ pub(super) fn probe(program: &Path, realm: &ReachableRealm, execution: &Executio
 }
 
 /// Dumps the start state of the linked core `image` into `work`, which `report` names; none
-/// where it cannot be dumped.
+/// where it cannot be dumped. The dump run is named by an argument, so the run reads no environment.
 pub(super) fn dump(image: &Path, work: &Path, report: &mut Value) -> Vec<Dump> {
-    match image_dump::dump_image(image, work, &[Vec::new()], UNDUMPED, &|_: &mut Command| {}) {
+    let request = |run: &mut Command, index: usize, path: &Path| {
+        run.arg(format!("{DUMP_ARGUMENT}{index}:{}", path.display()));
+    };
+    match image_dump::dump_image(image, work, 1, UNDUMPED, &request) {
         Ok(dumps) => {
             report["bootstrap"] = json!({"status": "dumped", "kind": "closed_world_state", "runs_entry_at_start": true,
                 "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes()})).collect::<Vec<_>>()});
@@ -99,71 +197,4 @@ pub(super) fn dump(image: &Path, work: &Path, report: &mut Value) -> Vec<Dump> {
             Vec::new()
         }
     }
-}
-
-/// The closed world's tables, leaked for the run: the compile process runs its workers once and
-/// exits, so the tables it keeps live for its run.
-fn closed_tables(realm: &ReachableRealm, execution: &ExecutionTableSpec) -> (&'static BuiltinTable, &'static ExecutionTable) {
-    let builtins: &'static BuiltinTable = Box::leak(Box::new(closed_builtins(realm)));
-    let engine: &'static ExecutionTable = Box::leak(Box::new(closed_execution(execution)));
-    (builtins, engine)
-}
-
-/// The builtin table the closed world keeps: the families the realm reaches, with their
-/// installers, and the natives it reaches (`natives: Some`, every other native `None`).
-fn closed_builtins(realm: &ReachableRealm) -> BuiltinTable {
-    let families = realm.families;
-    let natives: &'static [Native] = Box::leak(realm.natives.iter().cloned().collect::<Vec<Native>>().into_boxed_slice());
-    let all = BuiltinTable::ALL;
-    BuiltinTable {
-        families,
-        natives: Some(natives),
-        regexp: installer_of(families, BuiltinFamilies::REGEXP, all.regexp),
-        typed_memory: installer_of(families, BuiltinFamilies::TYPED_MEMORY, all.typed_memory),
-        collections: installer_of(families, BuiltinFamilies::COLLECTIONS, all.collections),
-        date: installer_of(families, BuiltinFamilies::DATE, all.date),
-        json: installer_of(families, BuiltinFamilies::JSON, all.json),
-        promise: installer_of(families, BuiltinFamilies::PROMISE_ASYNC, all.promise),
-        shadow_realm: installer_of(families, BuiltinFamilies::SHADOW_REALM, all.shadow_realm),
-    }
-}
-
-/// A family's installer where the closed world reaches the family, else `None`.
-fn installer_of<T>(families: BuiltinFamilies, family: BuiltinFamilies, installer: Option<T>) -> Option<T> {
-    if families.contains(family) { installer } else { None }
-}
-
-/// The engine entries the closed world keeps: each group the spec reaches keeps the runtime's own
-/// entries, and every other entry is `None` (`compiler::write_execution_table` names the same groups).
-fn closed_execution(spec: &ExecutionTableSpec) -> ExecutionTable {
-    let all = ExecutionTable::ALL;
-    ExecutionTable {
-        interpret: linked(spec.interpret, all.interpret),
-        native_execution_rejections: linked(spec.interpret, all.native_execution_rejections),
-        record_native_execution_rejection: linked(spec.interpret, all.record_native_execution_rejection),
-        js_tier_frame_entry: linked(spec.tier_up, all.js_tier_frame_entry),
-        offer_compiled: linked(spec.tier_up, all.offer_compiled),
-        run_offered: linked(spec.tier_up, all.run_offered),
-        js_jit_compiled_call: linked(spec.tier_up, all.js_jit_compiled_call),
-        tier_may_run: linked(spec.tier_up, all.tier_may_run),
-        hot_loop_lane_view: linked(spec.tier_up, all.hot_loop_lane_view),
-        report_lane_plan: linked(spec.tier_up, all.report_lane_plan),
-        prepare_native_script: linked(spec.compile_source, all.prepare_native_script),
-        store_native_module_program: linked(spec.compile_source, all.store_native_module_program),
-        kept_native_module_program: linked(spec.compile_source, all.kept_native_module_program),
-        stage_images_at_load: linked(spec.link_live, all.stage_images_at_load),
-        attach_native_js: linked(spec.link_live, all.attach_native_js),
-        load_ahead_images: linked(spec.link_live, all.load_ahead_images),
-        install_wasm_instance: linked(spec.wasm, all.install_wasm_instance),
-        bind_wasm_instance: linked(spec.wasm, all.bind_wasm_instance),
-        run_compiled: linked(spec.wasm, all.run_compiled),
-        wasm_table_step: linked(spec.wasm, all.wasm_table_step),
-        wasm_instance_address: linked(spec.wasm, all.wasm_instance_address),
-        compile_wasm_eagerly: linked(spec.wasm, all.compile_wasm_eagerly),
-    }
-}
-
-/// An engine entry where its group is linked, else `None`.
-fn linked<T>(group: bool, entry: Option<T>) -> Option<T> {
-    if group { entry } else { None }
 }
