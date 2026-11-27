@@ -68,9 +68,12 @@ pub fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
 
 /// The calls the unit of an image's lane body inlines: each call whose target the closed world
 /// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
-/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`numeric_restartable`).
+/// (`Lowering::closed_call`). A callee whose leaves restart the call (`numeric_restartable`) leaves
+/// at its call; any other leaves into its own activation, materialized from the unit's frame
+/// (`CallRecovery::Materialize`, the join's inlined leave).
 fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
-    let target = facts.function_facts(caller).call_target(pc).filter(|&callee| super::lane_facts::numeric_restartable(program, callee));
+    let _ = program;
+    let target = facts.function_facts(caller).call_target(pc);
     target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
 }
 
@@ -85,7 +88,6 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
         .ok_or("no lane unit")?;
-    if !unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall) { return Err("an inlined frame does not restart"); }
     Ok(unit)
 }
 
