@@ -3,7 +3,7 @@
 //! `wasm_memory_vector`), and `read_at`/`write_at` are their unchecked forms over raw bytes.
 
 use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
-use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
+use super::wasm_memory::{Access, AccessWasmMemoryExt, WasmMemory, WasmMemoryWrite};
 use super::wasm_memory_vector::{lane, load_lane, load_vector, store_vector};
 use crate::wasm::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStore};
 use crate::{WasmTrap, WasmType, WasmValue};

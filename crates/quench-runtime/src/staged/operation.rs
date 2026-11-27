@@ -4,6 +4,10 @@
 use super::*;
 #[cfg(not(stencil_build))]
 use super::wasm_jump::WasmJump;
+#[cfg(not(stencil_build))]
+use super::wasm_float::OperationWasmFloatExt;
+#[cfg(not(stencil_build))]
+use super::wasm_simd::OperationWasmSimdExt;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

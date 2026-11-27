@@ -5,7 +5,7 @@
 use super::ConcreteWasm;
 use super::machine::MachineStage;
 use super::wasm::{Width, integer_binary};
-use super::wasm_instance::{Instance, Storage, WasmInstance};
+use super::wasm_instance::{Instance, InstanceWasmInstanceExt, Storage, WasmInstance};
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_step::Step;
 use crate::bytecode::{Op, WideInstruction};
