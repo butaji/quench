@@ -69,6 +69,10 @@ pub(super) struct FunctionFlow {
     pub(super) numbers: Box<[Option<Representation>]>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// Per element access (a read or a store), by PC, the view of the array its base holds (`typed_ir::View`).
+    pub(super) element_views: std::collections::BTreeMap<u32, crate::typed_ir::View>,
+    /// The capture slots the function reads from its parent's environment, as (owner, slot) (`Record::observe`).
+    pub(super) captures: std::collections::BTreeSet<(u32, u16)>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
     /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,

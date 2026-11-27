@@ -3,7 +3,7 @@
 use super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
 use crate::bytecode::{Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -159,7 +159,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -229,6 +229,9 @@ fn value_of(
     if ctx.types.is_some() && let Some(array) = array_constructed(ctx, pc, instruction, state) {
         return array;
     }
+    if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
+        return typed;
+    }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
         if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
@@ -254,7 +257,7 @@ fn value_of(
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
+            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -306,7 +309,27 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any },
+        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
+}
+
+/// The typed array a call of a native typed-array constructor (`new Float64Array(...)`) allocates at `pc`. Whatever its
+/// arguments, its kind is the constructor's, so its elements are that kind's (`View::One`) and its length is not fixed
+/// (a resizable buffer's view may change length). Its element class is its own, as an array's is.
+fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    let kind = ctx.scope.typed_array_kind(state[usize::from(register)].origin)?;
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements {
+            ty: crate::typed_ir::view_element_type(kind),
+            classes: Classes::Never,
+            length: Length::Any,
+            view: View::One(kind),
+        },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -394,7 +417,7 @@ impl Abstract for Before<'_, '_> {
 /// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
 /// changes an array, an index store past the length, a `delete`.
 fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
     (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
@@ -438,7 +461,7 @@ fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operati
             let length = settled(ctx, array).elements.length;
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));

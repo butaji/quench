@@ -94,6 +94,12 @@ pub struct AotFacts {
     pub(crate) lengths: BTreeMap<u32, lengths::Settled>,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
+    /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
+    /// (`typed_ir::View::One`) → that kind (`FunctionFacts::element_view`).
+    pub(crate) element_views: BTreeMap<(u32, u32), crate::heap::TypedArrayKind>,
+    /// Per function, the capture slots it reads from its parent's environment, as (owner, slot), in slot order
+    /// (`FunctionFacts::capture_cells`).
+    pub(crate) captures: BTreeMap<u32, Box<[(u32, u16)]>>,
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
     /// that key: what a call plan's miss subscribes to (`call_plan::Miss::Edge`).
     pub(crate) call_keys: BTreeMap<(u32, u32), (Option<u32>, crate::typed_ir::FactKey)>,
@@ -132,6 +138,8 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             dependencies: BTreeMap::new(),
+            element_views: BTreeMap::new(),
+            captures: BTreeMap::new(),
             call_keys: BTreeMap::new(),
             call_sites: BTreeMap::new(),
             element_stores: BTreeMap::new(),
@@ -195,6 +203,13 @@ impl AotFacts {
     /// The settled cell of `key` (`cells`), none where the solve keeps none.
     pub fn cell(&self, key: crate::typed_ir::FactKey) -> Option<crate::typed_ir::Cell> {
         self.cells.get(&key).copied()
+    }
+
+    /// The settled cell of captured slot `slot` of the environment of function `owner` (`FactKey::Slot`): the join of what its
+    /// owner and every closure that captures it store, so a read of the slot from an inner function takes the owner's cell.
+    /// `Cell::ANY` where the solve did not settle.
+    pub fn captured_slot_cell(&self, owner: u32, slot: u16) -> crate::typed_ir::Cell {
+        self.cell(crate::typed_ir::FactKey::Slot { owner, slot }).unwrap_or(crate::typed_ir::Cell::ANY)
     }
 
     /// The keys of every element class `key`'s class shares (`element_classes`): a store through any array of the class
@@ -323,6 +338,21 @@ impl<'a> FunctionFacts<'a> {
     /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
     pub fn field_owner(&self, pc: u32) -> Option<u32> {
         self.access_classes(pc).single().map(|(class, _)| class)
+    }
+
+    /// The kind of typed array the element access (a read or a store) at `pc` reads or stores, where its base holds typed
+    /// arrays of one native kind and no other array (`typed_ir::View::One`). The element is that kind's: an access may
+    /// read it as the kind's element type with no conversion of the stores (`typed_ir::view_element_type`).
+    pub fn element_view(&self, pc: u32) -> Option<crate::heap::TypedArrayKind> {
+        self.facts.element_views.get(&(self.function, pc)).copied()
+    }
+
+    /// The capture slots this function reads from its parent's environment (depth 0), as the engine's capture seeds name them
+    /// (`int_captures`, `typed_captures`): each slot with its settled cell (`AotFacts::captured_slot_cell`).
+    pub fn capture_cells(&self) -> Vec<(u16, crate::typed_ir::Cell)> {
+        self.facts.captures.get(&self.function).map_or_else(Vec::new, |slots| {
+            slots.iter().map(|&(owner, slot)| (slot, self.facts.captured_slot_cell(owner, slot))).collect()
+        })
     }
 
     /// The cell register `register` holds just before the instruction at `pc` in the settled solve
@@ -561,6 +591,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
                 };
                 if let Some(keyed) = keyed { facts.call_keys.insert((id, call.pc), keyed); }
             }
+            for (&pc, &view) in &flow.element_views {
+                if let Some(kind) = view.kind() { facts.element_views.insert((id, pc), kind); }
+            }
+            facts.captures.insert(id, flow.captures.iter().copied().collect());
             for (&pc, &classes) in &flow.field_owners {
                 if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }
