@@ -1,5 +1,7 @@
 //! What each record family keeps alive, copied out before a barriered write.
 use super::*;
+use super::class_space::{ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, header_class};
+use crate::staged::object_encoding::DEPARTED_CLASS;
 use records::TraceRecord;
 
 /// A record's children as the reference-count barrier copies them (`RecordSpace::rc_note`):
@@ -15,6 +17,37 @@ fn snapshot_object(object: &Object, properties: &ValueArena, out: &mut Vec<Value
         &mut PushedProtos::default(),
     );
 }
+
+/// A live class cell's children as the reference-count barrier copies them: what the mark pushes
+/// (`Heap::cell_children_marking`), with no shape roots.
+fn class_cell_edges(class: u32, fields: &[Value], out: &mut Vec<Value>) {
+    Heap::cell_children_marking(
+        Value::UNDEFINED,
+        class,
+        fields,
+        |_, _, _| false,
+        out,
+        &mut |_, _, _, _, _| {},
+        GcTraceKind::Collection,
+        &mut PushedProtos::default(),
+    );
+}
+
+/// A class cell's record trait: the class in its header, and its fields. A stub holds no edge: its record's
+/// object is what its children are (`OrdinaryRecord`).
+macro_rules! class_cell_trace {
+    ($($name:ident;)*) => {$(
+        impl records::TraceRecord for $name {
+            fn extend_children(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
+                let class = header_class(self.header);
+                debug_assert!(class != DEPARTED_CLASS, "a departed cell's children are its record's");
+                class_cell_edges(class, &self.fields, out);
+            }
+        }
+    )*};
+}
+
+class_cell_trace! { ClassCell1; ClassCell2; ClassCell3; ClassCell4; ClassCell5; }
 
 impl records::TraceRecord for OrdinaryRecord {
     fn extend_children(&self, properties: &ValueArena, out: &mut Vec<Value>) {
@@ -101,7 +134,10 @@ impl Heap {
         // SAFETY: the caller names live records; each arm reads a live record of its family.
         unsafe {
             if let Some(object) = value.direct_object_index() {
-                self.object_records.get_live(self.record_id(object)).extend_children(properties, out);
+                match self.class_space.live_class(object.granule()) {
+                    Some(class) => class_cell_edges(class, self.class_space.cell_fields(object.granule()), out),
+                    None => self.object_records.get_live(self.record_id(object)).extend_children(properties, out),
+                }
             } else if let Some(id) = value.direct_array_index() {
                 self.array_records.get_live(id).extend_children(properties, out);
             } else if let Some(id) = value.direct_function_index() {

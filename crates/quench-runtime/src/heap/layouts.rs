@@ -184,13 +184,11 @@ pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
 }
 
 /// The shape of class `id`: the shape bits of its auxiliary word.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
 pub(crate) fn class_shape(id: u32) -> u32 {
     auxiliary(id) & SHAPE_MASK
 }
 
 /// The prototype link of class `id`: the index bits of its meta word.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
 pub(crate) fn class_link(id: u32) -> ProtoLink {
     ProtoLink::from_bits((word(id) >> u32::BITS) as u32 & PROTO_INDEX_BITS)
 }
