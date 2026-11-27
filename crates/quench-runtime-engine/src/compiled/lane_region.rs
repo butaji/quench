@@ -234,6 +234,8 @@ struct State {
     refinements: smallvec::SmallVec<[(quench_runtime::staged::Edge, Register, Type); INLINE_EDGE_REFINEMENTS]>,
     /// Receivers kept as their field values (`virtual_objects`), each live in its register.
     virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
+    /// Array literals kept as their element values (`virtual_objects::VirtualArray`), each live in its register.
+    virtual_arrays: smallvec::SmallVec<[virtual_objects::VirtualArray; 1]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -345,7 +347,8 @@ impl State {
     }
 
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
+        Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(),
+            virtual_arrays: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: smallvec::SmallVec::new(), records: smallvec::SmallVec::new(),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
@@ -540,6 +543,7 @@ struct GuardExit {
     values: Vec<RegisterFact>,
     homed: BitSet,
     virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
+    virtual_arrays: smallvec::SmallVec<[virtual_objects::VirtualArray; 1]>,
     pc: u32,
     line: u32,
     /// The fact the guard tests (`guard_exit_for`); `Unclassified` where it names none.
@@ -949,7 +953,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn canonicalize(&mut self, state: &mut State, pc: usize) {
         for register in 0..state.values.len() {
             // A kept receiver's register holds no object until it is materialized (`virtual_objects`).
-            if state.virtuals.iter().any(|kept| usize::from(kept.register) == register) { continue; }
+            if self.is_kept(state, register as Register) { continue; }
             if self.is_live(pc, register as Register) && !state.values[register].tagged.current() {
                 self.tagged(state, register as Register);
             }
@@ -981,7 +985,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             pc = self.unit.markers[frame];
         }
         // A kept receiver the interpreter reads is an object again (`virtual_objects`).
-        if !state.virtuals.is_empty() { self.materialize_virtuals(state, pc); }
+        if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() { self.materialize_virtuals(state, pc); }
         let stored = self.stored_at(state, pc);
         self.materialize_inlined(state, pc);
         // A caller-frame leave of a body differs from another storing the same registers only
@@ -1108,7 +1112,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             let register = index as Register;
             if !self.is_live(target, register) { continue; }
             // A kept receiver's register holds no value of its own: the join carries its object (`carry_kept`).
-            if state.virtuals.iter().any(|kept| kept.register == register) { continue; }
+            if self.is_kept(state, register) { continue; }
             // A parameter's entry fact varies per call: a mismatched value declines the
             // region (the lane runs the header) instead of exiting native code.
             let saved = self.proving_entry;
@@ -2345,12 +2349,12 @@ pub(crate) fn lower(
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
     let named = lowering.named_leaves();
-    for GuardExit { block, values, homed, virtuals, pc, line, .. } in lowering.take_leaves() {
+    for GuardExit { block, values, homed, virtuals, virtual_arrays, pc, line, .. } in lowering.take_leaves() {
         lowering.switch_to(block, true);
         if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
             eprintln!("aot-lanes: function {function_id}: a leave at {pc} (lowering line {line})");
         }
-        let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals };
+        let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals, virtual_arrays };
         lowering.record_line(line);
         lowering.leave_at(&mut leaving, pc);
     }
@@ -2548,6 +2552,7 @@ impl Lowering<'_, '_> {
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // A kept receiver never reaches a join: the block that would carry it allocates it.
         if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; declined("a kept receiver reaches a join", pc); }
+        if !state.virtual_arrays.is_empty() || !incoming.virtual_arrays.is_empty() { self.valid = false; declined("a kept array reaches a join", pc); }
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.headers.retain(|header| incoming.proofs.headers.contains(header));
@@ -3254,15 +3259,28 @@ impl Lowering<'_, '_> {
             self.hoisted_read(state, pc, instruction, read);
             return true;
         }
+        // An array literal kept as its elements allocates nothing, so the kept receivers and arrays it
+        // leaves are kept past it (`virtual_array_construct`).
+        if let Some(elements) = self.virtual_array_plan(pc, instruction) {
+            self.virtual_array_construct(state, pc, instruction, &elements);
+            self.native += 1;
+            return true;
+        }
         // Kept receivers (`virtual_objects`): a dead one is dropped, a read of a field it keeps
         // is its value, and an instruction that needs it as an object allocates it first.
-        if !state.virtuals.is_empty() {
+        if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() {
             state.virtuals.retain(|kept| self.is_live(pc, kept.register));
+            state.virtual_arrays.retain(|kept| self.is_live(pc, kept.register));
             if crate::compiled::meaning_compiled::is_get_field(instruction) && let Some(falls) = self.virtual_field(state, pc, instruction) {
                 self.native += 1;
                 return falls;
             }
-            if !state.virtuals.is_empty() {
+            // A kept array's element access or `.length` is lowered over its variables (`virtual_array_access`).
+            if let Some(falls) = self.virtual_array_access(state, pc, instruction) {
+                self.native += 1;
+                return falls;
+            }
+            if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() {
                 if self.keeps_virtuals(state, pc, instruction) { self.drop_overwritten_virtuals(state, instruction); } else { self.materialize_virtuals(state, pc); }
             }
         }

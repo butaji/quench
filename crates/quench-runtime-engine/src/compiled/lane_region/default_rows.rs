@@ -102,7 +102,7 @@ impl Lowering<'_, '_> {
     /// takes the raise path a callee's exception takes (`raised_call`); any other status stops the body with it
     /// (`stop_by_status`: a termination, or a leave in a callee the step made). Returns whether control falls through.
     fn step_in_place(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, record: u32) -> bool {
-        if !state.virtuals.is_empty() { self.materialize_virtuals(state, pc); }
+        if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() { self.materialize_virtuals(state, pc); }
         self.home_written(state, pc);
         let missed = self.guard_exit(state, pc as u32);
         let status = self.step_call(record);

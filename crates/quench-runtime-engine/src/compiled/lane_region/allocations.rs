@@ -12,7 +12,7 @@ impl Lowering<'_, '_> {
     /// The instructions after `pc` that no edge enters, as many as a literal's element
     /// definitions (`ARRAY_LITERAL_WINDOW`): the definitions the allocation of an array
     /// literal makes with it.
-    fn straight_following(&self, pc: usize) -> &[WideInstruction] {
+    pub(crate) fn straight_following(&self, pc: usize) -> &[WideInstruction] {
         let after = self.unit.instructions.get(pc + 1..).unwrap_or_default();
         let run = (pc + 1..).zip(after).take(ARRAY_LITERAL_WINDOW).take_while(|(at, _)| self.blocks[*at].is_none()).count();
         &after[..run]
@@ -60,7 +60,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The `count` element definitions after `pc` that the array literal's allocation made.
-    fn consume_definitions(&mut self, pc: usize, count: usize) {
+    pub(crate) fn consume_definitions(&mut self, pc: usize, count: usize) {
         for definition in pc + 1..=pc + count {
             self.consumed.insert(definition);
         }
