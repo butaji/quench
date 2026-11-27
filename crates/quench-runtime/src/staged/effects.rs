@@ -62,6 +62,28 @@ impl Effects {
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
     }
+
+    /// The regions an object's shape, property slots, record words and payload live in: a write to one of them, outside an
+    /// allocation (which writes only the new object's words), changes an existing object's exact shape or prototype link.
+    const OBJECT_REGIONS: RegionSet = RegionSet::of(Region::ShapeWord).with(Region::ObjectSlots).with(Region::Records)
+        .with(Region::Payload).with(Region::HeapMeta);
+
+    /// Whether a row with this effect may change an existing object's exact shape or prototype link: it may run guest code (a
+    /// getter, a setter, a proxy trap), or it writes an object's shape, slots or record words without allocating.
+    pub const fn reshapes(self) -> bool {
+        self.may_call_js || (!self.may_alloc && self.writes.intersects(Self::OBJECT_REGIONS))
+    }
+
+    /// Whether a row with this effect reads and nothing else: it writes no region, runs no guest code and allocates nothing.
+    pub const fn reads_alone(self) -> bool {
+        self.writes.0 == RegionSet::NONE.0 && !self.may_call_js && !self.may_alloc
+    }
+
+    /// Whether a row with this effect may rewrite the run's stores word: guest code may run in a nested run and specialize or
+    /// unspecialize stores. An allocation runs no guest code, so it clears nothing.
+    pub const fn clears_stores(self) -> bool {
+        self.may_call_js
+    }
 }
 
 /// How far a step can take the running activation out of native code (a leave). The lattice is a
@@ -200,6 +222,21 @@ impl<W, P> Operation<W, P> {
     pub fn makes_environment(&self) -> bool {
         let effects = self.effects();
         effects.may_alloc && effects.writes.contains(Region::Frame)
+    }
+
+    /// Whether the operation may change an existing object's exact shape or prototype link (`Effects::reshapes`).
+    pub fn reshapes(&self) -> bool {
+        self.effects().reshapes()
+    }
+
+    /// Whether the operation reads and nothing else (`Effects::reads_alone`).
+    pub fn reads_alone(&self) -> bool {
+        self.effects().reads_alone()
+    }
+
+    /// Whether the operation may rewrite the run's stores word (`Effects::clears_stores`).
+    pub fn clears_stores(&self) -> bool {
+        self.effects().clears_stores()
     }
 
     /// The effect row of the operation, from its variant alone.
