@@ -16972,7 +16972,7 @@ fn derive_lane_view<'live>(
     }
     let mut fused = lane_frame::fuse_chains(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty());
     fuse_target_backedges(&mut records, loop_tier);
-    fused.extend(lane_frame::fuse_rows(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    fused.extend(lane_frame::fuse_rows(&mut records, &decoded, constants, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     if let Some(kinds) = int_kinds.as_ref() {
         prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating);
         prove_compare_jumps(constants, &mut records, kinds, &mut int_speculating);
