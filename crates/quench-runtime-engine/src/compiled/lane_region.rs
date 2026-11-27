@@ -719,6 +719,8 @@ pub(crate) struct Lowering<'a, 'f> {
     /// ones arrived with: a block they all reach keeps the local proofs they share.
     forward: Vec<Option<usize>>,
     arrived: BTreeMap<usize, Vec<LocalProofs>>,
+    /// Per forward-only join, the kept receivers its arrivals carried (`virtual_objects::JoinedVirtuals`).
+    joined_virtuals: BTreeMap<usize, virtual_objects::JoinedVirtuals>,
     /// Per block leader a later PC also enters (a loop's header, a rotated body), its forward edge count and its last
     /// entering PC, and the typed views its forward edges arrived with (`carry_typed_views`).
     loop_carry: BTreeMap<usize, (usize, usize)>,
@@ -946,6 +948,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn canonicalize(&mut self, state: &mut State, pc: usize) {
         for register in 0..state.values.len() {
+            // A kept receiver's register holds no object until it is materialized (`virtual_objects`).
+            if state.virtuals.iter().any(|kept| usize::from(kept.register) == register) { continue; }
             if self.is_live(pc, register as Register) && !state.values[register].tagged.current() {
                 self.tagged(state, register as Register);
             }
@@ -1000,12 +1004,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
-        // No block's entry state keeps a receiver as its fields (`virtual_objects`): the
-        // instruction that ends a block allocates any live one first, so one reaching an
-        // edge is a lowering this code does not make.
-        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; declined("a kept receiver reaches an edge", pc); }
-        state.virtuals.clear();
         if !self.coverage.lowered(pc) {
+            self.decline_kept(state, pc);
             self.exit(state, pc as u32);
             return;
         }
@@ -1019,10 +1019,14 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 self.finishes |= pc <= self.at;
                 if self.at < pc { self.hoist_entry(state, pc); }
                 self.conform(state, pc);
+                self.carry_kept(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.goto(block, &[]);
             }
-            None => self.exit(state, pc as u32),
+            None => {
+                self.decline_kept(state, pc);
+                self.exit(state, pc as u32);
+            }
         }
     }
 
@@ -1103,6 +1107,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         for (index, ty) in types.iter().copied().enumerate() {
             let register = index as Register;
             if !self.is_live(target, register) { continue; }
+            // A kept receiver's register holds no value of its own: the join carries its object (`carry_kept`).
+            if state.virtuals.iter().any(|kept| kept.register == register) { continue; }
             // A parameter's entry fact varies per call: a mismatched value declines the
             // region (the lane runs the header) instead of exiting native code.
             let saved = self.proving_entry;
@@ -2076,7 +2082,7 @@ pub(crate) fn lower(
         at: 0,
         field_regions: BTreeMap::new(),
         forward: Vec::new(), sealable: BitSet::new(),
-        arrived: BTreeMap::new(), loop_carry: BTreeMap::new(), carried_typed: BTreeMap::new(),
+        arrived: BTreeMap::new(), joined_virtuals: BTreeMap::new(), loop_carry: BTreeMap::new(), carried_typed: BTreeMap::new(),
         entered: BitSet::with_capacity(unit.instructions.len()),
         finishes: false,
         leave,
@@ -2287,6 +2293,7 @@ pub(crate) fn lower(
             if reachable {
                 lowering.hoist_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
+                lowering.carry_kept(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);
                 lowering.goto(block, &[]);
@@ -2300,6 +2307,7 @@ pub(crate) fn lower(
             }
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
+            lowering.join_virtuals(&mut state, pc);
             lowering.keep_shared_proofs(&mut state, pc);
             lowering.narrow_to_cells(&mut state, pc);
             lowering.carry_typed_views(&mut state, pc);
