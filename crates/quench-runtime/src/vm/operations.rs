@@ -1076,7 +1076,6 @@ impl Vm {
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
-            Native::Date => self.date_call(),
             Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
             Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
             Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
@@ -1133,6 +1132,29 @@ impl Vm {
             | Native::DateToPrimitive
             | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
             Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
+            Native::RegExpCompile => self.regexp_compile_native(p, this, args),
+            Native::RegExpExec => self.regexp_builtin_exec(p, this, args),
+            Native::RegExpTest => self.regexp_test(p, this, args),
+            Native::RegExpEscape => self.regexp_escape_native(p, args),
+            Native::RegExpSymbolMatch => self.regexp_symbol_match(p, this, args),
+            Native::RegExpSymbolSearch => self.regexp_symbol_search(p, this, args),
+            Native::RegExpSymbolReplace => self.regexp_symbol_replace(p, this, args),
+            Native::RegExpSymbolMatchAll => self.regexp_symbol_match_all(p, this, args),
+            Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
+            Native::RegExpToString => self.regexp_to_string_native(p, this),
+            Native::RegExpSpecies => Ok(this),
+            Native::RegExpLegacyGetter => self.regexp_legacy_getter_native(p, this),
+            Native::RegExpLegacySetter => self.regexp_legacy_setter_native(p, this, args),
+            Native::RegExpGlobal
+            | Native::RegExpIgnoreCase
+            | Native::RegExpMultiline
+            | Native::RegExpDotAll
+            | Native::RegExpUnicode
+            | Native::RegExpUnicodeSets
+            | Native::RegExpSticky
+            | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
+            Native::RegExpSource => self.regexp_slot_native(p, native, this),
+            Native::RegExpFlags => self.regexp_flags_native(p, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -2094,6 +2116,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| realm_entry(native))
         .or_else(|| value_entry(native))
         .or_else(|| json::entry(native))
+        .or_else(|| super::date::entry(native))
         .unwrap_or(enter_table)
 }
 
