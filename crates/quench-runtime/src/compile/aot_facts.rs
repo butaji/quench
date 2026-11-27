@@ -549,6 +549,12 @@ impl<'a> FunctionFacts<'a> {
         self.facts.signatures.as_ref().map_or(Effects::ANY, |signatures| signatures.site_effects(self.function, pc))
     }
 
+    /// Whether the step at `pc` may allocate, and so may collect (`Effects::allocates` of `site_effects`). Top where the
+    /// type solve did not settle.
+    pub fn may_allocate(&self, pc: u32) -> bool {
+        self.site_effects(pc).allocates
+    }
+
     /// The call form of the call at `pc` (`staged::effects::call_form`): inlined where `inlinable`, else frameless
     /// where the callees the facts name cannot leave, collect or run guest code, else framed. The same settled facts
     /// decide it, and the same edges retire it. Framed where the type solve did not settle.
