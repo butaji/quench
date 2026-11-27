@@ -44,7 +44,7 @@ pub mod regexp;
 pub mod wasm {
     pub use crate::{wasm_families::*, wasm_kinds::*, wasm_layout::*, wasm_library::*, wasm_runtime_codes::*};
 }
-pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
+pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS32, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
 
