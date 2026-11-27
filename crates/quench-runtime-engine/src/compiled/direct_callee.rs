@@ -157,7 +157,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let (sloppy, lexical) = match target.this_binding {
         ThisBinding::Sloppy => (Some(vm.realm.globals), false),
         ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if crate::compiled::admission::stencil_only() => (None, true),
+        ThisBinding::Lexical if crate::compiled::admission::direct_row_binds_this() => (None, true),
         ThisBinding::Lexical => vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize))).map(|_| (None, false))?,
         _ => return None,
     };

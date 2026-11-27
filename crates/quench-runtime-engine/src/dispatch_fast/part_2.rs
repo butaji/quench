@@ -238,7 +238,7 @@ pub(super) fn inlining_region_in_lane(
     site: &LoopSite,
 ) -> Option<crate::compiled::LoopRegion> {
     // `--b-jit` runs no inlining regions, so it does not analyze them.
-    if crate::compiled::admission::stencil_only() { return None; }
+    if !crate::compiled::admission::analyzes_inlining_regions() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };

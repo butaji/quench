@@ -50,7 +50,7 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_hot_loop
 fn quench_engine_vm_runs_call_in_lane(view: *const LaneView) -> bool { <Vm as DispatchFastVm6>::runs_call_in_lane(view) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_runs_call_in_lane = quench_engine_vm_runs_call_in_lane;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::compiled::admission::Tier]) -> bool { <Vm as CompiledVm4>::tier_may_run(this, tiers) }
+fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::compiled::admission::Tier]) -> bool { crate::compiled::admission::vm_may_run(this, tiers) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_tier_may_run = quench_engine_vm_tier_may_run;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_view_any_in_lane(this: &Vm, program: ProgramId, function: u32) -> Option<*const LaneView> { <Vm as DispatchFastVm2>::view_any_in_lane(this, program, function) }

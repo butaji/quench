@@ -98,7 +98,7 @@ const LONG_TRIP_WARMUPS: u64 = 4;
 /// body's general native call costs more than the lane's own.
 pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
     let vm = unsafe { vm(cx) };
-    if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
+    if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !crate::compiled::admission::lane_bodies_enrolled(vm)
         || !crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { return false; }
     // SAFETY: the context's program outlives the lane run.
     let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
@@ -212,7 +212,7 @@ pub(crate) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: 
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     // A declined body is terminal: its dispatch has nothing to plan, run or count.
-    if !vm.programs.js_jit_lane_methods_enabled() || matches!(*site.body.borrow(), LoopBody::Declined)
+    if !crate::compiled::admission::lane_bodies_enrolled(vm) || matches!(*site.body.borrow(), LoopBody::Declined)
         || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }

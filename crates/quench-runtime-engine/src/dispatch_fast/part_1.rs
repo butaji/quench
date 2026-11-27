@@ -1497,9 +1497,8 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
     // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
-    let base_only = crate::compiled::admission::stencil_only();
     let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
-    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_only, callees_compiling: false })
+    if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, base_first: false, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead
     {
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
@@ -1537,8 +1536,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let diagnostics = vm.programs.js_jit_diagnostics_enabled();
-    let base_only = crate::compiled::admission::stencil_only();
+    let diagnostics = crate::compiled::admission::diagnosing(vm);
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let work = match work {
         // A looping caller's trips pay for the body as its own iterations do (`looped`).
@@ -1552,10 +1550,10 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // The default mode starts each body on the tier below u-jit: its b-jit body's completions then weigh the
     // u-jit compile over it (`LaneView::promote_base_body`), so the default is never costlier than b-jit.
     let history = own.tier().history.get();
-    let base_first = starting && own.starts_on_base(history) && !vm.programs.tiers().admits_all && crate::compiled::admission::stencil_below();
+    let base_first = crate::compiled::admission::starts_base_first(starting, own.starts_on_base(history), vm.programs.tiers());
     if base_first && !history.base_first { own.tier().history.set(quench_runtime::vm::engine_types::LaneBodyHistory { base_first: true, ..history }); }
-    let callees_compiling = starting && !base_only && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
-    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_only: base_only || base_first, callees_compiling }) {
+    let callees_compiling = starting && !base_first && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+    match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, base_first, callees_compiling }) {
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
             let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
@@ -1575,7 +1573,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
     // b-jit, so a function it would not beat takes the stencil body, stitched at once. A body
     // promoted from b-jit whose u-jit compile is refused goes back to b-jit, never down to the lane.
-    let back_to_base = matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined) && own.tier().history.get().promoted && crate::compiled::admission::stencil_below();
+    let back_to_base = crate::compiled::admission::returns_to_base(matches!(outcome, crate::compiled::LaneBodyOutcome::Unpaid | crate::compiled::LaneBodyOutcome::Short | crate::compiled::LaneBodyOutcome::Declined), own.tier().history.get().promoted);
     if let Some(generic) = &started && (matches!(outcome, crate::compiled::LaneBodyOutcome::Base) || back_to_base) {
         let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
         return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
@@ -1595,7 +1593,7 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     // (`LoopSite::refuse_warming`): its back edges are plain jumps until the epoch moves or the
     // wait runs out, so a function whose entries do not advance costs no per-edge checks.
     // SAFETY: the program's views outlive the lane run.
-    if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
+    if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
     {
         specialize_in_lane(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
@@ -1680,7 +1678,7 @@ pub(super) fn loop_run_in_lane(
     }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap_reads().memory_policy()) {
+        if !tier.may_run(site.tiers, unsafe { vm(cx) }) {
             return site.declined(RegionDecline::NoCompile);
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
@@ -1695,7 +1693,7 @@ pub(super) fn loop_run_in_lane(
     }
     // A b-jit region due to move to u-jit starts the u-jit compile and runs on meanwhile
     // (`LoopTier::promote`); one not yet due runs until the u-jit region would be ahead.
-    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }.heap_reads().memory_policy()) {
+    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }) {
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);

@@ -344,10 +344,9 @@ pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
 /// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
     (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
-    let base_only = crate::compiled::admission::stencil_only();
     // A u-jit region lowers in Cranelift. A b-jit region BaseJIT declines is declined here, in every mode: the default
     // mode compiles the site again as a u-jit region, from the u-jit region's own inputs (`loop_compile_in_lane`).
-    if !base { return base_only.then_some(None); }
+    if !base { return crate::compiled::admission::unbuilt_region_declined().then_some(None); }
     if region.inlining.is_some() { return Some(None); }
     let registers = known.program.function(function as usize).registers;
     let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds, typed: observation.typed_rows };
