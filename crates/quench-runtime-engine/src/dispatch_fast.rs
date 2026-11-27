@@ -10251,8 +10251,8 @@ script_handler! {
         let link = unsafe { (*ip).operand.call.memo } as usize;
         if vm.script_call_holds(link, r.get(i.c))
             && matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
-            && !unsafe { (*cx).tiers_run }
         {
+            if unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), r.get(i.c)); }
             let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
             resume!(cx, function_call_activation_in_lane(cx, r, ip, i, r.get(i.c), receiver, args))
         }
@@ -10277,15 +10277,7 @@ script_handler! {
         let Some(quench_runtime::vm::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i));
         };
-        // The function a forwarded call calls is the site's callee, through its native, for a
-        // body that inlines it (`lane_unit::Planner::through_call`).
-        if through_call
-            && unsafe { (*cx).tiers_run }
-            && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
-            && program == vm.active_program
-        {
-            vm.note_site_callee(&i.call_link, crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
-        }
+        if through_call && unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), callee); }
         if let Some(FunctionKind::Native(native)) = kind {
             if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
                 return exit(ip);
@@ -10297,6 +10289,14 @@ script_handler! {
             remember_bound_call_in_lane(vm, r.get(i.b));
         }
         resume!(cx, function_call_activation_in_lane(cx, r, ip, i, callee, receiver, args))
+    }
+}
+
+/// Notes the function a forwarded call calls as the site's callee, through its native `through`, for a body that
+/// inlines it (`lane_unit::Planner::through_call`).
+fn note_forwarded_in_lane(vm: &mut Vm, i: &LaneInstruction, through: Value, callee: Value) {
+    if let Some((program, function, _, false)) = vm.same_realm_script_target(callee) && program == vm.active_program {
+        vm.note_site_callee(&i.call_link, crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Forwarded { through, callee }, function });
     }
 }
 
