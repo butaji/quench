@@ -11,6 +11,7 @@ use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{
     F32BinaryOperator, F32UnaryOperator, F64BinaryOperator as Binary, F64UnaryOperator as Unary,
 };
+use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
 
 const SIGNALING_NAN_PAYLOAD: u32 = 1;

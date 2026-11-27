@@ -1,6 +1,6 @@
 //! Atomic access layouts derive from one table; byte rules remain in memory.rs.
 
-use super::memory::{MemoryLoad, MemoryStorage, MemoryStore};
+use super::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStorage, MemoryStore};
 use super::{WasmTrap, WasmType, WasmValue};
 use crate::shared_backing::memory_order;
 use crate::staged::wasm_emit;
