@@ -12,32 +12,72 @@ use crate::typed_ir::ElementClass;
 /// composed signature keeps apart, the same bound as a closed union of receiver classes (`typed_ir::MAX_CLASSES`).
 pub const MAX_WRITE_CLASSES: usize = 4;
 
-/// An affine index over the parameters of a function: the parameter `param` (its value on entry) plus a constant, or
-/// the constant alone where `param` is `None`.
+/// What a linear form is linear in: the value a parameter holds on entry, or the value a register holds where the form was
+/// asserted (a loop-invariant one, `lengths::ceilings`).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Base {
+    Parameter(u16),
+    Register(u16),
+}
+
+/// A linear form with an integer constant: `offset + sum(coefficient * base)` over at most two bases. A term's coefficient is
+/// nonzero and the terms are sorted by base, so equal forms are equal values.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Affine {
-    pub param: Option<u16>,
     pub offset: i64,
+    pub terms: [Option<(Base, i64)>; 2],
 }
 
 impl Affine {
     /// Parameter `index`'s value on entry.
     pub const fn parameter(index: u16) -> Self {
-        Self { param: Some(index), offset: 0 }
+        Self { offset: 0, terms: [Some((Base::Parameter(index), 1)), None] }
+    }
+
+    /// Register `index`'s value.
+    pub const fn register(index: u16) -> Self {
+        Self { offset: 0, terms: [Some((Base::Register(index), 1)), None] }
     }
 
     /// The constant `offset`.
     pub const fn constant(offset: i64) -> Self {
-        Self { param: None, offset }
+        Self { offset, terms: [None, None] }
+    }
+
+    /// This form plus `by`.
+    pub const fn shifted(self, by: i64) -> Self {
+        Self { offset: self.offset.saturating_add(by), ..self }
+    }
+
+    /// The sum of two forms, where the sum has at most two bases; None beyond.
+    pub fn plus(self, other: Self) -> Option<Self> {
+        let mut merged: Vec<(Base, i64)> = Vec::with_capacity(4);
+        for (base, coefficient) in self.terms.iter().chain(other.terms.iter()).flatten().copied() {
+            match merged.iter_mut().find(|(held, _)| *held == base) {
+                Some((_, total)) => *total = total.saturating_add(coefficient),
+                None => merged.push((base, coefficient)),
+            }
+        }
+        merged.retain(|&(_, coefficient)| coefficient != 0);
+        merged.sort();
+        if merged.len() > 2 {
+            return None;
+        }
+        let mut terms: [Option<(Base, i64)>; 2] = [None; 2];
+        for (slot, term) in terms.iter_mut().zip(merged) {
+            *slot = Some(term);
+        }
+        Some(Self { offset: self.offset.saturating_add(other.offset), terms })
     }
 
     /// This index as a caller sees it: each parameter `p` names the caller's parameter `parameter(p)` (the argument's
     /// own parameter), or nothing where the argument is no parameter of the caller. None where a parameter names nothing.
     fn substitute(self, parameter: &dyn Fn(u16) -> Option<u16>) -> Option<Self> {
-        match self.param {
-            None => Some(self),
-            Some(index) => parameter(index).map(|param| Self { param: Some(param), offset: self.offset }),
-        }
+        self.terms.iter().flatten().try_fold(Self::constant(self.offset), |sum, &(base, coefficient)| {
+            let Base::Parameter(index) = base else { return None };
+            let param = parameter(index)?;
+            sum.plus(Self { offset: 0, terms: [Some((Base::Parameter(param), coefficient)), None] })
+        })
     }
 }
 
