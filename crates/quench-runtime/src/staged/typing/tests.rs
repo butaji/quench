@@ -248,3 +248,12 @@ fn a_carry_recurrence_reaches_a_bounded_fixed_point_inside_int32() {
     assert!(carry.is_int32(), "the carry stays an int32: {carry:?}");
     assert!(carry.int_range().unwrap().max <= 1 << 15 || carry == Type::INT32, "{carry:?}");
 }
+
+#[test]
+fn power_thresholds_cover_a_growing_range_with_a_power_of_two_margin() {
+    assert_eq!(power_thresholds(span(0, 5)), [0, 7], "the next power of two above 5, less one");
+    assert_eq!(power_thresholds(span(0, 7)), [0, 7], "7 is itself one less than a power of two");
+    assert_eq!(power_thresholds(span(-5, 3)), [-8, 3], "the next power of two of -5 is 8");
+    assert_eq!(power_thresholds(span(0, 1 << 28)), [0, (1 << 29) - 1], "a sum past 2^28 doubles to 2^29 - 1");
+    assert_eq!(power_thresholds(span(0, i64::from(i32::MAX) + 1)), [0, i64::from(i32::MAX)], "clamped to int32's span");
+}
