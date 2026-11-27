@@ -3321,6 +3321,8 @@ impl Lowering<'_, '_> {
         let plain = instruction.result_flags() == 0;
         let ran = match () {
             _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Throw) => self.throw(state, pc, instruction),
+            // A Math call of exact arguments, folded at the lane's one fold point (`fold_static`).
+            _ if self.fold_static(state, pc, instruction, None) => Some(true),
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
             _ if self.scalar_call_admitted(state, pc, instruction) => Some(self.scalar_call(state, pc, instruction)),
@@ -3681,12 +3683,14 @@ impl Lowering<'_, '_> {
         false
     }
 
-    fn typeof_index(&mut self, state: &mut State, _pc: usize, instruction: WideInstruction) -> Option<bool> {
+    fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_b();
-        let ty = state.values[usize::from(source)].value.ty;
+        // The register's fact, or the type the whole-program solve proves it before this instruction: either one JS type folds it.
+        let fact = state.values[usize::from(source)].value.ty;
+        let solved = self.cell_before(pc, source).ty;
         let known = [quench_runtime::ValueType::Number, quench_runtime::ValueType::Boolean, quench_runtime::ValueType::Null,
             quench_runtime::ValueType::Undefined, quench_runtime::ValueType::String, quench_runtime::ValueType::BigInt, quench_runtime::ValueType::Symbol]
-            .into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)));
+            .into_iter().find(|kind| [fact, solved].into_iter().any(|ty| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))));
         let Some(kind) = known else {
             // A value of no one known kind: the VM names it, a heap value by its cell (`typeof_index_in_lane`).
             // The staged row's heap arm needs a frame that proves a cell's kind, which this one does not.
