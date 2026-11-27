@@ -637,7 +637,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// allocation, with no occupancy write (the refill occupied the run). `None` once spent.
     #[inline(always)]
     pub(super) fn cursor_take(&mut self) -> Option<RecordId> {
-        let mut stage = crate::staged::Concrete::new(core::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         crate::staged::bump::cursor_take(&mut stage, (&raw mut self.cursor) as u64, ()).map(|id| id as RecordId)
     }
 
@@ -1006,7 +1006,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     fn barrier_marked(&self, id: RecordId) -> bool {
         // A live id belongs to an initialized block, so the staged bit test reads within the table.
-        let mut stage = crate::staged::Concrete::new(core::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         crate::staged::barrier::mark_bit(&mut stage, self.blocks.as_ptr() as u64, u64::from(id)) != 0
     }
 

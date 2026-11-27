@@ -391,7 +391,7 @@ fn is_int32_truncation(shape: &Shape, first: u16, last: u16) -> bool {
     use quench_runtime::staged::NumericStage;
     let node = shape.nodes[usize::from(last)];
     let zero = |arg: Arg| matches!(arg, Arg::Scalar(s) if shape.scalar_constant(s).is_some_and(|value| {
-        let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+        let mut stage = quench_runtime::staged::Concrete::pure();
         NumericStage::to_int32(&mut stage, value.to_bits(), ()) == Some(0)
     }));
     matches!(node.op, NodeOp::Bits(NumberBitwise::Or))

@@ -65,7 +65,7 @@ pub fn frame(registers: Vec<u64>) -> ScopeFrame {
 
 #[test]
 fn a_staged_return_leaves_with_a_number_and_leaves_unresolved_for_any_other_value() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut numeric = frame(vec![Value::number(2.5).to_bits()]);
     assert!(matches!(step(&mut stage, &mut numeric, Operation::Return { source: 0 }), Step::Control(_)));
     assert_eq!(numeric.returned, Some(Value::number(2.5).to_bits()));

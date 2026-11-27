@@ -72,7 +72,7 @@ pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition:
     };
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
-    let mut stage = Concrete::storing(heap);
+    let mut stage = Concrete::over(heap);
     let added = add_property(&mut stage, record, u64::from(record_id), transition.edge(), form, value.to_bits(), ()).is_some();
     #[cfg(feature = "profile-memory")]
     if added {
@@ -93,7 +93,7 @@ pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transi
     if usize::from(transition.slot) >= OBJECT.inline_property_count { return false; }
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
-    let mut stage = Concrete::storing(heap);
+    let mut stage = Concrete::over(heap);
     super::add::add_property_held(&mut stage, record, u64::from(record_id), transition.edge(), Form::Packed, value.to_bits(), ()).is_some()
 }
 
@@ -108,7 +108,7 @@ pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transi
 pub unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
-    let mut stage = Concrete::storing(heap);
+    let mut stage = Concrete::over(heap);
     set_function_name(&mut stage, record, u64::from(record_id), (transition.edge(), empty), name_form(transition.slot), name.to_bits(), ()).is_some()
 }
 
@@ -171,7 +171,7 @@ mod tests {
         let before = heap.object(object).expect("an object").layout_id();
         let edge = Edge { before: u64::from(before), after: u64::from(Object::layout_with_shape(before, 1)), slot: 0 };
         let run = |heap: &mut Heap, word: Value, link: Option<u64>| {
-            let mut stage = Concrete::storing(heap);
+            let mut stage = Concrete::over(heap);
             site_add(&mut stage, records, word.to_bits(), (edge, link), Form::Packed, Value::integer(4).to_bits(), ()).is_some()
         };
         assert!(!run(&mut heap, Value::integer(3), None), "an int word names no object");

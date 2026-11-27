@@ -108,7 +108,7 @@ mod tests {
     }
 
     fn run(frame: &mut CaptureFrame, operation: Operation<u64, ()>) -> Step<u64, Edge> {
-        crate::staged::step(&mut Concrete::new(core::ptr::null()), frame, operation)
+        crate::staged::step(&mut Concrete::pure(), frame, operation)
     }
 
     /// The row reads what the slots hold, through the frame's access, and a slot the access

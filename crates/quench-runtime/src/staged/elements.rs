@@ -598,7 +598,7 @@ pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
 /// The backing is its array's own, alive, and holds `index`.
 #[inline(always)]
 pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: usize, value: crate::Value) {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     // SAFETY: the caller's contract.
     let address = unsafe { values.add(index) };
     let old = unsafe { address.read() };
@@ -619,7 +619,7 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
 /// As `concrete_replace_element`, for every index.
 #[inline(always)]
 pub unsafe fn concrete_replace_elements(backing: *mut crate::Value, first: isize, step: isize, values: impl Iterator<Item = crate::Value>) {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let others = stage.load_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES);
     let counted = others != u64::from(crate::heap::OTHERS_UNKNOWN);
     let (mut added, mut removed) = (0u64, 0u64);
@@ -645,12 +645,12 @@ pub unsafe fn concrete_replace_elements(backing: *mut crate::Value, first: isize
 /// As `concrete_replace_element`, for every index.
 #[inline(always)]
 pub unsafe fn concrete_replace_run(backing: *mut crate::Value, first: usize, values: &[u64]) {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     // SAFETY: the caller's contract.
     let elements = unsafe { std::slice::from_raw_parts_mut(backing.add(first).cast::<u64>(), values.len()) };
     let others = stage.load_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES);
     if others != u64::from(crate::heap::OTHERS_UNKNOWN) {
-        let count = |bits: &[u64]| bits.iter().map(|&bits| other(&mut Concrete::new(std::ptr::null()), bits)).sum::<u64>();
+        let count = |bits: &[u64]| bits.iter().map(|&bits| other(&mut Concrete::pure(), bits)).sum::<u64>();
         let (added, removed) = (count(values), count(elements));
         if added != removed {
             let others = recount(&mut stage, others, added, removed);
@@ -669,7 +669,7 @@ pub(crate) fn concrete_append_in_room(record_base: *const crate::heap::ArrayObje
     if value.heap_index().is_some() || value.is_deleted() {
         return false;
     }
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     array_backing(&mut stage, record_base as u64, array.to_bits(), ()).is_some_and(|backing| {
         writable_backing(&mut stage, backing, ()).is_some() && append_in_room(&mut stage, backing, value.to_bits(), ()).is_some()
     })
@@ -678,20 +678,20 @@ pub(crate) fn concrete_append_in_room(record_base: *const crate::heap::ArrayObje
 /// The interpreter's reading of `other`.
 #[inline(always)]
 pub(crate) fn concrete_other(value: crate::Value) -> u32 {
-    other(&mut Concrete::new(std::ptr::null()), value.to_bits()) as u32
+    other(&mut Concrete::pure(), value.to_bits()) as u32
 }
 
 /// The interpreter's reading of `recount`.
 #[inline(always)]
 pub(crate) fn concrete_recount(others: u32, added: u32, removed: u32) -> u32 {
-    recount(&mut Concrete::new(std::ptr::null()), u64::from(others), u64::from(added), u64::from(removed)) as u32
+    recount(&mut Concrete::pure(), u64::from(others), u64::from(added), u64::from(removed)) as u32
 }
 
 /// The interpreter's reading of `dense_element` over `elements`.
 #[cfg(test)]
 #[inline(always)]
 pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) -> Option<crate::Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     dense_element(&mut stage, elements.as_ptr() as u64, elements.len() as u64, index as u64, ())
         .map(|(_, value)| crate::Value::from_bits(value))
 }
@@ -700,7 +700,7 @@ pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) ->
 /// array records at `record_base`, as the int32 it reads as.
 #[inline(always)]
 pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject, base: crate::Value) -> Option<crate::Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     array_length(&mut stage, record_base as u64, base.to_bits(), ()).map(crate::Value::from_bits)
 }
 
@@ -738,7 +738,7 @@ pub(crate) fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word,
 /// `any_backing_element` on `Concrete`: the interpreter's read of element `index` of `base`.
 #[inline(always)]
 pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     any_backing_element(&mut stage, record_base as u64, base.to_bits(), index as u64, ()).map(crate::Value::from_bits)
 }
 

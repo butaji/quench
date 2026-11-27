@@ -204,15 +204,14 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
 
 /// The own field a site's hint proved: the value at `slot` of `object` where its exact shape
 /// is `shape`, else `None` (the interpreter's `GetField` hit: `GuardShape` then `LoadSlot`, the
-/// ops `run` interprets, through `Concrete`), through the arena whose values start at `property_values`.
+/// ops `run` interprets, through `Concrete`), through the arena of `heap`.
 ///
 /// # Safety
-/// `object` is a live record, and `property_values` is the base of the arena that holds its
-/// run; a hint's slot is one its shape covers.
+/// `object` is a live record of `heap`, and its run lies in `heap`'s arena; a hint's slot is one its shape covers.
 #[inline(always)]
-pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
     shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
 }
@@ -242,9 +241,9 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
 /// # Safety
 /// As for `concrete_own_field_hit`.
 #[inline(always)]
-pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
     shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // Each arm's form is a constant, so its layout tests no bit.
@@ -254,7 +253,7 @@ pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, property_v
         super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), OBJECT.extras_form, usize::from(slot) + 1)
     } else {
         // Any other form takes the general hit's formed walk.
-        return unsafe { concrete_own_field_hit(object, property_values, shape, slot) };
+        return unsafe { concrete_own_field_hit(object, heap, shape, slot) };
     }?;
     Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)))
 }
@@ -298,8 +297,8 @@ const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | 
 /// names `FORM`.
 #[inline(always)]
 pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
-    property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    heap: &crate::heap::Heap, hint: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     let word = layout_id(&mut stage, record);
     // A fixed form's hint names it (the caller's contract), so equality proves that form
@@ -330,11 +329,10 @@ pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::hea
 ///
 /// # Safety
 /// `entries` is the table of the running program and `offset` a site's byte offset in it,
-/// `records` the object record reservation and `property_values` the base of the arena that
-/// holds the record's run; none outlives the call.
+/// `records` the object record reservation of `heap`, whose arena holds the record's run; none outlives the call.
 #[inline(always)]
-pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -343,8 +341,8 @@ pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entr
 /// # Safety
 /// As `concrete_site_own_read`.
 #[cfg(test)]
-pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub(crate) unsafe fn concrete_site_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -355,8 +353,8 @@ pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (e
 /// # Safety
 /// As `concrete_site_own_read`, for both offsets.
 #[inline(always)]
-pub unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -369,7 +367,7 @@ pub unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tabl
 #[inline(always)]
 #[cfg(not(stencil_build))]
 pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
-    let mut stage = super::Concrete::storing(heap);
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }
 
@@ -382,7 +380,7 @@ mod tests {
 
     /// The interpreter's reading of `run`: `None` for a miss.
     fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
-        let mut stage = Concrete::new(heap.property_values_base());
+        let mut stage = Concrete::over(heap);
         let record = heap.object(object)?.record() as *const Object as u64;
         let records = heap.object_record_base()? as u64;
         run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)

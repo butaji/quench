@@ -214,8 +214,7 @@ impl Vm {
     /// object and the last key's exhaustion take.
     #[inline(always)]
     fn for_in_staged_step(&self, state: Value) -> Option<Value> {
-        let (arrays, objects) = (self.heap.array_record_base()?, self.heap.object_record_base()?);
-        concrete_for_in_next(arrays, objects, state, self.heap.collection_epoch())
+        concrete_for_in_next(&self.heap, state, self.heap.collection_epoch())
     }
 
     /// The state's object, snapshot, key at the cursor and cursor; `None` past the last key.

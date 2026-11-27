@@ -8,7 +8,7 @@ use crate::Value;
 
 /// Run `operation` over `registers` (the operands first, the destination last).
 fn run(operation: Operation<u64, ()>, values: &[Value], heap: Option<&Heap>) -> (Step<u64, Edge>, Vec<u64>) {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut registers: Vec<u64> = values.iter().map(|value| value.to_bits()).collect();
     registers.push(0);
     let mut frame = ConcreteFrame { registers, heap };

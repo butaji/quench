@@ -114,7 +114,7 @@ impl NumericFrame<Concrete> for Probe {
 }
 
 fn run(frame: &mut Probe, operation: Row<u64, ()>) -> Step<u64, Edge> {
-    step(&mut Concrete::new(std::ptr::null()), frame, operation)
+    step(&mut Concrete::pure(), frame, operation)
 }
 
 #[test]

@@ -349,7 +349,7 @@ pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::
 fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 4]) -> Option<crate::Value> {
     let records = heap.object_record_base()? as u64;
     // SAFETY: a stored entry, and the heap's live record table and arena.
-    unsafe { super::ic::concrete_site_read(heap.arena_values_base(), (entry.as_ptr() as u64, records), object, 0) }
+    unsafe { super::ic::concrete_site_read(heap, (entry.as_ptr() as u64, records), object, 0) }
 }
 
 #[cfg(test)]
@@ -390,7 +390,7 @@ mod tests {
             let entry = stored(shape, ENTRY.own_holder, u32::from(slot));
             let by_entry = concrete_read_entry(&heap, object, &entry);
             // SAFETY: the hint's shape and slot are the record's own.
-            let by_hint = unsafe { crate::staged::concrete_own_field_hit(record, heap.arena_values_base(), shape, slot) };
+            let by_hint = unsafe { crate::staged::concrete_own_field_hit(record, &heap, shape, slot) };
             assert_eq!(by_entry, by_hint, "slot {slot}");
             assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))));
         }
@@ -422,7 +422,7 @@ mod tests {
             let (holder_shape, receiver_shape) = (shape_of(&heap, prototype), shape_of(&heap, receiver));
             let records = heap.object_record_base().expect("object records exist") as u64;
             let read = |object: Value, entry: [u32; 4]| {
-                let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
+                let mut stage = crate::staged::Concrete::over(&heap);
                 site_read(&mut stage, (entry.as_ptr() as u64, records, 0), object.to_bits(), 0u64, ()).map(Value::from_bits)
             };
             for slot in 0..count as u32 {
@@ -450,7 +450,7 @@ mod tests {
         let entries = [stored(shape, ENTRY.own_holder, 0), stored(shape, ENTRY.own_holder, 0)];
         let records = heap.object_record_base().expect("object records exist") as u64;
         let read = |object: Value| {
-            let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
+            let mut stage = crate::staged::Concrete::over(&heap);
             site_chain(&mut stage, (entries.as_ptr() as u64, records, 0), object.to_bits(), (0u64, ENTRY.entry_size as u64), ()).map(Value::from_bits)
         };
         assert_eq!(read(outer), Some(Value::integer(9)));
@@ -467,7 +467,7 @@ mod tests {
             let (object, shape) = object_of(&mut heap, count);
             let records = heap.object_record_base().expect("object records exist") as u64;
             let store = |heap: &Heap, entry: [u32; 4], value: Value| {
-                let mut stage = crate::staged::Concrete::storing(heap);
+                let mut stage = crate::staged::Concrete::over(heap);
                 site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, (value.to_bits(), true, None), ()).is_some()
             };
             let read = |heap: &Heap, entry: [u32; 4]| concrete_read_entry(heap, object, &entry);

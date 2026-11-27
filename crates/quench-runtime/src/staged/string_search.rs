@@ -97,7 +97,7 @@ pub(crate) fn search(native: Native, text: Units<'_>, needle: Units<'_>, positio
         Native::StringStartsWith => SearchMethod::StartsWith,
         _ => SearchMethod::EndsWith,
     };
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     let word = search_row(&mut stage, method, concrete_span(text), concrete_span(needle), position as u64);
     match method {
         SearchMethod::IndexOf | SearchMethod::LastIndexOf => index_value((word != u64::MAX).then_some(word as usize)),
@@ -180,13 +180,13 @@ pub fn cut_row<S: Stage>(stage: &mut S, method: CutMethod, length: S::Word, star
 /// (`slice`, `fill`, `copyWithin` and friends) of an integer `bound` in `0..=length`.
 #[inline(always)]
 pub(crate) fn relative_bound(bound: i64, length: usize) -> usize {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     clamped_index(&mut stage, length as u64, bound as u64, true) as usize
 }
 
 /// `cut_row` on `Concrete` for `native` (`slice`, `substring` or `substr`), as a units range.
 pub(crate) fn cut(native: Native, length: i64, start: i64, end: i64) -> Range<usize> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     let (length, start, end) = (length as u64, start as u64, end as u64);
     // Each method is its own instance of the row, folded for it.
     let (start, end) = match native {

@@ -69,7 +69,7 @@ impl ConstructPlan {
             self.passed_values(vm, values, argument);
             return Some(());
         }
-        let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+        let mut stage = quench_runtime::staged::Concrete::pure();
         for (field, value) in values.iter_mut().enumerate().take(usize::from(self.fields)) {
             let class = self.classes[field];
             let staged = field_value(&mut stage, class, self.fallbacks[field].to_bits(), u64::from(self.operators[field]),

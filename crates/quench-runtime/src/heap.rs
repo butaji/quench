@@ -288,7 +288,6 @@ mod external;
 mod float_slots;
 mod slot_words;
 #[cfg(test)] mod float_slot_tests;
-#[cfg(any(test, feature = "test-support"))] mod access_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -4574,7 +4573,7 @@ impl Heap {
     #[inline(always)]
     pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
         // SAFETY: the caller's; the staged hit takes the arena form first, on one compare.
-        unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_own_field_hit(object, self, shape, slot) }
     }
     /// `own_field_hit` of the global object, whose values may live behind extras
     /// (`staged::concrete_global_field_hit`).
@@ -4582,7 +4581,7 @@ impl Heap {
     /// As for `own_field_hit`.
     #[inline(always)]
     pub(crate) unsafe fn global_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
-        unsafe { crate::staged::concrete_global_field_hit(object, self.properties.values_base(), shape, slot) }
+        unsafe { crate::staged::concrete_global_field_hit(object, self, shape, slot) }
     }
     /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
     /// on another exact shape or storage form.
@@ -4590,7 +4589,7 @@ impl Heap {
     /// As for `own_field_hit`.
     #[inline(always)]
     pub(crate) unsafe fn own_field_hint_hit<const FORM: u32>(&self, object: &Object, hint: u32, slot: u16) -> Option<Value> {
-        unsafe { crate::staged::concrete_hinted_own_field_hit::<FORM>(object, self.properties.values_base(), hint, slot) }
+        unsafe { crate::staged::concrete_hinted_own_field_hit::<FORM>(object, self, hint, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
@@ -5767,7 +5766,7 @@ fn join_object_slot_values(object: &Object, properties: &mut ValueArena) {
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
     // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
-    unsafe { crate::staged::concrete_own_read(object, properties.values_base(), slot) }
+    unsafe { crate::staged::concrete_own_read(object, crate::staged::Concrete::over_arena(properties), slot) }
 }
 
 /// Whether a store that `widened` its slot's owner is left to the caller: a native-preserving

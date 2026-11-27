@@ -15,7 +15,7 @@ fn a_dense_element_reads_present_values_and_leaves_past_the_backing_or_at_a_hole
 fn a_packed_view_reads_a_hole_as_the_value_its_consumer_rejects_and_still_leaves_past_the_backing() {
     let elements = [Value::number(1.5), Value::DELETED];
     let view = |packed| DenseView { values: elements.as_ptr() as u64, length: elements.len() as u64, packed, within: false, double: None, uncounted: false };
-    let read = |packed, index| read_element(&mut Concrete::new(std::ptr::null()), view(packed), index, ());
+    let read = |packed, index| read_element(&mut Concrete::pure(), view(packed), index, ());
     assert_eq!(read(false, 1), None, "an unpacked read leaves at a hole");
     assert_eq!(read(true, 1), Some(Value::DELETED.to_bits()), "a packed read has no hole test");
     assert_eq!(read(true, 0), Some(Value::number(1.5).to_bits()));
@@ -27,7 +27,7 @@ fn a_double_view_reads_numbers_canonically_and_replaces_numbers_as_binary64() {
     let mut words = [3.0f64.to_bits(), Value::DELETED.to_bits(), 0.5f64.to_bits()];
     let view = DenseView { values: words.as_mut_ptr() as u64, length: 3, packed: true, within: false,
         double: Some(u64::from(crate::heap::DOUBLE_LEN)), uncounted: false };
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     assert_eq!(read_element(&mut stage, view, 0, ()), Some(Value::integer(3).to_bits()), "a whole double reads as its int32");
     assert_eq!(read_element(&mut stage, view, 1, ()), None, "a hole leaves even through a packed view");
     assert_eq!(read_element(&mut stage, view, 2, ()), Some(Value::number(0.5).to_bits()));
@@ -43,7 +43,7 @@ fn a_double_view_reads_numbers_canonically_and_replaces_numbers_as_binary64() {
 fn append(elements: &mut crate::heap::UniqueElements, index: usize, value: Value) -> Option<u64> {
     let (length, capacity) = (elements.len() as u64, elements.capacity() as u64);
     let values = elements.as_mut_ptr() as u64;
-    append_element(&mut Concrete::new(std::ptr::null()), values, length, capacity, index as u64, value.to_bits(), ())
+    append_element(&mut Concrete::pure(), values, length, capacity, index as u64, value.to_bits(), ())
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn an_append_writes_the_slot_past_the_length_within_room_and_counts_it() {
     let elements = backing.make_mut();
     elements.reserve(2);
     let others = |elements: &mut crate::heap::UniqueElements| {
-        Concrete::new(std::ptr::null()).load_u32(crate::staged::Region::Elements.mutable(), elements.as_mut_ptr() as u64,
+        Concrete::pure().load_u32(crate::staged::Region::Elements.mutable(), elements.as_mut_ptr() as u64,
             crate::heap::OTHERS_FROM_VALUES)
     };
     assert_eq!(others(elements), 1);
@@ -68,7 +68,7 @@ fn an_append_writes_the_slot_past_the_length_within_room_and_counts_it() {
     while elements.len() < elements.capacity() { elements.push(Value::integer(0)); }
     let full = elements.len();
     assert_eq!(append(elements, full, Value::integer(7)), None, "a full backing leaves");
-    crate::staged::Stage::store_u32(&mut Concrete::new(std::ptr::null()), crate::staged::Region::Elements.mutable(),
+    crate::staged::Stage::store_u32(&mut Concrete::pure(), crate::staged::Region::Elements.mutable(),
         elements.as_mut_ptr() as u64,
         crate::heap::OTHERS_FROM_VALUES, u64::from(crate::heap::OTHERS_UNKNOWN));
     elements.reserve(1);
@@ -83,7 +83,7 @@ fn append_in_room_of(elements: &mut crate::heap::UniqueElements, value: Value) -
     let values = elements.as_mut_ptr() as u64;
     let header = values - ARRAY.header_values_offset as u64;
     let backing = Backing { record: 0, header, values, length: elements.len() as u64 };
-    append_in_room(&mut Concrete::new(std::ptr::null()), backing, value.to_bits(), ())
+    append_in_room(&mut Concrete::pure(), backing, value.to_bits(), ())
 }
 
 #[test]

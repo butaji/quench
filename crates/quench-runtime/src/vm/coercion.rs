@@ -24,7 +24,7 @@ const VOID: u32 = UnaryOperator::Void as u32;
 
 impl Vm {
     pub fn typeof_value(&mut self, value: Value) -> Value {
-        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         let names = self.typeof_names.as_ptr() as u64;
         match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
             Some(name) => Value::from_bits(name),

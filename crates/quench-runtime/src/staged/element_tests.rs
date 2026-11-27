@@ -79,7 +79,7 @@ fn probe(heap: &Heap, registers: [Value; 3], fact: Type) -> Probe {
 
 /// The row `operation` run on the concrete stage over `frame`.
 fn run(frame: &mut Probe, operation: Operation<u64, ()>) -> Option<Value> {
-    match step(&mut Concrete::new(std::ptr::null()), frame, operation) {
+    match step(&mut Concrete::pure(), frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
         Step::Unresolved => None,
         Step::Control(_) => unreachable!("an element access transfers no control"),

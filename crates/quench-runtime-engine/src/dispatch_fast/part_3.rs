@@ -41,7 +41,7 @@ pub(super) fn activate_gathering_in_lane(
         // SAFETY: the room checked above holds the kept values past the window.
         unsafe {
             quench_runtime::staged::call_keeping::keep_passed(
-                &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.add(count).expose_provenance() as u64,
+                &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.add(count).expose_provenance() as u64,
                 passed.expose_provenance() as u64, argc,
             );
             vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
@@ -1599,7 +1599,7 @@ pub(super) fn enter_plain_window(
         target.function, argc, 0, target.callee.to_bits(),
     );
     push_plain_at(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         stack.plain_frames_word() as u64, callee_registers.0.expose_provenance() as u64, header, u64::from(program.raw()), depth as u64,
     );
     // SAFETY: the program store keeps a derived view alive with its program.
@@ -1611,7 +1611,7 @@ pub(super) fn enter_plain_window(
     // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
     if !checked { note_lane_this(vm, this, || unsafe { (*target.view).this_rows }); }
     quench_runtime::staged::call_keeping::enter_context(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
+        &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
     );
     // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
@@ -1769,7 +1769,7 @@ pub(super) fn activate_environment_in_lane(
     let callee_registers = unsafe {
         let registers = stack.values.top();
         environment_row::enter_environment(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             registers.expose_provenance() as u64,
             shape,
             environment_row::EnvironmentPassed {

@@ -1676,7 +1676,7 @@ impl LaneStack {
         self.callback_return.caller_registers.set(header.caller_registers);
         // At depth 0, which the push need not load.
         quench_runtime::staged::protocol::push_plain_at(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, 0,
         );
     }
@@ -1699,7 +1699,7 @@ impl LaneStack {
         // counts this window, which starts at the values' top and takes at least `CONTEXT` words.
         if depth == 0 { self.refresh_plain_bound(window.addr()); }
         quench_runtime::staged::protocol::push_plain_at(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, depth as u64,
         );
     }
@@ -1791,7 +1791,7 @@ impl LaneStack {
             );
             let side = lane_frames::Side::of(script, activation.caller_program(), flags);
             push_plain(
-                &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+                &mut quench_runtime::staged::Concrete::pure(),
                 self.plain_frames_word() as u64, window.expose_provenance() as u64, header, u64::from(activation.caller_program().raw()),
             );
             if let Some(side) = side { self.sides.get_mut().push(side); }

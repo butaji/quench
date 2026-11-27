@@ -629,7 +629,7 @@ pub(super) fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     if let Some(this) = this { note_lane_this(vm, Value::from_bits(this), || unsafe { (*target.view).this_rows }); }
     // The context words the form left to its caller, by the staged row on machine words.
     quench_runtime::staged::call_leaf::materialize_leaf_context(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), window.expose_provenance() as u64, form, this,
+        &mut quench_runtime::staged::Concrete::pure(), window.expose_provenance() as u64, form, this,
         target.env.to_bits(), target.capture.expose_provenance() as u64,
     );
 }
@@ -1858,7 +1858,7 @@ pub(super) fn activate_keeping_window_in_lane<const GENERAL: bool>(
         let passed = r.0.add(usize::from(arguments)).cast_const();
         let registers = fill_window_in_lane(vm, target, passed, argc.min(target.params));
         quench_runtime::staged::call_keeping::keep_passed(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.0.add(count).expose_provenance() as u64,
+            &mut quench_runtime::staged::Concrete::pure(), registers.0.add(count).expose_provenance() as u64,
             passed.expose_provenance() as u64, argc,
         );
         vm.lane_stack.values.set_top(registers.0.add(window_size + lane_values::CONTEXT));
