@@ -100,6 +100,9 @@ pub struct AotFacts {
     /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
     /// no guest code for a key that converts to none (`lengths::element_runs_guest_code`).
     pub(crate) index_accessors_absent: bool,
+    /// Whether the property `apply` of every function is `Function.prototype.apply` (`gate::apply_is_builtin`): the callee
+    /// register of a `f.apply(this, arguments)` forwarding call then holds the builtin, which calls `f` with the caller's arguments.
+    pub(crate) apply_builtin: bool,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
@@ -147,6 +150,7 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             index_accessors_absent: false,
+            apply_builtin: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
             captures: BTreeMap::new(),
@@ -181,6 +185,12 @@ impl AotFacts {
     /// not live needs no subscription and no recovery: a closed unit has no exits.
     pub fn live(&self, key: crate::typed_ir::FactKey) -> bool {
         self.world.live(key)
+    }
+
+    /// Whether the property `apply` of every function is `Function.prototype.apply` (`AotFacts::apply_builtin`): a closed-world
+    /// fact that a forwarding `f.apply(this, arguments)` call's callee is the builtin.
+    pub fn apply_is_builtin(&self) -> bool {
+        self.apply_builtin
     }
 
     /// Whether no code can be added to the program (`World::Closed`): no key is live, so a unit that
@@ -705,6 +715,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
+        facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
