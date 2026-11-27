@@ -188,8 +188,8 @@ impl YoungRuns {
 /// Entries in the direct-mapped `ValueArena::reservations` table; a power of two.
 const RESERVATIONS: usize = 16;
 
-/// A young run taken past the class of its length for a constructor's receiver
-/// (`ValueArena::young_reserved_run`): `[start, end)` was bumped from the nursery whole, so no
+/// A young run taken past the class of its length by a growth that predicts more adds
+/// (`ValueArena::grow`, `reserve_predicted_run`): `[start, end)` was bumped from the nursery whole, so no
 /// other run holds any of it until the young cycle ends, and the run's owner may grow into it
 /// without moving (`ValueArena::reserved_room`). A run's capacity is otherwise a fact of its
 /// length (`ordered_capacity`), which every other reader still sees: the words past it are
@@ -1051,28 +1051,9 @@ impl ValueArena {
         Some(start as u32)
     }
 
-    /// The start of an empty young run reserved for `slots` values (`Reservation`): the run
-    /// of a constructor's receiver whose fields its learned count says will reach `slots`,
-    /// bumped from the nursery's range whole, so the adds that follow append in place up to
-    /// that count (`reserved_room`) where the class of each length would move the run. Its
-    /// owner must be a direct object record, as for every young run. `None`, taking nothing,
-    /// where the nursery's range lacks the room: a reservation never grows the arena.
-    #[inline(always)]
-    pub(crate) fn young_reserved_run(&mut self, slots: usize) -> Option<u32> {
-        let capacity = capacity_class(slots);
-        let start = self.nursery.top;
-        if capacity > self.nursery.end - start {
-            return None;
-        }
-        self.nursery.top = start + capacity;
-        self.reservations[Reservation::index(start)] =
-            Reservation { start: start as u32, end: (start + capacity) as u32, cycle: self.reservation_cycle };
-        Some(start as u32)
-    }
-
     /// Whether `vector`, a young run outside dictionary and narrow storage, may hold `len`
     /// values in place, past the capacity its current length gives it: its reservation
-    /// (`young_reserved_run`) still holds, from its start, the whole capacity of `len` values
+    /// (`reserve_predicted_run`) still holds, from its start, the whole capacity of `len` values
     /// (`ordered_capacity`), which every later reader takes as the run's.
     #[inline(always)]
     pub(crate) fn reserved_room(&self, vector: ValueVec, len: usize) -> bool {
@@ -1727,19 +1708,6 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
         // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
-        unsafe { self.set_flat_at(vector.start(), len, value) };
-    }
-
-    /// `push` of `value` to `vector` of `len` values, where its reservation has the room
-    /// (`reserved_room` of `len + 1`): the store alone.
-    ///
-    /// # Safety
-    /// `vector` is a young arena run outside dictionary storage of `len` values whose
-    /// reservation holds the capacity of `len + 1`.
-    #[inline(always)]
-    pub(crate) unsafe fn push_reserved(&mut self, vector: ValueVec, len: usize, value: Value) {
-        debug_assert!(len == self.len(vector) && self.reserved_room(vector, len + 1));
-        // SAFETY: the reservation holds the range from `start` past `len`, reserved in `values`.
         unsafe { self.set_flat_at(vector.start(), len, value) };
     }
 
