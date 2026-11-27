@@ -382,13 +382,6 @@ pub fn cell_class<S: Stage>(stage: &mut S, cell: S::Word) -> S::Word {
     stage.load_u32(Region::ShapeWord.mutable(), cell, NATIVE_CLASS_CELL_LAYOUT.class_offset as i32)
 }
 
-/// Whether the class `class` (`cell_class`) names a live cell: `DEPARTED_CLASS` names the record instead.
-#[inline(always)]
-#[allow(dead_code)] // read by the class readers the R4-D2..D4 callers adopt
-pub fn class_is_live<S: Stage>(stage: &mut S, class: S::Word) -> S::Cond {
-    stage.ne_imm(class, u64::from(DEPARTED_CLASS))
-}
-
 /// The fields of the class cell at `cell`, which holds `storage_len` values: value `i` is the tagged
 /// word at `cell + 8 + 8 * i` (`NATIVE_CLASS_CELL_LAYOUT.fields_offset`). A cell's fields are one flat
 /// run, so a class-fixed object's layout is this and no table entry.

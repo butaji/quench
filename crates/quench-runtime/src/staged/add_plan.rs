@@ -5,7 +5,8 @@ use super::add::{Edge, add_property};
 use super::naming::{name_form, set_function_name};
 use super::object::Form;
 use super::Concrete;
-use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT};
+use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT, layouts};
+use super::field_cache_layout::{CLASS_KEY, is_class_key};
 use crate::value_vec::range_has_room;
 
 #[quench_macros::test_visible]
@@ -36,10 +37,33 @@ pub struct AddSite {
 }
 
 impl Transition {
-    /// The staged rows' edge: the layouts, and the slot.
+    /// Whether the transition is keyed by a live cell's class (`before` is `class | CLASS_KEY`,
+    /// `Heap::live_class_key`): its add runs in the cell in place, not on a record.
+    #[inline(always)]
+    pub(crate) fn is_class_keyed(self) -> bool {
+        is_class_key(self.before)
+    }
+
+    /// The class id a class-keyed transition's cell holds before the add (`before` without its key bit).
+    #[inline(always)]
+    pub(crate) fn class_before(self) -> u32 {
+        self.before & !CLASS_KEY
+    }
+
+    /// The transition as a record's add takes it: a class-keyed `before` becomes its class's shape,
+    /// so `set_class` and the record path see shapes, and the record layouts (`layouts`) are unchanged.
+    #[inline(always)]
+    pub(crate) fn record_form(self) -> Self {
+        if self.is_class_keyed() { Self { before: layouts::class_shape(self.class_before()), ..self } } else { self }
+    }
+
+    /// The staged rows' edge: the layouts, and the slot. A class-keyed transition's `before` is its
+    /// key (`class | CLASS_KEY`), which `add::site_add` compares with the cell's class; a record
+    /// transition's is its before-layout.
     #[inline(always)]
     pub fn edge(self) -> Edge<u64> {
-        let [before, after] = self.layouts.map(u64::from);
+        let [layout_before, after] = self.layouts.map(u64::from);
+        let before = if self.is_class_keyed() { u64::from(self.before) } else { layout_before };
         Edge { before, after, slot: u64::from(self.slot) }
     }
 
@@ -67,6 +91,7 @@ impl Transition {
 /// transition's slot where the shape matches (the row proves the shape before any write).
 #[inline(always)]
 pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+    let transition = transition.record_form();
     let Some(form) = transition.form() else {
         return false;
     };
@@ -90,6 +115,7 @@ pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition:
 /// As `concrete_add_property`.
 #[inline(always)]
 pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+    let transition = transition.record_form();
     if usize::from(transition.slot) >= OBJECT.inline_property_count { return false; }
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
@@ -106,6 +132,7 @@ pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transi
 /// `record_id` names a live function record of `heap`, whose exact shape the row proves before any write.
 #[inline(always)]
 pub unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
+    let transition = transition.record_form();
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
     let mut stage = Concrete::over(heap);

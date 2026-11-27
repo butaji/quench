@@ -2256,8 +2256,9 @@ impl Vm {
             return false;
         }
         let (shape, link) = (data.shape(), data.proto_link());
+        let key = self.own_receiver_key(object, shape);
         let site = self.field_cache_index(site);
-        self.try_cached_field_add(object, atom, shape, link, value, site)
+        self.try_cached_field_add(object, atom, (shape, key), link, value, site)
     }
 
     /// `primary_field_add_hit` while the site's entry for the receiver's shape holds its
@@ -2279,8 +2280,9 @@ impl Vm {
         };
         // The exact shape matches an entry's source, which is never a dictionary's, only
         // outside dictionary storage (`Object::exact_shape`).
+        let key = self.own_receiver_key(object, receiver.exact_shape());
         let Some((_, cache)) =
-            self.field_add_entry_for(self.field_cache_index(site), receiver.exact_shape(), atom, receiver.proto_link())
+            self.field_add_entry_for(self.field_cache_index(site), key, atom, receiver.proto_link())
         else {
             return false;
         };
@@ -2293,8 +2295,8 @@ impl Vm {
         }
         let layout = receiver.layout_id();
         if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
-            let (shape, link) = (receiver.exact_shape(), receiver.proto_link());
-            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, Some(link), layout);
+            let link = receiver.proto_link();
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), key, atom, Some(link), layout);
         }
         self.add_by_transition(object, transition, value);
         self.profile.field_cache_hit(0, 0);
@@ -2309,16 +2311,21 @@ impl Vm {
     /// allocates (`Heap::record_property_add_moving`).
     #[inline(always)]
     fn add_by_transition(&mut self, object: Value, transition: Transition, value: Value) {
-        // A live class cell adds in place where the field fits its capacity (R4-C4: the class edge
-        // from the before-shape to the after-shape). Beyond capacity the cell departs first, and the
-        // record takes the add below.
+        // A class-keyed transition (`Transition::is_class_keyed`) adds to the live class cell in place where
+        // the field fits its capacity (R4-C4: the class edge from the before-class to the after-shape). A cell
+        // it does not fit, or one a shape-keyed transition names (a dictionary or constant cell, which has no
+        // class key), departs first, and the record takes the add below.
         if let Some(granule) = self.heap.live_class_cell(object) {
-            if self.heap.class_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value) {
+            if transition.is_class_keyed()
+                && self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value)
+            {
                 return;
             }
             self.heap.depart_class_object(object);
             self.drop_departed_holder_entries();
         }
+        // The record path takes the transition's shapes (`record_form`), whose layouts it guards.
+        let transition = transition.record_form();
         let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object")).expect("a departed receiver is a record");
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
         if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
@@ -2368,13 +2375,14 @@ impl Vm {
         // A define of a name the receiver's shape already holds as a default data property
         // (`record_field_define_overwrite`) is CreateDataProperty's plain value write: an object
         // update's `{...state, n}` overwrites the copied `n`.
+        let key = self.own_receiver_key(object, receiver.exact_shape());
         let overwrite = self.field_cache_entry(site);
-        if overwrite.holder == NO_FIELD_HOLDER && overwrite.receiver == receiver.exact_shape() && !self.method_caches_may_name(atom) {
+        if overwrite.holder == NO_FIELD_HOLDER && overwrite.receiver == key && !self.method_caches_may_name(atom) {
             self.heap.property_set(object, usize::from(overwrite.slot), value);
             self.profile.field_cache_hit(0, 0);
             return true;
         }
-        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
+        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), key, atom) else {
             return false;
         };
         let transition = cache.transition();
@@ -2383,8 +2391,7 @@ impl Vm {
         }
         let layout = receiver.layout_id();
         if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
-            let shape = receiver.exact_shape();
-            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, None, layout);
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), key, atom, None, layout);
         }
         self.add_by_transition(object, transition, value);
         self.profile.field_cache_hit(0, 0);
@@ -4816,8 +4823,9 @@ impl Vm {
             return false;
         }
         let (shape, link) = (data.shape(), data.proto_link());
+        let key = self.own_receiver_key(object, shape);
         let site = self.field_cache_index(site);
-        self.try_cached_field_add(object, atom, shape, link, value, site)
+        self.try_cached_field_add(object, atom, (shape, key), link, value, site)
     }
 
     /// `set_field_cached` past the inline own-data store hits. `store_owed` is false when those
@@ -4978,6 +4986,8 @@ impl Vm {
         let (shape, layout) = self
             .heap.object(object)
             .map_or((u32::MAX, 0), |data| (data.shape(), data.layout_id()));
+        // The add entry's source, taken before the write: a live class cell's class key (`own_receiver_key`).
+        let key = self.own_receiver_key(object, shape);
         let add_prototype_guard =
             if existing.is_none() && shape != u32::MAX && self.field_add_atom_eligible(atom) {
                 self.add_prototype_guard(object, PropertyKey::string(atom))
@@ -5006,7 +5016,7 @@ impl Vm {
                     site,
                     FieldAddCache {
                         atom,
-                        source_shape: shape,
+                        source_shape: key,
                         target_shape: data_shape,
                         slot: slot as u16,
                         layouts: Object::add_layouts(layout, data_shape),
@@ -5055,18 +5065,18 @@ impl Vm {
         &mut self,
         object: Value,
         atom: Atom,
-        shape: u32,
+        (shape, key): (u32, u32),
         link: ProtoLink,
         value: Value,
         site: usize,
     ) -> bool {
         // The caller proved `object` an extensible ordinary object of `shape` whose prototype
         // `link` names.
-        let Some((set, cache)) = self.field_add_entry_for(site, shape, atom, link) else {
+        let Some((set, cache)) = self.field_add_entry_for(site, key, atom, link) else {
             return false;
         };
         let (target_shape, slot, transition) = (cache.target_shape, cache.slot, cache.transition());
-        if !cache.proof_holds(link) && !self.prove_field_add_chain(set, shape, atom, link) {
+        if !cache.proof_holds(link) && !self.prove_field_add_chain(set, key, atom, link) {
             return false;
         }
         // An object record outside dictionary storage, whose exact shape is the entry's source
@@ -5074,7 +5084,7 @@ impl Vm {
         // the staged row, the plain or reserved append, else the moving add
         // `apply_cached_field_add` makes.
         let in_entry_shape = object.direct_object_index().is_some()
-            && self.heap.object(object).is_some_and(|receiver| receiver.exact_shape() == shape);
+            && self.heap.object(object).is_some_and(|receiver| self.own_receiver_key(object, receiver.exact_shape()) == key);
         if !in_entry_shape {
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
             return true;
@@ -5159,7 +5169,8 @@ impl Vm {
             return Ok(());
         }
         let site = self.field_cache_index(site);
-        if let Some((_, cache)) = self.field_add_entry(site, shape, atom) {
+        let receiver_key = self.own_receiver_key(object, shape);
+        if let Some((_, cache)) = self.field_add_entry(site, receiver_key, atom) {
             let (target_shape, slot) = (cache.target_shape, cache.slot);
             debug_assert!(self.class_field_is_plain_add(object, key));
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);

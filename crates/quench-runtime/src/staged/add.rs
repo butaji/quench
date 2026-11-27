@@ -14,6 +14,7 @@
 //! other add is the VM's, which allocates and grows.
 
 use super::region::Region;
+use super::field_cache_layout::CLASS_KEY;
 use super::entry::direct_record;
 use super::object::{Form, plain_payload, proto_link};
 use crate::typed_ir::Representation;
@@ -86,22 +87,25 @@ pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S:
 }
 
 /// `add_property` for the object word `object` of the record table at `records`, the way a
-/// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`), and where
-/// `link` is given (an add the prototype chain can intercept, whose chain proof the code holds as
-/// a Stable fact for exactly that prototype) the object's prototype link is it. The chain's own
-/// shapes are not read: a change to the layout of a prototype on it retires the code
-/// (`Heap::subscribe_prototype_chain`), so only what varies per receiver, its link, is tested.
+/// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`). An edge
+/// keyed by a class (`Edge::before` carries `CLASS_KEY`, `Transition::edge`) is the live cell's add
+/// (`add_cell_property`); a record edge takes the record, where `link` (an add the prototype chain
+/// can intercept, whose chain proof the code holds as a Stable fact for exactly that prototype) is
+/// the object's prototype link. The chain's own shapes are not read: a change to the layout of a
+/// prototype on it retires the code (`Heap::subscribe_prototype_chain`), so only what varies per
+/// receiver, its link, is tested. The path is the edge's key, a fact of the site, not a test of the
+/// object: a departed cell's class matches no key, so a keyed edge leaves to the VM, and a record
+/// edge leaves at `direct_record` where the object is live.
 #[inline(always)]
 pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
-    // A live cell's class is its layout: the before-class fixes the link `link` proves, so no link test is made.
-    let granule = super::value::direct_object_id(stage, object);
-    let cell = super::object::cell_at_granule(stage, granule);
-    let class = super::object::cell_class(stage, cell);
-    let live = super::object::class_is_live(stage, class);
-    stage.choose_leaving(live, #[inline(always)] |stage| {
+    let keyed = edge_keys_class(stage, edge.before);
+    stage.choose_leaving(keyed, #[inline(always)] |stage| {
+        let granule = super::value::direct_object_id(stage, object);
+        let cell = super::object::cell_at_granule(stage, granule);
+        let class = super::object::cell_class(stage, cell);
         add_cell_property(stage, (granule, cell, class), edge, value, miss)?;
         Some(stage.constant(0))
     }, #[inline(always)] |stage| {
@@ -120,16 +124,26 @@ pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edg
     Some(())
 }
 
+/// Whether the edge's `before` is a class key (`CLASS_KEY` set): a record's before-layout id is below
+/// `LAYOUT_CAPACITY`, so its bit is clear.
+#[inline(always)]
+fn edge_keys_class<S: Stage>(stage: &mut S, before: S::Word) -> S::Cond {
+    let bit = stage.and_imm(before, u64::from(CLASS_KEY));
+    stage.ne_imm(bit, 0u32)
+}
+
 /// The add of `value` at the slot of `edge` to the live class cell `cell` at `granule`, in place: it holds the
-/// before-class (its header is the layout word, so one compare proves the shape, link and flags), the field
-/// fits its region's capacity, and the store gate admits the write (the class space's barrier, as
+/// before-class, keyed as `Heap::live_class_key` keys it (`class | CLASS_KEY`, the same one compare as
+/// `entry::class_matches`: a departed cell's `DEPARTED_CLASS` gives a word past u32 that equals no key), the
+/// field fits its region's capacity, and the store gate admits the write (the class space's barrier, as
 /// `Heap::class_cell_add`). The field is stored before the header takes the after-class, so no reader sees the
 /// new class without its slot. `None` (leaving at `miss`, before any write) otherwise, where the VM departs the
 /// cell or grows nothing. The after-class is the transition's, which keeps the before-class's link and flags.
 #[inline(always)]
 fn add_cell_property<S: Stage>(stage: &mut S, (granule, cell, class): (S::Word, S::Word, S::Word), edge: Edge<S::Word>,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let moved = stage.sub(class, edge.before);
+    let key = stage.add_imm(class, u64::from(CLASS_KEY));
+    let moved = stage.sub(key, edge.before);
     let same = stage.eq_imm(moved, 0u32);
     stage.guard(same, miss)?;
     // The region's capacity is `2^region - 1`, so `slot < capacity` is `slot + 1 < 2^region`, which is `(slot + 1) >> region == 0`.
