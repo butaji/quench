@@ -2003,6 +2003,25 @@ impl Function {
             && self.handler_at(pc).is_none()
     }
 
+    /// `permits_js_tail_call_at` for the call at `pc`, read from the bit set derived once for every PC of
+    /// the function on its first call (`FunctionCaches::tail_sites`). Every input of the rule is fixed by
+    /// the record, so the bit never changes.
+    #[inline(always)]
+    pub fn tail_site_permitted(&self, pc: u32) -> bool {
+        let bits = self.caches().tail_sites.get_or_init(|| self.derive_tail_sites());
+        bits.get(pc as usize / 64).is_some_and(|word| *word & (1u64 << (pc % 64)) != 0)
+    }
+
+    fn derive_tail_sites(&self) -> Box<[u64]> {
+        let mut bits = vec![0u64; self.code.len().div_ceil(64)].into_boxed_slice();
+        for pc in 0..self.code.len() {
+            if self.permits_js_tail_call_at(pc as u32) {
+                bits[pc / 64] |= 1u64 << (pc % 64);
+            }
+        }
+        bits
+    }
+
     pub fn handler_at(&self, pc: u32) -> Option<Handler> {
         self.handlers
             .iter()
@@ -2667,6 +2686,7 @@ impl Function {
                 suspended_registers,
                 suspended_environment,
                 admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
+                tail_callee: !self.is_async && !self.is_generator,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,
