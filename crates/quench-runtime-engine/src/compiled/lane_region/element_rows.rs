@@ -126,8 +126,11 @@ impl Lowering<'_, '_> {
         if !string_base || !unread || self.hoisted.contains_key(&next) || self.unit_leaders().contains(next) { return None; }
         let within = self.ranges.string_in_bounds(pc);
         let bits = self.tagged(state, base);
-        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_string(&mut stage, bits) };
-        emit_js_guard(&mut self.builder, is_string, exit);
+        // A base the solver types a string holds the string tag already: its test is made only where the type does not prove it.
+        if !super::tag_proofs::register_proves(state, base, Type::language(quench_runtime::ValueType::String)) {
+            let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_string(&mut stage, bits) };
+            emit_js_guard(&mut self.builder, is_string, exit);
+        }
         let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
         let unit = {
