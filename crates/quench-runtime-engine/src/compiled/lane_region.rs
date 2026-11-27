@@ -2213,7 +2213,7 @@ pub(crate) fn lower(
         // the same way: `scalar::declared_entry_types`).
         let mut refined = false;
         for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
-            if matches!(carried, Type::INT32 | Type::NUMBER) && *input != carried {
+            if (carried == Type::INT32 || number_domains::is_double(carried)) && *input != carried {
                 *input = carried;
                 refined = true;
             }
@@ -2231,7 +2231,7 @@ pub(crate) fn lower(
                 |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_int32()) {
                 for register in operands.into_iter().filter_map(Operand::register_index)
                     .filter(|register| *register < unit.caller_registers && !lowering.written.contains(usize::from(*register))) {
-                    if initial[usize::from(register)] == Type::NUMBER {
+                    if number_domains::is_double(initial[usize::from(register)]) {
                         initial[usize::from(register)] = Type::INT32;
                         refined = true;
                     }
@@ -3987,7 +3987,7 @@ impl Lowering<'_, '_> {
     /// completion's test checks by its tag. An int32 keeps its test, as an integral double is a Number and not its tag.
     fn typed_native_result(&self, pc: usize, ty: Type) -> bool {
         self.resumes_after(pc) && ty.object_shape().is_none() && ty != Type::DIRECT_OBJECT_FAMILY
-            && (ty == Type::NUMBER || number_domains::target_representation(ty) == Representation::Tagged)
+            && (number_domains::is_double(ty) || number_domains::target_representation(ty) == Representation::Tagged)
     }
 
     /// Joins a direct call's native return and its helper's completion, both continuing with the call's result in the
@@ -4284,7 +4284,7 @@ impl Lowering<'_, '_> {
                 for register in writes(*instruction) { defined.insert(usize::from(register)); }
             }
             for (index, ty) in types.iter().enumerate() {
-                if *ty == Type::NUMBER && defined.contains(index) && self.is_live(header, index as Register) {
+                if number_domains::is_double(*ty) && defined.contains(index) && self.is_live(header, index as Register) {
                     candidates.push(((header, index as Register, Type::INT32), header..=back));
                 }
             }

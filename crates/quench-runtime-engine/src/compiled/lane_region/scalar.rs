@@ -192,7 +192,7 @@ fn relation_requirement(program: &ResidualProgram, instruction: WideInstruction)
     if super::super::operations::NumberRelation::from_operator(operator).is_none()
         || super::super::operations::equality_operator(operator).is_some() && !operands.iter().any(number_constant) { return None; }
     let floating = operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-        && super::super::facts::operand_type(&program.constants, *operand, |_| Type::ANY) == Type::NUMBER);
+        && super::number_domains::is_double(super::super::facts::operand_type(&program.constants, *operand, |_| Type::ANY)));
     Some((operands, if floating { Type::NUMBER } else { Type::INT32 }))
 }
 

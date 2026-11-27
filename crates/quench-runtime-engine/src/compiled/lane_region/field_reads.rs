@@ -23,7 +23,7 @@ fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Op
 /// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
 fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     agreed_slot_type(program, fields, instruction)
-        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
+        .filter(|ty| *ty == Type::INT32 || super::number_domains::is_double(*ty) || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
 }
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
@@ -39,7 +39,7 @@ fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction:
 /// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
 /// proves Number once and keeps the double view, so its arithmetic takes the double operation.
 pub(crate) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    agreed_slot_type(program, fields, instruction) == Some(Type::NUMBER)
+    agreed_slot_type(program, fields, instruction).is_some_and(super::number_domains::is_double)
 }
 
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): its last read's slots
