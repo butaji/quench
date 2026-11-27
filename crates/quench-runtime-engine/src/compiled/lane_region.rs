@@ -4538,9 +4538,13 @@ impl Lowering<'_, '_> {
             // The closure the entry holds, admitted by its function on this edge: the capture view
             // every iteration reads through is the one it resolves here.
             let callee = self.tagged(state, register);
-            let function = self.unit.frames[frame].target.function;
-            let matched = self.function_binding(callee, function);
-            emit_js_guard(&mut self.builder, matched, exit);
+            // A call plan that names exactly this frame's target proves the callee's body, which the held closure is
+            // (`invariant_callee_read`: the loop neither writes the register nor reads the callee again): no compare.
+            if !self.plan_call(state, exit, frame) {
+                let function = self.unit.frames[frame].target.function;
+                let matched = self.function_binding(callee, function);
+                emit_js_guard(&mut self.builder, matched, exit);
+            }
             return Ok(Some(callee));
         }
         let read = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, boundaries)
