@@ -174,6 +174,11 @@ pub(crate) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.reads_string())
 }
 
+/// The last instruction before `pc` that writes `register`: the definition its value came from.
+pub(crate) fn definition_before(unit: &super::super::lane_unit::Unit, pc: usize, register: Register) -> Option<usize> {
+    (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register))
+}
+
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
 /// read that was a native function when the body was compiled (`GlobalRead::NativeMember`: a
 /// member of a Stable global, or a method of the string or array prototype; `GlobalRead::NativeSlot`: a
@@ -185,8 +190,7 @@ pub(crate) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {
-            let callee = instruction.register_b();
-            let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
+            let defined = definition_before(unit, pc, instruction.register_b())?;
             let (value, native, holder) = match global_reads.get(&defined)? {
                 GlobalRead::NativeMember { value, native, holder, .. } | GlobalRead::NativeSlot { value, native, holder, .. } => (*value, *native, *holder),
                 _ => return None,

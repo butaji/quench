@@ -37,14 +37,18 @@ pub(crate) struct VirtualObject {
     arguments: smallvec::SmallVec<[Variable; 4]>,
 }
 
-/// An array literal kept as its element values (`virtual_array_construct`): its register, and per
-/// element in index order the variable holding its tagged bits and the type the value had. Its length
-/// is the literal's, since nothing kept grows.
+/// An array kept as its element values: a literal (`virtual_array_construct`) or `new Array(k)`
+/// (`kept_array_new`), grown by `push` (`kept_push`). Its register, and per element in index order the
+/// variable holding its tagged bits and the type the value had. The length is the element count: a kept
+/// array never crosses a block end (`keeps_virtuals`), so each access sees that count as a constant.
 #[derive(Clone, PartialEq)]
 pub(crate) struct VirtualArray {
-    /// The register the literal defined.
+    /// The register the array's construction defined.
     pub(crate) register: Register,
     elements: smallvec::SmallVec<[(Variable, Type); ARRAY_LITERAL_WINDOW]>,
+    /// Bit `i` set where element `i` is certainly written: a literal's, a push's, or a write at a constant
+    /// index. An element not set is a hole, which reads `undefined` (its variable holds that until written).
+    written: u16,
 }
 
 /// The most arguments a kept construction passes.
