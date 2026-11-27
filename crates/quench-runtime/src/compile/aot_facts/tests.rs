@@ -70,7 +70,8 @@ fn an_int32_register_is_proven_int32() {
 
 #[test]
 fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
-    // Wrapped in a function: a top-level function is a global, which the host reads by name, so it escapes (`types::escapes`).
+    // Wrapped in a function so its constructor and methods are slots, not globals: a global is read by name by code an open
+    // world may add, so it is a guess there (`types::escapes`).
     let program = program("(function () { function T(n) { this.link = null; this.count = 0; this.next = n; }
         T.prototype.run = function () { this.count = this.count | 1; return this.next; };
         function S() { this.current = null; }
@@ -87,7 +88,7 @@ fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
 
 #[test]
 fn a_field_takes_the_type_of_the_argument_its_constructor_is_called_with() {
-    // Wrapped in a function, as the test above: a top-level constructor is a global the host may read, so it escapes.
+    // Wrapped in a function, as the test above, so the constructor is a slot of the program's own code.
     let program = program("(function () { function P(v) { this.v = v; } function mk() { return new P(3); } mk(); mk(); })();");
     let facts = analyze(&program);
     let v = program.atoms.iter().position(|atom| atom.as_ref() == "v").expect("the field name") as u32;
@@ -118,8 +119,40 @@ fn a_function_a_native_calls_takes_any_parameter_and_this() {
 }
 
 #[test]
-fn a_global_function_escapes_because_the_host_reads_globals_by_name() {
-    let program = program("function f(a) { return a | 1; } f(2); f(3);");
+fn a_global_function_escapes_in_an_open_world() {
+    // `eval` may add code, which reads globals by name and may call `f`: a global function escapes.
+    let program = program("function f(a) { return a | 1; } f(2); f(3); eval('1');");
     let facts = analyze(&program);
     assert_eq!(parameter(&program, &facts, "f", 0).ty, Type::ANY);
+}
+
+#[test]
+fn a_richards_shaped_class_keeps_its_int32_parameters_in_a_closed_world() {
+    // Top-level code, as richards is: the constructor and its prototype methods are globals and stored on globals, which no
+    // code of a closed world reads by name, so nothing escapes; `this.m(3)` runs the class's own method.
+    let program = program("function Scheduler() { this.count = 0; } \
+        Scheduler.prototype.m = function m(x) { return x | 1; }; \
+        Scheduler.prototype.run = function run() { return this.m(3); }; \
+        new Scheduler().run();");
+    let facts = analyze(&program);
+    assert!(parameter(&program, &facts, "m", 0).ty.is_subtype(Type::INT32));
+    let (scheduler, run) = (function_named(&program, "Scheduler") as u32, function_named(&program, "run") as u32);
+    assert!(facts.cell(FactKey::Receiver(run)).is_some_and(|cell| cell.classes.may_hold(scheduler)));
+}
+
+#[test]
+fn a_host_callee_makes_no_program_closure_escape() {
+    // `Math.abs` is read off a key no program write reaches: it holds no program closure, so `f` stays a closed slot.
+    let program = program("(function () { function f(a) { return a | 1; } f(2); Math.abs(1); })();");
+    let facts = analyze(&program);
+    assert!(parameter(&program, &facts, "f", 0).ty.is_subtype(Type::INT32));
+}
+
+#[test]
+fn a_builtin_method_named_as_a_program_method_takes_its_closure_argument() {
+    // `[1].map` is the array's own method: the program's `map` does not run, so its callback `cb` escapes.
+    let program = program("(function () { function C() {} C.prototype.map = function map(f) { return f(1); }; \
+        function cb(a) { return a | 1; } cb(2); [1].map(cb); })();");
+    let facts = analyze(&program);
+    assert_eq!(parameter(&program, &facts, "cb", 0).ty, Type::ANY);
 }

@@ -4,7 +4,7 @@
 use super::flow::FunctionFlow;
 use super::gate::World;
 use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::FactKey;
+use crate::typed_ir::{Classes, FactKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The most closures a method read's closed set may hold (`candidates`): a test per arm.
@@ -102,17 +102,41 @@ impl Census {
         live || method_guess
     }
 
-    /// The closure `key` holds, when it is written once, with a closure, and no write the
-    /// analysis cannot follow reaches it.
-    fn single(&self, key: Key) -> Option<u32> {
-        let wild = match key {
+    /// Whether a write the analysis cannot follow may reach `key`: a global written by code it cannot name
+    /// (`global_wild`), a slot of a function whose frame it cannot follow (`wild_owner`), or a named property
+    /// written through a computed key (`member_wild`). The keys with no such write are never wild.
+    pub(super) fn wild(&self, key: Key) -> bool {
+        match key {
             Key::Global(_) => self.global_wild,
             Key::Slot { owner, .. } => self.wild_owner.get(owner as usize).copied().unwrap_or(true),
             Key::Member(_) => self.member_wild,
-            Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => return None,
-        };
+            Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => false,
+        }
+    }
+
+    /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
+    pub(super) fn wild_read(&self, origin: Origin) -> bool {
+        match origin {
+            Origin::Binding(key) => self.wild(key),
+            Origin::Member(atom) | Origin::MemberOn { atom, .. } => self.wild(Key::Member(atom)),
+            _ => false,
+        }
+    }
+
+    /// Whether every class `classes` lists holds its own method `atom` (`members_on`), and every one of those is one of
+    /// `callees`. A method call whose receiver is such a closed set of program classes runs the program's own method, so
+    /// no builtin of the same name is the callee (`types::resolved`).
+    pub(super) fn own_methods(&self, classes: Classes, atom: u32, callees: &[u32]) -> bool {
+        let ids = classes.ids();
+        !ids.is_empty() && ids.iter().all(|&class| matches!(self.members_on.get(&(class, true, atom)), Some(Some(function)) if callees.contains(function)))
+    }
+
+    /// The closure `key` holds, when it is written once, with a closure, and no write the
+    /// analysis cannot follow reaches it.
+    fn single(&self, key: Key) -> Option<u32> {
+        if matches!(key, Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_)) { return None; }
         match self.writes.get(&key) {
-            Some(&(1, fact)) if !wild => fact.cell.ty.body_index(),
+            Some(&(1, fact)) if !self.wild(key) => fact.cell.ty.body_index(),
             _ => None,
         }
     }
