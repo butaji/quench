@@ -3,7 +3,7 @@
 //! (identity, `this`, room, window, entry, completion) is `staged::invoke`; this file keeps the
 //! words it reads (the register file, the lane stack's tops, the callee's entry cell) and the
 //! blocks the lowering made for its exits. A callee the body owns (`DirectCallee`) has its words
-//! as constants; an image's proven callee has them in its `CallRecord` (`ProvenCall`), which the
+//! as constants; an image's proven callee has them in its `CalleeRecord` (`ProvenCall`), which the
 //! loader binds, so the code names the record by `Symbol::CallRecord` and never a JIT-time address.
 
 #[allow(unused_imports)]
@@ -15,7 +15,7 @@ use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
-use quench_bjit::call_record::{CallRecord, LaneStatus};
+use quench_bjit::call_record::{CalleeRecord, CallRecord, LaneStatus};
 use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
 use super::super::lane_body_abi::body_signature_in_lane;
@@ -74,14 +74,16 @@ pub(crate) struct CallSite<'a> {
 pub(crate) enum DirectSite<'a> {
     Owned(&'a DirectCallee),
     Proven(ProvenCall),
-    /// A closed-set arm's record, read from its receiver class's method vector at run time (`closed_set_indirect`): the
-    /// record's address is the value, and its words are read from it as a proven call's are.
-    Indirect(ir::Value),
+    /// A closed-set call through its receiver class's method vector (`closed_set_indirect`): `callee` is the callee record
+    /// the vector holds at run time, whose words the call reads; `site` is the arm the call's site is, whose record holds
+    /// the site's own words (the caller's call record and base), which every arm of the call shares.
+    Indirect { site: ProvenCall, callee: ir::Value },
 }
 
 /// An image's call whose callee the closed world proves (`AotFacts::call_target`): the callee's function, which fixes
 /// its window and `this` form, and the symbol of the site's record (`Symbol::CallRecord`, as `(namespace, key)`). The
-/// call reads the callee's identity, cell, descriptor, captures, global, caller call and caller base from the record,
+/// call reads the callee's identity, cell, descriptor, captures, global from the callee record the site names, and the
+/// caller call and caller base from the site's record,
 /// which the loader binds (`BoundCalls::bind`). Until a binding the record's identity is no callee's, so the identity
 /// guard sends every call to the VM's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +110,7 @@ impl DirectSite<'_> {
         match self {
             Self::Owned(callee) => Some(callee.registers),
             Self::Proven(call) => Some(call.registers),
-            Self::Indirect(_) => None,
+            Self::Indirect { .. } => None,
         }
     }
 
@@ -118,7 +120,7 @@ impl DirectSite<'_> {
         match self {
             Self::Owned(callee) => Some(callee.target.function),
             Self::Proven(call) => Some(call.function),
-            Self::Indirect(_) => None,
+            Self::Indirect { .. } => None,
         }
     }
 }
@@ -183,14 +185,30 @@ impl EmitFrame<'_> {
         stage.load_u64(CALL_RECORD, record, field(offset))
     }
 
-    /// The word at `offset` of the record of a proven or indirect callee: a proven call's record is its symbol's, an
-    /// indirect call's the run-time address it reads from its class's method vector. `None` for an owned callee, whose
-    /// words are its own constants.
-    fn record_of(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, offset: usize) -> Option<ir::Value> {
+    /// The address of the callee record a call names: a proven call's site record names it (`CallRecord::callee_record`),
+    /// an indirect call's is the one its class's method vector holds. `None` for an owned callee, whose words are its own
+    /// constants.
+    fn callee_address(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
         match callee {
             DirectSite::Owned(_) => None,
-            DirectSite::Proven(call) => Some(self.record_word(stage, call, offset)),
-            DirectSite::Indirect(record) => Some(stage.load_u64(CALL_RECORD, record, field(offset))),
+            DirectSite::Proven(call) => Some(self.record_word(stage, call, std::mem::offset_of!(CallRecord, callee_record))),
+            DirectSite::Indirect { callee, .. } => Some(callee),
+        }
+    }
+
+    /// The word at `offset` of the callee record of a proven or indirect callee (`CalleeRecord`).
+    fn callee_word(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, offset: usize) -> Option<ir::Value> {
+        let record = self.callee_address(stage, callee)?;
+        Some(stage.load_u64(CALL_RECORD, record, field(offset)))
+    }
+
+    /// The word at `offset` of the site's own record (`CallRecord`) of a proven or indirect call: the proven call's symbol,
+    /// or for an indirect call the symbol of the arm it names (every arm of the call shares the site's words). `None` for
+    /// an owned callee, whose words are its own constants.
+    fn site_word(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, offset: usize) -> Option<ir::Value> {
+        match callee {
+            DirectSite::Owned(_) => None,
+            DirectSite::Proven(call) | DirectSite::Indirect { site: call, .. } => Some(self.record_word(stage, call, offset)),
         }
     }
 
@@ -271,7 +289,7 @@ impl EmitFrame<'_> {
         let next = match callee.registers() {
             Some(registers) => stage.add_imm(top, (u64::from(registers) + context) * word),
             None => {
-                let registers = self.record_of(stage, callee, std::mem::offset_of!(CallRecord, registers))?;
+                let registers = self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, registers))?;
                 let bytes = stage.mul_imm(registers, word);
                 let at = stage.add(top, bytes);
                 stage.add_imm(at, context * word)
@@ -301,7 +319,7 @@ impl EmitFrame<'_> {
         let window = room.top;
         let at = Region::Frame.mutable();
         // The words the callee's identity fixes are constants (its function's packed word); the words the binding
-        // makes are the record's (a proven callee's), a constant of the owned callee's own.
+        // makes are the records' (a proven callee's, an indirect callee's), a constant of the owned callee's own.
         let (descriptor, call, caller_base, callee_word) = match callee {
             DirectSite::Owned(owned) => (
                 address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64),
@@ -309,21 +327,21 @@ impl EmitFrame<'_> {
                 stage.constant(owned.caller_base as u64),
                 if self.rebinds.get() { self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee)) } else { stage.constant(owned.callee.to_bits()) },
             ),
-            DirectSite::Proven(_) | DirectSite::Indirect(_) => (
-                self.record_of(stage, callee, std::mem::offset_of!(CallRecord, descriptor))?,
-                self.record_of(stage, callee, std::mem::offset_of!(CallRecord, call))?,
-                self.record_of(stage, callee, std::mem::offset_of!(CallRecord, caller_base))?,
-                self.record_of(stage, callee, std::mem::offset_of!(CallRecord, callee))?,
+            DirectSite::Proven(_) | DirectSite::Indirect { .. } => (
+                self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, descriptor))?,
+                self.site_word(stage, callee, std::mem::offset_of!(CallRecord, call))?,
+                self.site_word(stage, callee, std::mem::offset_of!(CallRecord, caller_base))?,
+                self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, callee))?,
             ),
         };
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
         let flags = quench_runtime::staged::frame::PLAIN_FLAG | quench_runtime::staged::frame::NATIVE_FLAG;
-        // A proven callee's packed word is its function's constant; an indirect callee's record holds its function's
-        // packed word, whose function bits are the callee's, so the header takes those bits and the flags.
+        // A proven callee's packed word is its function's constant; an indirect callee's record holds its function, so the
+        // header takes those bits and the flags.
         let packed = match callee.function() {
             Some(function) => stage.constant(u64::from(function) | flags),
             None => {
-                let word = self.record_of(stage, callee, std::mem::offset_of!(CallRecord, packed))?;
+                let word = self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, function))?;
                 let function = stage.and_imm(word, u64::from(u32::MAX));
                 stage.or_imm(function, flags)
             }
@@ -399,7 +417,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             }
             // An indirect callee's identity is its record's, which the closed-set guard checked: the register's identity is
             // guarded again here as a proven callee's is, and its sloppiness and window are its record's at run time.
-            DirectSite::Indirect(_) => {
+            DirectSite::Indirect { .. } => {
                 if !matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_)) { return CallEntry::Helper; }
                 (Identity::Guarded(crate::aot_image::unbound_callee()), None)
             }
@@ -432,7 +450,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// An indirect callee's window is its record's words, read at run time.
     fn call_registers_dynamic(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
-            callee @ DirectSite::Indirect(_) => self.record_of(stage, callee, std::mem::offset_of!(CallRecord, registers)),
+            callee @ DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, registers)),
             DirectSite::Owned(_) | DirectSite::Proven(_) => None,
         }
     }
@@ -440,7 +458,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// An indirect callee's sloppiness is its record's word, read at run time.
     fn call_sloppy_dynamic(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
-            callee @ DirectSite::Indirect(_) => self.record_of(stage, callee, std::mem::offset_of!(CallRecord, sloppy)),
+            callee @ DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, sloppy)),
             DirectSite::Owned(_) | DirectSite::Proven(_) => None,
         }
     }
@@ -449,7 +467,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let callee = self.call_site()?.callee?;
         let cell = match callee {
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::EntryCell, owned.target.function, owned.cell as u64),
-            other => self.record_of(stage, other, std::mem::offset_of!(CallRecord, cell))?,
+            other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, cell))?,
         };
         self.admit_stacks(stage, callee, cell, miss)
     }
@@ -460,7 +478,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_identity(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
             DirectSite::Owned(owned) => self.rebinds.get().then(|| self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
-            other => self.record_of(stage, other, std::mem::offset_of!(CallRecord, callee)),
+            other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, callee)),
         }
     }
 
@@ -468,7 +486,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_global(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
             DirectSite::Owned(_) => None,
-            other => self.record_of(stage, other, std::mem::offset_of!(CallRecord, global_this)),
+            other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, global_this)),
         }
     }
 
@@ -495,7 +513,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let captures = match callee {
             DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
             DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
-            other => self.record_of(stage, other, std::mem::offset_of!(CallRecord, captures))?,
+            other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, captures))?,
         };
         let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
         // The status test's fall-through is the returned path (`complete_call`); every other status is cold.
