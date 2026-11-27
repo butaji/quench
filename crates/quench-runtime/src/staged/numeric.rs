@@ -1,6 +1,7 @@
 //! Number x Number semantics over `Stage`/`Frame`, shared by the interpreter and native tiers.
 
 use super::value::language;
+use super::typing;
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
@@ -204,7 +205,12 @@ impl NumberOperation {
             Self::BitwiseNot { .. } | Self::Imul { .. } | Self::IntCase { .. } => Type::INT32,
             Self::Remainder { domain, .. } => if domain == Domain::Int32 { Type::INT32 } else { Type::NUMBER },
             Self::IncDec { overflow, .. } => if overflow == Overflow::Widen { Type::NUMBER } else { Type::INT32 },
-            Self::Unary { .. } | Self::ToNumeric { .. } | Self::Math { .. } | Self::Extreme { .. } => Type::NUMBER,
+            // No operand type is known here, so the `typing` rules are applied to the Number this domain names (`Type::NUMBER`,
+            // which may be NaN); each rule then gives the NaN-tolerant Number, the same one rule the solve applies to real operands.
+            Self::Unary { operation, .. } => typing::unary(operation, Type::NUMBER),
+            Self::Math { operation, .. } => typing::math(operation, Type::NUMBER),
+            Self::Extreme { maximum, .. } => typing::extreme(maximum, Type::NUMBER, Type::NUMBER),
+            Self::ToNumeric { .. } => Type::NUMBER,
         }
     }
 
