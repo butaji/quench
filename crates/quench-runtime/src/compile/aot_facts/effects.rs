@@ -220,6 +220,9 @@ fn value_of(
             None => Word::member(first, cell),
         };
     }
+    if ctx.types.is_some() && let Some(array) = array_constructed(ctx, pc, instruction, state) {
+        return array;
+    }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
         if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
@@ -281,6 +284,27 @@ fn value_of(
     }
 }
 
+/// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).
+/// Its holes are `undefined` where its one argument is a Number (the length), and any value where the arguments are the
+/// elements (`Array(x)` holds `x`); no argument leaves it empty. Its length is unknown, as the length is not a constant here.
+fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    if !ctx.scope.is_array_constructor(state[usize::from(register)].origin) { return None; }
+    let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
+    let holes = match arguments.as_slice() {
+        [] => Type::NEVER,
+        [length] if length.is_number() => Type::language(crate::ValueType::Undefined),
+        _ => Type::ANY,
+    };
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
+}
+
 /// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
 /// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
 /// (`Key::Member`); any value in the passes that find call targets.
@@ -330,9 +354,10 @@ pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
     Word::member(atom, member_type(ctx, this, atom))
 }
 
-/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
+/// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`), and the
+/// receiver's own element class, which a resolved call joins to its receiver's (`types::entry_links`).
 pub(super) fn this_fact(ctx: &Ctx<'_>) -> Word {
-    ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id)))
+    ctx.types.map_or(Word::UNKNOWN, |types| Word { cell: types.this(ctx.id), origin: Some(Origin::Receiver(ctx.id)) })
 }
 
 /// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.

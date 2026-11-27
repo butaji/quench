@@ -442,11 +442,11 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // the first pass that changes nothing. A solve that does not settle in `TYPE_PASSES` keeps no type.
     // A pass whose integer range still grows after `WIDENING_ROUNDS` widens it (`Types::widen`), so a counter that
     // climbs settles at int32's span rather than one step a pass.
-    let mut found = types::Types::of(&flows, &facts, &census).bottom();
+    let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
     let mut settled = false;
     let mut grown = BTreeMap::new();
     for _ in 0..types::TYPE_PASSES {
-        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census).widen(&found, &mut grown);
+        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census, &scope).widen(&found, &mut grown);
         settled = next == found;
         found = next;
         if settled { break; }
@@ -464,6 +464,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // take it from a flow over the settled types.
     let mut reads: BTreeMap<u32, std::collections::BTreeSet<value::Key>> = BTreeMap::new();
     let mut field_readers = Readers::new(program);
+    let mut open_escapes = None;
     if settled {
         let mut settled_flows = analyze_typed(&resolved, Some(&found));
         for (id, flow) in settled_flows.iter_mut().enumerate() {
@@ -495,6 +496,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             field_readers.scan(program, id, &flow, &facts, &scope);
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
         }
+        open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
         facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_functions());
     }
@@ -503,7 +505,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     if settled {
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
-        field_readers.finish(&facts.cells);
+        if let Some(escaped) = &open_escapes { field_readers.finish(&facts.cells, escaped); }
         facts.readers = Some(field_readers);
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);

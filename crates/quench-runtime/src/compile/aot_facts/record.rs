@@ -2,7 +2,8 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code};
+use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, this_fact};
+use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
@@ -116,8 +117,7 @@ impl Record {
             let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
-                crate::staged::Receiver::This { path: None } if !ctx.is_root =>
-                    ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id))),
+                crate::staged::Receiver::This { path: None } if !ctx.is_root => this_fact(ctx),
                 crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
                     Some(_) => super::effects::this_member(ctx, atom),
                     None => Word::UNKNOWN,
@@ -129,24 +129,21 @@ impl Record {
                 },
                 _ => Word::UNKNOWN,
             };
-            // An array method that may change its array (`push`, `splice`, ...) makes the arrays the receiver names hold
-            // the arguments, and an unknown length (`Scope::is_array_mutator`).
-            let method = match (invocation.callee, callee.origin) {
-                (crate::staged::Callee::Method { atom, .. }, _) => Some(atom),
-                (crate::staged::Callee::Register(_), Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => Some(atom),
-                _ => None,
-            };
-            if method.is_some_and(|atom| ctx.scope.is_array_mutator(atom)) {
-                let stored = arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
+            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            let method = method_atom(&call);
+            // An array mutator (`push`, `splice`, ...) makes the arrays its receiver names hold its arguments, and an unknown
+            // length (`Scope::is_array_mutator`).
+            if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
+                let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
-                self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
+                self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
+                // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
+                // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
+                if call.receiver.cell.elements != Elements::NEVER && ctx.scope.is_array_builtin(atom) {
+                    self.links.extend(call.arguments.iter().filter_map(|argument| argument.link(ElementClass::Unnamed)));
+                }
             }
-            // A receiver or an argument is read back by the callee with no origin (`this`, a parameter), so its array joins the
-            // unnamed class: the callee's reads of it see the stores this call's callee makes.
-            self.links.extend(receiver.link(ElementClass::Unnamed));
-            self.links.extend(arguments.iter().filter_map(|argument| argument.link(ElementClass::Unnamed)));
-            let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
             if matches!(invocation.receiver, crate::staged::Receiver::This { .. }) {
                 self.reads_this = true;
             }
@@ -218,7 +215,7 @@ impl Record {
         }
     }
 
-    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool) -> FunctionFlow {
+    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool, in_register: Box<[bool]>) -> FunctionFlow {
         // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
@@ -249,6 +246,7 @@ impl Record {
             guest_runs: self.guest_runs,
             quiet: self.quiet,
             arity,
+            in_register,
             returns_out,
             handed: self.handed,
             closures: self.closures,

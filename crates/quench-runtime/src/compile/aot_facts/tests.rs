@@ -370,3 +370,27 @@ fn a_computed_name_store_into_the_global_object_loses_a_layout_that_makes_an_arr
     let p = function_named(&program, "P") as u32;
     assert_eq!(facts.class_layout(p), None, "the global object is reachable, so Array may be rebound before the store");
 }
+
+#[test]
+fn an_array_a_resolved_callee_pushes_keeps_its_own_class() {
+    // `add` stores into its parameter, which a resolved call passes the caller's `xs`: the push reaches `xs`'s class, and
+    // the array does not join the unnamed class.
+    let program = program("(function () { function add(a) { a.push(1); } var xs = [0]; add(xs); return xs[0]; })();");
+    let facts = analyze(&program);
+    let grown = facts.cells.iter().any(|(key, cell)| matches!(key, FactKey::Elements(ElementClass::Allocation { .. })) && cell.elements.length == Length::Any);
+    assert!(grown, "the callee's push reaches the caller's array's class");
+    let unnamed = facts.cells.get(&FactKey::Elements(ElementClass::Unnamed)).is_none_or(|cell| cell.elements.length != Length::Any);
+    assert!(unnamed, "the array does not join the unnamed class");
+}
+
+#[test]
+fn a_pushed_literal_is_unfixed_and_an_untouched_one_keeps_its_length() {
+    let program = program("(function () { var a = [1]; a.push(2); var b = [3]; return b[0]; })();");
+    let facts = analyze(&program);
+    let lengths: Vec<Length> = facts.cells.iter()
+        .filter(|(key, _)| matches!(key, FactKey::Elements(ElementClass::Allocation { .. })))
+        .map(|(_, cell)| cell.elements.length)
+        .collect();
+    assert!(lengths.contains(&Length::Any), "the pushed literal's length is unknown");
+    assert!(lengths.iter().any(|length| matches!(length, Length::Fixed(_))), "the untouched literal keeps its fixed length");
+}
