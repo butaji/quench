@@ -69,7 +69,7 @@ pub(crate) use quench_runtime::vm::jit_backend::NativeTarget as ImageTarget;
 pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
     // Every function lowers as a VM that loads the image runs it (`lowered_function`), so the image's PCs are its.
     for index in 0..program.function_count() { program.lowered_function(index); }
-    let mut symbols = symbols::SymbolTable::new(program);
+    let mut symbols = symbols::SymbolTable::new(program, std::sync::Arc::new(quench_runtime::compile::call_plan::Selectors::of(program, facts)));
     let frozen = crate::compiled::ClosedFrozen::of(program);
     let graph = quench_runtime::compile::call_graph::CallGraph::of(program, facts);
     let mut sites = std::collections::BTreeMap::new();
@@ -141,7 +141,7 @@ fn regexps(program: &ResidualProgram) -> Vec<quench_runtime::vm::engine_types::A
 /// in place of stitching (`compiled::wasm_image::linked`); its base body is empty, every record generic.
 pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::ProgramId, program: &ResidualProgram,
     bindings: &[quench_runtime::WasmBindingType]) -> Result<AotImage, String> {
-    let mut symbols = symbols::SymbolTable::new(program);
+    let mut symbols = symbols::SymbolTable::new(program, Default::default());
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let wasm = {
         use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
