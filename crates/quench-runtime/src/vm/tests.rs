@@ -6261,11 +6261,11 @@ fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
                     let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
                     let roots = vm.heap.root_count_for_test();
                     let outcome = if from {
-                        vm.array_modern_native(
+                        vm.array_from_native(
                             &program,
-                            Native::TypedArrayFrom,
                             constructor,
                             &[source],
+                            super::array_modern::ArrayFromTarget::TypedArray,
                         )
                     } else {
                         vm.construct_typed_array_native(&program, &[source], kind, name)
@@ -6459,7 +6459,7 @@ fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
                 let comparator_atom = vm.intern_atom("comparator");
                 let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
                 let roots_before = vm.heap.root_count_for_test();
-                let outcome = vm.array_modern_native(&program, native, source, &[comparator]);
+                let outcome = vm.array_sort_native(&program, source, &[comparator], native == Native::ArraySort);
                 assert_eq!(outcome.is_err(), fails);
                 assert_eq!(vm.heap.root_count_for_test(), roots_before);
                 if native == Native::ArrayToSorted
