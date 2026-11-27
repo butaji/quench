@@ -99,7 +99,7 @@ pub(crate) fn note_intrinsic_change() {
 /// list of another length does not compile.
 macro_rules! natives {
     ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[repr(u16)]
         pub enum Native {
             $( $(#[$meta])* $variant, )*

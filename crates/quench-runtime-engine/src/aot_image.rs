@@ -36,7 +36,7 @@ pub(crate) mod file;
 #[path = "aot_image/page.rs"]
 mod page;
 #[path = "aot_image/demand.rs"]
-pub(crate) mod demand;
+pub mod demand;
 #[path = "aot_image/class_recipe.rs"]
 pub(crate) mod class_recipe;
 

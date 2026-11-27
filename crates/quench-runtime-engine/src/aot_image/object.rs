@@ -12,7 +12,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{AotFunction, AotImage, base::NO_ENTRY, file, symbols::{Symbol, SymbolTable}};
+use super::{AotFunction, AotImage, base::NO_ENTRY, demand::Demand, file, symbols::{Symbol, SymbolTable}};
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::native_object::{NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeDataAddress, NativeFunctionAddress, NativeJsModule, NativeReloc};
 use cranelift_codegen::{ir, isa::{CallConv, TargetIsa}};
@@ -48,7 +48,7 @@ struct Targets<'a> {
 }
 
 /// The object of `image`, its symbols named under `namespace`.
-pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarget) -> Result<NativeJsModule, String> {
+pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarget, demand: Demand) -> Result<NativeJsModule, String> {
     let isa = quench_runtime::vm::jit_backend::relocatable_isa(target)?;
     let isa = &*isa;
     let mut functions = vec![NativeFunction::Import {
@@ -66,7 +66,7 @@ pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarge
     let file = file::to_bytes(image);
     let table = entry_table(isa, namespace, (&bases, first), (file.len(), image.regexps.len()))?;
     let data = vec![image_data(namespace, file), table, call_data(namespace, image), helpers, regexps];
-    Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
+    Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD, demand))
 }
 
 /// The code the object places for an image's function: its base body. A lane body names VM
