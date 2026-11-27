@@ -21,7 +21,7 @@
 use super::plan::{CallEntry, CalleeKind, DirectPlan, Identity, NativeId, WordList};
 use super::region::Region;
 use super::property::get_field;
-use super::protocol::{bind_this_with, complete_call, fill_call, guard_callee, guard_callee_word, guard_received};
+use super::protocol::{bind_this_with, complete_call, fill_call, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
 #[cfg(not(stencil_build))]
@@ -145,6 +145,15 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// call record, which the loader binds); `None` where the plan's identity is the constant itself.
     #[inline(always)]
     fn call_identity(&mut self, _stage: &mut S) -> Option<S::Word> {
+        None
+    }
+
+    /// The bound target's admission word and the run's it must equal, where the frame reads them (a
+    /// lane's script call entry: generation, program and proof, `Admission`; an image's call record:
+    /// the cell's validity word and the one it was bound under), checked with the callee's identity in
+    /// one guard (`call::guard_bound_target`); `None` where the plan proved it.
+    #[inline(always)]
+    fn call_admission(&mut self, _stage: &mut S) -> Option<(S::Word, S::Word)> {
         None
     }
 
@@ -338,10 +347,11 @@ fn callee_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, fram
         (Callee::Method { atom, site: index }, Identity::Guarded(_)) => frame.call_method(stage, receiver?, atom, index, miss)?,
         (_, identity) => return Some(frame.call_identity(stage).unwrap_or_else(|| stage.constant(identity.word()))),
     };
-    match frame.call_identity(stage) {
-        Some(expected) => guard_callee_word(stage, held, expected, miss)?,
-        None => guard_callee(stage, held, plan.identity.word(), miss)?,
-    }
+    // One guard for the bound target: the callee is the one it holds, and its admission word is the
+    // run's (`CallFrame::call_admission`), folded into one branch (`call::guard_bound_target`).
+    let expected = frame.call_identity(stage).unwrap_or_else(|| stage.constant(plan.identity.word()));
+    let admission = frame.call_admission(stage);
+    super::call::guard_bound_target(stage, held, expected, admission, miss)?;
     Some(held)
 }
 

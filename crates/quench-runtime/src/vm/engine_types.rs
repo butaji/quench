@@ -1201,6 +1201,12 @@ pub struct ScriptCallTarget {
     pub forwarded_method: u16,
 }
 
+/// Where the call row's one guard (`staged::call::guard_bound_target`) reads a `ScriptCallTarget`: its
+/// callee word and its admission word, and the entry's size, for a tier that addresses the entries itself.
+pub const SCRIPT_TARGET_CALLEE_OFFSET: usize = core::mem::offset_of!(ScriptCallTarget, callee);
+pub const SCRIPT_TARGET_ADMISSION_OFFSET: usize = core::mem::offset_of!(ScriptCallTarget, admission);
+pub const SCRIPT_TARGET_BYTES: usize = core::mem::size_of::<ScriptCallTarget>();
+
 /// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
 /// line; its wrap clears every entry, so no stale one can match a reused number.
 pub type ScriptGeneration = u32;

@@ -238,8 +238,8 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
-        if target.admission != stack.admission
-            || (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
+        // The target's admission is checked with its callee in the row's one guard (`call_admission`).
+        if (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
             || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
             || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
         {
@@ -248,6 +248,17 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
         call.target.set(std::ptr::from_ref(target));
         direct_plan(call, target)
+    }
+
+    /// The admitted entry's admission word and the lane's (`call_entry`'s target), which the row's one guard
+    /// compares with the callee (`call::guard_bound_target`); a getter's entry is admitted by its own form.
+    #[inline(always)]
+    fn call_admission(&mut self, _stage: &mut Concrete) -> Option<(u64, u64)> {
+        let call = self.call.as_ref()?;
+        let target = call.target.get();
+        if target.is_null() || call.base != Value::UNDEFINED { return None; }
+        // SAFETY: `call_entry` admitted the entry of the running lane's cache, which nothing before the hand-off changes.
+        Some(unsafe { ((*target).admission.0, (*call.stack).admission.0) })
     }
 
     /// A getter's base (`Receiver::Base`).

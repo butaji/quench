@@ -245,3 +245,19 @@ mod tests {
         assert_eq!(admit(cell(7, 5, 8, 2, 0), 7, 7), None);
     }
 }
+
+/// The one guard of a call's bound target (a lane's script call entry, an image's call record):
+/// the callee word `held` is the target's `callee`, and, where the frame reads one, the target's
+/// admission word equals the run's (`admission`), as `((held - callee) | (admitted - run)) == 0`,
+/// one branch. A tier holding the callee as a fact folds the guard away.
+#[inline(always)]
+pub(crate) fn guard_bound_target<S: Stage>(stage: &mut S, held: S::Word, callee: S::Word,
+    admission: Option<(S::Word, S::Word)>, miss: S::Miss) -> Option<()> {
+    let mut difference = stage.sub(held, callee);
+    if let Some((admitted, run)) = admission {
+        let other = stage.sub(admitted, run);
+        difference = stage.or(difference, other);
+    }
+    let same = stage.eq_imm(difference, 0u32);
+    stage.guard(same, miss)
+}
