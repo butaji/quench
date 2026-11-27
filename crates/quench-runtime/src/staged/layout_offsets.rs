@@ -64,6 +64,8 @@ pub struct NativeObjectLayout {
 /// `records + id * OBJECT_RECORD_BYTES`, and `id` is the high half of the stub's class-cell header.
 pub const OBJECT_RECORD_BYTES: usize = 16;
 const _: () = assert!(size_of::<super::record_heads::ObjectHead>() <= OBJECT_RECORD_BYTES);
+/// Where an ordinary object's record keeps its stub granule (`OrdinaryRecord::stub`).
+pub const OBJECT_RECORD_STUB: usize = core::mem::offset_of!(super::record_heads::OrdinaryRecordHead, stub);
 
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: OBJECT_RECORD_CAPACITY,
@@ -321,7 +323,8 @@ pub(crate) const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
-/// The empty allocations' cursor and template words (`JsStepHead::object_cursor` and after).
+/// The empty allocations' cursor and template words (`JsStepHead::stub_cursor`, `object_cursor` and after).
+pub(crate) const JS_STEP_STUB_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stub_cursor);
 pub(crate) const JS_STEP_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_cursor);
 pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_layout);
 pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_payload);

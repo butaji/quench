@@ -4169,7 +4169,7 @@ impl JsStepDispatch {
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+                stub_cursor: 0, object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
                 armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
@@ -4236,6 +4236,7 @@ impl JsStepDispatch {
         // makes an object again, which captures the template anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_layout, self.empty_object_payload) = (0, 0);
+        self.stub_cursor = vm.heap_reads().native_stub_cursor();
         self.object_cursor = vm.heap_reads().native_object_cursor();
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
