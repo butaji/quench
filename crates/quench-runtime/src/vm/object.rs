@@ -1388,10 +1388,10 @@ impl Vm {
                     values.truncate(start);
                     object
                 }
-                crate::bytecode::LiteralStep::Json(start) => {
-                    let text = program.data_literal_text(start).ok_or_else(|| {
-                        JsError::validation("data literal is outside the program's source".into())
-                    })?;
+                crate::bytecode::LiteralStep::Json(constant) => {
+                    let Some(crate::bytecode::Constant::String(text)) = program.constants.get(constant as usize) else {
+                        return Err(JsError::validation("data literal is not a JSON text constant".into()));
+                    };
                     self.json_literal(text)?
                 }
             };

@@ -467,7 +467,6 @@ complexity crates/quench-runtime/src/bytecode.rs::Function::forwarded_this_metho
 complexity crates/quench-runtime/src/bytecode.rs::Function::kept_arguments 18
 complexity crates/quench-runtime/src/bytecode.rs::Function::plain_local_context_ineligibility 16
 complexity crates/quench-runtime/src/bytecode.rs::Function::super_forwarding 48
-complexity crates/quench-runtime/src/bytecode.rs::ProgramSource::validate_call_sites 13
 complexity crates/quench-runtime/src/bytecode/binary.rs::decode_program 37
 complexity crates/quench-runtime/src/bytecode/binary.rs::encode_program 43
 complexity crates/quench-runtime/src/bytecode/binary.rs::read_function 46

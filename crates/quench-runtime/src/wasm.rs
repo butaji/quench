@@ -782,7 +782,7 @@ impl Engine {
             declared_types: None,
             source_name: name.into(),
             source: None,
-            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: program_constants.into() },
+            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: program_constants.into(), ..Default::default() },
             functions: slots.into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),
