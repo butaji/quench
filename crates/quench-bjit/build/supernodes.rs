@@ -1,4 +1,4 @@
-//! The supernode list, generated from `supernodes.txt` (`stencils/supernodes.rs` includes the
+//! The supernode list, generated from `supernodes.txt` (`stencils/supernode_list.rs`, checked in, holds the
 //! generated `FAMILIES` and `SUPERNODES`). Each line is read and validated here: every opcode name
 //! a label or a family line names must be an opcode of the runtime's table (`quench_opcodes::ROWS`,
 //! the rows of `quench-opcodes/src/table.rs`), every pattern must be one the rules build, and its feeds,
@@ -24,7 +24,7 @@ pub struct Listed {
     pub families: Vec<(String, Family)>,
     /// The entries, in file order.
     pub supernodes: Vec<Supernode>,
-    /// The Rust text of `FAMILIES` and `SUPERNODES`, which `QUENCH_SUPERNODES` names.
+    /// The Rust text of `FAMILIES` and `SUPERNODES`, which `stencils/supernode_list.rs` must equal.
     pub text: String,
 }
 

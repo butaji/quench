@@ -147,9 +147,6 @@ impl Family {
         }
     }
 }
-/// Environment variable of the library (`stencils/supernodes.rs`) naming the generated list: `build/supernodes.rs`
-/// writes `FAMILIES` and `SUPERNODES` from `supernodes.txt` to `OUT_DIR/supernodes.rs`.
-const SUPERNODES_VAR: &str = "QUENCH_SUPERNODES";
 /// The prefix of an exit hole (`HOLE_EXIT<k>`) that precedes its index.
 const EXIT_PREFIX: usize = "EXIT".len();
 /// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
@@ -180,20 +177,15 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     }
 }
 
-/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script builds two packages:
-/// `quench-bjit` (the library's generated supernode list only) and `quench-stencils` (every stencil row and the
-/// table), so the runtime crates, which depend on `quench-bjit` alone, compile while the stencils build.
+/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script is `quench-stencils`' build
+/// script (`build = "../quench-bjit/build.rs"`), so the runtime crates, which depend on `quench-bjit` alone, compile
+/// while the stencils build.
 fn manifest_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let package = Path::new(env!("CARGO_MANIFEST_DIR"));
         if package.ends_with("quench-bjit") { package.to_path_buf() } else { package.join("../quench-bjit").canonicalize().expect("the quench-bjit crate") }
     })
-}
-
-/// Whether this run builds the stencil table (`quench-stencils`) rather than `quench-bjit`'s supernode list alone.
-fn builds_stencils() -> bool {
-    env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "quench-stencils")
 }
 
 fn main() {
@@ -210,10 +202,9 @@ fn main() {
     let listed = supernodes::load();
     let generated = out.join("supernodes.rs");
     fs::write(&generated, &listed.text).unwrap();
-    println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
-    if !builds_stencils() {
-        return;
-    }
+    let checked_in = manifest.join("stencils/supernode_list.rs");
+    assert!(fs::read_to_string(&checked_in).is_ok_and(|text| text == listed.text),
+        "supernodes.txt and stencils/supernode_list.rs differ: copy {} over it", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
         watch(&sources::watched(manifest));
