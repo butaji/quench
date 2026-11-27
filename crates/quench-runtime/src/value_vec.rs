@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::fact_stats::{self, FactKind};
 use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::typed_ir::Representation;
 use crate::typed_ir::SlotType;
@@ -595,7 +596,9 @@ impl ValueArena {
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
-        self.shape_readers.retire(shape);
+        if self.shape_readers.retire(shape) {
+            fact_stats::retired(FactKind::Shape, u64::from(shape));
+        }
         assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
@@ -635,7 +638,9 @@ impl ValueArena {
             self.shape_chains.resize(index + 1, 0);
             self.owner_types.resize(index + 1, SlotType::None);
         }
-        self.slot_readers.retire(shape);
+        if self.slot_readers.retire(shape) {
+            fact_stats::retired(FactKind::Slot, u64::from(shape));
+        }
         self.owner_types[index] = SlotType::None;
         self.owner_epoch += 1;
         // A parent's chain covers its length once registered; one that does not (a parent the
@@ -757,8 +762,8 @@ impl ValueArena {
     }
 
     #[inline(always)] pub(crate) fn note_shape_transition(&mut self, previous: u32, next: u32) {
-        if previous != next {
-            self.shape_readers.retire(previous);
+        if previous != next && self.shape_readers.retire(previous) {
+            fact_stats::retired(FactKind::Shape, u64::from(previous));
         }
     }
 
@@ -771,7 +776,9 @@ impl ValueArena {
     #[inline(never)]
     fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
         self.owner_epoch += 1;
-        self.slot_readers.retire(owner);
+        if self.slot_readers.retire(owner) {
+            fact_stats::retired(FactKind::Slot, u64::from(owner));
+        }
         let held = std::mem::replace(&mut self.owner_types[owner as usize], class);
         if self.float && (held == SlotType::Number) != (class == SlotType::Number) {
             self.widened.push(owner);
@@ -1665,8 +1672,12 @@ impl ValueArena {
                 .map(|values| values.capacity() * size_of::<(u32, Value)>())
                 .sum::<usize>()
             + self.free_dictionaries.capacity() * size_of::<u32>()
-            + self.slot_readers.memory_bytes()
-            + self.shape_readers.memory_bytes()
+            + self.dependency_bytes()
+    }
+
+    /// The bytes of the shape and slot readers: the facts this arena's values hold.
+    pub(crate) fn dependency_bytes(&self) -> usize {
+        self.slot_readers.memory_bytes() + self.shape_readers.memory_bytes()
     }
 
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
