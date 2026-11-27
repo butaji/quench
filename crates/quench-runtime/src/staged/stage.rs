@@ -190,9 +190,15 @@ pub trait Stage: crate::projection::Sealed {
     /// The binary64 is a proof (`staged::Float64`), so only a proved Number is boxed.
     fn box_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
     /// The `Value` bits of an `f64` word as a Number-typed slot or element holds it (decision 4.1): the
-    /// double's raw bits, integral values included (`Value::from_f64_raw`), NaN canonical. The binary64
-    /// is a proof (`staged::Float64`).
+    /// double's own bits, a plain move. Every stored double is already canonical (each float bit entry made
+    /// its NaN the canonical one, `canonical_float`), so a read does not canonicalize. The binary64 is a
+    /// proof (`staged::Float64`).
     fn box_raw_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
+    /// The word a float bit entry holds (decision 4.1, invariant I): a binary64 word read from memory
+    /// that may carry any bits (a typed array or DataView element, a Float32 widened, a binary16 decoded),
+    /// with every NaN made the canonical NaN (a signalling one too: arithmetic would quiet it into the tag
+    /// space); any other word is its own. Every such entry calls it, so no stored double is a tag.
+    fn canonical_float(&mut self, bits: Self::Word) -> Self::Word;
     /// The raw double word of the Number word `bits` (decision 4.1, R4-M1): an int32 converts to its
     /// binary64, any other Number is its own bits. Only a generic writer into a Number-class slot runs it.
     fn raw_number(&mut self, bits: Self::Word) -> Self::Word;

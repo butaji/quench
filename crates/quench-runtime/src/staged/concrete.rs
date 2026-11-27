@@ -156,8 +156,11 @@ impl Stage for Concrete {
     // place, as the row's other arms make their words.
     fn box_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::number_inline(f64::from_bits(number.word())).to_bits() }
     #[inline(always)]
-    // `Value::from_f64_raw`: the double's own bits, NaN canonical (decision 4.1).
-    fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::from_f64_raw(f64::from_bits(number.word())).to_bits() }
+    // A stored double's own bits (decision 4.1): no read-side canonicalization.
+    fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { number.word() }
+    #[inline(always)]
+    // A float bit entry: `Value::from_float_bits64`, every NaN made canonical (decision 4.1).
+    fn canonical_float(&mut self, bits: u64) -> u64 { crate::Value::from_float_bits64(bits).to_bits() }
     #[inline(always)]
     fn raw_number(&mut self, bits: u64) -> u64 { crate::Value::from_bits(bits).as_number().map_or(bits, f64::to_bits) }
     #[inline(always)]
