@@ -66,3 +66,34 @@ pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, fra
     frame.keep_layout(owner, (shape, shaped.fact()), layout);
     Some(read_slot_value(stage, layout, slot, rep))
 }
+
+/// Continues where `owner`'s object has the layout an ahead image names by `id`
+/// (`ic::SYMBOLIC_SHAPE`, `ImageWord::Layout`): a plain arena run of the construction's exact
+/// shape under its prototype. A proof the frame holds emits nothing; else the record's own word is
+/// compared once with the id the loader resolved, which proves the shape, the form and the link
+/// together, and the proof is kept under `id`.
+#[inline(always)]
+pub(in crate::staged) fn guard_receiver_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
+    at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<super::super::Shaped<S::Word>> {
+    if let Some((proven, fact)) = frame.proven_shape(stage, owner) && proven == id { return Some(super::super::Shaped::by_fact(at.record, fact)); }
+    let shaped = ic::guard_image_layout(stage, at, id & !ic::SYMBOLIC_SHAPE, miss)?;
+    frame.prove_shape(stage, owner, (id, shaped), direct);
+    Some(shaped)
+}
+
+/// The value at `slot` of `owner`'s object of the ahead image's layout `id` (`guard_receiver_layout`):
+/// through the run the frame kept, else the arena run the layout proves, which the frame keeps.
+#[inline(always)]
+pub(super) fn image_layout_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool),
+    at: &Reached<S::Word, S::Cond>, key: u32, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
+    let (owner, id) = (owned.0, key | ic::SYMBOLIC_SHAPE);
+    if frame.proven_shape(stage, owner).map(|(proven, _)| proven) == Some(id)
+        && let Some(layout) = frame.kept_layout(owner, id).filter(|layout| usize::from(slot) < layout.storage_len) {
+        return Some(read_slot_value(stage, layout, slot, rep));
+    }
+    let shaped = guard_receiver_layout(stage, frame, owned, at, id, miss)?;
+    let payload = stage.load_u64(super::super::region::Region::Payload.mutable(), at.record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
+    let layout = Layout { slots: super::super::object::Slots::Flat(super::super::object::arena_run(stage, payload)), storage_len };
+    frame.keep_layout(owner, (id, shaped.fact()), layout);
+    Some(read_slot_value(stage, layout, slot, rep))
+}

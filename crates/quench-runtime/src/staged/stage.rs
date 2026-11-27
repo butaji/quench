@@ -396,4 +396,8 @@ pub enum ImageWord {
     HolderLink,
     /// The value the holder's slot holds at link.
     HolderValue,
+    /// The layout id (`ProtoLink::arena_layout`) of the objects a construction makes, by a field
+    /// guard key: one compare of a record's own word with it proves the exact shape, the plain
+    /// arena run and the prototype link (`ic::IcOp::GuardFormed` of an `ic::SYMBOLIC_SHAPE` id).
+    Layout,
 }

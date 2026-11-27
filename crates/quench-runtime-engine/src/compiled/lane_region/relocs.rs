@@ -38,6 +38,9 @@ pub(crate) enum RelocKind {
     HolderLink,
     /// The value that holder's slot holds when the code links (`staged::ImageWord::HolderValue`).
     HolderValue,
+    /// The layout id of the objects a construction makes, by a field guard key
+    /// (`staged::ImageWord::Layout`): an id no record has where the guard does not resolve.
+    GuardLayout,
 }
 
 impl RelocKind {
@@ -46,6 +49,7 @@ impl RelocKind {
         match word {
             quench_runtime::staged::ImageWord::HolderLink => Self::HolderLink,
             quench_runtime::staged::ImageWord::HolderValue => Self::HolderValue,
+            quench_runtime::staged::ImageWord::Layout => Self::GuardLayout,
         }
     }
 }

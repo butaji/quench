@@ -307,6 +307,14 @@ impl NativeFieldLoad {
         self.shape & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0
     }
 
+    /// Whether this is an ahead image's guess of the own slot of a construction that keeps its values
+    /// in a plain arena run (more fields than inline storage holds): its guard compares the record's
+    /// layout id with the one the loader resolves (`ImageWord::Layout`, `symbols::guarded_layout`).
+    pub(crate) fn image_layout(self) -> bool {
+        self.guessed() && self.holder.is_none() && self.storage.is_none() && !self.raw_double
+            && self.storage_len > quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count
+    }
+
     /// Whether this is an ahead image's guess that reads its slot as one class, the class every store
     /// of the field writes (`aot_image::symbols::GuardAccess::read`), under the slot's dependency.
     pub(crate) fn closed_typed(self) -> bool {

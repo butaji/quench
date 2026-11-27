@@ -30,6 +30,10 @@ pub enum IcOp<'a> {
     /// site whose observed form is that run (`Form::Arena`) guards this way: a record in another form missed
     /// the run's form tests anyway (`object::plain_slots`), so only the tests go.
     GuardShapeFormed(u32),
+    /// The record's layout id is the one an ahead image's loader resolves for field guard key
+    /// `key` (`ImageWord::Layout`): a construction's exact shape, a plain arena run and its
+    /// prototype link, proved by one compare, so the `LoadSlot` after it reads the run untested.
+    GuardImageLayout(u32),
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
@@ -160,6 +164,10 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         }
         IcOp::GuardShapeFormed(shape) => {
             at.shaped = Some(guarded!(guard_shape_formed(stage, at, shape, miss)));
+            at.formed = Some(0);
+        }
+        IcOp::GuardImageLayout(key) => {
+            at.shaped = Some(guarded!(guard_image_layout(stage, at, key, miss)));
             at.formed = Some(0);
         }
         IcOp::GuardFormed { id, form } => {

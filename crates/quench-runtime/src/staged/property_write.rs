@@ -167,6 +167,15 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
     let named = frame.store_admission(stage, miss)?;
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
+        // An ahead image's layout arm: the record's own word proves the shape and the plain arena
+        // run, so the store writes the run with no form test.
+        [arm] if arm.layout => {
+            super::property::guard_receiver_layout(stage, frame, (owner, true), &at, arm.shape, miss)?;
+            if let Some(base) = kept_flat(frame, owner, *arm) {
+                return tagged_through_layout(stage, (base, object), *arm, value, named, miss);
+            }
+            arm_store_flat(stage, (at.record, object), *arm, value, named, miss)
+        }
         [arm] => {
             let shaped = guard_receiver_shape(stage, frame, (owner, true), &at, arm.shape, miss)?;
             if let (true, Some(number)) = (arm.raw_double, value.2) {
@@ -258,6 +267,25 @@ fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>
     stage.choose_leaving(same,
         #[inline(always)] |stage| arm_store(stage, (at.record, object), *arm, value, named, miss).map(|()| stage.constant(0)),
         #[inline(always)] |stage| arm_switch(stage, (at, object), rest, value, named, miss).map(|()| stage.constant(0))).map(drop)
+}
+
+/// `arm_store` of a tagged arm whose layout the caller proved a plain arena run (`StoreArm::layout`):
+/// the arm's type test, the method-cache admission and the gate, then the word into the run.
+#[inline(always)]
+fn arm_store_flat<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm: StoreArm,
+    (value, fact, _): Stored<S::Word>, named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
+    let value = value?;
+    let fact = match arm.holds {
+        Some(holds) => {
+            let held = slot_holds(stage, value, holds);
+            stage.guard(held, miss)?;
+            holds
+        }
+        None => fact,
+    };
+    admit_named(stage, named, (record, arm.slot), value, miss)?;
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    super::store::own_store_flat_proved(stage, record, id, arm.slot, (value, fact), miss)
 }
 
 /// The store through one arm into `record` (the record of `object`), whose shape the caller

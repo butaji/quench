@@ -172,6 +172,9 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
             // and the slot read tests none of it (`IcOp::GuardShapeFormed`).
             let guard = match formed_id(load) {
                 Some(id) => IcOp::GuardLayout(id),
+                // An ahead image's guess of a construction's arena run: the layout id its loader
+                // resolves proves the shape, the form and the link in one compare.
+                None if load.image_layout() => IcOp::GuardImageLayout(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
                 None if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
                 None => IcOp::GuardShape(load.shape),
             };

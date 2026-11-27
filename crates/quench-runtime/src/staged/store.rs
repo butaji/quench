@@ -59,6 +59,17 @@ pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_
     own_store_with(stage, (record, payload, slot), value, miss)
 }
 
+/// `own_store_proved` of a record whose layout the caller proved keeps its values in a plain arena
+/// run (`StoreArm::layout`): the gate, then the word into the run, with no form test.
+#[inline(always)]
+pub(crate) fn own_store_flat_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
+    value: (S::Word, Type), miss: S::Miss) -> Option<()> {
+    super::slot_store::held_gate_open(stage, record_id, value, miss)?;
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    store_flat(stage, payload, slot, (value.0, Representation::Tagged));
+    Some(())
+}
+
 /// The storage arms of an own store whose guards have passed: a packed slot takes the narrow
 /// form of `value`, a flat one any value.
 #[inline(always)]

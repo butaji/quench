@@ -12,6 +12,7 @@
 #[path = "property_slots.rs"]
 mod slots;
 use slots::{formed_slot, kept_slot, word_formed_slot};
+pub(super) use slots::guard_receiver_layout;
 use super::ic::{self, IcOp, Reached};
 use super::object::{object_record_at, Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
@@ -138,6 +139,9 @@ pub struct StoreArm {
     /// Whether the site left the record's storage form open (`Form::Either`): a raw store
     /// then tests the inline flag at run time, which a proven arena run skips.
     pub(crate) unformed: bool,
+    /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
+    /// its guard compares the record's own word, which proves the form, so the store tests none.
+    pub(crate) layout: bool,
 }
 
 impl StoreArm {
@@ -146,9 +150,9 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false, layout: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false, layout: false })
     }
 
     /// `StoreArm::of` for a slot whose arena words are raw doubles where `raw_double`: only a
@@ -160,6 +164,11 @@ impl StoreArm {
         if !raw_double { return Some(arm); }
         (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
             .then_some(Self { raw_double: true, unformed: form == super::Form::Either, ..arm })
+    }
+
+    /// This arm guarded by the layout id `shape` names (`layout`), where it stores a tagged word.
+    pub fn as_layout(self) -> Self {
+        Self { layout: !self.raw_double, ..self }
     }
 }
 
@@ -607,6 +616,9 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *rep, *storage_len), miss);
+    }
+    if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
+        return slots::image_layout_slot(stage, frame, (owner, direct), &at, *key, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest

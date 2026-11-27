@@ -998,6 +998,14 @@ impl ProtoLink {
         self.0
     }
 
+    /// The layout id of an ordinary object linked here whose exact shape is `shape` and whose
+    /// values are a plain arena run: no flag, no storage-form bit (`header_word`). It is the one
+    /// representation of the class a construction of more fields than inline storage holds
+    /// makes, which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
+    pub fn arena_layout(self, shape: u32) -> u32 {
+        super::layouts::intern(header_word(self.0, shape))
+    }
+
     /// The window link naming object record `id`; `None` past the object window, where the
     /// record's link (if it is a prototype) is an overflow link (`heap::prototypes`).
     #[inline(always)]
