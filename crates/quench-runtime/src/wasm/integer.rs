@@ -1,6 +1,8 @@
 //! Integer rules have one declaration; width-specific selectors and execution
 //! are macro-derived. Selector order is the residual ABI, not a Wasm opcode.
 
+// The runtime's list macros come from the crate root (`lib.rs`); a stencil build mounts its own.
+#[cfg(stencil_build)]
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;

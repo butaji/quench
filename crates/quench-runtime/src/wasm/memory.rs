@@ -361,10 +361,6 @@ pub(crate) fn checked_range(
     Ok(start..end)
 }
 
-#[macro_use]
-#[path = "../staged/wasm_lists.rs"]
-mod wasm_lists;
-
 /// The page size of a Wasm memory as a shift, from the one list the b-jit codes also read.
 macro_rules! page_bits_const {
     ($bits:literal) => {

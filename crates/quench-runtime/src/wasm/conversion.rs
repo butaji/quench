@@ -1,5 +1,7 @@
 //! Scalar conversions keep selector, input/output type, and semantics together.
 
+// The runtime's list macros come from the crate root (`lib.rs`); a stencil build mounts its own.
+#[cfg(stencil_build)]
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;
