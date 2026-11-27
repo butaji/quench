@@ -383,7 +383,7 @@ mod tests {
     /// The interpreter's reading of `run`: `None` for a miss.
     fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
         let mut stage = Concrete::new(heap.property_values_base());
-        let record = heap.object(object)? as *const Object as u64;
+        let record = heap.object_ref(object)?.record() as *const Object as u64;
         let records = heap.object_record_base()? as u64;
         run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
     }
@@ -402,7 +402,7 @@ mod tests {
         let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::number(7.0), 1);
         heap.property_add(object, Value::number(8.0), 2);
-        let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
+        let (own, holder) = (heap.object_ref(object).unwrap().exact_shape(), heap.object_ref(prototype).unwrap().exact_shape());
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
         let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
@@ -421,7 +421,7 @@ mod tests {
         let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
         let object = heap.alloc_object(Object::new(prototype));
-        let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
+        let (link, shape) = { let record = heap.object_ref(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
@@ -444,10 +444,10 @@ mod tests {
             }
             heap.object_record_mut(prototype).unwrap().mark_as_prototype();
             let object = heap.alloc_object(Object::new(prototype));
-            let holder = heap.object(prototype).unwrap();
+            let holder = heap.object_ref(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
-                let interpreter = unsafe { heap.holder_property_get_flat(holder, slot) };
+                let interpreter = unsafe { heap.holder_property_get_flat(holder.record(), slot) };
                 assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
                     "slot {slot} of {len}");
             }
