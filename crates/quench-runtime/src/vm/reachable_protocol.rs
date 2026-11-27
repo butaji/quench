@@ -205,6 +205,12 @@ impl Vm {
     pub(super) fn open_native(&mut self, closure: &mut Closure, effects: NativeEffects) {
         if effects.coerces_args {
             self.open_coercion(closure);
+            // The arguments of a coercing native are not typed here (`[f].join()` converts a function
+            // element), so a function may be coerced whatever the program's operands show.
+            if !closure.function_coercion {
+                closure.function_coercion = true;
+                requeue(closure);
+            }
         }
         if effects.iterates {
             self.open_iteration(closure);
