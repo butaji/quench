@@ -3273,7 +3273,7 @@ impl Lowering<'_, '_> {
         // Kept receivers (`virtual_objects`): a dead one is dropped, a read of a field it keeps
         // is its value, and an instruction that needs it as an object allocates it first.
         if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() {
-            state.virtuals.retain(|kept| self.is_live(pc, kept.register));
+            self.prune_virtuals(state, pc);
             state.virtual_arrays.retain(|kept| self.is_live(pc, kept.register));
             if crate::compiled::meaning_compiled::is_get_field(instruction) && let Some(falls) = self.virtual_field(state, pc, instruction) {
                 self.native += 1;
@@ -3283,6 +3283,11 @@ impl Lowering<'_, '_> {
             if let Some(falls) = self.virtual_array_access(state, pc, instruction) {
                 self.native += 1;
                 return falls;
+            }
+            // A copy of a kept receiver's alias adds the destination as an alias (`virtual_copy`).
+            if self.virtual_copy(state, instruction) {
+                self.native += 1;
+                return true;
             }
             if !state.virtuals.is_empty() || !state.virtual_arrays.is_empty() {
                 if self.keeps_virtuals(state, pc, instruction) { self.drop_overwritten_virtuals(state, instruction); } else { self.materialize_virtuals(state, pc); }
@@ -3778,6 +3783,8 @@ impl Lowering<'_, '_> {
     /// receiver recovery, a guard leaving at `exit`, but for a restartable numeric callee.
     fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
         let inlined = self.unit.frames[frame];
+        // A kept receiver is a direct object of its plan's class: the guard is answered without reading it.
+        if self.is_kept(state, inlined.receiver) { return; }
         let receiver = self.tagged(state, inlined.receiver);
         let word = self.builder.func.dfg.resolve_aliases(receiver);
         // A numeric body has no entry facts: only a dominating proof admits its receiver.
@@ -3851,7 +3858,8 @@ impl Lowering<'_, '_> {
             self.set_tagged(state, destination, undefined);
         }
         for (destination, source) in inlined.passed_registers(callee) {
-            self.copy(state, destination, source);
+            // A kept receiver passed as an argument becomes an alias of the callee's parameter (`alias_kept`).
+            if !self.alias_kept(state, destination, source) { self.copy(state, destination, source); }
         }
         true
     }

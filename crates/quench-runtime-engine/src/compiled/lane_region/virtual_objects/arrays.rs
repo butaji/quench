@@ -38,7 +38,6 @@ impl Lowering<'_, '_> {
         let result = instruction.result_register();
         let placeholder = self.raw_const(Lane::I64, 0);
         self.define(state, result, placeholder, RegisterFact::definition(Type::ANY, Representation::Tagged));
-        state.virtuals.retain(|other| other.register != result);
         state.virtual_arrays.retain(|other| other.register != result);
         state.virtual_arrays.push(VirtualArray { register: result, elements: kept });
         self.consume_definitions(pc, elements.len());
@@ -59,7 +58,7 @@ impl Lowering<'_, '_> {
 
     /// Whether `register` holds a kept receiver or a kept array.
     pub(crate) fn is_kept(&self, state: &State, register: Register) -> bool {
-        state.virtuals.iter().any(|kept| kept.register == register) || state.virtual_arrays.iter().any(|kept| kept.register == register)
+        state.virtuals.iter().any(|kept| kept.aliases.contains(&register)) || state.virtual_arrays.iter().any(|kept| kept.register == register)
     }
 
     /// Allocates each kept array live at `pc` from its element variables, into its register, and drops the rest:
@@ -81,7 +80,7 @@ impl Lowering<'_, '_> {
             let this = self.helper_call(LaneHelper::NewArray, &[payload, length, elements]);
             let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
             self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
-            self.bind_allocated(state, kept.register, this);
+            self.bind_allocated(state, &[kept.register], this);
         }
     }
 
