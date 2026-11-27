@@ -73,7 +73,7 @@ pub(super) fn stage_image(
     });
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\nconst REACHES_INTL: bool = {};\n",
-            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), reaches_intl(graph)).as_bytes()))
+            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), NODE_REACHES_INTL).as_bytes()))
         .map_err(|error| error.to_string())?;
     // An image that starts from a saved heap (a saved run's, or the startup snapshot's) starts
     // from the operations that heap holds, and the builders of the builtins its program may
@@ -474,17 +474,7 @@ fn runs_wasm(graph: &DependencyGraph) -> bool {
     makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
 }
 
-/// Whether the program can reach Intl or Temporal, so its image links that layer
-/// (`quench_runtime::install_intl`). Their entries are reached only through the `Intl` and
-/// `Temporal` globals and the locale-sensitive methods (`toLocale*` on every prototype and
-/// `localeCompare`), by name. Host code calls none of them. So the layer links where the program
-/// makes code (`makes_code`), names either global, spells a locale method's name anywhere in its
-/// source, reads a member by a non-literal key (`dynamic_reflective_sites`: the key may be any
-/// name), or writes an escape that could spell a name the text does not show; and wherever its
-/// support links the layer (`DependencyGraph::needs_intl`).
-fn reaches_intl(graph: &DependencyGraph) -> bool {
-    const SPELLINGS: &[&[u8]] = &[b"Intl", b"Temporal", b"toLocale", b"localeCompare", b"\\u", b"\\x"];
-    graph.needs_intl() || makes_code(graph) || !graph.dynamic_reflective_sites.is_empty()
-        || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
-        || graph.files.values().any(|file| SPELLINGS.iter().any(|spelling| file.bytes.windows(spelling.len()).any(|window| window == *spelling)))
-}
+/// A Node image links the Intl and Temporal layer. Its realm is not closed yet (the closed world of
+/// `ReachableRealm` is computed over the core realm), so the layer is kept for every Node image:
+/// the locale and Intl entries are reached through names and spellings the graph cannot bound.
+const NODE_REACHES_INTL: bool = true;

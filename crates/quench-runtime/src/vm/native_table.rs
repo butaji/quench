@@ -22,6 +22,16 @@ impl NativeTable {
         })
     }
 
+    /// The table of a closed world: the entries of `natives` alone, every other native `None`. The
+    /// image runs one table for its process, so the table is leaked once per image runtime.
+    pub(crate) fn closed(natives: &[Native]) -> &'static NativeTable {
+        let mut entries = [None; Native::COUNT as usize];
+        for &native in natives {
+            entries[native as usize] = Some(operations::native_entry(native));
+        }
+        Box::leak(Box::new(NativeTable { entries }))
+    }
+
     /// The entry that runs `native`, or `None` when the table holds none for it.
     #[inline(always)]
     pub(super) fn entry(&self, native: Native) -> Option<NativeFn> {

@@ -296,14 +296,15 @@ fn compile(options: Options) -> Result<(), String> {
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
-    if core {
-        report["builtin_families"] = json!(compiled.builtin_families().bits());
-    }
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let (inputs, demand) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let (inputs, demand, realm) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     report["closed_world"] = super::compiler::demand_report(&demand);
+    if let Some(realm) = &realm {
+        report["builtin_families"] = json!(realm.families.bits());
+        report["reachable_realm"] = super::compiler::realm_report(realm);
+    }
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs

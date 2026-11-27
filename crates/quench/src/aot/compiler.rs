@@ -1,7 +1,7 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime};
+use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
 use quench_layers::engine::{Demand, ExecutionTableSpec, emit_native_module_for, lower_native_js_module_for};
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
@@ -79,14 +79,9 @@ pub struct CompiledSources {
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
-    /// The intrinsic families the programs reach (a core image's realm table).
-    pub fn builtin_families(&self) -> quench_runtime::BuiltinFamilies {
-        super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
-    }
-
-    /// The link inputs of every program, and the demand their images reach in aggregate.
-    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand), String> {
-        let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
+    /// The link inputs of every program, the demand their images reach in aggregate, and (for a
+    /// core image) the closed world of the realm they reach (`ReachableRealm`).
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>), String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -133,20 +128,34 @@ impl CompiledSources {
             Ok((metadata, symbol))
         };
         let (entry, entry_symbol) = write(&self.entry, NATIVE_ENTRY_UNIT, None)?;
+        let mut units = Vec::with_capacity(self.units.len());
+        for (index, unit) in self.units.iter().enumerate() {
+            units.push(write(&unit.program, &format!("unit_{index}"), Some(&namespace))?);
+        }
+        // The closed world: what the programs reach of the realm, from the demand their lowering proved.
+        let realm = match host {
+            ImageHost::Core => {
+                let programs: Vec<&ResidualProgram> = std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)).collect();
+                let realm = quench_runtime::reachable_realm(&programs, RealmRoots { globals: &demand.globals, natives: &demand.natives }).map_err(|error| error.to_string())?;
+                demand.needs_source_text = realm.needs_source_text;
+                demand.needs_stack_positions = realm.needs_stack_positions;
+                Some(realm)
+            }
+            ImageHost::Node => None,
+        };
         let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
         writeln!(catalog, "{}::linked_source_pool!(quench_native_source_text, {:?});", host.crate_path(), pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
-        if host == ImageHost::Core { write_builtin_table(&mut catalog, families)?; }
+        if let Some(realm) = &realm { write_builtin_table(&mut catalog, realm)?; }
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
         };
         writeln!(catalog, "{sources_macro}\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
-        for (index, unit) in self.units.iter().enumerate() {
-            let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"), Some(&namespace))?;
+        for (index, (unit, (metadata, symbol))) in self.units.iter().zip(&units).enumerate() {
             let parts = unit.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
             let source = unit.program.source_text().map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, [{parts}], source {source}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name())
@@ -182,8 +191,23 @@ impl CompiledSources {
                 .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
             ImageHost::Core => std::collections::BTreeSet::new(),
         };
-        Ok((NativeImageInputs::new(directory, objects, host_exports), demand))
+        Ok((NativeImageInputs::new(directory, objects, host_exports), demand, realm))
     }
+}
+
+/// The compile report's view of a core image's closed world of the realm (`ReachableRealm`).
+pub fn realm_report(realm: &ReachableRealm) -> Value {
+    json!({
+        "natives": realm.natives.len(),
+        "families": realm.families.bits(),
+        "objects": realm.objects,
+        "makes_code": realm.makes_code,
+        "needs_source_text": realm.needs_source_text,
+        "needs_stack_positions": realm.needs_stack_positions,
+        "needs_regexp_compiler": realm.needs_regexp_compiler,
+        "needs_intl": realm.needs_intl,
+        "needs_tz": realm.needs_tz,
+    })
 }
 
 /// The compile report's view of an image's demand (`Demand`): what the closed world reaches, and the
@@ -210,13 +234,16 @@ pub fn demand_report(demand: &Demand) -> Value {
 }
 
 /// The realm's intrinsic table: a family the program reaches names its installer, and one
-/// it does not keeps its realm objects and its installer out of the image.
-fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::BuiltinFamilies) -> Result<(), String> {
+/// it does not keeps its realm objects and its installer out of the image. The natives table
+/// keeps exactly the natives the closed world reaches; every other entry is `None`.
+fn write_builtin_table(catalog: &mut fs::File, realm: &ReachableRealm) -> Result<(), String> {
     use quench_runtime::BuiltinFamilies as F;
+    let families = realm.families;
     let installer = |family: F, name: &str| {
         if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }
     };
-    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
+    let natives = realm.natives.iter().map(|native| format!("quench_runtime::tier_surface::Native::{native:?}")).collect::<Vec<_>>().join(", ");
+    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), natives: Some(&[{natives}]), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
         families.bits(),
         installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
         installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),

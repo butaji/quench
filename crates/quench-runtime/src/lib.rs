@@ -143,6 +143,7 @@ pub mod value_vec;
 pub mod vm;
 pub use vm::builtin_table::{BuiltinFamilies, BuiltinTable};
 pub use vm::execution_table::ExecutionTable;
+pub use vm::reachable_realm::{reachable_realm, ReachableRealm, RealmRoots};
 #[doc(hidden)]
 pub mod wasm;
 pub use wasm::{
