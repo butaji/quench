@@ -88,9 +88,10 @@ fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
     out.u8(binding.declaration as u8);
 }
 
-pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::Path) -> Result<(), String> {
+pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::Path, retention: super::ImageRetention) -> Result<(), String> {
     crate::vm::freeze_call_sites(program);
-    let (bytes, _) = encode_program(program, AtomEncoding::Program, SourceEncoding::Included);
+    let source = retained_source(SourceEncoding::Included, retention);
+    let (bytes, _) = encode_program(program, AtomEncoding::Program, source, retention.stack_positions);
     std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
@@ -99,7 +100,7 @@ pub(super) fn write_program(program: &super::ResidualProgram, path: &std::path::
 /// The source text is left out: whoever decodes it supplies the same text. Its reader, this
 /// build, parses call sites for a diagnostic alone (each entry's had cost mandreel 14 MB).
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
-    let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External);
+    let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External, true);
     (sealed(bytes), order)
 }
 
@@ -107,7 +108,7 @@ pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u
 /// under the program's own atom ids, which seed the VM's, followed by its checksum.
 pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
     crate::vm::freeze_call_sites(program);
-    sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included).0)
+    sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included, true).0)
 }
 
 /// `bytes`, an encoding, followed by the checksum of its body: everything but the region of
@@ -203,39 +204,34 @@ fn compact_checksum(bytes: &[u8]) -> u64 {
 enum SourceEncoding {
     Included,
     External,
+    /// No text: the program's image keeps none (`ImageRetention::source_text` is false).
+    Omitted,
 }
 
-fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_encoding: SourceEncoding) -> (Vec<u8>, Vec<u32>) {
+/// `kept`, unless the image keeps no source text.
+fn retained_source(kept: SourceEncoding, retention: super::ImageRetention) -> SourceEncoding {
+    if retention.source_text { kept } else { SourceEncoding::Omitted }
+}
+
+fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_encoding: SourceEncoding, stack_positions: bool) -> (Vec<u8>, Vec<u32>) {
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
-    match &program.source {
+    let source = program.source.as_ref().filter(|_| !matches!(source_encoding, SourceEncoding::Omitted));
+    match source {
         Some(_) if matches!(source_encoding, SourceEncoding::External) => out.u8(OPTIONAL_STRING_ELIDED),
-        source => write_optional_string(&mut out, source.as_ref().map(|source| source.text.as_ref())),
+        source => write_optional_string(&mut out, source.map(|source| source.text.as_ref())),
     }
-    if let Some(source) = &program.source {
+    if let Some(source) = source {
         out.bool(source.typescript);
         out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
-        out.bool(source.call_sites.get().is_some());
-        if let Some(sites) = source.call_sites.get() {
-            out.u32(sites.len() as u32);
-            for site in sites.iter() {
-                out.u32(site.offset);
-                out.bool(site.construct);
-                out.string(&site.callee);
-                out.bool(site.expression.is_some());
-                if let Some(span) = site.expression {
-                    out.u32(span.start);
-                    out.u32(span.end);
-                }
-            }
-        }
     }
+    write_call_sites(&mut out, &program.record, source.is_some());
     write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
     for import in &program.module_imports {
@@ -253,6 +249,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     write_declared_types(&mut out, program.declared_types.as_deref());
     let mut header = out;
     let mut out = BinaryWriter::with_atoms(atoms);
+    out.stack_positions = stack_positions;
     out.bytes.reserve(program.functions.len() * ESTIMATED_RECORD_BYTES);
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
@@ -415,7 +412,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
                 LiteralStep::Array(count) => (LITERAL_STEP_ARRAY, count),
                 LiteralStep::Object(site) => (LITERAL_STEP_OBJECT, site),
                 LiteralStep::Int(value) => (LITERAL_STEP_INT, value.cast_unsigned()),
-                LiteralStep::Json(start) => (LITERAL_STEP_JSON, start),
+                LiteralStep::Json(constant) => (LITERAL_STEP_JSON, constant),
             };
             out.u8(tag);
             out.u32(operand);
@@ -511,13 +508,14 @@ pub(super) fn decode_compact_program(
 
 pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
     crate::vm::freeze_call_sites(program);
-    sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
+    sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included, true).0)
 }
 
 /// A snapshot's encoding of `program` (`crate::snapshot`): the program's own atom ids, which
 /// its VM's restored atom table keeps, and no source text, which the snapshot writes apart.
-pub(super) fn encode_snapshot_program(program: &super::ResidualProgram) -> Vec<u8> {
-    sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::External).0)
+pub(super) fn encode_snapshot_program(program: &super::ResidualProgram, retention: super::ImageRetention) -> Vec<u8> {
+    let source = retained_source(SourceEncoding::External, retention);
+    sealed(encode_program(program, AtomEncoding::Shared, source, retention.stack_positions).0)
 }
 
 /// Checks that `bytes` are an `encode_snapshot_program` encoding whose checksum holds, as
@@ -557,6 +555,59 @@ enum ReadAtoms<'a> {
     Interned(&'a mut dyn FnMut(&str) -> u32),
     /// Only the length of the table the program shares with its reader, written here.
     Shared(&'a mut usize),
+}
+
+/// The frozen call-site descriptions and call offsets (`write_call_sites`).
+fn read_call_sites(input: &mut BinaryReader<'_>) -> Result<(std::cell::OnceCell<std::sync::Arc<[super::CallSiteDescription]>>, std::cell::OnceCell<Box<[super::CallPc]>>), String> {
+    let call_sites = if input.bool()? {
+        let sites = input.list(|input| Ok(super::CallSiteDescription {
+            offset: input.u32()?,
+            construct: input.bool()?,
+            callee: input.string()?,
+            expression: if input.bool()? {
+                Some(super::SourceSpan { start: input.u32()?, end: input.u32()? })
+            } else { None },
+        }))?;
+        std::cell::OnceCell::from(std::sync::Arc::from(sites))
+    } else {
+        Default::default()
+    };
+    let call_pcs = if input.bool()? {
+        let pcs = input.list(|input| Ok(super::CallPc { function: input.u32()?, pc: input.u32()?, offset: input.u32()? }))?;
+        std::cell::OnceCell::from(pcs.into_boxed_slice())
+    } else {
+        Default::default()
+    };
+    Ok((call_sites, call_pcs))
+}
+
+/// Writes the frozen call-site descriptions and call offsets of `record`. An expression names a
+/// span of the source text, so it is written only with the text (`keep_expressions`).
+fn write_call_sites(out: &mut BinaryWriter, record: &super::ProgramRecord, keep_expressions: bool) {
+    out.bool(record.call_sites.get().is_some());
+    if let Some(sites) = record.call_sites.get() {
+        out.u32(sites.len() as u32);
+        for site in sites.iter() {
+            out.u32(site.offset);
+            out.bool(site.construct);
+            out.string(&site.callee);
+            let expression = site.expression.filter(|_| keep_expressions);
+            out.bool(expression.is_some());
+            if let Some(span) = expression {
+                out.u32(span.start);
+                out.u32(span.end);
+            }
+        }
+    }
+    out.bool(record.call_pcs.get().is_some());
+    if let Some(pcs) = record.call_pcs.get() {
+        out.u32(pcs.len() as u32);
+        for call in pcs.iter() {
+            out.u32(call.function);
+            out.u32(call.pc);
+            out.u32(call.offset);
+        }
+    }
 }
 
 /// Decodes the encoding in the first `length` bytes of `encoded`, which a program with
@@ -600,24 +651,11 @@ fn decode_program(
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
-            call_sites: if input.bool()? {
-                std::cell::OnceCell::from(std::sync::Arc::from(input.list(|input| {
-                    Ok(super::CallSiteDescription {
-                        offset: input.u32()?,
-                        construct: input.bool()?,
-                        callee: input.string()?,
-                        expression: if input.bool()? {
-                            Some(super::SourceSpan { start: input.u32()?, end: input.u32()? })
-                        } else { None },
-                    })
-                })?))
-            } else {
-                Default::default()
-            },
             layout: Default::default(),
         }),
         None => None,
     };
+    let (call_sites, call_pcs) = read_call_sites(&mut input)?;
     let module_requests = read_module_requests(&mut input)?;
     let module_imports = input.list(|input| {
         let ModuleRequest { source, phase, module_type } = read_module_request(input)?;
@@ -831,7 +869,7 @@ fn decode_program(
         declared_types,
         source_name,
         source,
-        record: super::ProgramRecord { atoms, constants: constants.into() },
+        record: super::ProgramRecord { atoms, constants: constants.into(), call_sites, call_pcs },
         functions: functions.into(),
         cache_sites: cache_sites.into(),
         method_sites: method_sites.into(),
@@ -1592,6 +1630,9 @@ pub(super) struct BinaryWriter {
     /// An unlowered record (`encode_program`): without the memos a lowered one carries, which
     /// its first read derives after lowering it.
     unlowered: bool,
+    /// Whether function records keep their pc-to-position tables (`ImageRetention`); without
+    /// them a record's table is written empty, which reads as no positions.
+    stack_positions: bool,
 }
 
 /// The function a program runs first, whose record a decoder always decodes.
@@ -1616,7 +1657,7 @@ struct CompactAtoms {
 #[rustfmt::skip]
 impl BinaryWriter {
     pub(super) fn new() -> Self { Self::with_atoms(AtomEncoding::Program) }
-    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms, packed: false, unlowered: false } }
+    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms, packed: false, unlowered: false, stack_positions: true } }
     fn leb(&mut self, mut value: u32) { while value >= 0x80 { self.bytes.push(value as u8 | 0x80); value >>= 7; } self.bytes.push(value as u8); }
     fn atom(&mut self, atom: u32) {
         let encoded = self.encoded_atom(atom);
@@ -1668,7 +1709,8 @@ impl BinaryWriter {
     /// A source position table as it is coded in memory, and its final entry: decoding copies
     /// the bytes instead of coding each entry again (`BinaryReader::source_positions`).
     fn source_positions(&mut self, table: &super::SourcePositions) {
-        let (bytes, last) = table.encoded();
+        let empty = super::SourcePositions::default();
+        let (bytes, last) = if self.stack_positions { table.encoded() } else { empty.encoded() };
         self.u32(bytes.len() as u32);
         self.bytes.extend_from_slice(bytes);
         match last {

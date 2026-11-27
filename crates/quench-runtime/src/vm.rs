@@ -155,7 +155,7 @@ pub mod builtins;
 pub mod native_rows;
 pub mod call_arguments;
 pub mod call_printer;
-pub(crate) use call_printer::freeze_call_sites;
+pub(crate) use call_printer::{freeze_call_pcs, freeze_call_sites};
 pub mod call_out;
 pub mod call_out_calls;
 pub mod call_out_literals;

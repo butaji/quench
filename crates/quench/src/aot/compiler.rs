@@ -1,7 +1,7 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
+use quench_runtime::{Engine, ImageRetention, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
 use quench_layers::engine::{Demand, emit_native_module_for, lower_native_js_module_for};
 use super::core_rest::{write_closed_world, ClosedTables};
 use serde_json::{json, Value};
@@ -77,6 +77,11 @@ pub struct CompiledSources {
     pub assets: ModuleAssets,
 }
 
+/// The source text an image of `retention` keeps of `program`.
+fn retained_text(program: &ResidualProgram, retention: ImageRetention) -> Option<&str> {
+    program.source_text().filter(|_| retention.source_text)
+}
+
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
@@ -85,10 +90,52 @@ impl CompiledSources {
     pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>, Option<ClosedTables>), String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
+        let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
+        let mut required_exports = BTreeSet::new();
+        let mut objects = Vec::new();
+        let mut demand = Demand::default();
+        // Every program is lowered before any metadata is written: its lowering proves the demand
+        // the realm, and so what each image keeps, derive from.
+        let programs: Vec<(String, &ResidualProgram)> = std::iter::once((NATIVE_ENTRY_UNIT.to_owned(), &self.entry))
+            .chain(self.units.iter().enumerate().map(|(index, unit)| (format!("unit_{index}"), &unit.program)))
+            .collect();
+        let mut lowered = Vec::with_capacity(programs.len());
+        for (name, program) in &programs {
+            program.freeze_native_diagnostics();
+            let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
+            lowered.push(module.entry_table_symbol().to_owned());
+            demand.absorb(&module.demand);
+            for function in &module.functions {
+                if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
+                    required_exports.insert(name.clone());
+                }
+            }
+            let object = emit_native_module_for(name, module.functions, module.data, target)?;
+            let object_path = directory.join(format!("{name}.o"));
+            fs::write(&object_path, object).map_err(|error| error.to_string())?;
+            objects.push(object_path);
+        }
+        // The closed world: what the programs reach of the realm, from the demand their lowering proved.
+        let realm = match host {
+            ImageHost::Core => {
+                let residual: Vec<&ResidualProgram> = programs.iter().map(|(_, program)| *program).collect();
+                let realm = quench_runtime::reachable_realm(&residual, RealmRoots { globals: &demand.globals, natives: &demand.natives }).map_err(|error| error.to_string())?;
+                demand.needs_source_text = realm.needs_source_text;
+                demand.needs_stack_positions = realm.needs_stack_positions;
+                Some(realm)
+            }
+            ImageHost::Node => None,
+        };
+        // What the images keep of each program. The Node host keeps all of it.
+        let retention = realm.as_ref().map_or(ImageRetention::ALL, |realm| ImageRetention {
+            // A position is a line and column only through the text it indexes.
+            source_text: realm.needs_source_text || realm.needs_stack_positions,
+            stack_positions: realm.needs_stack_positions,
+        });
         let mut texts = Vec::new();
         for unit in &self.units {
             texts.extend(unit.key.parts());
-            texts.extend(unit.program.source_text());
+            texts.extend(retained_text(&unit.program, retention));
         }
         for error in &self.syntax_errors {
             texts.extend(error.key.parts());
@@ -103,47 +150,16 @@ impl CompiledSources {
         let pool = SourcePool::new(texts);
         let pool_path = directory.join("source_pool.utf8");
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
-        let mut required_exports = BTreeSet::new();
-        let mut objects = Vec::new();
-        let mut demand = Demand::default();
-        let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
-        let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
-            program.freeze_native_diagnostics();
-            let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
-            let symbol = module.entry_table_symbol().to_owned();
-            demand.absorb(&module.demand);
-            for function in &module.functions {
-                if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
-                    required_exports.insert(name.clone());
-                }
-            }
-            let object = emit_native_module_for(name, module.functions, module.data, target)?;
-            let object_path = directory.join(format!("{name}.o"));
-            fs::write(&object_path, object).map_err(|error| error.to_string())?;
-            objects.push(object_path);
-            let metadata = directory.join(format!("{name}.bin"));
-            match namespace {
-                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(program)?).map_err(|error| error.to_string())?,
-                None => program.write_binary(&metadata)?,
-            }
-            Ok((metadata, symbol))
-        };
-        let (entry, entry_symbol) = write(&self.entry, NATIVE_ENTRY_UNIT, None)?;
+        let entry = directory.join(format!("{NATIVE_ENTRY_UNIT}.bin"));
+        self.entry.write_binary_retaining(&entry, retention)?;
         let mut units = Vec::with_capacity(self.units.len());
         for (index, unit) in self.units.iter().enumerate() {
-            units.push(write(&unit.program, &format!("unit_{index}"), Some(&namespace))?);
+            let metadata = directory.join(format!("unit_{index}.bin"));
+            fs::write(&metadata, namespace.encode_with_external_source(&unit.program, retention)?).map_err(|error| error.to_string())?;
+            units.push(metadata);
         }
-        // The closed world: what the programs reach of the realm, from the demand their lowering proved.
-        let realm = match host {
-            ImageHost::Core => {
-                let programs: Vec<&ResidualProgram> = std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)).collect();
-                let realm = quench_runtime::reachable_realm(&programs, RealmRoots { globals: &demand.globals, natives: &demand.natives }).map_err(|error| error.to_string())?;
-                demand.needs_source_text = realm.needs_source_text;
-                demand.needs_stack_positions = realm.needs_stack_positions;
-                Some(realm)
-            }
-            ImageHost::Node => None,
-        };
+        let Some((entry_symbol, unit_symbols)) = lowered.split_first() else { unreachable!("the entry is always lowered") };
+        let units: Vec<(PathBuf, String)> = units.into_iter().zip(unit_symbols.iter().cloned()).collect();
         let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
         writeln!(catalog, "{}::linked_source_pool!(quench_native_source_text, {:?});", host.crate_path(), pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
@@ -168,7 +184,7 @@ impl CompiledSources {
             .map_err(|error| error.to_string())?;
         for (index, (unit, (metadata, symbol))) in self.units.iter().zip(&units).enumerate() {
             let parts = unit.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
-            let source = unit.program.source_text().map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
+            let source = retained_text(&unit.program, retention).map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, [{parts}], source {source}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name())
                 .map_err(|error| error.to_string())?;
         }
