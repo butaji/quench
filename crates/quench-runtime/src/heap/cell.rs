@@ -998,12 +998,12 @@ impl ProtoLink {
         self.0
     }
 
-    /// The class id (layout id) of an ordinary object linked here, of exact shape `shape` and
-    /// capacity class `capacity` (`heap::layouts::intern_class`), with no flags. Capacity 0 is the
-    /// record-table class: the one a construction of more fields than inline storage held, which an
-    /// ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
-    pub fn class(self, shape: u32, capacity: u32) -> u32 {
-        super::layouts::intern_class(shape, self, 0, capacity)
+    /// The class id (layout id) of an ordinary object linked here, of exact shape `shape`, with no
+    /// flags (`heap::layouts::intern_class`). The one a construction of more fields than inline
+    /// storage held makes, which an ahead image's guard names as a link-time immediate
+    /// (`Symbol::GuardLayout`).
+    pub fn class(self, shape: u32) -> u32 {
+        super::layouts::intern_class(shape, self, 0)
     }
 
     /// The window link naming object record `id`; `None` past the object window, where the

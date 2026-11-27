@@ -17,10 +17,8 @@
 //! common case.
 
 use super::cell::{ProtoLink, header_word};
-use crate::staged::object_encoding::{
-    CAPACITY_CLASSES, CAPACITY_MASK, CAPACITY_SHIFT, DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS,
-};
-use crate::value_vec::{CONSTANT_FORM, SHAPE_LIMIT, SHAPE_MASK, STORAGE_FORM};
+use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS};
+use crate::value_vec::{CONSTANT_FORM, SHAPE_LIMIT, SHAPE_MASK};
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
 #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
@@ -166,26 +164,22 @@ pub(crate) fn intern(word: u64) -> u32 {
     intern_slow(word, slot)
 }
 
-/// The class word's flag bits beyond shape, link and capacity, in header-word positions: the
+/// The class word's flag bits beyond shape and link, in header-word positions: the
 /// auxiliary flags (constant mark, exotic access, dictionary storage) in the low half, the meta
 /// flags (array, non-extensible, frozen) in the high half. `intern_class` takes them as `flags`.
 pub(crate) const CLASS_FLAG_MASK: u64 = (CONSTANT_FORM | EXOTIC_ACCESS | DICTIONARY_STORAGE) as u64
     | ((OBJECT_ARRAY | NON_EXTENSIBLE | FROZEN) as u64) << u32::BITS;
 
-/// The class id of an ordinary object with prototype link `link`, exact shape `shape`, `flags`
-/// (`CLASS_FLAG_MASK` bits) and capacity class `capacity` (`0..CAPACITY_CLASSES`): the interned
-/// header word, so equal classes share one id as every header does.
-///
-/// Capacity 0 is a record-table class, the only kind interned before cell classes, and its word
-/// has no form bit. Capacity 1 to 5 sets the bit positions `NARROW_FORM`, `EXTRAS_FORM` and
-/// `INLINE_FORM` (`CAPACITY_SHIFT`); see `class_capacity` for the overlap until R4-E retires them.
-pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64, capacity: u32) -> u32 {
+/// The class id of an ordinary object with prototype link `link`, exact shape `shape` and `flags`
+/// (`CLASS_FLAG_MASK` bits): the interned header word, so equal classes share one id as every
+/// header does. The capacity of a cell is its region's (`class_space::region_capacity`), not a
+/// bit of the class word, so the word has no capacity field.
+pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
     assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
-    assert!((capacity as usize) < CAPACITY_CLASSES, "capacity class out of range");
     assert!(flags & !CLASS_FLAG_MASK == 0, "class flags outside the class word");
     assert!(link.bits() & !PROTO_INDEX_BITS == 0, "prototype link outside its field");
     let meta = link.bits() | (flags >> u32::BITS) as u32;
-    let auxiliary = shape | flags as u32 | (capacity << CAPACITY_SHIFT);
+    let auxiliary = shape | flags as u32;
     intern(header_word(meta, auxiliary))
 }
 
@@ -205,24 +199,6 @@ pub(crate) fn class_link(id: u32) -> ProtoLink {
 #[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
 pub(crate) fn class_flags(id: u32) -> u64 {
     word(id) & CLASS_FLAG_MASK
-}
-
-/// The raw capacity field of class `id`: bits `CAPACITY_SHIFT..+3` of its auxiliary word, whatever
-/// else sets them. Only `intern_class` writes it for a capacity class; a legacy form bit reads here too.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
-pub(crate) fn class_capacity_bits(id: u32) -> u32 {
-    (auxiliary(id) & CAPACITY_MASK) >> CAPACITY_SHIFT
-}
-
-/// The capacity class of class `id` (`0..CAPACITY_CLASSES`): its cell holds `2^k - 1` fields.
-///
-/// R4-E: until the storage forms retire, the capacity field overlaps `NARROW_FORM` (bit 27),
-/// `EXTRAS_FORM` (bit 28) and `INLINE_FORM` (bit 29). Every class with a form bit set reads as
-/// capacity 0, the record-table class, so every legacy class does. The field is never nonzero
-/// without a form bit, so this reads 0 for every class until R4-E makes the field the capacity.
-#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
-pub(crate) fn class_capacity(id: u32) -> u32 {
-    if auxiliary(id) & STORAGE_FORM != 0 { 0 } else { class_capacity_bits(id) }
 }
 
 #[cold]
@@ -261,47 +237,22 @@ mod tests {
     }
 
     #[test]
-    fn class_round_trips_shape_link_and_flags_at_every_capacity() {
+    fn class_round_trips_shape_link_and_flags() {
         let link = ProtoLink::from_bits(0x0123_4567 & PROTO_INDEX_BITS);
         let flags = CONSTANT_FORM as u64 | ((FROZEN | OBJECT_ARRAY) as u64) << u32::BITS;
-        for capacity in 0..CAPACITY_CLASSES as u32 {
-            let id = intern_class(1234, link, flags, capacity);
-            assert_eq!(class_shape(id), 1234, "capacity {capacity}");
-            assert_eq!(class_link(id), link, "capacity {capacity}");
-            assert_eq!(class_flags(id), flags, "capacity {capacity}");
-            assert_eq!(class_capacity_bits(id), capacity, "capacity {capacity}");
-            assert_eq!(intern_class(1234, link, flags, capacity), id, "interning is stable at capacity {capacity}");
-        }
+        let id = intern_class(1234, link, flags);
+        assert_eq!(class_shape(id), 1234);
+        assert_eq!(class_link(id), link);
+        assert_eq!(class_flags(id), flags);
+        assert_eq!(intern_class(1234, link, flags), id, "interning is stable");
+        assert_ne!(intern_class(1235, link, flags), id, "a shape is part of the class");
     }
 
     #[test]
-    fn capacity_zero_is_the_record_table_class_of_a_plain_link() {
-        // Capacity 0 with no flags is the plain header word of the link and shape.
-        let id = ProtoLink::NULL.class(5, 0);
+    fn plain_class_is_the_plain_header_word_of_link_and_shape() {
+        let id = ProtoLink::NULL.class(5);
         assert_eq!(word(id), header_word(ProtoLink::NULL.bits(), 5));
-        assert_eq!(class_capacity(id), 0);
         assert_eq!(class_flags(id), 0);
         assert_eq!(class_shape(id), 5);
-    }
-
-    #[test]
-    fn distinct_capacities_are_distinct_classes() {
-        let ids: Vec<u32> = (0..CAPACITY_CLASSES as u32).map(|capacity| intern_class(9, ProtoLink::NULL, 0, capacity)).collect();
-        for (i, a) in ids.iter().enumerate() {
-            for b in &ids[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
-    }
-
-    #[test]
-    fn capacity_reads_as_zero_until_the_form_bits_retire() {
-        // R4-E: capacity 1 to 5 set the form bit positions, so the gated accessor reads 0 (see
-        // `class_capacity`); the raw field still carries the capacity.
-        for capacity in 1..CAPACITY_CLASSES as u32 {
-            let id = intern_class(77, ProtoLink::NULL, 0, capacity);
-            assert_eq!(class_capacity_bits(id), capacity);
-            assert_eq!(class_capacity(id), 0);
-        }
     }
 }
