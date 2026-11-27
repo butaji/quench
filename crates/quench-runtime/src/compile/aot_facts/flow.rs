@@ -12,7 +12,7 @@ use super::value::{Key, PrototypeBase, Word};
 use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use crate::staged::{Comparison, Operation};
-use crate::typed_ir::{Cell, Classes, Elements, Representation, Type, WIDENING_ROUNDS, language_bit};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Representation, Type, WIDENING_ROUNDS, language_bit};
 use crate::ValueType;
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
@@ -62,7 +62,9 @@ pub(super) struct FunctionFlow {
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
     /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
-    pub(super) links: Vec<(u32, u32)>,
+    pub(super) links: Vec<(crate::typed_ir::ElementClass, crate::typed_ir::ElementClass)>,
+    /// Whether the function writes elements of arrays it cannot name (`effects::Events::wild_elements`).
+    pub(super) wild_elements: bool,
     /// The changes its instructions and calls make to named properties, in PC order (`shape`).
     pub(super) shapes: Vec<Shape>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
@@ -91,6 +93,8 @@ struct Solver<'a> {
     headers: BitSet,
     /// Per block, how many joins changed its input: past `WIDENING_ROUNDS` a loop header widens on every change.
     rounds: Vec<std::cell::Cell<u8>>,
+    /// The element-class links the joins make of words with different origins (`Word::join_links`): the record keeps them.
+    joined: std::cell::RefCell<std::collections::BTreeSet<(ElementClass, ElementClass)>>,
 }
 
 /// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
@@ -121,10 +125,11 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     };
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds };
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default() };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
     let mut record = Record::new(ctx.registers);
+    record.joined(solver.joined.take());
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
             let cells = state.words.iter().map(|word| settled(&ctx, *word)).collect();
@@ -294,6 +299,7 @@ impl Solver<'_> {
     fn join_words(&self, into: &mut [Word], incoming: &[Word], widen: bool) -> bool {
         let mut changed = false;
         for (slot, &fact) in into.iter_mut().zip(incoming) {
+            self.joined.borrow_mut().extend(slot.join_links(fact));
             let joined = slot.join(fact);
             let next = if widen {
                 Word { cell: Cell { ty: typing::widen(&self.thresholds, slot.cell.ty, joined.cell.ty), ..joined.cell }, ..joined }

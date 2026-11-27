@@ -1,12 +1,7 @@
 //! The facts the closed-world analyses carry: what a register holds, and which binding a write
 //! reaches.
 
-use crate::typed_ir::{Cell, Elements, Representation, Type};
-
-/// The element key of the arrays no field names: an array read off a binding, a return, an element or an argument
-/// has no field origin, so its element class is this one (`Key::elements_class`). An array stored into a field
-/// joins this class (`Word::link`), so a store through either reaches the other's elements (`census::ElementClasses`).
-pub(super) const UNNAMED_ARRAYS: u32 = u32::MAX;
+use crate::typed_ir::{Cell, ElementClass, Elements, Representation, Type};
 
 /// A binding: a global name (by atom), or a slot of the environment or frame of `owner`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -22,18 +17,21 @@ pub(super) enum Key {
     MemberAny(u32),
     /// The value function `0` returns: every return it makes (`types`).
     Return(u32),
-    /// The elements of the arrays field `0` holds: every indexed store through a read of that field (`types`).
-    Element(u32),
+    /// The elements of the arrays of an element class: every indexed store into an array of that class (`types`).
+    Element(ElementClass),
 }
 
 impl Key {
-    /// The element class of an array stored into this binding or field. A field's (`Member`, `MemberAny`, `MemberOn`)
-    /// is the field's name, which an array read off it carries as its `Word::elements_key`; every other binding, a
-    /// return and an element is `UNNAMED_ARRAYS`, the class an array read off one of those carries.
-    pub(super) fn elements_class(self) -> u32 {
+    /// The element class an array stored into this binding or field joins (`Word::link`). A field's (`Member`,
+    /// `MemberAny`, `MemberOn`) is the field's name; a global's, a slot's and a return's is its own, so an array held
+    /// there keeps its class; an element's is the unnamed class, as an array read out of an element has no origin.
+    pub(super) fn elements_class(self) -> ElementClass {
         match self {
-            Self::Member(atom) | Self::MemberAny(atom) | Self::MemberOn { atom, .. } => atom,
-            _ => UNNAMED_ARRAYS,
+            Self::Member(atom) | Self::MemberAny(atom) | Self::MemberOn { atom, .. } => ElementClass::Field(atom),
+            Self::Global(atom) => ElementClass::Global(atom),
+            Self::Slot { owner, slot } => ElementClass::Slot { owner, slot },
+            Self::Return(function) => ElementClass::Return(function),
+            Self::Element(_) => ElementClass::Unnamed,
         }
     }
 }
@@ -52,6 +50,9 @@ pub(super) enum Origin {
     Prototype(PrototypeBase),
     /// An instance of class `function` (`new`).
     Instance(u32),
+    /// The array a literal allocates at `pc` of `function` (`effects::value_of`): its own element class, which only a
+    /// store or a call joins to another (`Word::link`).
+    Alloc { function: u32, pc: u32 },
     /// A method `atom` read on class `function`'s static object (`instance: false`) or prototype;
     /// `guess` where the class is the type solve's (`Classes::Set { proven: false }`), not a `new`'s.
     MemberOn { class: u32, instance: bool, atom: u32, guess: bool },
@@ -126,12 +127,15 @@ impl Word {
         }
     }
 
-    /// The element class of the array `self` holds: the field it was read from, else `UNNAMED_ARRAYS`. Every store
-    /// into an array names its class by this key, and the class's cell is read back through it (`flow::settled`).
-    pub(super) fn elements_key(self) -> u32 {
+    /// The element class of the array `self` holds: the key it was read from (`Key::elements_class`), the field it was
+    /// read off, or the allocation it was made at; the unnamed class where no origin names one. Every store into an
+    /// array names its class by this key, and the class's cell is read back through it (`effects::settled`).
+    pub(super) fn elements_key(self) -> ElementClass {
         match self.origin {
-            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => atom,
-            _ => UNNAMED_ARRAYS,
+            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => ElementClass::Field(atom),
+            Some(Origin::Binding(key)) => key.elements_class(),
+            Some(Origin::Alloc { function, pc }) => ElementClass::Allocation { function, pc },
+            _ => ElementClass::Unnamed,
         }
     }
 
@@ -139,9 +143,17 @@ impl Word {
     /// an array (its elements are not `Elements::NEVER`). The array is read back from the destination with that
     /// destination's origin, so the two classes must be one: a store through either reaches the other's elements.
     /// `None` where `self` holds no array or already is of `class`.
-    pub(super) fn link(self, class: u32) -> Option<(u32, u32)> {
+    pub(super) fn link(self, class: ElementClass) -> Option<(ElementClass, ElementClass)> {
         let from = self.elements_key();
         (self.cell.elements != Elements::NEVER && from != class).then_some((from, class))
+    }
+
+    /// The links a join of `self` with `other` makes where their origins differ (`flow::Solver::join_words`): the joined word
+    /// has no origin, so an array either word holds joins the unnamed class, which a store or read through the joined word
+    /// names. A join of one origin keeps it, and makes no link.
+    pub(super) fn join_links(self, other: Self) -> impl Iterator<Item = (ElementClass, ElementClass)> {
+        let differ = self.origin != other.origin;
+        [self, other].into_iter().filter(move |_| differ).filter_map(|word| word.link(ElementClass::Unnamed))
     }
 
     /// The atom `self` is the property-key constant of, if it is one.

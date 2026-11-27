@@ -1,8 +1,8 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
-use crate::typed_ir::{Cell, Classes, Elements, Length};
+use super::value::{Word, Key, Origin, PrototypeBase};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};
 use crate::bytecode::{Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -46,7 +46,10 @@ pub(super) struct Events {
     pub(super) prototype_write: Option<(PrototypeBase, u32)>,
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
-    pub(super) links: Vec<(u32, u32)>,
+    pub(super) links: Vec<(ElementClass, ElementClass)>,
+    /// Whether the instruction writes elements the analysis cannot name to an array (`IndexWrite`, a length store
+    /// through an object of no known origin): the arrays of every class may change, so every class's elements are any.
+    pub(super) wild_elements: bool,
     /// The change the instruction makes to a named property or a key the analysis cannot name (`shape`).
     pub(super) shape: Option<super::shape::Shape>,
 }
@@ -81,9 +84,10 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         None => operation,
     };
     let mut value = value_of(ctx, pc, instruction, typed_operation, state, &mut events);
-    // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
-    if let Some(types) = ctx.types && let Some(cell) = types.call(ctx.id, pc as u32) {
-        value = Word::of_cell(cell);
+    // A call whose callees the solve knows returns the join of their returns, and the array it returns is the array
+    // the first callee's `Return` holds (`types::Types::call`).
+    if let Some(types) = ctx.types && let Some(word) = types.call(ctx.id, pc as u32) {
+        value = word;
     }
     // A return, or an operation whose result completes the frame, writes the function's result.
     if instruction.op().is_return() {
@@ -184,13 +188,15 @@ fn value_of(
     }
     // An array of `length` elements: its length is fixed by its literal, and its element type is what the
     // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    // The array is its own element class, named by its allocation site (`Origin::Alloc`).
     if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
         let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
-        return Word::of_cell(Cell {
+        let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
             elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
-        });
+        };
+        return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
     // Over the operands' cells (`typing`): an increment and a `Binary` record in the typed pass, whose operands are the
     // record's own (none over a constant operand, a numeric one over registers), and an indexed read by its index.
@@ -303,11 +309,11 @@ impl Abstract for Before<'_, '_> {
     fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
 }
 
-/// The write that makes the length of the arrays `key` names (`Key::Element`) unknown: a length write, a method that
+/// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
 /// changes an array, an index store past the length, a `delete`.
-fn length_change(key: u32) -> (Key, Word) {
+fn length_change(class: ElementClass) -> (Key, Word) {
     let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
-    (Key::Element(key), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
+    (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
@@ -347,14 +353,14 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
-            events.links.extend(stored.link(UNNAMED_ARRAYS));
+            events.links.extend(stored.link(ElementClass::Unnamed));
             events.wild_member |= !index.is_number();
         }
-        // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) may store any value into any array
-        // and change any length: every element read joins the cell of the unnamed class.
+        // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) names no array: it may store
+        // any value into an array of any class and change any length, so every class's elements are any (`wild_elements`).
         Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => {
             events.wild_member = true;
-            events.writes.push((Key::Element(UNNAMED_ARRAYS), Word::of_cell(Cell::ANY)));
+            events.wild_elements = true;
         }
         // `delete base[key]` keeps the values the elements hold and changes the length of `base`'s class (a hole, or the
         // last element removed); it may name a property (`wild_member`).
@@ -381,16 +387,13 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
-            if ctx.scope.length == Some(atom) {
-                events.writes.push(length_change(UNNAMED_ARRAYS));
-            }
+            // A length store through an object the analysis does not name may resize an array of any class.
+            events.wild_elements |= ctx.scope.length == Some(atom);
         }
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
             events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
             events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
-            if ctx.scope.length == Some(instruction.atom_index()) {
-                events.writes.push(length_change(UNNAMED_ARRAYS));
-            }
+            events.wild_elements |= ctx.scope.length == Some(instruction.atom_index());
         }
         _ => {}
     }

@@ -6,9 +6,9 @@ use super::effects::{Ctx, Events};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
-use super::value::{Key, Origin, PrototypeBase, Word, UNNAMED_ARRAYS};
+use super::value::{Key, Origin, PrototypeBase, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
-use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
 
 /// What a replay gathers over a function's reachable code.
 pub(super) struct Record {
@@ -25,7 +25,8 @@ pub(super) struct Record {
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
-    links: Vec<(u32, u32)>,
+    links: Vec<(ElementClass, ElementClass)>,
+    wild_elements: bool,
     shapes: Vec<Shape>,
     handed: Vec<Word>,
     closures: Vec<u32>,
@@ -46,10 +47,16 @@ impl Record {
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             links: Vec::new(),
+            wild_elements: false,
             shapes: Vec::new(),
             handed: Vec::new(),
             closures: Vec::new(),
         }
+    }
+
+    /// Notes the element-class links the solve's joins made (`Word::join_links`): a word of two origins joins the unnamed class.
+    pub(super) fn joined(&mut self, links: std::collections::BTreeSet<(ElementClass, ElementClass)>) {
+        self.links.extend(links);
     }
 
     /// Notes the reads and the calls `instruction` makes, from the facts before it.
@@ -114,8 +121,10 @@ impl Record {
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(receiver.elements_key()), Word::of_cell(written)));
             }
-            self.links.extend(receiver.link(UNNAMED_ARRAYS));
-            self.links.extend(arguments.iter().filter_map(|argument| argument.link(UNNAMED_ARRAYS)));
+            // A receiver or an argument is read back by the callee with no origin (`this`, a parameter), so its array joins the
+            // unnamed class: the callee's reads of it see the stores this call's callee makes.
+            self.links.extend(receiver.link(ElementClass::Unnamed));
+            self.links.extend(arguments.iter().filter_map(|argument| argument.link(ElementClass::Unnamed)));
             let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
             self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
             self.calls.push(call);
@@ -127,6 +136,7 @@ impl Record {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
         self.wild_member |= events.wild_member;
+        self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
         self.shapes.extend(events.shape);
@@ -164,6 +174,7 @@ impl Record {
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
             member_wild: self.wild_member,
+            wild_elements: self.wild_elements,
             numbers,
             prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,

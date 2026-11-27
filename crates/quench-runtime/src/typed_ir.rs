@@ -20,7 +20,7 @@ pub use slot_type::SlotType;
 pub use int_range::{IntRange, WIDENING_ROUNDS};
 pub mod arithmetic;
 mod cell;
-pub use cell::{Cell, Classes, Elements, FactKey, Length, MAX_CLASSES};
+pub use cell::{Cell, Classes, ElementClass, Elements, FactKey, Length, MAX_CLASSES};
 
 /// An element index is below its array's length, which every layout stores in 32 bits: it
 /// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.

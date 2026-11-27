@@ -38,7 +38,7 @@ impl World {
         match self {
             Self::Closed => false,
             Self::Open => true,
-            Self::Locals => matches!(key, FactKey::Global(_) | FactKey::Field { .. } | FactKey::AnyField(_) | FactKey::Elements(_) | FactKey::UnnamedElements),
+            Self::Locals => matches!(key, FactKey::Global(_) | FactKey::Field { .. } | FactKey::AnyField(_) | FactKey::Elements(_)),
         }
     }
 }
