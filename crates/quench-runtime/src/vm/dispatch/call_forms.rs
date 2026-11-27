@@ -124,13 +124,11 @@ impl Vm {
             return Ok(StepResult::TailCall);
         }
         if p.kind != crate::bytecode::ProgramKind::Wasm
-            && self.js_tail_call_allowed(p, f, i, pc)
             && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
             && let Some(CallTarget::User(program_id, id, env)) =
                 self.call_target(callee).ok()
             && program_id == self.frames[f].program
-            && !p.function(id as usize).is_async
-            && !p.function(id as usize).is_generator
+            && self.tail_call_reuses_frame(p, f, i, pc, p.function(id as usize))
         {
             self.with_call_roots(
                 [callee, this].into_iter().chain(args.iter().copied()),
@@ -261,14 +259,12 @@ impl Vm {
         self.profile.call_target(1, usize::from(window.count));
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
-        let tail_call = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            i.returns_from_frame()
+        let callee_function = p.function(function_index as usize);
+        let proper_tail = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            i.returns_from_frame() && !callee_function.is_async && !callee_function.is_generator
         } else {
-            self.js_tail_call_allowed(p, f, i, pc)
+            self.tail_call_reuses_frame(p, f, i, pc, callee_function)
         };
-        let proper_tail = tail_call
-            && !p.function(function_index as usize).is_async
-            && !p.function(function_index as usize).is_generator;
         // A proper tail call recycles the caller's register buffer before it binds the
         // arguments, so only that path copies the window. Every other call borrows it, as the
         // tier's direct call does: the caller's registers are not written during the call.

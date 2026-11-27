@@ -387,7 +387,6 @@ mod constructors;
 mod demands;
 pub use demands::SourceDemands;
 mod global_scripts;
-mod reachability;
 
 impl Engine {
     pub(super) fn native_source_requests(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool, calls: &[(String, String)]) -> Vec<NativeSourceKey> {

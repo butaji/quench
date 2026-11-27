@@ -1987,11 +1987,20 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
 
-    /// Reusing an activation is observable while its call is protected by a handler.
-    /// A terminal return may skip its following Return instruction without being a
-    /// proper tail call: the caller must still catch the callee's abrupt completion.
+    /// Whether a call at `pc` of this function may replace this activation (`staged::effects::tail_site`'s
+    /// `caller_done`). Reusing an activation is observable while its call is protected by a handler, and
+    /// it discards what the activation still owes its caller: a generator or async body settles or suspends
+    /// its frame, a constructor's result depends on its own frame, and an `arguments` object the activation
+    /// made or may still make reads the frame's values. Those callers keep their frame.
     pub fn permits_js_tail_call_at(&self, pc: u32) -> bool {
-        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
+        self.strict
+            && !self.class_initializer
+            && !self.is_class_constructor
+            && !self.derived_constructor
+            && !self.is_async
+            && !self.is_generator
+            && self.arguments_slot.is_none()
+            && self.handler_at(pc).is_none()
     }
 
     pub fn handler_at(&self, pc: u32) -> Option<Handler> {
