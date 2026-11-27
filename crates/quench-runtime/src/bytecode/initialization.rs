@@ -35,81 +35,148 @@ pub(crate) type FlowCell = std::cell::OnceCell<BasicBlocks>;
 /// The blocks in `flow`, when set, are those of `function`'s current control flow.
 pub(crate) fn initialized_before_reads(function: &Function, superinstructions: &[Superinstruction],
     candidates: &BitSet, uninitialized_at_entry: &BitSet, flow: &FlowCell) -> BitSet {
-    let mut proven = candidates.clone();
     let dense = dense_indices(candidates);
     let count = dense.iter().flatten().count();
     if count == 0 {
-        return proven;
+        return candidates.clone();
     }
-    let words = count.div_ceil(u64::BITS as usize);
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     let blocks = flow.get_or_init(|| BasicBlocks::of(function, &decoded));
-    // States are kept per basic block, not per instruction: a row per instruction grows with
-    // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
-    let mut maybe_uninitialized = crate::bitset::BitRows::new(blocks.count, count);
+    let words = count.div_ceil(u64::BITS as usize);
     let mut entry = vec![0; words];
     let entering = dense.iter().enumerate().filter(|(slot, _)| uninitialized_at_entry.contains(*slot));
     for index in entering.filter_map(|(_, index)| *index) {
         entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
     }
-    maybe_uninitialized.join(0, &entry);
-    let mut state = vec![0; words];
-    let mut abrupt = vec![0; words];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (block, &start) in blocks.starts.iter().enumerate() {
-            state.copy_from_slice(maybe_uninitialized.row(block));
-            let mut pc = start;
-            while let Some(&instruction) = decoded.get(pc) {
-                if blocks.interruptible(pc) { abrupt.copy_from_slice(&state); }
-                let mut apply = |slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]| {
-                    let Some(Some(index)) = dense.get(slot).copied() else {
-                        return;
-                    };
-                    let (word, bit) = (index / u64::BITS as usize, 1 << (index % u64::BITS as usize));
-                    match access {
-                        Access::Uninitialize => state[word] |= bit,
-                        Access::Initialize => state[word] &= !bit,
-                        Access::Read if state[word] & bit != 0 => proven.remove(slot),
-                        Access::Read => {}
-                        Access::Opaque => proven.remove(slot),
-                    }
-                    abrupt[word] |= state[word];
-                };
-                match instruction.op().immediate_role() {
-                    ImmediateRole::SuperinstructionIndex => {
-                        for member in superinstructions[instruction.superinstruction_index()].wide {
-                            accesses(member, uninitialized_at_entry, |slot, access| {
-                                apply(slot, access, &mut state, &mut abrupt)
-                            });
-                        }
-                    }
-                    _ => accesses(instruction, uninitialized_at_entry, |slot, access| {
-                        apply(slot, access, &mut state, &mut abrupt)
-                    }),
-                }
-                let mut falls_through = false;
-                blocks.successors.at(pc).for_each(|(successor, edge)| {
-                    if blocks.continues(pc, successor, edge) {
-                        falls_through = true;
-                        return;
-                    }
-                    let incoming = match edge {
-                        ControlEdge::Normal => &state,
-                        ControlEdge::Handler => &abrupt,
-                    };
-                    // A later block takes its gain in this sweep; only a loop asks for another.
-                    if let Some(target) = blocks.at(successor) { changed |= maybe_uninitialized.join(target, incoming) & (target <= block); }
-                });
-                if !falls_through {
-                    break;
-                }
-                pc += 1;
-            }
-        }
+    let mut analysis = MaybeUninitialized {
+        blocks,
+        decoded: &decoded,
+        superinstructions,
+        uninitialized_at_entry,
+        dense,
+        words,
+        proven: candidates.clone(),
+        entry,
+        targets: vec![Vec::new(); blocks.starts.len()],
+        sent: vec![Vec::new(); blocks.starts.len()],
+    };
+    crate::dataflow::solve(&mut analysis);
+    analysis.proven
+}
+
+/// `initialized_before_reads` as a forward problem of `dataflow::solve`: each state is the set of
+/// candidate slots maybe uninitialized at a block's head, as a bitset over the candidates. A block
+/// with no entry seed starts empty, so every block runs at least once, as the sweep it replaces did.
+struct MaybeUninitialized<'a> {
+    blocks: &'a BasicBlocks,
+    decoded: &'a [WideInstruction],
+    superinstructions: &'a [Superinstruction],
+    uninitialized_at_entry: &'a BitSet,
+    /// Each candidate slot's index among the candidates.
+    dense: Vec<Option<usize>>,
+    words: usize,
+    /// The candidates no read has reached while maybe-uninitialized.
+    proven: BitSet,
+    /// The state at block 0 before any output reaches it.
+    entry: Vec<u64>,
+    /// Each block's edges to run blocks, and the state each carries, as its last `transfer` left them.
+    targets: Vec<Vec<usize>>,
+    sent: Vec<Vec<Vec<u64>>>,
+}
+
+impl crate::dataflow::Dataflow for MaybeUninitialized<'_> {
+    type State = Vec<u64>;
+
+    fn blocks(&self) -> usize {
+        self.blocks.starts.len()
     }
-    proven
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.targets[block]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Vec<u64>> {
+        Some(if block == 0 { self.entry.clone() } else { vec![0; self.words] })
+    }
+
+    fn join(&self, into: &mut Vec<u64>, incoming: &Vec<u64>) -> bool {
+        let mut grew = false;
+        for (word, incoming) in into.iter_mut().zip(incoming) {
+            let next = *word | incoming;
+            grew |= next != *word;
+            *word = next;
+        }
+        grew
+    }
+
+    fn transfer(&mut self, block: usize, entering: &Vec<u64>) -> Vec<u64> {
+        let (blocks, decoded, superinstructions, uninitialized_at_entry) =
+            (self.blocks, self.decoded, self.superinstructions, self.uninitialized_at_entry);
+        let (dense, proven) = (&self.dense, &mut self.proven);
+        let (targets, sent) = (&mut self.targets[block], &mut self.sent[block]);
+        targets.clear();
+        sent.clear();
+        let mut state = entering.clone();
+        let mut abrupt = vec![0; self.words];
+        let mut pc = blocks.starts[block];
+        while let Some(&instruction) = decoded.get(pc) {
+            if blocks.interruptible(pc) { abrupt.copy_from_slice(&state); }
+            match instruction.op().immediate_role() {
+                ImmediateRole::SuperinstructionIndex => {
+                    for member in superinstructions[instruction.superinstruction_index()].wide {
+                        accesses(member, uninitialized_at_entry, |slot, access| {
+                            touch(dense, proven, slot, access, &mut state, &mut abrupt)
+                        });
+                    }
+                }
+                _ => accesses(instruction, uninitialized_at_entry, |slot, access| {
+                    touch(dense, proven, slot, access, &mut state, &mut abrupt)
+                }),
+            }
+            let mut falls_through = false;
+            for (successor, edge) in blocks.successors.at(pc) {
+                if blocks.continues(pc, successor, edge) {
+                    falls_through = true;
+                    continue;
+                }
+                // The function's end is the last block, which no state is read from.
+                let Some(target) = blocks.at(successor).filter(|&target| target < blocks.starts.len()) else {
+                    continue;
+                };
+                targets.push(target);
+                sent.push(match edge {
+                    ControlEdge::Normal => state.clone(),
+                    ControlEdge::Handler => abrupt.clone(),
+                });
+            }
+            if !falls_through {
+                break;
+            }
+            pc += 1;
+        }
+        state
+    }
+
+    fn transfer_edge_at(&self, block: usize, index: usize, _out: &Vec<u64>) -> Vec<u64> {
+        self.sent[block][index].clone()
+    }
+}
+
+/// Applies one access to the candidate `slot`: `state` is the maybe-uninitialized set and
+/// `abrupt` gathers the states a handler may observe.
+fn touch(dense: &[Option<usize>], proven: &mut BitSet, slot: usize, access: Access, state: &mut [u64], abrupt: &mut [u64]) {
+    let Some(Some(index)) = dense.get(slot).copied() else {
+        return;
+    };
+    let (word, bit) = (index / u64::BITS as usize, 1 << (index % u64::BITS as usize));
+    match access {
+        Access::Uninitialize => state[word] |= bit,
+        Access::Initialize => state[word] &= !bit,
+        Access::Read if state[word] & bit != 0 => proven.remove(slot),
+        Access::Read => {}
+        Access::Opaque => proven.remove(slot),
+    }
+    abrupt[word] |= state[word];
 }
 
 /// Each candidate slot's index among the candidates.
@@ -134,7 +201,6 @@ pub(crate) struct BasicBlocks {
     starts: Vec<usize>,
     /// The block starting at each pc, with one entry past the end for the function's end.
     block_at: Vec<Option<u32>>,
-    count: usize,
     /// Every pc's successors, listed once for all the passes over the blocks.
     successors: super::Successors,
 }
@@ -150,10 +216,9 @@ impl BasicBlocks {
             block_at[pc] = Some(starts.len() as u32);
             starts.push(pc);
         }
-        let count = starts.len();
         // The function's end is a join point no instruction follows.
         starts.retain(|&pc| pc < end);
-        Self { starts, block_at, count, successors }
+        Self { starts, block_at, successors }
     }
 
     fn at(&self, pc: usize) -> Option<usize> {

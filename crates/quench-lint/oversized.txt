@@ -1075,6 +1075,9 @@ concept_runs successor-table 5
 concept_twin length-int32-guard 1
 concept_twin math-imul 2
 concept_twin packed-instruction-decode 2
+concept_twin cfg-leaders 2
+concept_twin cfg-reachable 7
+concept_twin cfg-successors 7
 concept_twin string-order 0
 concept_twin to-int32 1
 concept_twin to-uint8-clamp 0
