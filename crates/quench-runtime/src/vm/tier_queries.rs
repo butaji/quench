@@ -216,6 +216,8 @@ heap_reads! {
     fn live_array_records() -> *const ArrayObject;
     /// The live string records (`Heap::live_string_records`).
     fn live_string_records() -> *const JsString;
+    /// The region 0 stub cursor an inline empty object allocation bumps (`Heap::native_stub_cursor`).
+    fn native_stub_cursor() -> usize;
     /// The native object allocation cursor (`Heap::native_object_cursor`).
     fn native_object_cursor() -> usize;
     /// The native array allocation cursor (`Heap::native_array_cursor`).

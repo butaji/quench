@@ -145,6 +145,12 @@ impl ClassSpace {
     pub(super) fn release_withheld_stubs(&mut self) {
         self.regions.0.release_withheld();
     }
+
+    /// The address of region 0's allocation cursor (`RecordCursor`): its `next` is the granule an inline
+    /// empty object allocation takes, and its `limit` the run's end, as the object record cursor's are.
+    pub(super) fn stub_cursor_address(&self) -> usize {
+        std::ptr::addr_of!(self.regions.0.cursor) as usize
+    }
 }
 
 /// The record id of the ordinary object whose stub is granule `g` in the class space at `base`: the
@@ -182,6 +188,12 @@ impl super::Heap {
     /// space is reserved. Read per heap (`staged::Table::ClassSpace`), never a fixed address.
     #[inline(always)]
     pub fn class_space_base(&self) -> usize { self.class_space.base }
+
+    /// The region 0 stub cursor (`ClassSpace::stub_cursor_address`), which an inline empty object allocation
+    /// bumps (`JsStepHead::stub_cursor`). It is a field of this heap, which stays where it is while the VM
+    /// runs; a native entry rereads it with the other record bases.
+    #[inline(always)]
+    pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
 }
 
 /// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A

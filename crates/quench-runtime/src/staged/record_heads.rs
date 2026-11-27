@@ -19,6 +19,15 @@ pub struct ObjectHead {
     pub(crate) layout: u32,
 }
 
+/// An ordinary object's record as generated code reads it (`heap::cell::OrdinaryRecord`, whose `object` is an
+/// `ObjectHead`): its head, then the granule of its region 0 stub, which an empty allocation stores after the
+/// head's words. Sixteen bytes with the stub's padding.
+#[repr(C)]
+pub struct OrdinaryRecordHead {
+    pub object: ObjectHead,
+    pub stub: u32,
+}
+
 /// The head of a Wasm GC object's record: the address of its payload bytes (`heap::cell::WasmGcFields`),
 /// their length in bytes, and the type index the object was built from. Compiled code reads a field's
 /// slot as `payload + offset`, bounded by `length`, so a field access takes no callout, box or barrier.
