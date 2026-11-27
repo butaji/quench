@@ -18,6 +18,7 @@ mod slot_type;
 pub use slot_type::SlotType;
 #[allow(unused_imports)]
 pub use int_range::{IntRange, WIDENING_ROUNDS};
+pub mod arithmetic;
 mod cell;
 pub use cell::{Cell, Classes, Elements, FactKey, Length, MAX_CLASSES};
 

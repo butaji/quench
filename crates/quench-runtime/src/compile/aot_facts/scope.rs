@@ -107,7 +107,7 @@ impl Scope {
 
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
 /// a string's, a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
-fn constant_type(constant: &Constant) -> Type {
+pub fn constant_type(constant: &Constant) -> Type {
     match constant {
         Constant::Number(value) => crate::value::exact_int32(*value)
             .map_or(Type::NUMBER, |int| Type::int(IntRange::singleton(i64::from(int)))),

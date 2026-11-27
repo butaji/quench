@@ -41,21 +41,9 @@ fn bigint_operator(operator: u32) -> bool {
 /// else a Number.
 pub(super) fn arithmetic(operation: NumberArithmetic, left: Type, right: Type) -> Type {
     match (left.int_range(), right.int_range()) {
-        (Some(left), Some(right)) => int_arithmetic(operation, left, right).map_or(Type::NUMBER, Type::int),
+        (Some(left), Some(right)) => crate::typed_ir::arithmetic::number_range(operation, left, right).map_or(Type::NUMBER, Type::int),
         _ => Type::NUMBER,
     }
-}
-
-/// The exact range of an arithmetic operator over integer ranges, where its result is an integer Number a word holds.
-/// A product that may be a negative zero is no integer.
-fn int_arithmetic(operation: NumberArithmetic, left: IntRange, right: IntRange) -> Option<IntRange> {
-    let range = match operation {
-        NumberArithmetic::Add => left.add(right),
-        NumberArithmetic::Subtract => left.subtract(right),
-        NumberArithmetic::Multiply if !left.product_may_be_negative_zero(right) => left.multiply(right),
-        NumberArithmetic::Multiply | NumberArithmetic::Divide => None,
-    };
-    range.and_then(IntRange::as_number)
 }
 
 /// The type of a bitwise operator over Numbers. An operand reads as its int32 (`int32_operand`), so every operator but

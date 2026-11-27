@@ -40,6 +40,7 @@ use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
 pub use flow::RegisterCells;
+pub use scope::constant_type;
 
 /// The facts of one program, solved in `world`.
 pub struct AotFacts {
