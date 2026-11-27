@@ -288,7 +288,8 @@ fn integer_ranges_are_number_subtypes_and_int32_is_the_widest_machine_range() {
     assert!(!wide.is_subtype(Type::INT32) && !Type::NUMBER.is_subtype(Type::INT32));
     assert!(Type::int(IntRange::singleton(3)).is_int32() && !wide.is_int32() && !Type::NUMBER.is_int32());
     assert_eq!(Type::int(IntRange::singleton(3)).machine(), Type::INT32);
-    assert_eq!(wide.machine(), Type::NUMBER);
+    assert_eq!(wide.machine(), wide, "a range within EXACT keeps its 64-bit view");
+    assert_eq!(Type::int(IntRange::WORD).machine(), Type::NUMBER, "beyond EXACT a Number");
     assert_eq!(Type::ANY.machine(), Type::ANY);
     assert_eq!(SlotType::from_type(Type::int(IntRange { min: 0, max: 255 })), SlotType::Int32);
     assert_eq!(SlotType::from_type(wide), SlotType::Number);

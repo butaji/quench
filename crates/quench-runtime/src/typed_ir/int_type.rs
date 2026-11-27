@@ -21,12 +21,14 @@ impl Type {
     pub fn is_int32(self) -> bool { self.int_range().is_some_and(|range| range.fits_int32()) }
 
     /// What a machine view of a value of this type proves of it: an integer type is int32 where
-    /// its range fits and a Number where it does not, and a NaN-free Number is a Number. The range and
-    /// the NaN bit are the analysis's: no load or edge checks them, so a representation conforms to
+    /// its range fits, an integer of `IntRange::EXACT` (the 64-bit word view, `Representation::Int64`)
+    /// where it fits that span, and a Number where it does not; a NaN-free Number is a Number. The range
+    /// and the NaN bit are the analysis's: no load or edge checks them, so a representation conforms to
     /// this type, not to either refinement (a Float64 word is a Number whether or not it is NaN).
     pub fn machine(self) -> Self {
         match self.int_range() {
             Some(_) if self.is_int32() => Self::INT32,
+            Some(range) if range.fits_exact_double() => self,
             Some(_) => Self::NUMBER,
             None if self == Self::NOT_NAN_NUMBER => Self::NUMBER,
             None => self,

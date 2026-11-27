@@ -44,7 +44,7 @@ impl SlotType {
     pub fn from_type(ty: Type) -> Self {
         let ty = ty.without_object_shape().machine();
         match ty.0 {
-            TypeKind::Int(_) => Self::Int32,
+            TypeKind::Int(range) => if range.fits_int32() { Self::Int32 } else { Self::Number },
             TypeKind::DirectObjectFamily => Self::DirectObject,
             TypeKind::NullableDirectObjectFamily(bits) => {
                 if bits == Type::language(ValueType::Null).kinds() { Self::DirectObjectOrNull }
