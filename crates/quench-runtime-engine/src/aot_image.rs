@@ -143,7 +143,7 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
     let mut symbols = symbols::SymbolTable::new(program);
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let wasm = {
-        use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, RelocatableCode, Relocation};
+        use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
         let (memory_slot, rows) = crate::compiled::wasm_image::rows(vm, id, program, bindings);
         if quench_runtime::trace::Channel::AotLanes.on() {
             let (stitched, named) = (rows.iter().flatten().count(), rows.iter().flatten().map(|rows| rows.symbols.len()).sum::<usize>());
@@ -152,7 +152,7 @@ pub(crate) fn lower_wasm(vm: &quench_runtime::vm::Vm, id: quench_runtime::vm::Pr
         let functions = rows.into_iter().map(|rows| rows.map(|rows| {
             let relocations = rows.symbols.iter().map(|&(offset, symbol)| {
                 let (namespace, key) = symbols.intern(symbol);
-                Relocation { offset, kind: RelocKind::Abs8, namespace, key, addend: 0 }
+                Relocation { offset, kind: PatchKind::Abs8, namespace, key, addend: 0 }
             }).collect();
             RelocatableCode { code: rows.code.into(), relocations }
         })).collect();
