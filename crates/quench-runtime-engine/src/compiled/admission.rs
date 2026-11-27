@@ -1,6 +1,6 @@
 //! The one admission policy for compiles: every question that decides whether a callee or a
 //! body compiles, and every reason it does not, lives here. A refused compile records its
-//! `Refusal`; `QUENCH_REFUSALS=1` prints the counts at exit (`refusal_report`).
+//! `Refusal`.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -11,9 +11,9 @@ use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::dispatch_fast::LaneView;
 use quench_runtime::vm::Vm;
 
-/// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
-/// by `record` and named in `refusal_report`. The OSR region reasons (`RegionRejection`) share
-/// this enum through `From`.
+/// Why a compile or a callee's admission is refused. Each variant is one refusal site, noted by
+/// `record` and named by `describe`. The OSR region reasons (`RegionRejection`) share this enum
+/// through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// The predicted tier is the interpreter (`PredictedTier::Interpreter`, `PlanNotAmortized`).
@@ -45,7 +45,7 @@ pub(crate) enum Refusal {
 }
 
 impl Refusal {
-    /// The report's names, in `slot` order.
+    /// The refusals' names, in `slot` order.
     const NAMES: [&'static str; 17] = [
         "not-amortized", "callee-not-eligible", "no-unit", "frame-not-admitted",
         "no-entry", "compile-bound", "nothing-native", "dependencies",
@@ -53,7 +53,7 @@ impl Refusal {
         "field-limit", "field-store-limit", "field-mutation", "array-redefined",
     ];
 
-    /// The counter this refusal counts in (`NAMES`).
+    /// The index of this refusal's name in `NAMES`.
     fn slot(self) -> usize {
         match self {
             Self::NotAmortized => 0,
@@ -110,28 +110,10 @@ impl Refusal {
     }
 }
 
-/// Refusals counted since the process started, one per `Refusal::slot`. Atomics rather than
-/// thread-local cells, so the exit report sees the compiles of every thread.
-static COUNTS: [std::sync::atomic::AtomicU64; Refusal::NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; Refusal::NAMES.len()];
-static REPORT: std::sync::Once = std::sync::Once::new();
-
-/// Whether refusals print at exit (`QUENCH_REFUSALS=1`).
-fn reporting() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("QUENCH_REFUSALS").is_ok_and(|value| value == "1"))
-}
-
-/// Counts `refusal`, and registers the exit report on the first count when reporting is on.
+/// Notes `refusal` as a fallback in focus, where it is one.
 pub(crate) fn record(refusal: Refusal) {
-    COUNTS[refusal.slot()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if quench_runtime::fallback::on() && refusal.is_fallback() {
         quench_runtime::fallback::note_in_focus(quench_runtime::fallback::Fallback::JitReject, format_args!("{}", refusal.describe()));
-    }
-    if reporting() {
-        REPORT.call_once(|| {
-            // SAFETY: `report` is a plain function that outlives the process.
-            unsafe { libc::atexit(report) };
-        });
     }
 }
 
@@ -140,21 +122,6 @@ pub(crate) fn record(refusal: Refusal) {
 pub(crate) fn refuse(vm: &Vm, refusal: Refusal) {
     record(refusal);
     if let Some(reason) = refusal.miss() { miss(vm, reason); }
-}
-
-/// The refusals counted so far, `QUENCH_REFUSALS {...}`, most frequent first; only the nonzero ones.
-pub fn refusal_report() -> String {
-    let mut counts: Vec<(&str, u64)> = Refusal::NAMES.iter().zip(COUNTS.iter())
-        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed)))
-        .filter(|(_, count)| *count != 0).collect();
-    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
-    format!("QUENCH_REFUSALS {{{fields}}}")
-}
-
-/// Prints `refusal_report` at process exit.
-extern "C" fn report() {
-    eprintln!("{}", refusal_report());
 }
 
 /// The kinds of unit whose tier gate `may_compile` decides.
