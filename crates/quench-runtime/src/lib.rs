@@ -73,6 +73,9 @@ pub mod webs;
 pub mod dense_map;
 #[doc(hidden)]
 pub mod bytecode;
+/// The operators an instruction's operator immediate names, in the parser's numbering.
+#[doc(hidden)]
+pub mod operator;
 #[doc(hidden)]
 pub mod compile;
 #[doc(hidden)]
@@ -140,6 +143,7 @@ pub mod value_vec;
 pub mod vm;
 pub use vm::builtin_table::{BuiltinFamilies, BuiltinTable};
 pub use vm::execution_table::ExecutionTable;
+pub use vm::reachable_realm::{reachable_realm, ReachableRealm, RealmRoots};
 #[doc(hidden)]
 pub mod wasm;
 pub use wasm::{

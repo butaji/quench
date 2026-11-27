@@ -265,10 +265,9 @@ impl Lowered {
         if replans && ir * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES {
             return Self::Oversized;
         }
-        let started = std::time::Instant::now();
         let code = image::compile(native, lowered.scalar.take(), lowered.proven.take(), level);
         if let Some(census) = census {
-            eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
+            eprintln!("{}", Census { ir, ..census }.report(code.as_ref().map_or(0, |image| image.code.len())));
         }
         Self::Compiled { lowered, ir, code }
     }
@@ -496,7 +495,7 @@ impl Vm {
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
         // The element reads observed, and the direct calls whose results their callees' summaries type.
-        let mut number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        let mut number_reads = observed_reads(&program, unit, arrays, &[], left_at);
         number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
         // A typed element read the interpreter's record observed types its result by the kind (`body_views::typed_reads`).
         let typed = super::body_views::typed_reads(self, function, unit);
@@ -602,7 +601,6 @@ impl Vm {
             super::admission::Decision::Short => return Err(Unstarted::Short),
         };
         super::base_region::count(super::base_region::Event::BodyPlanned);
-        let plan_started = std::time::Instant::now();
         let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
@@ -666,10 +664,9 @@ impl Vm {
             global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
-        let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
-            generic: generic.len(), direct: direct.len(), budget, closed, plan_us });
+            generic: generic.len(), direct: direct.len(), budget, closed });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
@@ -934,3 +931,33 @@ pub(crate) mod dependencies;
 pub(crate) use dependencies::LaneDependencies;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] pub(crate) mod tests;
+
+/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
+/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
+/// that is not one. A lane body's observation is its entry activation's array parameters.
+pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
+    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
+    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
+        .filter(|(pc, instruction)| {
+            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
+            let read = matches!(crate::compiled::decoded_completed(*instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }));
+            read && !abandoned.contains(pc)
+        })
+        .filter_map(|(pc, instruction)| {
+            let register = instruction.operand_b().register_index()?;
+            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
+            // An inlined callee's reads are Numbers whatever the entry showed: its registers
+            // hold nothing at entry that the sample could have seen. So is a read that left
+            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
+            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
+            Some(super::facts::ObservedRead { pc, ty, kind: None })
+        }).collect();
+    // A register's `length` read defines an int32: the region reads it as one
+    // (`Lowering::array_length`), leaving where it is not.
+    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
+        && instruction.result_flags() == 0
+        && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
+        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
+    reads.sort_by_key(|read| read.pc);
+    reads
+}

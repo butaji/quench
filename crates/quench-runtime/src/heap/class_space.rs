@@ -15,7 +15,7 @@
 use super::records::{AddressRange, RecordSpace};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
-    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT,
+    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, REGION_MASK, REGION_SHIFT, departed_header,
 };
 use crate::value::Value;
 use std::mem::{MaybeUninit, size_of};
@@ -103,6 +103,89 @@ impl ClassSpace {
         debug_assert!(self.range.is_some() && (locate(g).0 as usize) < CAPACITY_CLASSES);
         (self.base + g as usize * CLASS_HEADER_BYTES) as *mut u64
     }
+
+    /// The record id of the ordinary object whose stub is granule `g` (`stub_record_at`). The
+    /// space must be reserved, and `g` must name a live stub.
+    #[inline(always)]
+    pub(super) fn record_of(&self, g: u32) -> u32 {
+        debug_assert!(self.range.is_some());
+        stub_record_at(self.base, g)
+    }
+
+    /// Claims a region 0 stub for object record `record`: the cell's header is `departed_header(record)`,
+    /// so its granule names the record through `record_of`. The stub is claimed from region 0's cursor
+    /// (`RecordSpace::bump_id`), charged as an allocation. `None` where the space is full.
+    pub(super) fn claim_stub(&mut self, record: u32, allocated: &mut usize) -> Option<u32> {
+        if !self.ensure_reserved() {
+            return None;
+        }
+        let local = self.regions.0.bump_id(allocated)?;
+        // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
+        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
+        Some(granule(0, local))
+    }
+
+    /// Whether region 0's cursor has a stub left, which `claim_stub_quick` would claim.
+    #[inline(always)]
+    pub(super) fn stub_cursor_open(&self) -> bool {
+        self.regions.0.cursor_open()
+    }
+
+    /// `claim_stub` where it calls nothing out of line: the next stub of region 0's cursor, with the
+    /// header `departed_header(record)`. `None`, with nothing claimed, where the run is spent (the
+    /// caller then takes `claim_stub`'s slow path, which refills it).
+    #[inline(always)]
+    pub(super) fn claim_stub_quick(&mut self, record: u32) -> Option<u32> {
+        let local = self.regions.0.cursor_take()?;
+        // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
+        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
+        Some(granule(0, local))
+    }
+
+    /// Frees region 0's stub `g` with its dead record (the record sweep's dispose). Region 0 is never
+    /// swept on its own: its stubs die only here.
+    pub(super) fn release_stub(&mut self, g: u32) {
+        let (region, local) = locate(g);
+        debug_assert_eq!(region, 0, "an object stub lies in region 0");
+        self.regions.0.release_live(local);
+    }
+
+    /// Withholds region 0's stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
+    /// as its record id is withheld: a Value naming the stub names no other object meanwhile.
+    pub(super) fn withhold_stub(&mut self, g: u32) {
+        let (region, local) = locate(g);
+        debug_assert_eq!(region, 0, "an object stub lies in region 0");
+        self.regions.0.withhold(local);
+    }
+
+    /// Makes every withheld region 0 stub reusable again (`RecordSpace::release_withheld`).
+    pub(super) fn release_withheld_stubs(&mut self) {
+        self.regions.0.release_withheld();
+    }
+
+    /// The address of region 0's allocation cursor (`RecordCursor`): its `next` is the granule an inline
+    /// empty object allocation takes, and its `limit` the run's end, as the object record cursor's are.
+    pub(super) fn stub_cursor_address(&self) -> usize {
+        std::ptr::addr_of!(self.regions.0.cursor) as usize
+    }
+
+    /// Frees the unallocated rest of region 0's cursor run and empties the cursor, returning how many stubs
+    /// that was (`RecordSpace::retire_cursor`). The inline empty object allocation bumps this run, so every
+    /// collection retires it with the record cursors, before occupancy or a snapshot reads region 0.
+    pub(super) fn retire_stub_cursor(&mut self) -> usize {
+        self.regions.0.retire_cursor()
+    }
+}
+
+/// The record id of the ordinary object whose stub is granule `g` in the class space at `base`: the
+/// high half of the stub's header, which `departed_header` writes. Reading it is the one hop from a
+/// direct object `Value` to its record, so it needs only the base, not the heap.
+#[inline(always)]
+pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
+    // SAFETY: a direct object `Value` names a stub granule of the reserved class space, whose
+    // header is a readable u64 at `base + g * CLASS_HEADER_BYTES`.
+    let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
+    header_record(header)
 }
 
 /// Region `k`'s first address, as the record space of its cells.
@@ -124,6 +207,19 @@ pub(super) const fn locate(g: u32) -> (u32, u32) {
     (region, (g & REGION_MASK) >> region)
 }
 
+impl super::Heap {
+    /// The class space's base: granule `g`'s cell is at this plus `g * CLASS_HEADER_BYTES`. Zero until the
+    /// space is reserved. Read per heap (`staged::Table::ClassSpace`), never a fixed address.
+    #[inline(always)]
+    pub fn class_space_base(&self) -> usize { self.class_space.base }
+
+    /// The region 0 stub cursor (`ClassSpace::stub_cursor_address`), which an inline empty object allocation
+    /// bumps (`JsStepHead::stub_cursor`). It is a field of this heap, which stays where it is while the VM
+    /// runs; a native entry rereads it with the other record bases.
+    #[inline(always)]
+    pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
+}
+
 /// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A
 /// cell's capacity class is its address's region, so no class word records it.
 pub(crate) const fn region_capacity(granule: u32) -> u32 {
@@ -135,11 +231,6 @@ pub(crate) const fn region_capacity(granule: u32) -> u32 {
 /// The header word of a live class cell: the class id in the low half, zero above.
 pub(super) const fn live_header(class: u32) -> u64 {
     class as u64
-}
-
-/// The header word of a departed object: `DEPARTED_CLASS` in the low half, its record id above.
-pub(super) const fn departed_header(record: u32) -> u64 {
-    DEPARTED_CLASS as u64 | ((record as u64) << CLASS_RECORD_SHIFT)
 }
 
 pub(super) const fn header_class(header: u64) -> u32 {

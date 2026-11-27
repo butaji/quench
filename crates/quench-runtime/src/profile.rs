@@ -23,7 +23,7 @@ mod size_histogram;
 pub(crate) use size_histogram::{SIZE_BUCKETS, size_bucket};
 
 #[cfg(feature = "profile-aggregate")]
-const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as usize + 1;
+const BINARY_OPERATOR_COUNT: usize = crate::operator::BinaryOperator::Instanceof as usize + 1;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -303,7 +303,7 @@ impl Profile {
         let site_total = sites.iter().flatten().sum::<u64>();
         assert_eq!(total, site_total, "dispatch opcode/site counters diverged");
         eprint!(
-            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"binary_value_paths\":{{\"operator_order\":\"oxc_ast::ast::BinaryOperator discriminant\",\"value_tag_order\":{:?},\"path_order\":{:?},\"counts\":{:?}}},\"counts\":{{",
+            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"binary_value_paths\":{{\"operator_order\":\"crate::operator::BinaryOperator discriminant\",\"value_tag_order\":{:?},\"path_order\":{:?},\"counts\":{:?}}},\"counts\":{{",
             crate::value::ProfileKind::NAMES,
             BinaryValuePath::NAMES,
             self.binary_value_paths,

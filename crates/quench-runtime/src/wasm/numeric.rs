@@ -4,14 +4,14 @@
 use super::{ScalarBits, WasmValue};
 
 #[cfg(test)]
-pub(super) enum NumericResult<T> {
+pub enum NumericResult<T> {
     Value(T),
     Comparison(bool),
 }
 
 #[cfg(test)]
 impl<T> NumericResult<T> {
-    pub(super) fn into_wasm(self, integer: impl FnOnce(T) -> WasmValue) -> WasmValue {
+    pub fn into_wasm(self, integer: impl FnOnce(T) -> WasmValue) -> WasmValue {
         match self {
             Self::Value(value) => integer(value),
             Self::Comparison(value) => WasmValue::I32(i32::from(value)),
@@ -21,10 +21,9 @@ impl<T> NumericResult<T> {
 
 #[cfg(not(stencil_build))]
 impl WasmValue {
-    #[cfg_attr(feature = "test-support", quench_macros::test_visible)]
     /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
     #[inline]
-    pub(crate) fn word(self) -> u64 {
+    pub fn word(self) -> u64 {
         match self.bits() {
             Some(ScalarBits::Bits32(bits)) => u64::from(bits),
             Some(ScalarBits::Bits64(bits)) => bits,
@@ -51,22 +50,22 @@ macro_rules! selectors {
         impl $enum {
             pub const ALL: &'static [Self] = &[$(Self::$name,)+];
             #[cfg(not(stencil_build))]
-            pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
+            pub fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }
             }
         }
     };
 }
 
-pub(super) use selectors;
+pub(crate) use selectors;
 
 const IEEE_IMPLICIT_SIGNIFICAND_BITS: u32 = 1;
 
-pub(crate) const fn sign_mask(bit_width: u32) -> u64 {
+pub const fn sign_mask(bit_width: u32) -> u64 {
     1 << (bit_width - 1)
 }
 
-pub(crate) const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
+pub const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
     let fraction_width = precision - IEEE_IMPLICIT_SIGNIFICAND_BITS;
     let quiet_bit = 1 << (fraction_width - 1);
     infinity | quiet_bit

@@ -9,11 +9,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 
 /// Every record space, listed once, in `Heap`'s field order. Each row is
-/// `Family = field: Space [Elem] view => handle`: `Family` names the space's `RecordSpaceId`
+/// `Family = field: Space [Elem] view`: `Family` names the space's `RecordSpaceId`
 /// variant (whose index is the family's number, in this order); `field: Space` is the space's
-/// `Heap` field and type; `Elem` is the type its records hold; `view` is its field in
-/// `ParallelMarkView`; and `handle` is the `Value` constructor naming its records
-/// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
+/// `Heap` field and type; `Elem` is the type its records hold, whose `RecordValue` names them
+/// (`RecordFamily::value_of`); and `view` is its field in `ParallelMarkView`. `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
 /// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
 /// declares these fields by hand, since a macro cannot expand into a struct body that also holds
 /// other fields: a new space is added there as well.
@@ -21,19 +20,19 @@ macro_rules! for_each_record_space {
     ($m:ident, $($pre:tt)*) => {
         $m! {
             $($pre)* ;
-            Object = object_records: ObjectRecordSpace [Object] objects => Value::direct_object,
-            Array = array_records: ArrayRecordSpace [ArrayObject] arrays => Value::direct_array,
-            Function = function_records: FunctionRecordSpace [FunctionRecord] functions => Value::direct_function,
-            Promise = promise_records: PromiseRecordSpace [PromiseCell] promises => Value::direct_promise,
-            Await = await_records: AwaitRecordSpace [AwaitState] awaits => Value::direct_await,
-            Iterator = iterator_records: IteratorRecordSpace [IteratorRecord] iterators => Value::direct_iterator,
-            Collection = collection_records: CollectionRecordSpace [CollectionRecord] collections => Value::direct_collection,
-            String = string_records: StringRecordSpace [JsString] strings => Value::direct_string,
-            SmallString = small_strings: small_strings::SmallStringSpace [SmallParts] small_strings => small_strings::small_string_value,
-            V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s => Value::direct_v128,
-            Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments => Value::direct_environment,
-            Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols => Value::direct_symbol,
-            WasmGc = wasm_gc_records: WasmGcRecordSpace [WasmGcRecord] wasm_gcs => Value::direct_wasm_gc,
+            Object = object_records: ObjectRecordSpace [OrdinaryRecord] objects,
+            Array = array_records: ArrayRecordSpace [ArrayObject] arrays,
+            Function = function_records: FunctionRecordSpace [FunctionRecord] functions,
+            Promise = promise_records: PromiseRecordSpace [PromiseCell] promises,
+            Await = await_records: AwaitRecordSpace [AwaitState] awaits,
+            Iterator = iterator_records: IteratorRecordSpace [IteratorRecord] iterators,
+            Collection = collection_records: CollectionRecordSpace [CollectionRecord] collections,
+            String = string_records: StringRecordSpace [JsString] strings,
+            SmallString = small_strings: small_strings::SmallStringSpace [SmallParts] small_strings,
+            V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s,
+            Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments,
+            Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols,
+            WasmGc = wasm_gc_records: WasmGcRecordSpace [WasmGcRecord] wasm_gcs,
         }
     };
 }
@@ -44,7 +43,8 @@ macro_rules! for_each_record_space {
 macro_rules! record_reference_test {
     ($s:expr, $reference:expr, $method:ident, $otherwise:expr) => {
         match $reference {
-            Some(HeapReference::ObjectRecord(id)) => $s.object_records.$method(id),
+            // A direct object names its stub granule; its record is the stub header's hop.
+            Some(HeapReference::ObjectRecord(granule)) => $s.object_records.$method($s.stub_record(granule)),
             Some(HeapReference::ArrayRecord(id)) => $s.array_records.$method(id),
             Some(HeapReference::FunctionRecord(id)) => $s.function_records.$method(id),
             Some(HeapReference::PromiseRecord(id)) => $s.promise_records.$method(id),
@@ -62,41 +62,76 @@ macro_rules! record_reference_test {
 
 /// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
 macro_rules! mark_bits_struct {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
         #[derive(Clone, Copy)]
         pub(super) struct MarkBits<'a> {
             $($field: &'a $space,)*
             marks: &'a [AtomicU64],
+            /// The class space's base, which reads a direct object's stub (`stub_record_at`).
+            class_base: usize,
         }
     };
 }
 
 /// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
 macro_rules! mark_bits_literal {
-    ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         MarkBits {
             $($field: &$heap.$field,)*
             marks: &$heap.marks,
+            class_base: $heap.class_space.base,
         }
     };
 }
 
 /// `record_families` and `record_families_mut`, over every record space.
 macro_rules! record_families_fns {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
-        /// Every record family, with the `Value` constructor naming its records.
-        fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-            [$((&self.$field, $handle),)*]
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
+        /// Every record family, in `RecordSpaceId` order.
+        fn record_families(&self) -> [&dyn RecordFamily; RECORD_FAMILIES] {
+            [$(&self.$field as &dyn RecordFamily,)*]
         }
 
         /// `record_families`, mutably.
-        fn record_families_mut(
-            &mut self,
-        ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-            [$((&mut self.$field, $handle),)*]
+        fn record_families_mut(&mut self) -> [&mut dyn RecordFamily; RECORD_FAMILIES] {
+            [$(&mut self.$field as &mut dyn RecordFamily,)*]
         }
     };
+}
+
+/// `RecordValue` of each family that names its records by id: the family's `Value` constructor.
+macro_rules! record_values_by_id {
+    ($($elem:ty => $value:path),* $(,)?) => {$(
+        impl RecordValue for $elem {
+            fn value_of<const CAPACITY: usize, const HOLE: usize>(_: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value {
+                $value(id)
+            }
+        }
+    )*};
+}
+
+record_values_by_id! {
+    ArrayObject => Value::direct_array,
+    FunctionRecord => Value::direct_function,
+    PromiseCell => Value::direct_promise,
+    AwaitState => Value::direct_await,
+    IteratorRecord => Value::direct_iterator,
+    CollectionRecord => Value::direct_collection,
+    JsString => Value::direct_string,
+    SmallParts => small_strings::small_string_value,
+    [u8; crate::wasm::V128_BYTES] => Value::direct_v128,
+    EnvironmentRecord => Value::direct_environment,
+    SymbolData => Value::direct_symbol,
+    WasmGcRecord => Value::direct_wasm_gc,
+}
+
+impl RecordValue for OrdinaryRecord {
+    /// An ordinary object's `Value` is its stub granule, which its record holds (`publish_object_record`).
+    fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value {
+        // SAFETY: `RecordFamily::value_of` names a live record of `space`.
+        Value::direct_object(unsafe { space.get_live(id) }.stub)
+    }
 }
 
 /// `RecordSpaceId`, the family numbering every record-space lookup shares (`locate`, `with_space!`,
@@ -104,7 +139,7 @@ macro_rules! record_families_fns {
 /// in `for_each_record_space!`. Environments and symbols are numbered but never counted, so no
 /// lookup names them.
 macro_rules! record_space_ids {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         /// A record space's family, named by its row in `for_each_record_space!`. Every variant
         /// is constructed by `RECORD_FAMILIES`.
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -119,7 +154,7 @@ macro_rules! record_space_ids {
 
 /// `Heap::reset`'s empty record spaces.
 macro_rules! reset_record_spaces {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         /// Replaces every record space with an empty one (`Heap::reset`).
         fn reset_record_spaces(&mut self) {
             $(self.$field = <$space>::default();)*
@@ -216,7 +251,7 @@ pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries,
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, CollectionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace, WasmGcRecordSpace,
-    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
+    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, RecordSpace, RecordValue, StringRecordSpace, RecordId, RecordSweep,
 };
 pub use root::RootId;
 pub use root::{RootTable, WeakHandle};
@@ -515,6 +550,12 @@ for_each_record_space!(record_space_ids,);
 for_each_record_space!(mark_bits_struct,);
 
 impl MarkBits<'_> {
+    /// The record id of the object whose stub is `granule`.
+    #[inline(always)]
+    pub(super) fn stub_record(self, granule: u32) -> u32 {
+        class_space::stub_record_at(self.class_base, granule)
+    }
+
     /// Whether `value` is a heap value marked so far.
     pub(super) fn is_marked(self, value: Value) -> bool {
         match value.heap_reference() {
@@ -1065,7 +1106,7 @@ impl Heap {
     fn has_direct_records(&self) -> bool {
         self.record_families()
             .iter()
-            .any(|(family, _)| family.live_count() > 0)
+            .any(|family| family.live_count() > 0)
     }
 
     /// How this collection marks in parallel, if it does: a full collection, or a minor one
@@ -1109,7 +1150,7 @@ impl Heap {
     /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
     fn occupied_resident_bytes(&mut self) -> usize {
         let payload = self.payload_bytes;
-        self.record_families_mut().iter().map(|(family, _)| family.occupied_bytes()).sum::<usize>() + payload
+        self.record_families_mut().iter().map(|family| family.occupied_bytes()).sum::<usize>() + payload
     }
 
     /// Each program a live cell or function can still run or resolve names in
@@ -1178,7 +1219,7 @@ impl Heap {
             + self
                 .record_families()
                 .iter()
-                .map(|(family, _)| family.live_count())
+                .map(|family| family.live_count())
                 .sum::<usize>()
     }
 
@@ -1718,11 +1759,34 @@ impl Heap {
             panic!("object records exhausted: the object space holds 2^30 records");
         };
         // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
-        unsafe { self.object_records.record_ptr(record_id).write(object) };
-        let value = Value::direct_object(record_id);
+        unsafe { self.object_records.record_ptr(record_id).write(OrdinaryRecord { object, stub: 0 }) };
+        let value = self.publish_object_record(record_id);
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(value);
         value
+    }
+
+    /// Publishes object record `record_id`, whose record is written: claims its stub in region 0,
+    /// writes the stub's header (the record id, `departed_header`), stores the granule in the record,
+    /// and returns the direct object `Value` the granule names. A record claimed but not yet written
+    /// (`claim_object_record`) may be published first: only its stub field is written here.
+    #[inline(always)]
+    pub(crate) fn publish_object_record(&mut self, record_id: u32) -> Value {
+        let granule = self
+            .class_space
+            .claim_stub(record_id, &mut self.allocated)
+            .expect("class space stubs exhausted: region 0 holds the stubs of every ordinary object");
+        let record = self.object_records.record_ptr(record_id);
+        // SAFETY: `record_id` is a claimed record in the object space; only its stub field is written.
+        unsafe { std::ptr::addr_of_mut!((*record).stub).write(granule) };
+        Value::direct_object(granule)
+    }
+
+    /// The direct object `Value` of the live object record `record_id`: its stub granule.
+    #[inline(always)]
+    pub(crate) fn object_value(&self, record_id: u32) -> Value {
+        // SAFETY: the caller names a live object record, whose stub is set by `publish_object_record`.
+        Value::direct_object(unsafe { self.object_records.get_live(record_id) }.stub)
     }
 
     /// Admit initial named properties before any object-bearing cell or record
@@ -2188,7 +2252,7 @@ impl Heap {
         for (_, owner) in owners {
             // SAFETY: the owners were listed from records the sweep kept.
             let object = match owner {
-                YoungOwner::Object(record_id) => unsafe { self.object_records.get_live_mut_unbarriered(record_id) },
+                YoungOwner::Object(record_id) => &mut unsafe { self.object_records.get_live_mut_unbarriered(record_id) }.object,
                 YoungOwner::Function(record_id) => &mut unsafe { self.function_records.get_live_mut_unbarriered(record_id) }.object,
             };
             let mut vector = object.properties();
@@ -2209,7 +2273,8 @@ impl Heap {
     /// collection that does not compact: objects that grew after promotion.
     fn narrow_live_runs(&mut self) {
         let Self { object_records, properties, .. } = self;
-        object_records.for_each_live_mut(|_, object| {
+        object_records.for_each_live_mut(|_, record| {
+            let object = &mut record.object;
             if object.has_extras() {
                 return;
             }
@@ -2239,9 +2304,9 @@ impl Heap {
                 slot_owners.push(pack_offset_owner(object.properties().start_offset(), index));
             }
         }
-        self.object_records.for_each_live(|record_id, object| {
-            if object.properties().has_compact_range() {
-                direct_owners.push((object.properties().start_offset(), Value::direct_object(record_id)));
+        self.object_records.for_each_live(|_, record| {
+            if record.object.properties().has_compact_range() {
+                direct_owners.push((record.object.properties().start_offset(), Value::direct_object(record.stub)));
             }
         });
         self.function_records.for_each_live(|record_id, function| {
@@ -2294,6 +2359,7 @@ impl Heap {
         owners.sort_unstable_by_key(|(offset, _)| *offset);
         let mut target = 0;
         let Self {
+            class_space,
             object_records,
             array_records,
             function_records,
@@ -2306,9 +2372,10 @@ impl Heap {
             ..
         } = self;
         for (_, owner) in owners {
-            let object = if let Some(record_id) = owner.direct_object_index().map(|object| object.raw()) { // R4-B2b: needs heap (`self` is destructured above)
+            let object = if let Some(object_ref) = owner.direct_object_index() {
+                let record_id = class_space.record_of(object_ref.granule());
                 // SAFETY: direct owners were collected from live marked records.
-                Some(unsafe { object_records.get_live_mut_unbarriered(record_id) })
+                Some(&mut unsafe { object_records.get_live_mut_unbarriered(record_id) }.object)
             } else if let Some(record_id) = owner.direct_array_index() {
                 // SAFETY: array owners were collected from live array records.
                 Some(&mut **unsafe { array_records.get_live_mut_unbarriered(record_id) })
@@ -2608,6 +2675,8 @@ impl Heap {
                 match prototype.direct_object_index() {
                     Some(object_ref) => {
                         let record_id = self.record_id(object_ref);
+                        // Its stub is withheld with its record: the granule names no other object either.
+                        self.class_space.withhold_stub(object_ref.granule());
                         withheld = self.object_records.withhold(record_id);
                     }
                     None => died_unrecorded = true,
@@ -2627,6 +2696,7 @@ impl Heap {
             advance_prototype_layout_epoch();
             self.dependencies.retire_cells();
             self.object_records.release_withheld();
+            self.class_space.release_withheld_stubs();
         }
     }
 
@@ -2635,7 +2705,7 @@ impl Heap {
     /// runs (`ValueArena::return_free_pages`), and the allocator's free memory when the sweep
     /// freed a lot (`release_freed_allocator_memory`).
     fn return_freed_memory(&mut self, payload_before: usize) {
-        for (family, _) in self.record_families_mut() {
+        for family in self.record_families_mut() {
             family.return_free_pages();
         }
         self.properties.return_free_pages();
@@ -2652,7 +2722,8 @@ impl Heap {
         let unspent = self.object_records.retire_cursor()
             + self.array_records.retire_cursor()
             + self.function_records.retire_cursor()
-            + self.environment_records.retire_cursor();
+            + self.environment_records.retire_cursor()
+            + self.class_space.retire_stub_cursor();
         self.allocated = self.allocated.saturating_sub(unspent);
     }
 
@@ -2738,7 +2809,7 @@ impl Heap {
             self.carried_owners.clear();
             // A full collection promotes every survivor, aged or not.
             self.aged.clear();
-            for (family, _) in self.record_families_mut() {
+            for family in self.record_families_mut() {
                 family.clear_marks();
                 family.forget_ages();
             }
@@ -2757,8 +2828,8 @@ impl Heap {
         #[cfg(debug_assertions)]
         let verify_old_records = (!full).then(|| {
             let mut old = Vec::new();
-            for (family, handle) in self.record_families() {
-                family.for_each_marked(&mut |id| old.push(handle(id)));
+            for family in self.record_families() {
+                family.for_each_marked(&mut |id| old.push(family.value_of(id)));
             }
             old
         });
@@ -2770,7 +2841,7 @@ impl Heap {
                 self.gc_profile.remembered_owner_scans += self
                     .record_families()
                     .iter()
-                    .map(|(family, _)| family.remembered_count())
+                    .map(|family| family.remembered_count())
                     .sum::<usize>() as u64;
             }
             // What the barriers logged since the last collection is carried to the next one
@@ -2781,7 +2852,7 @@ impl Heap {
             }
             // The newborn records are named while the carried owners are still marked old, so
             // only the barriers' log needs excluding from them.
-            let written = self.record_families_mut().map(|(family, _)| {
+            let written = self.record_families_mut().map(|family| {
                 let written = family.take_remembered();
                 family.prepare_minor(&written, age);
                 written
@@ -2789,11 +2860,11 @@ impl Heap {
             for owner in std::mem::take(&mut self.carried_owners) {
                 self.write_barrier(owner);
             }
-            for ((family, handle), mut logged) in self.record_families_mut().into_iter().zip(written) {
+            for (family, mut logged) in self.record_families_mut().into_iter().zip(written) {
                 let written = logged.len();
                 logged.extend(family.take_remembered());
                 let first = work.len();
-                work.extend(logged.into_iter().map(handle));
+                work.extend(logged.into_iter().map(|id| family.value_of(id)));
                 if carries_owners {
                     remembered_owners.extend_from_slice(&work[first..first + written]);
                 }
@@ -2968,7 +3039,7 @@ impl Heap {
                 self.gc_profile.sweep_slots +=
                     self.record_families()
                         .iter()
-                        .map(|(family, _)| family.high_water())
+                        .map(|family| family.high_water())
                         .sum::<usize>() as u64;
             }
             // A full collection sweeps the strings on a mark-pool worker meanwhile, once
@@ -2991,26 +3062,29 @@ impl Heap {
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
+            let class_space = &mut self.class_space;
             let payload_bytes = &mut self.payload_bytes;
             let live_payload_bytes = &mut live_payload_bytes;
             let mut collection_counts = (0, 0);
             let mut sweep_rest = || {
                 // Every young run's owner is a direct object or function (`YoungOwner`), so
                 // their sweep shows its survivors, minor or full, and lists those it keeps.
-                // A dead object's storage is released in place; one without extras, which its drop
-                // would free, is then forgotten.
+                // A dead object's storage is released in place, and its stub with it; one without
+                // extras, which its drop would free, is then forgotten.
                 let young_runs = properties.young_runs();
-                let dispose = |_record_id: RecordId, object: &Object| {
+                let dispose = |_record_id: RecordId, record: &OrdinaryRecord| {
                     #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
-                    object.release_storage(properties)
+                    memory_profile.freed_record_cell(Value::direct_object(record.stub), properties.len(record.object.properties()));
+                    class_space.release_stub(record.stub);
+                    record.object.release_storage(properties)
                 };
                 let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
-                    RecordSweep::Keep(record_id, object) => {
+                    RecordSweep::Keep(record_id, record) => {
+                        let object = &record.object;
                         if compacts && object.properties().has_compact_range() {
                             direct_property_owners.push((
                                 object.properties().start_offset(),
-                                Value::direct_object(record_id),
+                                Value::direct_object(record.stub),
                             ));
                         } else if young_runs.hold(object.properties()) {
                             note_young_owner(&mut young_owners, object.properties().start_offset(), YoungOwner::Object(record_id));
@@ -3261,8 +3335,8 @@ impl Heap {
         }
         let _ = (freed_cells, swept_slots);
         if carries_owners {
-            for (family, handle) in self.record_families_mut() {
-                remembered_owners.extend(family.take_promoted().into_iter().map(handle));
+            for family in self.record_families_mut() {
+                remembered_owners.extend(family.take_promoted().into_iter().map(|id| family.value_of(id)));
             }
             self.carried_owners = remembered_owners;
         }
@@ -3368,7 +3442,7 @@ impl Heap {
         }
         let since_full = self.allocated_since_full();
         let mut aged = std::mem::take(&mut self.aged_fates);
-        for (family, _) in self.record_families_mut() {
+        for family in self.record_families_mut() {
             aged.add(family.take_aged_fates());
         }
         let mut next = self.pacing().plan(
@@ -3638,13 +3712,13 @@ impl Heap {
     fn snapshot_record_marks(&self) -> Vec<Vec<u64>> {
         self.record_families()
             .iter()
-            .map(|(family, _)| family.snapshot_marks())
+            .map(|family| family.snapshot_marks())
             .collect()
     }
 
     #[cfg(debug_assertions)]
     fn restore_record_marks(&mut self, marks: &[Vec<u64>]) {
-        for ((family, _), marks) in self.record_families_mut().into_iter().zip(marks) {
+        for (family, marks) in self.record_families_mut().into_iter().zip(marks) {
             family.restore_marks(marks);
         }
     }
@@ -3662,7 +3736,7 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
-        for (family, _) in self.record_families_mut() {
+        for family in self.record_families_mut() {
             family.clear_marks();
         }
         let mut work = roots.to_vec();
@@ -3701,7 +3775,7 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
-        for (family, _) in self.record_families_mut() {
+        for family in self.record_families_mut() {
             family.clear_marks();
         }
         let pinned_records: rustc_hash::FxHashSet<Value> = old_records.iter().copied().collect();
@@ -3729,14 +3803,14 @@ impl Heap {
         let marked = |marks: &[u64], id: RecordId| {
             marks[id as usize / u64::BITS as usize] & (1_u64 << (id as usize % u64::BITS as usize)) != 0
         };
-        for (((family, handle), minor), verified) in self
+        for ((family, minor), verified) in self
             .record_families()
             .into_iter()
             .zip(&minor_record_marks)
             .zip(&verified_record_marks)
         {
             family.for_each_live_id(&mut |id| {
-                let identity = handle(id);
+                let identity = family.value_of(id);
                 assert!(
                     pinned_records.contains(&identity) || marked(minor, id) == marked(verified, id),
                     "minor collection's young records differ from a full mark with old records pinned: {identity:?}"
@@ -3858,6 +3932,12 @@ impl Heap {
         }
     }
 
+    /// The record id of the ordinary object whose stub is `granule` (`class_space::stub_record_at`).
+    #[inline(always)]
+    pub(super) fn stub_record(&self, granule: u32) -> u32 {
+        self.class_space.record_of(granule)
+    }
+
     /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
     /// alive onto `work`: the serial mark's visit of one value. Objects, arrays, functions and
     /// strings are visited here; the rarer kinds are visited by `mark_rare_value`.
@@ -3867,6 +3947,7 @@ impl Heap {
         R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     {
         if let Some(object_ref) = value.direct_object_index() {
+            // Marking a direct object marks its record: the stub has no mark bit of its own.
             let record_id = self.record_id(object_ref);
             if !self.object_records.mark(record_id) {
                 return;
@@ -3880,10 +3961,10 @@ impl Heap {
                 self.push_aged_object_children(value, record_id, ctx.work, ctx.trace_kind);
             } else {
                 // SAFETY: the direct handle is live and its mark bit was newly set.
-                let object = unsafe { self.object_records.get_live(record_id) };
+                let record = unsafe { self.object_records.get_live(record_id) };
                 Self::object_children(
                     value,
-                    object,
+                    &record.object,
                     &self.properties,
                     ctx.work,
                     ctx.object_roots,
@@ -4166,9 +4247,9 @@ impl Heap {
         // A survivor's snapshot names its children (`SatbSnapshot`); its shape's edges are pinned
         // or this collection's roots, and its owned roots are roots (`Vm::collect_inner`).
         // SAFETY: the direct handle is live and its mark bit was newly set.
-        let object = unsafe { self.object_records.get_live(record_id) };
+        let record = unsafe { self.object_records.get_live(record_id) };
         let first = work.len();
-        Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+        Self::object_children(value, &record.object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
         for &child in &work[first..] {
             self.rc_increment(child);
         }
@@ -4268,7 +4349,10 @@ impl Heap {
     /// owner-attached VM tables): `owner` is logged as if it had been written.
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.barrier(record_id, &self.properties),
+            Some(HeapReference::ObjectRecord(granule)) => {
+                let record_id = self.stub_record(granule);
+                self.object_records.barrier(record_id, &self.properties)
+            }
             Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id, &self.properties),
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.barrier(record_id, &self.properties)
@@ -4889,7 +4973,8 @@ impl Heap {
         data.append_plain(properties, slot, value, shape);
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
-        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        let value = self.object_value(record_id);
+        self.note_object_slots(value, slot + 1);
         true
     }
 
@@ -5785,7 +5870,7 @@ impl Heap {
             own.take((0..len).filter_map(|slot| properties.get(vector, slot)));
         };
         let (mut objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
-        self.object_records.for_each_live(|_, object| { objects += 1; take_object(object, &mut own); });
+        self.object_records.for_each_live(|_, record| { objects += 1; take_object(&record.object, &mut own); });
         self.array_records.for_each_live(|_, array| {
             arrays += 1;
             take_object(array, &mut own);

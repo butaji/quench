@@ -62,7 +62,13 @@ impl Heap {
             return None;
         }
         let object = Object::from_inline_header(header, inline)?;
-        // The cursor's next id is the call-free case; a spent cursor takes the per-id claim.
+        // The record's stub is the next of region 0's cursor, claimed once the record's id is taken (the
+        // stub's header names the record). The stub cursor is peeked first, so a spent one returns `None`
+        // with nothing claimed.
+        if !self.class_space.stub_cursor_open() {
+            return None;
+        }
+        // The record cursor's next id is the call-free case; a spent cursor takes the per-id claim.
         let id = match self.object_records.cursor_take() {
             Some(id) => id,
             None => {
@@ -71,9 +77,12 @@ impl Heap {
                 id
             }
         };
+        let Some(granule) = self.class_space.claim_stub_quick(id) else {
+            unreachable!("the stub cursor was checked open before the record's id was taken");
+        };
         // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
-        unsafe { self.object_records.record_ptr(id).write(object) };
-        Some(Value::direct_object(id))
+        unsafe { self.object_records.record_ptr(id).write(OrdinaryRecord { object, stub: granule }) };
+        Some(Value::direct_object(granule))
     }
 
     /// A fresh direct object record claimed with nothing written: its `Value` and the address
@@ -84,7 +93,11 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn claim_object_record(&mut self) -> Option<(Value, *mut Object)> {
         let id = self.object_records.bump_id(&mut self.allocated)?;
-        Some((Value::direct_object(id), self.object_records.record_ptr(id)))
+        let value = self.publish_object_record(id);
+        let record = self.object_records.record_ptr(id);
+        // SAFETY: the record is claimed and its stub is written in place by `publish_object_record`; its
+        // object is the caller's to write whole, through this address, before any safepoint.
+        Some((value, unsafe { std::ptr::addr_of_mut!((*record).object) }))
     }
 
     /// Gives `object`, a constructor's receiver that no code has seen, allocated from a template
@@ -114,7 +127,7 @@ impl Heap {
         };
         // The template's inline storage holds no values and it has no extras, so nothing is
         // lost: the record is rewritten whole, as a planned allocation writes it.
-        *data = Object::from_run_header(header, start);
+        data.object = Object::from_run_header(header, start);
         true
     }
 
@@ -138,7 +151,8 @@ impl Heap {
         data.append_reserved(properties, slot, value, shape);
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
-        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        let value = self.object_value(record_id);
+        self.note_object_slots(value, slot + 1);
         true
     }
 

@@ -6,10 +6,14 @@
 //! is built from `Demand::execution_table` (`quench-runtime-engine/src/aot_image/demand.rs`), one
 //! group per demand flag:
 //!
-//! * `interpret`: the frame loop's interpreter (`Demand::needs_interpreter`);
-//! * `tier_up`: the tiers that take a frame over or offer it compiled code (`Demand::needs_exits`);
-//! * `compile_source`: run-time compilation of source text (`eval`, `Function`);
-//! * `link_live`: the VM's linking of a lane body from the image file (`Demand::needs_live_link`);
+//! * `interpret`: the frame loop's interpreter, and the counter of the native executions it rejects
+//!   (`Demand::needs_interpreter`);
+//! * `tier_up`: the tiers that take a frame over or offer it compiled code, the hot-loop view they
+//!   derive, and the lane plan report that derives views (`Demand::needs_exits`);
+//! * `compile_source`: run-time compilation of source text (`eval`, `Function`), and the native
+//!   module programs it stores (`Demand::compile_source`, always on until E1);
+//! * `link_live`: the VM's linking of a lane body from the image file, and the AOT images it loads
+//!   (`Demand::needs_live_link`);
 //! * `wasm`: the WebAssembly tier (`Demand::wasm`).
 //!
 //! `ALL` is the complete table every non-image runtime uses, so its behaviour is unchanged. A `None`
@@ -49,6 +53,20 @@ pub type WasmTableStepFn = entry::quench_engine_vm_wasm_table_step;
 pub type WasmInstanceAddressFn = entry::quench_engine_vm_wasm_instance_address;
 /// Compiles the module's Wasm functions eagerly (`quench_engine_vm_compile_wasm_eagerly`).
 pub type CompileWasmEagerlyFn = entry::quench_engine_vm_compile_wasm_eagerly;
+/// The count of rejected native executions (`quench_engine_vm_native_execution_rejections`).
+pub type NativeExecutionRejectionsFn = entry::quench_engine_vm_native_execution_rejections;
+/// Counts a rejected native execution (`quench_engine_vm_record_native_execution_rejection`).
+pub type RecordNativeExecutionRejectionFn = entry::quench_engine_vm_record_native_execution_rejection;
+/// The lane view of a function a hot loop of it turned hot (`quench_engine_vm_hot_loop_lane_view`).
+pub type HotLoopLaneViewFn = entry::quench_engine_vm_hot_loop_lane_view;
+/// Reports the lane plan of a finished run (`quench_engine_vm_report_lane_plan`).
+pub type ReportLanePlanFn = entry::quench_engine_vm_report_lane_plan;
+/// Stores a native module's program (`quench_engine_vm_store_native_module_program`).
+pub type StoreNativeModuleProgramFn = entry::quench_engine_vm_store_native_module_program;
+/// Admits a kept native module's program (`quench_engine_vm_kept_native_module_program`).
+pub type KeptNativeModuleProgramFn = entry::quench_engine_vm_kept_native_module_program;
+/// Loads AOT images into the runtime (`quench_engine_vm_load_ahead_images`).
+pub type LoadAheadImagesFn = entry::quench_engine_vm_load_ahead_images;
 
 /// The engine entries one runtime links. A field is `None` when the runtime's closed world proved
 /// the entry unreachable; `ALL` is every entry.
@@ -56,17 +74,24 @@ pub type CompileWasmEagerlyFn = entry::quench_engine_vm_compile_wasm_eagerly;
 pub struct ExecutionTable {
     /// `interpret` group.
     pub interpret: Option<RunLaneFn>,
+    pub native_execution_rejections: Option<NativeExecutionRejectionsFn>,
+    pub record_native_execution_rejection: Option<RecordNativeExecutionRejectionFn>,
     /// `tier_up` group.
     pub js_tier_frame_entry: Option<TierFrameEntryFn>,
     pub offer_compiled: Option<OfferCompiledFn>,
     pub run_offered: Option<RunOfferedFn>,
     pub js_jit_compiled_call: Option<JsJitCompiledCallFn>,
     pub tier_may_run: Option<TierMayRunFn>,
+    pub hot_loop_lane_view: Option<HotLoopLaneViewFn>,
+    pub report_lane_plan: Option<ReportLanePlanFn>,
     /// `compile_source` group.
     pub prepare_native_script: Option<PrepareNativeScriptFn>,
+    pub store_native_module_program: Option<StoreNativeModuleProgramFn>,
+    pub kept_native_module_program: Option<KeptNativeModuleProgramFn>,
     /// `link_live` group.
     pub stage_images_at_load: Option<StageImagesAtLoadFn>,
     pub attach_native_js: Option<AttachNativeJsFn>,
+    pub load_ahead_images: Option<LoadAheadImagesFn>,
     /// `wasm` group.
     pub install_wasm_instance: Option<InstallWasmInstanceFn>,
     pub bind_wasm_instance: Option<BindWasmInstanceFn>,
@@ -80,14 +105,21 @@ impl ExecutionTable {
     /// Every engine entry: what every non-image runtime links.
     pub const ALL: Self = Self {
         interpret: Some(super::engine_calls::quench_engine_vm_run_fast_lane),
+        native_execution_rejections: Some(super::engine_calls::quench_engine_vm_native_execution_rejections),
+        record_native_execution_rejection: Some(super::engine_calls::quench_engine_vm_record_native_execution_rejection),
         js_tier_frame_entry: Some(super::engine_calls::quench_engine_vm_js_tier_frame_entry),
         offer_compiled: Some(super::engine_calls::quench_engine_vm_offer_compiled),
         run_offered: Some(super::engine_calls::quench_engine_vm_run_offered),
         js_jit_compiled_call: Some(super::engine_calls::quench_engine_vm_js_jit_compiled_call),
         tier_may_run: Some(super::engine_calls::quench_engine_vm_tier_may_run),
+        hot_loop_lane_view: Some(super::engine_calls::quench_engine_vm_hot_loop_lane_view),
+        report_lane_plan: Some(super::engine_calls::quench_engine_vm_report_lane_plan),
         prepare_native_script: Some(super::engine_calls::quench_engine_vm_prepare_native_script),
+        store_native_module_program: Some(super::engine_calls::quench_engine_vm_store_native_module_program),
+        kept_native_module_program: Some(super::engine_calls::quench_engine_vm_kept_native_module_program),
         stage_images_at_load: Some(super::engine_calls::quench_engine_vm_stage_images_at_load),
         attach_native_js: Some(super::engine_calls::quench_engine_vm_attach_native_js),
+        load_ahead_images: Some(super::engine_calls::quench_engine_vm_load_ahead_images),
         install_wasm_instance: Some(super::engine_calls::quench_engine_vm_install_wasm_instance),
         bind_wasm_instance: Some(super::engine_calls::quench_engine_vm_bind_wasm_instance),
         run_compiled: Some(super::engine_calls::quench_engine_vm_run_compiled),

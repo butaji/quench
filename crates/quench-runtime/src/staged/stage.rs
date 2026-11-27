@@ -407,6 +407,10 @@ pub enum Table {
     ChainOwners,
     /// The representation each owner holds (`ValueArena::owner_types`), one `SlotType` byte each.
     OwnerTypes,
+    /// The class space's base (`Heap::class_space_base`): a direct object's granule `g` names the cell at
+    /// `base + g * CLASS_HEADER_BYTES`, whose header's high half is the object's record id (R4-B2b). Per heap:
+    /// a stage reads it from its heap or its dispatch head, never from a constant.
+    ClassSpace,
 }
 
 

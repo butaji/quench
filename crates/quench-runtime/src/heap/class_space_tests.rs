@@ -1,10 +1,10 @@
 use super::class_space::{
-    ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, departed_header, granule, header_class, header_record,
+    ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, granule, header_class, header_record,
     live_header, locate, region_capacity, region_cells,
 };
 use super::layouts::LAYOUT_CAPACITY;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, DEPARTED_CLASS, REGION_SHIFT};
+use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, DEPARTED_CLASS, REGION_SHIFT, departed_header};
 use std::mem::size_of;
 
 #[test]

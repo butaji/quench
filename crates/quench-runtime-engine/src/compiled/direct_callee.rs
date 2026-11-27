@@ -100,11 +100,10 @@ pub(crate) fn frames_window(frames: impl Iterator<Item = (quench_runtime::byteco
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
 /// (`compiled::DirectCallee`), the latest first.
 pub(crate) fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
-    let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
         let instruction = body.widened(*packed);
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
-            && !(tail_calls && instruction.returns_from_frame());
+            && !quench_runtime::compile::call_plan::tail_site(instruction.returns_from_frame(), body.permits_js_tail_call_at(pc as u32));
         let mut callees = crate::compiled::DirectCandidates::new();
         if quench_runtime::staged::construction_family(instruction.op()) {
             callees.extend(construct_callee_in_lane(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));

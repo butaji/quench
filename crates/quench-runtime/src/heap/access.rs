@@ -246,7 +246,14 @@ impl Heap {
     /// The record id of the ordinary object `object` names (identity now; R4-B2b reads the cell header).
     #[inline(always)]
     pub fn record_id(&self, object: ObjectRef32) -> u32 {
-        object.0
+        self.class_space.record_of(object.granule())
+    }
+
+    /// The object record whose stub granule is `granule`: the stub header's hop, then the record. A
+    /// prototype link names its object by granule (`ProtoLink::object_granule`), so readers come here.
+    #[inline(always)]
+    pub fn object_record_by_granule(&self, granule: u32) -> &Object {
+        self.object_record_by_id(self.class_space.record_of(granule))
     }
 
     /// The read view of the ordinary object `value` names (`object_view`). Same reach as `object`: a class
@@ -280,7 +287,7 @@ impl Heap {
             let record_id = self.record_id(object);
             // SAFETY: a direct-object Value is only created after the
             // ObjectRecord is initialized, and records retire after weak pruning.
-            return Some(unsafe { self.object_records.get_live(record_id) });
+            return Some(&unsafe { self.object_records.get_live(record_id) }.object);
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: a direct-array Value names an initialized array record.
@@ -455,7 +462,7 @@ impl Heap {
         if let Some(object_ref) = value.direct_object_index() {
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            let object = unsafe { self.object_records.get_live_mut(record_id, &self.properties) };
+            let object = &mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object;
             widen_narrow_run(object, &mut self.properties);
             return Some(object);
         }
@@ -491,7 +498,7 @@ impl Heap {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
             // narrow value in place and widen the run for any other.
-            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) });
+            return Some(&mut unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) }.object);
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
@@ -602,6 +609,7 @@ impl Heap {
             self.remember(index as usize);
         }
         let Self {
+            class_space,
             object_records,
             array_records,
             function_records,
@@ -613,10 +621,12 @@ impl Heap {
             ..
         } = self;
         let object: &mut Object = match reference {
-            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            HeapReference::ObjectRecord(record_id) => unsafe {
-                object_records.get_live_mut(record_id, properties)
-            },
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive. The stub's
+            // header names the record.
+            HeapReference::ObjectRecord(granule) => {
+                let record_id = class_space.record_of(granule);
+                &mut unsafe { object_records.get_live_mut(record_id, properties) }.object
+            }
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             HeapReference::ArrayRecord(record_id) => unsafe {
                 array_records.get_live_mut(record_id, properties)
@@ -851,14 +861,15 @@ impl Heap {
     /// Value. It must end before any safepoint and must not retain a record pointer afterward.
     #[inline]
     pub fn object_record_base(&self) -> Option<*const Object> {
-        self.object_records.base_ptr()
+        // The record's object is its first field (`OrdinaryRecord` is `repr(C)`), so the base is the object's.
+        self.object_records.base_ptr().map(|base| base.cast::<Object>())
     }
 
     /// `object_record_base` untested, for a read that proves its receiver a direct object before
     /// it addresses the table (`object_record_by_id`'s contract).
     #[inline(always)]
     pub fn live_object_records(&self) -> *const Object {
-        self.object_records.live_base()
+        self.object_records.live_base().cast::<Object>()
     }
 
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
@@ -917,7 +928,7 @@ impl Heap {
     #[inline]
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
-            HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
+            HeapReference::ObjectRecord(granule) => Some(self.object_record_by_granule(granule)),
             HeapReference::ArrayRecord(record_id) => {
                 // SAFETY: the tagged Value identifies an initialized live array record.
                 Some(unsafe { self.array_records.get_live(record_id) })
@@ -952,8 +963,8 @@ impl Heap {
     /// stored link, an object record's without decoding it.
     #[inline(always)]
     pub(crate) fn record_prototype(&self, object: &Object) -> Option<&Object> {
-        match object.proto_link().object_record_id() {
-            Some(record_id) => Some(self.object_record_by_id(record_id)),
+        match object.proto_link().object_granule() {
+            Some(granule) => Some(self.object_record_by_granule(granule)),
             None => self.record_object(object.proto().heap_reference()?),
         }
     }
@@ -965,12 +976,12 @@ impl Heap {
 
     /// Every live object record, for a diagnostics census (`Vm::field_site_report`).
     pub(crate) fn for_each_live_object_record(&self, mut visit: impl FnMut(&Object)) {
-        self.object_records.for_each_live(|_, object| visit(object));
+        self.object_records.for_each_live(|_, record| visit(&record.object));
     }
 
     #[inline(always)] pub fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
-        unsafe { self.object_records.get_live(record_id) }
+        &unsafe { self.object_records.get_live(record_id) }.object
     }
 
     #[quench_macros::test_visible]
@@ -978,7 +989,7 @@ impl Heap {
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = self.record_id(value.direct_object_index()?);
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
-        Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) })
+        Some(&mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object)
     }
 
     #[quench_macros::test_visible]
@@ -994,8 +1005,8 @@ impl Heap {
     }
 
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
-        for (family, handle) in self.record_families() {
-            family.for_each_live_id(&mut |record_id| visit(handle(record_id)));
+        for family in self.record_families() {
+            family.for_each_live_id(&mut |record_id| visit(family.value_of(record_id)));
         }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {

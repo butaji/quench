@@ -24,7 +24,7 @@ impl Heap {
     /// Visits every live object-bearing record and legacy cell with the property arena.
     pub(super) fn visit_live_objects(&mut self, mut visit: impl FnMut(&Object, &mut ValueArena)) {
         let properties = &mut self.properties;
-        self.object_records.for_each_live(|_, object| visit(object, properties));
+        self.object_records.for_each_live(|_, record| visit(&record.object, properties));
         self.array_records.for_each_live(|_, array| visit(array, properties));
         self.function_records.for_each_live(|_, function| visit(&function.object, properties));
         self.promise_records.for_each_live(|_, promise| visit(&promise.object, properties));
@@ -42,7 +42,7 @@ impl Heap {
         let properties = &self.properties;
         let mut runs = Vec::new();
         let mut visit = |object: &Object| runs.extend(arena_run_of(properties, object));
-        self.object_records.for_each_live(|_, object| visit(object));
+        self.object_records.for_each_live(|_, record| visit(&record.object));
         self.array_records.for_each_live(|_, array| visit(array));
         self.function_records.for_each_live(|_, function| visit(&function.object));
         self.promise_records.for_each_live(|_, promise| visit(&promise.object));

@@ -194,6 +194,10 @@ heap_reads! {
     fn property_get(object: &Object, slot: usize) -> Option<Value>;
     /// The store-watch word compiled code compares (`Heap::store_watch_word`).
     fn store_watch_word() -> usize;
+    /// The class space's base, which a direct object's granule is added to (`Heap::class_space_base`).
+    fn class_space_base() -> usize;
+    /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index.
+    fn record_id(object: crate::value::ObjectRef32) -> u32;
     /// The weight allocated since the last collection (`Heap::allocated_weight`).
     fn allocated_weight() -> usize;
     /// An object held as a record (`Heap::record_object_value`).
@@ -212,6 +216,8 @@ heap_reads! {
     fn live_array_records() -> *const ArrayObject;
     /// The live string records (`Heap::live_string_records`).
     fn live_string_records() -> *const JsString;
+    /// The region 0 stub cursor an inline empty object allocation bumps (`Heap::native_stub_cursor`).
+    fn native_stub_cursor() -> usize;
     /// The native object allocation cursor (`Heap::native_object_cursor`).
     fn native_object_cursor() -> usize;
     /// The native array allocation cursor (`Heap::native_array_cursor`).

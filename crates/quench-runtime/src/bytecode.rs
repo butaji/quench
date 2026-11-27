@@ -1990,7 +1990,7 @@ impl Function {
     /// Reusing an activation is observable while its call is protected by a handler.
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
-    pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+    pub fn permits_js_tail_call_at(&self, pc: u32) -> bool {
         self.strict && !self.class_initializer && self.handler_at(pc).is_none()
     }
 

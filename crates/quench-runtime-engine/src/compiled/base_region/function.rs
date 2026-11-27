@@ -187,8 +187,8 @@ pub(crate) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: E
 }
 
 /// What a built stitch adds to the trace's totals: a body's rows and exits, or a region's span and
-/// bytes with the time it took.
-fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)) {
+/// bytes.
+fn tally(built: &Result<Body, String>, ending: Ending, span: u64) {
     note(|totals, rejects| match (built, ending) {
         (Ok(body), Ending::Body) => {
             totals.bodies += 1;
@@ -199,7 +199,6 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
             totals.regions += 1;
             totals.ops += span;
             totals.bytes += body.code.len() as u64;
-            totals.nanos += nanos;
         }
         (Err(name), Ending::Body) => *rejects.entry(format!("body: {name}")).or_default() += 1,
         (Err(name), Ending::Region) => {
@@ -214,7 +213,6 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 /// # Safety
 /// As `build_body`.
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
-    let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let targets = unsafe { callees.targets() };
     let function = spec.known.program.function(spec.function as usize);
@@ -223,7 +221,7 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     let known = Known { classes: &classes, ..spec.known };
     let sites = Sites { function, id: spec.function, callees, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
-    tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
+    tally(&built, ending, u64::from(region.backedge - region.header) + 1);
     built
 }
 

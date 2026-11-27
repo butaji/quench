@@ -1,9 +1,11 @@
 //! The pure-ECMAScript image driver: the same compiled program and image tables as the Node
 //! driver, executed on the runtime's own host. It links `quench_runtime` alone, so the
-//! executable carries no Node host, no bootstrap snapshot and no operation table.
+//! executable carries no Node host and no operation table. It starts from the realm its closed
+//! world saved at build time (`aot::core_rest`), so it installs no realm and runs no builtin installer.
 #![no_main]
 
 use quench_runtime::{ExecutionMode, MemoryPolicy, NativeProgramNamespace, Runtime, SystemHost};
+use std::rc::Rc;
 
 // Every runtime layer (engine, intl, stencils) links through this facade: the core calls their
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
@@ -16,6 +18,9 @@ extern crate quench_layers;
 static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
+
+/// The startup snapshot `aot::core_rest` saved: the realm and program the image restores.
+const REST: &[u8] = include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP"));
 
 /// The policy this image runs: the default, or memory-first under the experiment the Node host
 /// also reads (`QUENCH_DEV=memory-first`).
@@ -44,7 +49,9 @@ fn run() -> Result<u8, String> {
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
     let policy = memory_policy();
     apply_allocator_policy(policy);
-    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS, &EXECUTION);
+    // The realm and the program's loaded state come from the snapshot `aot::core_rest` saved at
+    // build time; the entry is still bound (`bind_entry`) for its atoms and its native code.
+    let mut runtime = Runtime::new_restored_with_builtins(SystemHost, &BUILTINS, &EXECUTION);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
     runtime.set_memory_policy(policy);
     runtime.set_native_program_resolver(move |name, parts| {
@@ -52,7 +59,7 @@ fn run() -> Result<u8, String> {
         unsafe { resolve(&namespace, name, parts) }
     });
     let program = entry.residual();
-    match runtime.execute_native_deferred_jobs(&entry) {
+    match runtime.execute_native_from_snapshot(Rc::new(REST), &entry, |_, _| Ok(())) {
         Ok(()) => {
             runtime.run_host_jobs(program).map_err(|error| uncaught(&error))?;
             runtime.finish_deferred_execution(program).map_err(|error| uncaught(&error))?;

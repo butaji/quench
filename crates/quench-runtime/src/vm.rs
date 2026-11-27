@@ -262,6 +262,7 @@ use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 pub mod native_table;
+pub mod reachable_realm;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;

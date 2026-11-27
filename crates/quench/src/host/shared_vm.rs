@@ -2793,10 +2793,6 @@ impl quench_runtime::Host for NodeHost {
         }
     }
 
-    fn proper_tail_calls(&self) -> bool {
-        false
-    }
-
     fn allows_natives_syntax(&self) -> bool {
         self.shared_state.borrow().exec_argv.iter().any(|flag| matches!(flag.as_str(), "--allow-natives-syntax" | "--allow_natives_syntax"))
     }

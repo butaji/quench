@@ -4,7 +4,7 @@
 use crate::ext_traits::*;
 use super::super::lane_region::{relocs, Completion, Coverage, ElementViews, NO_ENTRY_FIELDS, lower};
 use super::*;
-use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
+use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode};
 use std::collections::BTreeMap;
 
 /// `source`'s function 1 lowered ahead and compiled to an image, with its caller registers.
@@ -65,7 +65,7 @@ fn write_image(image: &RelocatableCode, registers: usize) -> Vec<u8> {
     out.extend(&*image.code);
     out.extend((image.relocations.len() as u64).to_le_bytes());
     for relocation in &*image.relocations {
-        assert_eq!(relocation.kind, cranelift_codegen::binemit::Reloc::Abs8, "a symbol is an absolute word");
+        assert_eq!(relocation.kind, PatchKind::Abs8, "a symbol is an absolute word");
         out.extend((relocation.offset as u64).to_le_bytes());
         out.extend(relocation.namespace.to_le_bytes());
         out.extend(relocation.key.to_le_bytes());
@@ -95,7 +95,7 @@ fn read_image(file: &[u8]) -> (RelocatableCode, usize) {
     let code: Box<[u8]> = words.0[..length].into();
     words.0 = &words.0[length..];
     let relocations = (0..words.word()).map(|_| quench_runtime::vm::jit_backend::relocatable_code::Relocation {
-        offset: words.word() as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
+        offset: words.word() as usize, kind: PatchKind::Abs8,
         namespace: words.half(), key: words.half(), addend: words.word() as i64 }).collect();
     (RelocatableCode { code, relocations }, registers)
 }

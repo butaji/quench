@@ -115,15 +115,15 @@ pub(crate) enum HeapReference {
     WasmGcRecord(u32),
 }
 
-/// An ordinary object reference: the low half of a direct object `Value`. Today it equals the
-/// object's record id; after R4-B2b it is a class-space granule. Read the record id only
-/// through `Heap::record_id` (Concrete) or `staged::object::object_record_of` (staged).
+/// An ordinary object reference: the low half of a direct object `Value`, which is its class-space
+/// granule (the object's stub). Read the record id only through `Heap::record_id` (Concrete) or
+/// `staged::object::object_record_of` (staged).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ObjectRef32(pub(crate) u32);
 
 impl ObjectRef32 {
-    /// The raw low half, for code that cannot reach the heap yet. Temporary: R4-B2b deletes it.
-    #[inline(always)] pub const fn raw(self) -> u32 { self.0 }
+    /// The stub granule this reference names: the identity an object link carries (`ProtoLink`).
+    #[inline(always)] pub(crate) const fn granule(self) -> u32 { self.0 }
 }
 
 #[cfg(feature = "profile-aggregate")]

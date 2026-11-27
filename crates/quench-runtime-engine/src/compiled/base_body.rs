@@ -199,7 +199,7 @@ impl Vm {
         SiteFacts {
             constructors: self.instanceof_constructors(program, code, parameters),
             presences: self.membership_facts(code),
-            globals: Some(self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base)),
+            globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
         }
     }
 
@@ -345,7 +345,7 @@ impl Vm {
         let receiver = self.object_data(instance)?;
         let shape = receiver.exact_shape();
         let link = receiver.proto_link();
-        let prototype = Value::direct_object(link.object_record_id()?);
+        let prototype = Value::direct_object(link.object_granule()?);
         let data = self.object_data(prototype)?;
         let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
         let constructor = self.heap_reads().property_get(data, slot)?;

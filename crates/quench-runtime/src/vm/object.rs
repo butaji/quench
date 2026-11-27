@@ -1612,8 +1612,8 @@ impl Vm {
         };
         // The holder is an object record, as most prototypes are, or another cell, as
         // `Array.prototype` of an array receiver (`ordinary_holder_entry_value`).
-        let holder = match receiver.proto_link().object_record_id() {
-            Some(record) => Some(self.heap.object_record_by_id(record)),
+        let holder = match receiver.proto_link().object_granule() {
+            Some(granule) => Some(self.heap.object_record_by_granule(granule)),
             None => self.heap.object_ref(receiver.proto()).map(|o| o.record()),
         };
         if let Some(holder) = holder
@@ -1759,7 +1759,7 @@ impl Vm {
         if entry.holder == NO_FIELD_HOLDER {
             return FieldCache { receiver: receiver.hint_shape(), ..entry };
         }
-        match receiver.proto_link().object_record_id().map(|id| self.heap.object_record_by_id(id)) {
+        match receiver.proto_link().object_granule().map(|granule| self.heap.object_record_by_granule(granule)) {
             Some(holder) if cached_holder_matches(holder, entry.holder) =>
                 FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_id: NO_FIELD_HOLDER_LAYOUT, ..entry },
             _ => entry,
@@ -1779,7 +1779,7 @@ impl Vm {
         if cache.holder == NO_FIELD_HOLDER {
             return self.own_field_hint_hit::<{ crate::staged::HINTED_FORM }>(cache, receiver);
         }
-        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        let holder = self.heap.object_record_by_granule(receiver.proto_link().object_granule()?);
         if cache.receiver != receiver.hint_shape() || holder.hint_shape() != cache.holder {
             return None;
         }
@@ -2002,7 +2002,7 @@ impl Vm {
             }
             return value;
         }
-        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        let holder = self.heap.object_record_by_granule(receiver.proto_link().object_granule()?);
         if cache.receiver != receiver.exact_shape() || !cached_holder_matches(holder, cache.holder) {
             return None;
         }
@@ -3345,8 +3345,8 @@ impl Vm {
         }
         // Most prototypes are object records, read from the stored link without decoding it
         // or the cell families' dispatch.
-        let holder = match receiver.proto_link().object_record_id() {
-            Some(record) => self.heap.object_record_by_id(record),
+        let holder = match receiver.proto_link().object_granule() {
+            Some(granule) => self.heap.object_record_by_granule(granule),
             None => self.heap.object_ref(receiver.proto())?.record(),
         };
         if !cached_holder_matches(holder, cache.holder) {

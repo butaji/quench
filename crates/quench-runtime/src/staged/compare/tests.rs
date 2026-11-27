@@ -5,7 +5,7 @@ use crate::staged::tests::ConcreteFrame;
 use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame, Stage};
 use crate::typed_ir::Type;
 use crate::ValueType;
-use oxc_ast::ast::BinaryOperator;
+use crate::operator::BinaryOperator;
 
 /// A register file that records the decisions it is asked for, answering them with `answer`, and
 /// the facts a jump proves along its edges; `types` are the registers' proved types.

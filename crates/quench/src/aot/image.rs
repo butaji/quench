@@ -3,7 +3,9 @@
 
 use super::cli::{BOOTSTRAP_WORKER_OPTION, WAIT_WORKER_OPTION};
 use super::{CompiledSources, DependencyGraph, NativeSupport, SourceManifest};
+use quench_layers::engine::ExecutionTableSpec;
 use quench_runtime::native_link::{NativeImageInputs, NativeLinkAudit};
+use quench_runtime::ReachableRealm;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
@@ -34,11 +36,12 @@ pub(super) fn compile_sources(
     manifest.compile_closed(&source, file.kind)
 }
 
-/// Stage the host services, saved runs and bootstrap an image links: a core image links none,
-/// a Node image takes the operation table its program can reach and a snapshot of the builtins
-/// it names. Returns the image inputs, the operations an image that starts from a saved heap
-/// keeps, and its saved runs (`dump_saved_waits`). A `strict` image whose entry reads a process
-/// input runs it from the startup snapshot alone (`RESTORED`).
+/// Stage the host services, saved runs and bootstrap an image links: a core image saves its
+/// realm and program as a startup snapshot on its closed world (`core_rest`), which it restores
+/// at each start; a Node image takes the operation table its program can reach and a snapshot of
+/// the builtins it names. Returns the image inputs, the operations an image that starts from a
+/// saved heap keeps, and its saved runs (`dump_saved_waits`). A `strict` image whose entry reads
+/// a process input runs it from the startup snapshot alone (`RESTORED`).
 pub(super) fn stage_image(
     core: bool,
     strict: bool,
@@ -47,12 +50,17 @@ pub(super) fn stage_image(
     native_entry: &Path,
     inputs: NativeImageInputs,
     waits: &[super::strict::Answers],
+    closed: Option<(&ReachableRealm, ExecutionTableSpec)>,
     report: &mut Value,
 ) -> Result<(NativeImageInputs, Option<BTreeSet<u32>>, Vec<SavedWait>), String> {
     if core {
         report["unlinked_host_operations"] = json!(0);
-        report["bootstrap"] = json!({"status": "not_required", "reason": "Variant::Core runs on the runtime's own host"});
-        return Ok((inputs, None, Vec::new()));
+        let (realm, execution) = closed.ok_or("a core image has no closed world to save its realm on")?;
+        let rest = work.join("core-rest.bin");
+        super::core_rest::build_rest(native_entry, &rest, realm, &execution)?;
+        let bytes = fs::metadata(&rest).map_err(|error| error.to_string())?.len();
+        report["bootstrap"] = json!({"status": "prepared", "kind": "closed_world_realm", "bytes": bytes, "runs_entry_at_start": true});
+        return Ok((inputs.with_bootstrap(rest), None, Vec::new()));
     }
     // A program whose build-time runs wait for input before reading any resumes the run whose
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.
@@ -73,7 +81,7 @@ pub(super) fn stage_image(
     });
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\nconst REACHES_INTL: bool = {};\n",
-            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), reaches_intl(graph)).as_bytes()))
+            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), NODE_REACHES_INTL).as_bytes()))
         .map_err(|error| error.to_string())?;
     // An image that starts from a saved heap (a saved run's, or the startup snapshot's) starts
     // from the operations that heap holds, and the builders of the builtins its program may
@@ -474,17 +482,7 @@ fn runs_wasm(graph: &DependencyGraph) -> bool {
     makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
 }
 
-/// Whether the program can reach Intl or Temporal, so its image links that layer
-/// (`quench_runtime::install_intl`). Their entries are reached only through the `Intl` and
-/// `Temporal` globals and the locale-sensitive methods (`toLocale*` on every prototype and
-/// `localeCompare`), by name. Host code calls none of them. So the layer links where the program
-/// makes code (`makes_code`), names either global, spells a locale method's name anywhere in its
-/// source, reads a member by a non-literal key (`dynamic_reflective_sites`: the key may be any
-/// name), or writes an escape that could spell a name the text does not show; and wherever its
-/// support links the layer (`DependencyGraph::needs_intl`).
-fn reaches_intl(graph: &DependencyGraph) -> bool {
-    const SPELLINGS: &[&[u8]] = &[b"Intl", b"Temporal", b"toLocale", b"localeCompare", b"\\u", b"\\x"];
-    graph.needs_intl() || makes_code(graph) || !graph.dynamic_reflective_sites.is_empty()
-        || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
-        || graph.files.values().any(|file| SPELLINGS.iter().any(|spelling| file.bytes.windows(spelling.len()).any(|window| window == *spelling)))
-}
+/// A Node image links the Intl and Temporal layer. Its realm is not closed yet (the closed world of
+/// `ReachableRealm` is computed over the core realm), so the layer is kept for every Node image:
+/// the locale and Intl entries are reached through names and spellings the graph cannot bound.
+const NODE_REACHES_INTL: bool = true;

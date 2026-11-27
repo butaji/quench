@@ -1027,13 +1027,8 @@ pub struct LoopSite {
     pub header: u32,
     pub backedge: u32,
     pub jump: isize,
-    /// The header record's own handler while the site holds that record
-    /// (`loop_header_miss`), which enters the loop's native code wherever control arrives at
-    /// the header; null otherwise.
-    pub header_handler: std::cell::Cell<*const ()>,
-    /// Whether the site may hold its header record (`loop_hold_header_in_lane`): one that is
-    /// no call record, whose `call_link` names a call target, and the header of no other
-    /// site. The record's `call_link` then names the site.
+    /// Whether the header record names this site in its `call_link` (its distance to the jump):
+    /// one that is no call record, and the header of no other site.
     pub hookable: bool,
     /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
     /// tier model has admitted the compile (`LoopSite::interprets`).
@@ -1245,7 +1240,6 @@ pub struct WasmJitDiagnostics {
     pub compiled_functions: usize,
     pub code_bytes: usize,
     pub mapped_bytes: usize,
-    pub compile_ns: u128,
     pub native_entry_requests: Vec<std::cell::Cell<u64>>,
     pub interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     pub compiled_to_vm_callouts: std::cell::Cell<u64>,
@@ -1670,8 +1664,6 @@ pub struct LaneBodyStats {
     pub frames: std::cell::Cell<u32>,
     /// The last compile's inlined frames as `index:function<-parent@call-pc`, `+` marking an alternative.
     pub shape: std::cell::RefCell<String>,
-    /// Wall-clock milliseconds since the epoch of each compile's publication.
-    pub compiled_at: std::cell::RefCell<Vec<u64>>,
     /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
     /// or irreversibly terminated.
     pub ends: [std::cell::Cell<u32>; super::tier_events::Event::END_COUNT],
@@ -2347,9 +2339,6 @@ pub struct JsStepDispatch {
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
     pub call_targets: usize,
-    /// Whether the host makes a strict function's terminal calls proper tail calls
-    /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
-    pub proper_tail_calls: u64,
     pub outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -4915,8 +4904,8 @@ impl LaneBodyStats {
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.refused.get(),
             )
         })
     }
@@ -5715,13 +5704,12 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
             stats.code_bytes,
             stats.mapped_bytes,
-            stats.compile_ns,
             entries,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),

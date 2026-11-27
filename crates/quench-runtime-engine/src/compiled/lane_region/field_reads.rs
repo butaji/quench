@@ -23,7 +23,7 @@ fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Op
 /// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
 fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     agreed_slot_type(program, fields, instruction)
-        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
+        .filter(|ty| *ty == Type::INT32 || super::number_domains::is_double(*ty) || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
 }
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
@@ -39,7 +39,7 @@ fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction:
 /// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
 /// proves Number once and keeps the double view, so its arithmetic takes the double operation.
 pub(crate) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    agreed_slot_type(program, fields, instruction) == Some(Type::NUMBER)
+    agreed_slot_type(program, fields, instruction).is_some_and(super::number_domains::is_double)
 }
 
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): its last read's slots
@@ -263,7 +263,7 @@ impl Lowering<'_, '_> {
     /// double: every read and store site names the one own slot of one shape, whose arena words
     /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
     /// through the slot the entry projected and its reads take the carried word, boxing nothing.
-    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &quench_runtime::dataflow::BitSet) -> bool {
+    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction) -> bool {
         let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
         let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
             Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),
@@ -277,8 +277,7 @@ impl Lowering<'_, '_> {
         reads && field.stores.iter().all(|store| {
             let instruction = self.unit.instructions[*store];
             raw_slot(instruction.cache_site_index()) == Some(slot)
-                && self.facts.before(*store, instruction.register_a(), &self.unit.instructions, boundaries,
-                    &self.program.constants, &writes, self.native_calls).is_subtype(Type::NUMBER)
+                && self.cell_before(*store, instruction.register_a()).ty.is_subtype(Type::NUMBER)
         })
     }
 }

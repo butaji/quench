@@ -2172,8 +2172,7 @@ version = "0.1.0"
 dependencies = [
  "iced-x86",
  "libc",
- "object 0.39.1",
- "quench-opcodes",
+ "quench-staged",
  "quench-stencils",
 ]
 
@@ -2372,6 +2371,14 @@ dependencies = [
 [[package]]
 name = "quench-stack"
 version = "0.1.0"
+
+[[package]]
+name = "quench-staged"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "wasmparser",
+]
 
 [[package]]
 name = "quench-stencils"

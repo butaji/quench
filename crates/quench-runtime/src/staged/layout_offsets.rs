@@ -16,6 +16,7 @@
 
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 use super::object_encoding::{
+    CAPACITY_CLASSES, REGION_SHIFT,
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
@@ -58,9 +59,17 @@ pub struct NativeObjectLayout {
     pub property_value_align: usize,
 }
 
+/// The stride of an ordinary object's record in the record table (R4-B2b): an `OrdinaryRecord` of an `Object`
+/// (its `ObjectHead`, 12 bytes) and the record's stub granule, padded to 16. A record's address is
+/// `records + id * OBJECT_RECORD_BYTES`, and `id` is the high half of the stub's class-cell header.
+pub const OBJECT_RECORD_BYTES: usize = 16;
+const _: () = assert!(size_of::<super::record_heads::ObjectHead>() <= OBJECT_RECORD_BYTES);
+/// Where an ordinary object's record keeps its stub granule (`OrdinaryRecord::stub`).
+pub const OBJECT_RECORD_STUB: usize = core::mem::offset_of!(super::record_heads::OrdinaryRecordHead, stub);
+
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: OBJECT_RECORD_CAPACITY,
-    record_size: size_of::<super::record_heads::ObjectHead>(),
+    record_size: OBJECT_RECORD_BYTES,
     record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
     meta_offset: META_OFFSET,
@@ -314,7 +323,8 @@ pub(crate) const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
-/// The empty allocations' cursor and template words (`JsStepHead::object_cursor` and after).
+/// The empty allocations' cursor and template words (`JsStepHead::stub_cursor`, `object_cursor` and after).
+pub(crate) const JS_STEP_STUB_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stub_cursor);
 pub(crate) const JS_STEP_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_cursor);
 pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_layout);
 pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_payload);
@@ -333,6 +343,13 @@ pub(crate) const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_st
 /// reservation, the allocator header of the property values (whose base is at
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
 pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
+/// The class space's base (`heap::class_space`): a direct object's cell is at this plus its granule times
+/// `CLASS_HEADER_BYTES`, and its header names the record by its high half.
+pub(crate) const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);
+/// The granules the class space spans: a direct object's granule below this names a cell of some region.
+pub const CLASS_SPACE_GRANULES: u32 = (CAPACITY_CLASSES as u32) << REGION_SHIFT;
+/// A class cell's granule, in bytes: a direct object's cell is at the class base plus its granule times this.
+pub const CLASS_CELL_GRANULE_BYTES: usize = super::object_encoding::CLASS_HEADER_BYTES;
 pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
 /// count, and what watches a store (`store_watch`), which an unobserved store requires zero.

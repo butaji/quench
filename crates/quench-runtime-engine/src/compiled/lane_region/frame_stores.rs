@@ -57,7 +57,7 @@ impl EmitFrame<'_> {
         let (slot, property) = (facts.held.slot?, regions::property_flags(facts.property));
         #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
         let builder = &mut *stage.builder;
-        if slot.domain == Type::NUMBER {
+        if super::number_domains::is_double(slot.domain) {
             // The entry admitted the slot's raw doubles and left a packed record: the word goes in as it is.
             emit(builder).raw_store(Lane::F64, property, (value, false), slot.address, 0);
             return Some(());

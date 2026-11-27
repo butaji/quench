@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, OrdinaryRecord, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -30,7 +30,7 @@ pub(super) trait TraceRecord {
     fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
-pub(super) type ObjectRecordSpace = RecordSpace<Object, OBJECT_RECORD_CAPACITY>;
+pub(super) type ObjectRecordSpace = RecordSpace<OrdinaryRecord, OBJECT_RECORD_CAPACITY>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;
@@ -63,9 +63,19 @@ const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
 
+/// The `Value` of a record of one family, named by the family's element type. A family names its
+/// records by id, except the ordinary object, whose `Value` is its stub granule, which its record
+/// holds (`OrdinaryRecord::stub`).
+pub(super) trait RecordValue: Sized {
+    /// The `Value` of record `id` of `space`. The id names a live record of `space` (`RecordFamily::value_of`).
+    fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value;
+}
+
 /// What the collector does to every record family alike, whatever its record type: the
 /// per-collection passes iterate `Heap::record_families` instead of naming each space.
 pub(super) trait RecordFamily {
+    /// The `Value` of record `id`, which must be live in this family (`RecordValue::value_of`).
+    fn value_of(&self, id: RecordId) -> Value;
     /// Every record becomes young: a full collection's starting state.
     fn clear_marks(&mut self);
     /// The records the barrier logged since the last collection; each is unmarked.
@@ -101,7 +111,10 @@ pub(super) trait RecordFamily {
     fn return_free_pages(&mut self);
 }
 
-impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+impl<T: RecordValue, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+    fn value_of(&self, id: RecordId) -> Value {
+        T::value_of(self, id)
+    }
     fn clear_marks(&mut self) {
         RecordSpace::clear_marks(self);
     }
@@ -628,6 +641,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         crate::staged::bump::cursor_take(&mut stage, (&raw mut self.cursor) as u64, ()).map(|id| id as RecordId)
     }
 
+    /// Whether the cursor's run has an id left, which `cursor_take` would hand out.
+    #[inline(always)]
+    pub(super) fn cursor_open(&self) -> bool {
+        self.cursor.next < self.cursor.limit
+    }
+
     /// Claims the rest of the block the high water mark is in as the cursor's run, occupying
     /// it, and returns the run's length (the allocation charge it carries). `None` where the
     /// run cannot be fresh: a hole or loaded free word is still to reuse (the free scan takes
@@ -1026,9 +1045,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.remembered.len()
     }
 
-    #[cfg(test)]
-    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
-        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+    /// Frees the occupied record `id` without reading it: its value holds nothing to drop, or the
+    /// caller has taken it (`ClassSpace::release_stub`). The id is reusable as a swept dead record's is.
+    pub(super) fn release_live(&mut self, id: RecordId) {
+        debug_assert!(self.is_occupied(id), "a release frees an initialized record");
         let (block_index, record_index) = Self::split_id(id);
         self.blocks[block_index].release(record_index);
         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
@@ -1036,8 +1056,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.free_cursor = self.next_id;
         self.free_word = 0;
         self.live -= 1;
-        // SAFETY: release cleared the bit and this id was initialized exactly once.
-        unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
+    }
+
+    #[cfg(test)]
+    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
+        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+        // SAFETY: the id is initialized (asserted above) and is read once, before it is released.
+        let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
+        self.release_live(id);
+        value
     }
 
     #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {

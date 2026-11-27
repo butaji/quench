@@ -411,6 +411,12 @@ impl Stage for Emit<'_, '_> {
             },
             // The table is a static that never moves; in-process code embeds its address.
             Table::Layouts => self.constant(quench_runtime::tier_surface::layouts::table_base() as u64),
+            // The class space's base is per heap, so it is not an iconst: compiled code is shared by the
+            // heaps that run it. The dispatch head holds the base of the heap the running VM owns.
+            Table::ClassSpace => match self.payload {
+                Some(payload) => super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.class_base)),
+                None => panic!("an operation addressing the class space has its dispatch payload"),
+            },
             // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a Cranelift row stores through the VM"),
         }

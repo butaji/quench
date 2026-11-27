@@ -1171,7 +1171,7 @@ pub(super) fn frames_resumed_in_lane(
         crate::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         crate::compiled::LaneExit::Terminated | crate::compiled::LaneExit::Entry | crate::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
         crate::compiled::LaneExit::At(pc) => {
-            body_resume_at_in_lane(cx, r, own, loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc))
+            body_resume_at_in_lane(cx, r, own, pc)
         }
         crate::compiled::LaneExit::Inlined { frame, pc } => {
             let method = method.expect("a leave inside an inlined callee is a lane body's");
@@ -1273,14 +1273,10 @@ pub(super) fn raised_exit_in_lane(cx: *mut LaneContext, record: Ip) -> Ip {
     exit(record)
 }
 
-/// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: in
-/// the loop's published BaseJIT code where it has a resume stub for `pc` (`loop_resume`),
-/// else at the record, with the accumulator that record reads.
+/// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: at
+/// the record, with the accumulator that record reads.
 pub(super) fn body_resume_at_in_lane(cx: *mut LaneContext, r: Registers, own: &LaneView, pc: usize) -> LaneBodyLeft {
     let accumulator = own.accumulator_registers.get(pc).copied().filter(|&register| register != NO_ACCUMULATOR);
-    if accumulator.is_none() && let Some(left) = loop_resume::resume_loop(cx, r, own, pc) {
-        return left;
-    }
     let mut carried = Carried::script(cx);
     if let Some(register) = accumulator {
         carried.acc = Slot::of(r.get(register));

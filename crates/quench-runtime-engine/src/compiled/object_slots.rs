@@ -9,7 +9,7 @@ use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 use quench_runtime::tier_surface::PlainPropertyStorage;
-use quench_runtime::staged::machine::{Binary, Lane, MachineFlow, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 
 /// A non-null table reservation admitted for this native run. This proves no
 /// receiver identity, ID range, record liveness or property-storage lifetime.
@@ -59,6 +59,15 @@ pub(crate) struct ObjectHeader {
     pub(crate) shape_fact: Option<ShapeFact>,
 }
 
+/// The record id a direct object's granule names: the high half of its class cell's header
+/// (`staged::object::object_record_id_of`, the Cranelift projection). `granule` is an `I64`.
+pub(crate) fn record_id_of_granule(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value) -> ir::Value {
+    let cell_offset = emit(builder).raw_binary_imm(Binary::Mul, granule, quench_runtime::staged::layout_offsets::CLASS_CELL_GRANULE_BYTES as i64);
+    let cell = emit(builder).raw_binary(Binary::Add, class_base, cell_offset);
+    let header = emit(builder).raw_load(Lane::I64, MemFlagsData::trusted(), cell, 0);
+    emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, header, i64::from(u32::BITS))
+}
+
 /// A verified direct-object locator. Indexed records keep the admitted base and
 /// byte offset; address values are derived only for their consumers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -69,25 +78,25 @@ pub(crate) enum ObjectRecord {
 }
 
 impl ObjectRecord {
-    /// The Cranelift projection of staged `object::object_record_of` (via `direct_object_record`).
-    /// R4-B2b changes it together with `staged::object::object_record_of`: the record id is read from the cell header.
+    /// The Cranelift projection of staged `object::object_record_of`: the granule the direct object's
+    /// bits name is a class cell (`class_base + g * 8`), whose header's high half is the record id, and
+    /// the record is `records + id * record_size` (R4-B2b decision 6).
     pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
+        records: impl Into<ObjectTable>, class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let records = match records.into() {
             ObjectTable::Unchecked(base) => base,
             ObjectTable::Checked(table) => table.base(),
         };
         let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
-        let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
+        let granule = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
         if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
             let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
             emit_js_guard(builder, object, miss);
         }
-        // A direct object's id names a record of the reservation, whose base every native
-        // entry and allocating callout reads (`JsStepDispatch::refresh_allocation_bases`).
-        let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
+        let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
+        let id = record_id_of_granule(builder, class_base, granule);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
     }
@@ -122,15 +131,15 @@ impl ObjectRecord {
 
 impl ObjectHeader {
     pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        ObjectRecord::prove(builder, bits, records, known, miss).header(builder, known)
+        records: impl Into<ObjectTable>, class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
+        ObjectRecord::prove(builder, bits, records, class_base, known, miss).header(builder, known)
     }
 
     /// `prove` for a read, which a function's own fields answer too: a direct function's
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
     /// A store must not take this proof: its barrier reads object record marks.
     pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
+        records: ir::Value, class_base: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
         let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         let function = quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT;
         let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
@@ -142,7 +151,8 @@ impl ObjectHeader {
         let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
         emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
         builder.switch_to_block(object_block);
-        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
+        let record = record_id_of_granule(builder, class_base, id);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, record, layout.record_size as i64);
         let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
         emit(builder).goto(join, &[object_record]);
         builder.switch_to_block(function_block);
@@ -371,7 +381,7 @@ mod tests {
     fn checked_table_admits_once_without_admitting_receiver_handles() {
         let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 3]);
+        signature.params.extend([AbiParam::new(types::I64); 4]);
         signature.returns.push(AbiParam::new(types::I64));
         let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
         let mut context = FunctionBuilderContext::new();
@@ -384,8 +394,8 @@ mod tests {
         let table = CheckedObjectTable::prove(&mut builder, parameters[0], miss);
         // The second receiver retains its own family and range checks, even
         // after the first receiver has proved both against this same table.
-        ObjectRecord::prove(&mut builder, parameters[1], table, None, miss);
-        let record = ObjectRecord::prove(&mut builder, parameters[2], table, None, miss);
+        ObjectRecord::prove(&mut builder, parameters[1], table, parameters[3], None, miss);
+        let record = ObjectRecord::prove(&mut builder, parameters[2], table, parameters[3], None, miss);
         let address = record.address(&mut builder);
         builder.ins().return_(&[address]);
         builder.switch_to_block(miss);
@@ -403,16 +413,20 @@ mod tests {
         // SAFETY: the compiled function only checks bits and computes an
         // address; it dereferences neither table nor supplied receiver.
         let run = unsafe { std::mem::transmute::<*mut u8,
-            unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
+            unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
         let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         let records = vec![0_u8; layout.record_size * 2];
         let base = records.as_ptr() as u64;
+        // Granule 1's class cell names record 1 in its header's high half.
+        let mut classes = vec![0_u64; 2];
+        classes[1] = 1 << u32::BITS;
+        let class_base = classes.as_ptr() as u64;
         let object = Value::direct_object(1).to_bits();
-        assert_eq!(unsafe { run(base, object, object) }, base + layout.record_size as u64);
+        assert_eq!(unsafe { run(base, object, object, class_base) }, base + layout.record_size as u64);
         for (table, first, second) in [
             (0, object, object), (base, Value::NULL.to_bits(), object), (base, object, Value::NULL.to_bits()),
         ] {
-            assert_eq!(unsafe { run(table, first, second) }, Value::DELETED.to_bits());
+            assert_eq!(unsafe { run(table, first, second, class_base) }, Value::DELETED.to_bits());
         }
     }
 
@@ -433,7 +447,7 @@ mod tests {
             (Some(Type::direct_object(0).join(Type::language(quench_runtime::ValueType::Null).join(Type::language(quench_runtime::ValueType::Undefined)))), 1),
         ] {
             let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64); 2]);
+            signature.params.extend([AbiParam::new(types::I64); 3]);
             signature.returns.push(AbiParam::new(types::I64));
             let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
             let mut context = FunctionBuilderContext::new();
@@ -446,7 +460,7 @@ mod tests {
             let known = ty.map(|ty| Fact { ty, representation: Representation::Tagged,
                 binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact }
                 .verified().unwrap());
-            let record = ObjectRecord::prove(&mut builder, parameters[1], parameters[0], known, miss);
+            let record = ObjectRecord::prove(&mut builder, parameters[1], parameters[0], parameters[2], known, miss);
             let address = record.address(&mut builder);
             builder.ins().return_(&[address]);
             builder.switch_to_block(miss);
@@ -462,13 +476,16 @@ mod tests {
             // SAFETY: the entry takes two u64 words and performs guarded address
             // arithmetic only; it never dereferences the supplied table address.
             let run = unsafe { std::mem::transmute::<*mut u8,
-                unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
+                unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
             let records = vec![0_u8; layout.record_size * 2];
             let base = records.as_ptr() as u64;
+            let mut classes = vec![0_u64; 2];
+            classes[1] = 1 << u32::BITS;
+            let class_base = classes.as_ptr() as u64;
             let bits = Value::direct_object(1).to_bits();
-            assert_eq!(unsafe { run(base, bits) }, base + layout.record_size as u64);
-            assert_eq!(unsafe { run(base, Value::NULL.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
-            assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits()) }, Value::DELETED.to_bits(), "{ty:?}");
+            assert_eq!(unsafe { run(base, bits, class_base) }, base + layout.record_size as u64);
+            assert_eq!(unsafe { run(base, Value::NULL.to_bits(), class_base) }, Value::DELETED.to_bits(), "{ty:?}");
+            assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits(), class_base) }, Value::DELETED.to_bits(), "{ty:?}");
         }
     }
 }

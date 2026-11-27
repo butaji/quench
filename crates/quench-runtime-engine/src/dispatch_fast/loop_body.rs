@@ -10,7 +10,6 @@ use crate::compiled::{LaneBodyOutcome, LaneExit};
 use crate::compiled::LaneBodyWork;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopBody;
-pub(crate) use crate::compiled::loop_tier_up::{header_for_tier_up, left_for_tier_up};
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
@@ -19,10 +18,13 @@ use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOO
 impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
-    /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
-    /// outside `tier-stress`, which keeps compiling every eligible body,
-    /// or where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(crate) fn initial(tiers: &Tiers) -> Self { if (crate::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    /// A new loop site's body, planned under the static benefit rule every body follows
+    /// (`tier_model::static_benefit`): a loop reaches its own function, so the rule admits it, where
+    /// the process runs Cranelift function tiers (`--b-jit` runs none).
+    pub(crate) fn initial(tiers: &Tiers) -> Self {
+        let loop_fact = crate::compiled::tier_model::StaticFacts { in_loop_or_cycle: true, residue: 0 };
+        if crate::compiled::tier_model::static_benefit(tiers.admits_all, loop_fact) && crate::compiled::admission::tier_runs(crate::compiled::admission::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined }
+    }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -90,8 +92,8 @@ impl LoopBody {
 const LONG_TRIP_WARMUPS: u64 = 4;
 
 /// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
-/// script callee): loop bodies are off where a region runs the loop (`tier_policy::LOOP_BODIES`),
-/// but here none can, and without a body the loop interprets every iteration. Whether it did.
+/// script callee): a loop whose calls no region inlines takes a body, and without one the loop
+/// interprets every iteration. Whether it did.
 /// Each call must be one the body runs inline (a Math function, a string builtin) or a script
 /// function's, which it inlines or calls by its entry, by the callee its register holds now: a
 /// body's general native call costs more than the lane's own.
@@ -257,18 +259,5 @@ pub(crate) fn loop_attempt(cx: *mut LaneContext, ip: Ip, resumed: LaneBodyLeft) 
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(raised_exit_in_lane(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane(cx, record, value)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::tier_up_resume;
-
-    #[test]
-    fn a_leave_at_a_held_loops_backedge_resumes_at_its_header() {
-        assert_eq!(tier_up_resume(4, 9, 9, true, true), Some(4));
-        assert_eq!(tier_up_resume(4, 9, 7, true, true), None, "a guard inside the loop keeps its own PC");
-        assert_eq!(tier_up_resume(4, 9, 9, false, true), None, "an unheld header would not dispatch");
-        assert_eq!(tier_up_resume(4, 9, 9, true, false), None, "no published body to dispatch");
     }
 }

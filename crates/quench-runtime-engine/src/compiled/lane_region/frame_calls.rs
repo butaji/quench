@@ -110,7 +110,7 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
 pub(crate) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
     match allocation.inline_empty() {
-        Some(InlineEmpty::Object) => return allocate_template(frame, stage, destination, EMPTY_OBJECT, LaneHelper::NewObject, &[], proof),
+        Some(InlineEmpty::Object) => return allocate_empty_object(frame, stage, destination, proof),
         Some(InlineEmpty::Array) => {
             let arguments = [stage.raw_const(Lane::I64, 0), stage.raw_const(Lane::I64, 0)];
             return allocate_template(frame, stage, destination, EMPTY_ARRAY, LaneHelper::NewArray, &arguments, proof);
@@ -168,16 +168,6 @@ struct Template {
     words: usize,
 }
 
-/// An empty ordinary object (`Allocation::Empty`), from the object space's cursor and template.
-const EMPTY_OBJECT: Template = Template {
-    cursor: std::mem::offset_of!(JsStepDispatch, head.object_cursor),
-    records: std::mem::offset_of!(JsStepDispatch, head.object_record_base),
-    record_size: quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.record_size,
-    tag: quench_runtime::value::ValueLayout::DIRECT_OBJECT_TAG,
-    layout: std::mem::offset_of!(JsStepDispatch, head.empty_object_layout),
-    words: std::mem::offset_of!(JsStepDispatch, head.empty_object_payload),
-};
-
 /// A zero-length array (`Allocation::Array { length: 0 }`), from the array space's cursor and template: its
 /// elements are the static empty header, so its record is its two words alone (`ArrayObject::fresh`).
 const EMPTY_ARRAY: Template = Template {
@@ -189,25 +179,19 @@ const EMPTY_ARRAY: Template = Template {
     words: std::mem::offset_of!(JsStepDispatch, head.empty_array_payload),
 };
 
-/// An empty allocation by the kind's cursor (`Template`). While the cursor's run has an id (`next < limit`) and the
-/// kind's record words are captured (`JsStepDispatch::empty_*_layout`), the id is bumped and the record's two words
-/// are stored: no call, and no occupancy write, since the run was occupied and charged when it was claimed.
-/// Otherwise the lane's helper (`helper`, with `arguments`) makes it. That helper checks for a due collection
-/// first, and a spent run is refilled only there, so every run is checked once before it is used.
-fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
-    helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
-    use quench_runtime::staged::bump::{bump_record, Template as Bump};
+/// An allocation's inline claim `claim` (which leaves at the block it is given on a miss) joined with the lane's helper
+/// (`helper`, with `arguments`) on that miss: the helper checks for a due collection first, and a spent run or an
+/// absent template is refilled only there, so every run is checked once before it is used. The answer is delivered as
+/// `finish_allocation` does.
+fn allocate_claimed(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, helper: LaneHelper,
+    arguments: &[ir::Value], proof: EmitProof, claim: impl FnOnce(&mut Emit<'_, '_>, ir::Block) -> Option<ir::Value>)
+    -> Option<ir::Value> {
     let EmitProof::Allocation { miss } = proof else { return None };
     let payload = frame.payload;
-    let cursor = emit_js_record_base(stage.builder, payload, template.cursor);
-    let layout = emit_js_payload_word(stage.builder, payload, template.layout);
-    let words = emit_js_payload_word(stage.builder, payload, template.words);
-    let records = emit_js_record_base(stage.builder, payload, template.records);
     let slow = stage.builder.create_block();
     let joined = stage.builder.create_block();
     let made = stage.builder.append_block_param(joined, types::I64);
-    let bump = Bump { records, record_size: template.record_size as u64, layout, words, tag: template.tag };
-    let value = bump_record(stage, cursor, bump, slow).expect("an Emit guard always continues");
+    let value = claim(&mut *stage, slow).expect("an Emit guard always continues");
     stage.goto(joined, &[value]);
 
     stage.builder.switch_to_block(slow);
@@ -221,6 +205,40 @@ fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destin
     stage.builder.seal_block(joined);
     finish_allocation(stage, frame, destination, made, miss);
     Some(made)
+}
+
+/// An empty ordinary object (`Allocation::Empty`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
+/// cursors, bases and captured template. Its answer is the object's direct word; a miss makes it by `LaneHelper::NewObject`.
+fn allocate_empty_object(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof)
+    -> Option<ir::Value> {
+    use quench_runtime::staged::bump::{claim_empty_object, EmptyObject};
+    let payload = frame.payload;
+    let object = EmptyObject {
+        object_cursor: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_cursor)),
+        stub_cursor: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.stub_cursor)),
+        cells: super::headers::class_table_base(stage.builder, payload),
+        records: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)),
+        layout: emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_layout)),
+        words: emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_payload)),
+    };
+    allocate_claimed(frame, stage, destination, LaneHelper::NewObject, &[], proof,
+        |stage, miss| claim_empty_object(stage, object, miss))
+}
+
+/// An empty allocation by the kind's cursor (`Template`). While the cursor's run has an id (`next < limit`) and the
+/// kind's record words are captured (`JsStepDispatch::empty_*_layout`), the id is bumped and the record's two words
+/// are stored: no call, and no occupancy write, since the run was occupied and charged when it was claimed.
+/// Otherwise the lane's helper (`helper`, with `arguments`) makes it (`allocate_claimed`).
+fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
+    helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
+    use quench_runtime::staged::bump::{bump_record, Template as Bump};
+    let payload = frame.payload;
+    let cursor = emit_js_record_base(stage.builder, payload, template.cursor);
+    let layout = emit_js_payload_word(stage.builder, payload, template.layout);
+    let words = emit_js_payload_word(stage.builder, payload, template.words);
+    let records = emit_js_record_base(stage.builder, payload, template.records);
+    let bump = Bump { records, record_size: template.record_size as u64, layout, words, tag: template.tag };
+    allocate_claimed(frame, stage, destination, helper, arguments, proof, |stage, miss| bump_record(stage, cursor, bump, miss))
 }
 
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.

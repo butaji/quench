@@ -37,7 +37,6 @@ struct JsJitCounters {
     compile_attempts: u64,
     compile_successes: u64,
     rejection_reason: Option<&'static str>,
-    compile_ns: u64,
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
@@ -2368,7 +2367,7 @@ impl ProgramStore {
                                 count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
                         } else if crate::staged::computes_unary(op)
-                            && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Typeof as u32
+                            && instruction.unary_operator() == crate::operator::UnaryOperator::Typeof as u32
                         {
                             guard_census.1 = guard_census.1.saturating_add(1);
                         } else if crate::staged::binary(op) {
@@ -2421,7 +2420,6 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
-        elapsed_ns: u64,
         code_bytes: usize,
         installed: bool,
         rejection: Option<&'static str>,
@@ -2435,7 +2433,6 @@ impl ProgramStore {
             counters.compile_successes = counters
                 .compile_successes
                 .saturating_add(u64::from(installed));
-            counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
             counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
             if rejection.is_some() {
                 counters.rejection_reason = rejection;
@@ -3373,7 +3370,7 @@ fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<crate::vm::engi
 /// Counts a comparison in the guard census: strict (in)equality in its third column, an
 /// order (`<`, `<=`, `>`, `>=`) in its fourth.
 fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
-    use oxc_ast::ast::BinaryOperator;
+    use crate::operator::BinaryOperator;
     const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
     const ORDER: [BinaryOperator; 4] = [
         BinaryOperator::LessThan,

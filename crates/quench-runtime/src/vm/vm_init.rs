@@ -15,9 +15,7 @@ impl Vm {
     /// installs only `builtins`' families, and a family whose installer is `None` keeps its
     /// code out of the image. `execution` is the image's engine entries (`ExecutionTable`).
     pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable) -> Self {
-        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), execution);
-        vm.builtins = builtins;
-        vm
+        Self::with_closed_world(host, crate::host::HostStatics::of::<T>(), builtins, execution)
     }
 
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
@@ -27,6 +25,23 @@ impl Vm {
 
     pub(crate) fn new_restored<T: crate::Host>(host: T) -> Self {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>(), &ExecutionTable::ALL)
+    }
+
+    /// `new_restored` for an image whose closed world is `builtins` and `execution`: the saved
+    /// realm's natives and engine entries are the image's own (`new_static_with_builtins`).
+    pub(crate) fn new_restored_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable) -> Self {
+        Self::with_closed_world(host, crate::host::HostStatics::restored::<T>(), builtins, execution)
+    }
+
+    fn with_closed_world<T: crate::Host>(
+        host: T, statics: crate::host::HostStatics, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable,
+    ) -> Self {
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), statics, execution);
+        vm.builtins = builtins;
+        if let Some(natives) = builtins.natives {
+            vm.native_table = super::native_table::NativeTable::closed(natives);
+        }
+        vm
     }
 
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
