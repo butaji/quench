@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::bytecode::InstructionField;
-use crate::staged::effects::{call_form, CallForm, Signature};
+use crate::staged::effects::CallForm;
 use std::cell::{RefCell, UnsafeCell};
 use std::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -4107,16 +4107,6 @@ impl CallEntry {
     pub const fn table_index(self) -> usize {
         self.0 as usize
     }
-}
-
-/// Whether a call of `function` takes a frameless entry: the form `staged::effects::call_form` gives the
-/// function's composed signature (`FunctionFacts::signature`), of the program's facts `facts`
-/// (`ProgramStore::aot_facts`). The facts are not inlinable here, since a lane target is never spliced.
-/// A function the solve did not reach, or a program without facts, has the top signature, whose form is
-/// framed.
-pub fn frameless_call(facts: Option<&AotFacts>, function: u32) -> bool {
-    let signature = facts.map_or(Signature::ANY, |facts| facts.function_facts(function).signature());
-    call_form(signature, false) == CallForm::Frameless
 }
 
 impl Admission {

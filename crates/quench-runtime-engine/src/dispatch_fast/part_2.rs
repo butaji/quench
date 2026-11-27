@@ -678,7 +678,7 @@ pub(super) fn script_call_handler(imm: u32) -> Handler {
 
 /// Gives each call record the protocol row of its argument count, of a receiver that is the function's
 /// `undefined` register (`undefined`), and, where `admits_returns` (`concrete_admits_returning_call` for
-/// the host and the function), of a returning record (`RETURN_REGISTER`), whose completion the row admits.
+/// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits.
 pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool) {
     let general = script_call_row(ANY_ARGC, false, false) as *const ();
     for record in records.iter_mut().filter(|record| record.handler == general) {

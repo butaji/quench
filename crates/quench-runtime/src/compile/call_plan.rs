@@ -90,8 +90,8 @@ fn single_target(function: u32, miss: Miss, signatures: &Signatures, inlinable: 
 /// Whether the call at `pc` of `function` is a tail site: `staged::effects::tail_site` of its record's return flag
 /// (`returns`) and of the caller's permission (`permits_js_tail_call_at`: strict, not a class initializer, no handler
 /// covering the call), with every arm an ordinary function. A construction is never one (`construct`). The
-/// interpreter's proper tail calls (`Vm::js_tail_call_allowed`, `call_forms`) take the same two facts, and add the
-/// host's permission, which the plan does not carry.
+/// interpreter's proper tail calls (`Vm::js_tail_call_allowed`, `call_forms`) take the same facts: no host setting
+/// gates them, since stack depth is not observable (DESIGN.md decision 4.4), so this is the whole decision.
 fn tail_of(program: &ResidualProgram, function: u32, pc: u32, returns: bool, construct: bool, arms: &[Arm]) -> bool {
     let caller = program.function(function as usize);
     !construct
@@ -151,10 +151,20 @@ fn register_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32
     Some(single_target(function, Miss::None, signatures, &inlinable))
 }
 
+/// The entry form of a call target `function`: the form its composed signature gives (`call_form`), never inlined,
+/// of the facts of its program (`facts`, None where the program has no solve, whose signature is the top, so
+/// framed). This is the single-target plan's form (`single_target`) without inlining, which is the only form a lane
+/// target takes: the lane's target cache holds one entry per callee, so the entry cannot differ by call site.
+pub fn entry_form(facts: Option<&AotFacts>, function: u32) -> CallForm {
+    let signature = facts.map_or(Signature::ANY, |facts| facts.function_facts(function).signature());
+    call_form(signature, false)
+}
+
 /// The plans of every call `function` makes, by pc. A known function's call and a construction (`new`) with
 /// its one constructed function are proven single targets (`Miss::None`); a method call is planned by its name
 /// (`Callee::Method`, `method_plan`); a register callee by the target its key or its cell names (`register_plan`).
-/// A call no plan covers is absent from the map.
+/// A call no plan covers is absent from the map: its site is one the solve did not settle, and the tiers resolve
+/// that site at run time (`Vm::resolve_script_call_target`), with no plan-derived fact.
 pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Signatures, function: u32, inlinable: impl Fn(u32) -> bool) -> BTreeMap<u32, CallPlan> {
     let decode = DecodeContext::of(program);
     let calls: Vec<(u32, bool, Invocation)> = program.with_record(function as usize, |record| {

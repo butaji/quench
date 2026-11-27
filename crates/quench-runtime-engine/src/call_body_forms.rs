@@ -14,7 +14,7 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 }
 
 /// The entry a target's body takes in its call form (`frameless`, from the callee's composed signature,
-/// `frameless_call`), before what its call needs (a frame, an environment, kept arguments) decides further.
+/// `call_plan::entry_form`), before what its call needs (a frame, an environment, kept arguments) decides further.
 /// The form is the signature's, never the body's: a framed call form takes `Framed::Activates`, the framed
 /// shape that runs any body, so the body's frameless answers are recognized only for a frameless form. A
 /// frameless form takes the first answer its body has of those a call answers without activating it; a body
