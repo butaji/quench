@@ -325,7 +325,7 @@ fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S
 /// The field at `slot` of the live class cell `cell`: its fields are one flat run at `fields_offset`,
 /// so the value is one load.
 #[inline(always)]
-fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
+pub(super) fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
     let fields = stage.add_imm(cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
     let offset = stage.mul_imm(slot, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
     let address = stage.add(fields, offset);
