@@ -3052,30 +3052,6 @@ pub(crate) fn target_comparison(test: &crate::dispatch_fast::LaneInstruction) ->
     1 + (index * 2) as u8 + u8::from(constant)
 }
 
-/// The operators a `Binary` fused with a truth jump fixes at install (`fused::equality_fusion`), by index: `==`, `!=`, `===`, `!==`.
-const EQUALITY_OPERATORS: [u32; 4] = {
-    use oxc_ast::ast::BinaryOperator as B;
-    [B::Equality as u32, B::Inequality as u32, B::StrictEquality as u32, B::StrictInequality as u32]
-};
-
-/// The right operand forms of a fixed equality: two registers (0); a register and an int32 constant (1), which
-/// the record's `mode` holds from `EQUALITY_IMMEDIATE_SHIFT`; a register and any other constant (2), read from the context.
-pub(crate) const EQUALITY_FORMS: u8 = 3;
-
-/// Where a fixed equality's int32 constant sits in its record's `mode`, above every settings bit (`MODE_RAW_OUT` is the highest).
-pub(crate) const EQUALITY_IMMEDIATE_SHIFT: u32 = 32;
-const _: () = assert!(quench_runtime::staged::MODE_RAW_OUT < 1 << EQUALITY_IMMEDIATE_SHIFT);
-
-/// The `CMP` code of a fixed equality: operator index `index` in `EQUALITY_OPERATORS`, operand form `form`. 1 to 12; 0 is none.
-pub(crate) const fn equality_code(index: u8, form: u8) -> u8 { 1 + EQUALITY_FORMS * index + form }
-
-/// The operator (a `BinaryOperator`'s value) and operand form a fixed-equality `CMP` code names (`equality_code`); `None` for 0.
-pub(crate) const fn equality_fixed(code: u8) -> Option<(u32, u8)> {
-    if code == 0 { return None; }
-    let index = (code - 1) / EQUALITY_FORMS;
-    Some((EQUALITY_OPERATORS[index as usize], (code - 1) % EQUALITY_FORMS))
-}
-
 /// The `FUSED_TARGET` copy slot of no row: `target_run`'s `$copy` for a target run with no copy.
 const NO_COPY: u16 = quench_runtime::staged::NO_LINK;
 
@@ -3379,15 +3355,34 @@ fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constan
     Some(proven_handler)
 }
 
+/// The `null` or `undefined` constant that a register of cell type `ty` fixes a comparison `operator` against, so that the
+/// comparison is the nullish test of that constant for any value of the left operand. `ty` within `null` alone or
+/// `undefined` alone fixes it; within both fixes it only for a loose equality, which answers `null` and `undefined` alike.
+/// `NEVER` (a path leaves the register unset) fixes none.
+fn nullish_constant(operator: u32, ty: Type) -> Option<Value> {
+    use quench_runtime::ValueType;
+    if ty == Type::NEVER { return None }
+    let (strict, _) = quench_runtime::vm::operations::equality_operator(operator)?;
+    if ty.is_subtype(Type::language(ValueType::Null)) {
+        Some(Value::NULL)
+    } else if ty.is_subtype(Type::language(ValueType::Undefined)) {
+        Some(Value::UNDEFINED)
+    } else if !strict && ty.is_subtype(Type::language(ValueType::Null).join(Type::language(ValueType::Undefined))) {
+        Some(Value::NULL)
+    } else {
+        None
+    }
+}
+
 /// The nullish or Boolean instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its
-/// operand types decide at derivation: a register `typed` gives a type within `null` or `undefined`, compared with a
-/// constant `null` or `undefined` (`nullish_jump_row`); or a register of a type within Boolean, compared with a constant
-/// Boolean (`boolean_jump_row`). `typed` gives a register operand's cell type (`None` where no cell is). Both instances
-/// test any value exactly, so the cell only picks the instance the first run would otherwise pick (`row_jump`). `None`
-/// otherwise, the record unchanged.
-pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value],
-    typed: impl Fn(Operand) -> Option<quench_runtime::typed_ir::Type>) -> Option<Handler> {
-    use quench_runtime::typed_ir::Type;
+/// operand types decide at derivation. The left operand is a register. Where the right operand is a register that
+/// `typed` types `null` or `undefined` (`nullish_constant`), the comparison is the nullish test of that constant: it
+/// holds for any left value, as the constant's test does. Where the right operand is a constant, a left register that
+/// `typed` types within `null` or `undefined` takes the nullish test of the constant (`nullish_jump_row`), or one typed
+/// within Boolean takes the Boolean test of a constant Boolean (`boolean_jump_row`). Both instances test any value exactly,
+/// so the type only picks the instance the first run would otherwise pick (`row_jump`). `typed` gives a register
+/// operand's cell type, `ANY` where no cell is. `None` otherwise, the record unchanged.
+pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], typed: impl Fn(Operand) -> Type) -> Option<Handler> {
     use quench_runtime::ValueType;
     const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
     let backward = if record.handler == jump_row::<OP>(true) as *const () {
@@ -3399,11 +3394,15 @@ pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value],
     };
     let (_, left, right) = formed_compare_of(record)?;
     if left.kind() != Some(quench_runtime::bytecode::OperandKind::Register) { return None }
+    let operator = u32::from(record.a);
+    if right.kind() == Some(quench_runtime::bytecode::OperandKind::Register) {
+        let constant = nullish_constant(operator, typed(right))?;
+        return if backward { nullish_jump_row::<true>(operator, constant) } else { nullish_jump_row::<false>(operator, constant) };
+    }
     if right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) { return None }
     let constant = constants.get(usize::from(right.payload())).copied()?;
-    let ty = typed(left)?;
+    let ty = typed(left);
     if ty == Type::NEVER { return None }
-    let operator = u32::from(record.a);
     let nullish = Type::language(ValueType::Null).join(Type::language(ValueType::Undefined));
     if ty.is_subtype(nullish) {
         return if backward { nullish_jump_row::<true>(operator, constant) } else { nullish_jump_row::<false>(operator, constant) };
@@ -4196,7 +4195,7 @@ pub(crate) const OPERANDS_REGISTERS: u8 = 1;
 pub(crate) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(crate) const OPERANDS_REGISTER_INT32: u8 = 3;
 pub(crate) const OPERANDS_INT32: u8 = 4;
-/// Two registers the solve's int32 cells prove int32s (`int32_at`): read with no tag test.
+/// Two registers the solve's int32 cells prove int32s (`int32_cell`): read with no tag test.
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the solve's int32 cells prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
@@ -4264,7 +4263,7 @@ script_handler! {
         if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             frame.reads = frame.reads.with_immediate(Value::integer(i.mode as u32 as i32));
         }
-        // The solve's int32 cells proved each register operand an int32 before this record (`int32_at`), which
+        // The solve's int32 cells proved each register operand an int32 before this record (`int32_cell`), which
         // the staged row reads with no tag test.
         if const { FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } { frame.operands_int = true; }
         match quench_runtime::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
@@ -4290,6 +4289,21 @@ script_handler! {
                 sibling!(widened, r, ip, view)
             }
         }
+    }
+}
+
+script_handler! {
+    /// The plain `Binary` of `===` (`!==` where `NEGATE`) whose two operands the solve's cells type objects
+    /// (`specialize_plain_operators`). Two objects are strictly equal only as one object, and an object is never NaN,
+    /// so the operands' words decide the answer: equal words are the same object, any other pair is two objects.
+    /// No classification runs (`binary_values`), which every other pair takes.
+    pub(crate) fn object_identity_row<NEGATE: bool>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) = (super::operand_value_in_lane(cx, r, i.b), super::operand_value_in_lane(cx, r, i.c)) else {
+            sibling!(general_step_in_lane, r, ip, Carried::script_in(cx, view))
+        };
+        let value = Value::boolean((left.to_bits() == right.to_bits()) != NEGATE);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried { acc: Slot::of(value), ..Carried::script_in(cx, view) })
     }
 }
 

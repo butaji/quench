@@ -29,7 +29,7 @@ pub(crate) struct JitRoutes {
     pub(crate) fuse: LaneFusion,
 }
 
-pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction], &[quench_runtime::value::Value],
+pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction],
     Option<&quench_runtime::compile::liveness::RegisterMasks>, bool, bool) -> Vec<(usize, usize)>;
 
 static JIT: std::sync::OnceLock<JitRoutes> = std::sync::OnceLock::new();
@@ -57,11 +57,11 @@ fn quench_layer_enable_jit() {
         regexp: crate::regexp_native::enable_compiler,
         // Chains, the target back edges, then pairs (`derive_lane_view`); an image, whose bodies leave to the
         // lane only at misses, links no fused row.
-        fuse: |records, decoded, constants, live, loop_tier, raw_results| {
+        fuse: |records, decoded, live, loop_tier, raw_results| {
             use crate::dispatch_fast::{fuse_target_backedges, lane_frame::{fuse_chains, fuse_rows}};
             let mut fused = fuse_chains(records, decoded, live, raw_results);
             fuse_target_backedges(records, loop_tier);
-            fused.extend(fuse_rows(records, decoded, constants, live, loop_tier, raw_results));
+            fused.extend(fuse_rows(records, decoded, live, loop_tier, raw_results));
             fused
         },
     });

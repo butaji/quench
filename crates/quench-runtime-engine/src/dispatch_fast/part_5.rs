@@ -143,7 +143,7 @@ pub(super) fn plain_frame_local(function: &Function, slot: usize) -> bool {
 }
 
 /// The lane view of `function_id`'s `function`. Each record's row instance is chosen here, once, from the program's
-/// solve (`facts`, the cells `int32_at` and the compare choosers read): a record is quickened to the instance its
+/// solve (`facts`, the cells `operand_type` reads): a record is quickened to the instance its
 /// cells pick and is never reclassified per run. A record no cell decides keeps its first-run choice (`row_jump`).
 /// Without facts (`None`) the view takes no cell's instance.
 #[cfg(feature = "jit")]
@@ -440,19 +440,19 @@ pub(crate) fn derive_lane_view<'live>(
     // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
-    // The solve's int32 cells of this function's registers pick the operator records' proven forms (`int32_at`).
+    // The solve's cells of this function's registers choose the operator records' instances (`operand_type`).
     let facts = facts.filter(|_| !wasm && int32_projectable(&decoded, resolves_names));
-    let int32 = |pc: u32, register: u16| int32_at(facts, function_id, pc, register);
+    let types = |pc: u32, register: u16| operand_type(facts, function_id, pc, register);
     if !wasm {
         let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-        specialize_plain_operators(&decoded, constants, &mut records, true, &int32);
+        specialize_plain_operators(&decoded, constants, &mut records, true, &types);
         for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
             if record.handler != before {
                 *selected = record.handler;
             }
         }
     }
-    let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, constants, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     let proven_counters = int_steps::prove_loop_steps(&decoded, &mut records, facts, function_id);
     if let Some(facts) = facts { prove_compare_jumps(constants, &mut records, facts, function_id); }
     // A record reads the accumulator its predecessor produced only when control reaches it
@@ -491,7 +491,7 @@ pub(crate) fn derive_lane_view<'live>(
     }
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
-        specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| false);
+        specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| quench_runtime::typed_ir::Type::ANY);
         specialize_register_operands(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -593,13 +593,27 @@ fn int32_projectable(decoded: &[WideInstruction], resolves_names: bool) -> bool 
     !resolves_names && !decoded.iter().any(|instruction| instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::SuperinstructionIndex)
 }
 
-/// Whether register `register` holds an int32 just before the instruction at `pc` of `function`, in the program's one
-/// solve (`FunctionFacts::cell_at`): its cell's type lies within `Type::INT32`, and no path reaching `pc` leaves it
-/// unset (`Type::NEVER`). Without facts none does.
-pub(super) fn int32_at(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32, pc: u32, register: u16) -> bool {
-    use quench_runtime::typed_ir::Type;
-    facts.and_then(|facts| facts.function_facts(function).cell_at(pc, register))
-        .is_some_and(|cell| cell.ty != Type::NEVER && cell.ty.is_subtype(Type::INT32))
+/// The type of register `register` just before the instruction at `pc` of `function`, from the program's one solve
+/// (`FunctionFacts::cell_at`). A register with no cell, and every register without facts, is `Type::ANY`. The operator
+/// records and compare jumps choose their instances from it (`specialize_plain_operators`, `prove_compare_jumps`).
+pub(super) fn operand_type(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32, pc: u32, register: u16) -> quench_runtime::typed_ir::Type {
+    facts.and_then(|facts| facts.function_facts(function).cell_at(pc, register)).map_or(quench_runtime::typed_ir::Type::ANY, |cell| cell.ty)
+}
+
+/// Whether a cell type holds int32s only. `NEVER` (a path leaves the register unset) is a subtype of every type, so it is
+/// excluded: an unset register holds no value the instance may read untagged.
+pub(super) fn int32_cell(ty: quench_runtime::typed_ir::Type) -> bool {
+    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::INT32)
+}
+
+/// Whether a cell type holds Numbers only, int32s or doubles (`NEVER` excluded, as `int32_cell`).
+pub(super) fn number_cell(ty: quench_runtime::typed_ir::Type) -> bool {
+    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER)
+}
+
+/// Whether a cell type holds objects only (`NEVER` excluded, as `int32_cell`).
+pub(super) fn object_cell(ty: quench_runtime::typed_ir::Type) -> bool {
+    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::language(quench_runtime::ValueType::Object))
 }
 
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
@@ -788,17 +802,6 @@ pub(super) fn specialize_returning_binaries(decoded: &[WideInstruction], constan
     }
 }
 
-/// Whether `instruction` is a plain `Binary` of a Number operator: an arithmetic one (`arithmetic_operators!`), or a
-/// loose equality or relation (`relation_operators!`, whose strict forms `strict_equality_row` decides instead). Such a
-/// record runs its operator's row (`specialize_plain_operators`), so no fused pair takes it.
-pub(super) fn number_binary(instruction: WideInstruction) -> bool {
-    macro_rules! pick { ($op:expr) => { () }; }
-    let code = instruction.binary_operator();
-    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.result_flags() == 0
-        && code != oxc_ast::ast::BinaryOperator::StrictEquality as u32 && code != oxc_ast::ast::BinaryOperator::StrictInequality as u32
-        && arithmetic_operators!(code, pick).or_else(|| relation_operators!(code, pick)).is_some()
-}
-
 /// The row of a `Binary` operator that no Number operation denotes (`**`, `in`, `instanceof`): `binary_operator_miss`
 /// of that operator. It decides the operands' pure value (`binary_values`) and takes any other pair to the general
 /// step. The operator is the row's static parameter, so the row reads none from its record.
@@ -825,12 +828,14 @@ fn value_operator_row(code: u32) -> Option<Handler> {
 /// operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). A Number row's misses widen within its
 /// own operator (`operator_row`), so no record returns to the generated row once it has its operator's row.
 ///
-/// Where the solve's int32 cells (`int32`, by pc and register) prove every register operand of a record with no
-/// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
-/// which reads them with no tag test. Where the cells prove no such operand, a register pair of a Number operator
-/// takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
+/// Where the solve's cells (`types`, by pc and register) type every register operand of a record with no accumulator
+/// field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`), which reads them with no tag
+/// test. Where they type its operands Numbers (not all int32s), it takes the Number form with no guard. Where they type
+/// neither, a register pair of a Number operator takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs
+/// the proven one. Two objects under `===` take `object_identity_row`, and a strict equality of other operands keeps
+/// `strict_equality_row`.
 pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
-    int32: &dyn Fn(u32, u16) -> bool) {
+    types: &dyn Fn(u32, u16) -> quench_runtime::typed_ir::Type) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
     use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
@@ -884,15 +889,36 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
         }
         let code = instruction.binary_operator();
         let strict = code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 || code == oxc_ast::ast::BinaryOperator::StrictInequality as u32;
-        let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| int32(pc as u32, register));
+        // A register operand's cell type before this record; a constant has none (`ANY`).
+        let typed = |operand: quench_runtime::bytecode::Operand| operand.register_index()
+            .map_or(quench_runtime::typed_ir::Type::ANY, |register| types(pc as u32, register));
+        let proven = |operand: quench_runtime::bytecode::Operand| int32_cell(typed(operand));
+        // Each operand a Number: an int32 or a double register, or a Number constant. A record of such operands takes
+        // the Number instance with no operand guard, since its operands' tags are known to be Numbers.
+        let number = |operand: quench_runtime::bytecode::Operand| match operand.kind() {
+            Some(Register) => number_cell(typed(operand)),
+            Some(Constant) => constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_number().is_some()),
+            _ => false,
+        };
+        let numbers = number(left) && number(right);
+        // Both operands objects: a strict equality is their identity, as distinct objects are never strictly equal.
+        let objects = object_cell(typed(left)) && object_cell(typed(right));
         // The proven form, where the cells prove each register operand an int32 before this record.
         let proven_form = match form {
             OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
             OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
             _ => None,
         };
-        // A strict equality the cells do not prove int32 operands keeps `strict_equality_row`.
-        if strict && proven_form.is_none() {
+        if strict && proven_form.is_none() && objects {
+            records[pc].handler = if code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+                lane_frame::object_identity_row::<false> as Handler as *const ()
+            } else {
+                lane_frame::object_identity_row::<true> as Handler as *const ()
+            };
+            continue;
+        }
+        // A strict equality whose operands the cells do not type Numbers keeps `strict_equality_row`.
+        if strict && proven_form.is_none() && !numbers {
             records[pc].handler = if code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
                 strict_equality_row::<false> as Handler as *const ()
             } else {
@@ -924,7 +950,7 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
         if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(code, proven_at).or_else(|| relation_operators!(code, proven_at)) {
             records[pc].handler = proven_handler as *const ();
         }
-        if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(code, guarded_at).or_else(|| relation_operators!(code, guarded_at)) {
+        if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && !numbers && let Some(guarded_handler) = arithmetic_operators!(code, guarded_at).or_else(|| relation_operators!(code, guarded_at)) {
             records[pc].handler = guarded_handler as *const ();
         }
     }
@@ -1080,7 +1106,8 @@ pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
 
 /// The comparison jumps the solve's cells decide, each chosen once here at derivation: a pair of int32 cells takes its
 /// proven instance (`lane_frame::proven_compare_jump`), which reads its register operands untagged; a register the cells
-/// type `null` or `undefined` against a constant one, or a Boolean against a constant Boolean, takes that test's instance
+/// type `null` or `undefined` against a constant one, or a Boolean against a constant Boolean, takes that test's instance,
+/// and a register the cells fix to `null` or `undefined` on the right takes the nullish test of that constant
 /// (`lane_frame::typed_compare_jump`). A register pair no cell decides takes its guarded instance (`guarded_compare_jump`),
 /// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
 pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], facts: &quench_runtime::compile::aot_facts::AotFacts,
@@ -1088,12 +1115,11 @@ pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstru
     use quench_runtime::bytecode::Operand;
     for (pc, record) in records.iter_mut().enumerate() {
         let pc = pc as u32;
-        let int32 = |operand: Operand| operand.register_index().is_some_and(|register| int32_at(Some(facts), function, pc, register));
-        if let Some(proven) = lane_frame::proven_compare_jump(record, constants, int32) {
+        let typed = |operand: Operand| operand.register_index().map_or(quench_runtime::typed_ir::Type::ANY, |register| operand_type(Some(facts), function, pc, register));
+        if let Some(proven) = lane_frame::proven_compare_jump(record, constants, |operand| int32_cell(typed(operand))) {
             record.handler = proven as *const ();
             continue;
         }
-        let typed = |operand: Operand| operand.register_index().and_then(|register| facts.function_facts(function).cell_at(pc, register)).map(|cell| cell.ty);
         if let Some(decided) = lane_frame::typed_compare_jump(record, constants, typed) {
             record.handler = decided as *const ();
             continue;

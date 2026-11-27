@@ -1,8 +1,8 @@
-//! Loop steps the solve's int32 cells prove (`int32_at`): an `i++` back edge over a register-register test takes
+//! Loop steps the solve's int32 cells prove (`int32_cell`): an `i++` back edge over a register-register test takes
 //! its `PROVEN_STEP` form, at load (`prove_loop_steps`) or when the loop site holding it retires (`retired_step`).
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{checked_step, int32_at, Handler, Ip, LaneContext, LaneInstruction, LoopSite, Operand};
+use super::{checked_step, int32_cell, operand_type, Handler, Ip, LaneContext, LaneInstruction, LoopSite, Operand};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::staged::meaning::{means, Meaning};
@@ -12,7 +12,7 @@ use quench_runtime::vm::engine_types::LaneView;
 fn int_counter(step: WideInstruction, pc: u32, facts: Option<&AotFacts>, function: u32) -> Option<u16> {
     let in_place = means(step, Meaning::IncDec) && step.numeric_local_target().is_none() && step.boolean_flag() == Some(false)
         && step.result_flags() == 0 && step.result_register() == step.register_b();
-    (in_place && int32_at(facts, function, pc, step.register_b())).then(|| step.register_b())
+    (in_place && int32_cell(operand_type(facts, function, pc, step.register_b()))).then(|| step.register_b())
 }
 
 /// Gives each `(IncDec, Jump)` back edge over an int32 counter that its target's test compares its `PROVEN_STEP` form.
