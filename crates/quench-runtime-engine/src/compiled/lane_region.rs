@@ -377,7 +377,6 @@ impl State {
     fn call_effect(&mut self) {
         self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
-        self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
         self.proofs.keep_typed_views();
         // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
