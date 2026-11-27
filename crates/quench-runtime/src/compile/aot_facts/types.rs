@@ -195,11 +195,13 @@ impl Types {
         self.elements.members(class)
     }
 
-    /// Per element class the solve names (each class a store writes, and the unnamed class), the keys of every class of
-    /// its class: a store through any array of the class moves all of them (`AotFacts::element_class_keys`).
+    /// Per element class the solve names (each class a store writes, each class a link joins, and the unnamed class), the
+    /// keys of every class of its class: a store through any array of the class moves all of them (`AotFacts::element_class_keys`).
     pub(super) fn element_classes(&self) -> BTreeMap<FactKey, Box<[FactKey]>> {
+        // Every linked class is listed, cell or not: two classes a link joins are one class, and `element_classes_distinct`
+        // reads the list to tell that two classes are apart.
         let named = self.cells.keys().filter_map(|key| match key { Key::Element(class) => Some(*class), _ => None });
-        named.chain(std::iter::once(ElementClass::Unnamed))
+        named.chain(self.elements.linked()).chain(std::iter::once(ElementClass::Unnamed))
             .map(|class| (FactKey::Elements(class), self.elements.members(class).map(FactKey::Elements).collect::<Box<[FactKey]>>()))
             .collect()
     }

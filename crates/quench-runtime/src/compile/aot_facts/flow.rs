@@ -103,6 +103,8 @@ pub(super) struct FunctionFlow {
     pub(super) bounds: Vec<(Key, i64)>,
     /// The length relations each pc holds before its instruction (`lengths::Settled`), where any holds.
     pub(super) lengths: lengths::Settled,
+    /// Per pc of an element store, the array it writes and the indices it touches (`record::ElementStore`).
+    pub(super) element_stores: std::collections::BTreeMap<u32, super::record::ElementStore>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.

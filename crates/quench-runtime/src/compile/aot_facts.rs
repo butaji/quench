@@ -37,13 +37,15 @@ use std::collections::BTreeMap;
 
 use crate::bytecode::ResidualProgram;
 use crate::staged::effects::{CallForm, Effects, Signature};
-use crate::typed_ir::Representation;
+use crate::staged::effects::ElementWrites;
+use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
-use super::signatures::{self, Signatures};
+use super::signatures::{self, Argument, CallSite, Signatures};
 use census::Census;
 use class_layout::ClassLayouts;
 use flow::FunctionFlow;
 use readers::Readers;
+use record::ElementStore;
 use scope::Scope;
 pub use gate::World;
 pub use registers::{RegisterCells, Source};
@@ -94,6 +96,12 @@ pub struct AotFacts {
     /// `(function, pc)` of a call whose callee was read from a key → the method name it reads (a member read) and
     /// that key: what a call plan's miss subscribes to (`call_plan::Miss::Edge`).
     pub(crate) call_keys: BTreeMap<(u32, u32), (Option<u32>, crate::typed_ir::FactKey)>,
+    /// `(function, pc)` of a call → what it passes its callee (`CallSite`): each argument's array class and the caller's
+    /// parameter it is on entry. The call's writes are lifted through it (`signatures::solve`).
+    pub(crate) call_sites: BTreeMap<(u32, u32), CallSite>,
+    /// `(function, pc)` of an element store → the array class it writes and the indices it touches (`ElementStore`), where
+    /// the settled solve keeps the store.
+    pub(crate) element_stores: BTreeMap<(u32, u32), ElementStore>,
     /// The composed effect signatures of the program's functions and call forms, solved over the settled facts
     /// above (`signatures::solve`); none where the type solve did not settle, so no signature is taken from it.
     pub(crate) signatures: Option<Signatures>,
@@ -124,6 +132,8 @@ impl AotFacts {
             lengths: BTreeMap::new(),
             dependencies: BTreeMap::new(),
             call_keys: BTreeMap::new(),
+            call_sites: BTreeMap::new(),
+            element_stores: BTreeMap::new(),
             signatures: None,
             layouts: ClassLayouts::default(),
             readers: None,
@@ -214,6 +224,14 @@ impl AotFacts {
         self.layouts.prototypes.get(&class).map(|fields| &**fields)
     }
 
+    /// Whether two element classes are apart: no link of the program joins them, so an array of one class is never an array
+    /// of the other (`element_classes`, each class's listed members). A class no link names is apart from every other.
+    /// False where the solve did not settle, so no two classes are taken apart from nothing.
+    pub fn element_classes_distinct(&self, first: ElementClass, second: ElementClass) -> bool {
+        self.signatures.is_some() && first != second
+            && !self.element_classes.get(&crate::typed_ir::FactKey::Elements(first)).is_some_and(|members| members.contains(&crate::typed_ir::FactKey::Elements(second)))
+    }
+
     /// The functions some construction (`new`) always constructs.
     pub fn constructed_functions(&self) -> std::collections::BTreeSet<u32> {
         self.construct_targets.values().copied().collect()
@@ -258,6 +276,19 @@ fn dependencies(facts: &AotFacts, reads: BTreeMap<u32, std::collections::BTreeSe
         set.insert(FactKey::Receiver(function));
         (function, set.into_iter().collect())
     }).collect()
+}
+
+/// What the call `call` of `function` passes its callee (`CallSite`): each argument's array class, and the caller's parameter
+/// the argument is on entry.
+fn call_site(function: u32, call: &flow::Call) -> CallSite {
+    let argument = |word: &value::Word| Argument {
+        class: word.elements_key(),
+        parameter: match word.origin {
+            Some(value::Origin::Parameter { function: owner, index }) if owner == function => Some(index),
+            _ => None,
+        },
+    };
+    CallSite { receiver: call.receiver.elements_key(), arguments: call.arguments.iter().map(argument).collect() }
 }
 
 /// The facts of one function.
@@ -381,6 +412,33 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
     }
 
+    /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
+    pub(crate) fn call_site(&self, pc: u32) -> Option<&'a CallSite> {
+        self.facts.call_sites.get(&(self.function, pc))
+    }
+
+    /// The array element store at `pc` writes and the indices it touches (`AotFacts::element_stores`), where the solve kept it.
+    pub(crate) fn element_store(&self, pc: u32) -> Option<ElementStore> {
+        self.facts.element_stores.get(&(self.function, pc)).copied()
+    }
+
+    /// Whether the arguments `first` and `second` of the call at `pc` are arrays of apart classes (`AotFacts::element_classes_distinct`):
+    /// a write through one leaves the other's elements, and the facts about them, valid across the call. False where the
+    /// call is none the solve read.
+    pub fn arguments_distinct(&self, pc: u32, first: usize, second: usize) -> bool {
+        match self.call_site(pc).map(|site| (site.arguments.get(first).copied(), site.arguments.get(second).copied())) {
+            Some((Some(Argument { class: a, .. }), Some(Argument { class: b, .. }))) => self.facts.element_classes_distinct(a, b),
+            _ => false,
+        }
+    }
+
+    /// Whether the step at `pc` may write an element of an array of class `array`: its graded writes (`site_effects`)
+    /// are any, or name a class that is not apart from `array`. A step the solve did not settle may write any.
+    pub fn may_write_elements_of(&self, pc: u32, array: ElementClass) -> bool {
+        let writes = self.site_effects(pc).elements;
+        writes == ElementWrites::Any || writes.entries().iter().any(|write| !self.facts.element_classes_distinct(write.class, array))
+    }
+
     /// The composed effect signature of the function (`signatures::solve`): the leaves its steps can cause and the
     /// effects they have. The same settled facts that answer this file's queries decide it, and the same edges
     /// retire it. Top where the type solve did not settle.
@@ -489,6 +547,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
             reads.insert(id, std::mem::take(&mut flow.reads));
+            for call in &flow.calls {
+                facts.call_sites.insert((id, call.pc), call_site(id, call));
+            }
+            facts.element_stores.extend(flow.element_stores.iter().map(|(&pc, &store)| ((id, pc), store)));
             for call in &flow.calls {
                 let keyed = match call.callee.origin {
                     Some(value::Origin::Binding(key)) => Some((None, census::fact_key(key))),
