@@ -29,7 +29,7 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_admits_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_may_run_in_lane(this: &Vm, program: ProgramId, code: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_entry_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
-    safe fn quench_engine_vm_hot_loop_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
+    pub(super) safe fn quench_engine_vm_hot_loop_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
     safe fn quench_engine_vm_runs_call_in_lane(view: *const LaneView) -> bool;
     pub(super) safe fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::jit_mode::Tier]) -> bool;
     safe fn quench_engine_vm_view_any_in_lane(this: &Vm, program: ProgramId, function: u32) -> Option<*const LaneView>;
@@ -38,7 +38,7 @@ unsafe extern "Rust" {
     pub(super) safe fn quench_engine_vm_js_tier_frame_entry(this: &mut Vm, program: &ResidualProgram, frame: usize) -> Option<usize>;
     safe fn quench_engine_vm_trap_result_error(this: &mut Vm, p: &ResidualProgram, pending: &PendingGeneralCall, frame: usize, value: Value) -> Option<(u32, JsError)>;
     safe fn quench_engine_vm_completed_call_value(this: &Vm, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value;
-    safe fn quench_engine_vm_record_native_execution_rejection(this: &mut Vm) -> ();
+    pub(super) safe fn quench_engine_vm_record_native_execution_rejection(this: &mut Vm) -> ();
     safe fn quench_engine_vm_runs_windows_in_lane(this: &Vm) -> bool;
     pub(super) safe fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), super::JsError>;
     safe fn quench_engine_vm_lane_stack_sites(this: &mut Vm) -> Option<LaneSites>;
@@ -50,10 +50,10 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_specialized_operations_enabled(this: &Vm, program: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_call_stored_setter(this: &mut Vm, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError>;
     safe fn quench_engine_vm_enter_with_scope(this: &mut Vm) -> ();
-    safe fn quench_engine_vm_store_native_module_program(this: &mut Vm, native: NativeJsProgram) -> Result<ProgramId, JsError>;
-    safe fn quench_engine_vm_kept_native_module_program(this: &mut Vm, module: &crate::ModuleSource) -> Result<Option<ProgramId>, JsError>;
+    pub(super) safe fn quench_engine_vm_store_native_module_program(this: &mut Vm, native: NativeJsProgram) -> Result<ProgramId, JsError>;
+    pub(super) safe fn quench_engine_vm_kept_native_module_program(this: &mut Vm, module: &crate::ModuleSource) -> Result<Option<ProgramId>, JsError>;
     safe fn quench_engine_vm_run_chained_lane_job(this: &mut Vm, code: &ResidualProgram, arg1: (JobRoot, *const FrameRecord), resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> Result<JobEnd, JobResume>;
-    safe fn quench_engine_vm_report_lane_plan(this: &mut Vm) -> ();
+    pub(super) safe fn quench_engine_vm_report_lane_plan(this: &mut Vm) -> ();
     safe fn quench_engine_vm_rebind_lane_field_entries(this: &Vm) -> ();
     safe fn quench_engine_vm_finish_lane_callback(this: &mut Vm, prepared: PreparedLaneCallback) -> ();
     safe fn quench_engine_vm_call_prepared_lane(this: &mut Vm, prepared: &mut PreparedLaneCallback, args: &[Value]) -> Option<Result<Value, JsError>>;
@@ -62,12 +62,12 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_callee_runs_beside_activations(this: &Vm, callee: Value) -> bool;
     safe fn quench_engine_vm_deferred_callback_in_lane(this: &mut Vm, callee: Value, receiver: Value, args: &[Value]) -> Option<Result<Value, JsError>>;
     safe fn quench_engine_vm_execution_mode(this: &Vm) -> ExecutionMode;
-    safe fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> ();
+    pub(super) safe fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> ();
     pub(super) safe fn quench_engine_vm_stage_images_at_load(this: &mut Vm, id: ProgramId, program: &ResidualProgram) -> ();
     safe fn quench_engine_vm_set_execution_mode(this: &mut Vm, mode: ExecutionMode) -> ();
     safe fn quench_engine_vm_enable_lane_methods(this: &mut Vm) -> ();
     pub(super) safe fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> ();
-    safe fn quench_engine_vm_native_execution_rejections(this: &Vm) -> u64;
+    pub(super) safe fn quench_engine_vm_native_execution_rejections(this: &Vm) -> u64;
     safe fn quench_engine_vm_set_native_program_resolver_boxed(this: &mut Vm, resolver: Box<NativeProgramResolver>) -> ();
     safe fn quench_engine_vm_execute_native_program(this: &mut Vm, native: &NativeJsProgram, drain_jobs: bool) -> Result<Value, JsError>;
     safe fn quench_engine_vm_execute_native_after_scripts(this: &mut Vm, scripts: &[NativeJsProgram], native: &NativeJsProgram) -> Result<Value, JsError>;
@@ -190,7 +190,9 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView { quench_engine_vm_entry_lane_view(self, program, function) }
     #[inline(always)]
-    fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView { quench_engine_vm_hot_loop_lane_view(self, program, function) }
+    fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+        self.execution.hot_loop_lane_view.map_or(std::ptr::null(), |view| view(self, program, function))
+    }
     #[inline(always)]
     fn runs_call_in_lane(view: *const LaneView) -> bool { quench_engine_vm_runs_call_in_lane(view) }
     #[inline(always)]
@@ -211,7 +213,7 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value { quench_engine_vm_completed_call_value(self, completion, caller, destination, value) }
     #[inline(always)]
-    fn record_native_execution_rejection(&mut self) -> () { quench_engine_vm_record_native_execution_rejection(self) }
+    fn record_native_execution_rejection(&mut self) -> () { if let Some(record) = self.execution.record_native_execution_rejection { record(self) } }
     #[inline(always)]
     fn runs_windows_in_lane(&self) -> bool { quench_engine_vm_runs_windows_in_lane(self) }
     #[inline(always)]
@@ -250,13 +252,20 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn enter_with_scope(&mut self) -> () { quench_engine_vm_enter_with_scope(self) }
     #[inline(always)]
-    fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError> { quench_engine_vm_store_native_module_program(self, native) }
+    fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError> {
+        match self.execution.store_native_module_program {
+            Some(store) => store(self, native),
+            None => Err(JsError::validation("image proved no native module compile: its execution table leaves store_native_module_program out".to_owned())),
+        }
+    }
     #[inline(always)]
-    fn kept_native_module_program(&mut self, module: &crate::ModuleSource) -> Result<Option<ProgramId>, JsError> { quench_engine_vm_kept_native_module_program(self, module) }
+    fn kept_native_module_program(&mut self, module: &crate::ModuleSource) -> Result<Option<ProgramId>, JsError> {
+        self.execution.kept_native_module_program.map_or(Ok(None), |kept| kept(self, module))
+    }
     #[inline(always)]
     fn run_chained_lane_job(&mut self, code: &ResidualProgram, arg1: (JobRoot, *const FrameRecord), resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> Result<JobEnd, JobResume> { quench_engine_vm_run_chained_lane_job(self, code, arg1, resume, pending) }
     #[inline(always)]
-    fn report_lane_plan(&mut self) -> () { quench_engine_vm_report_lane_plan(self) }
+    fn report_lane_plan(&mut self) -> () { if let Some(report) = self.execution.report_lane_plan { report(self) } }
     #[inline(always)]
     fn rebind_lane_field_entries(&self) -> () { quench_engine_vm_rebind_lane_field_entries(self) }
     #[inline(always)]
@@ -274,7 +283,7 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn execution_mode(&self) -> ExecutionMode { quench_engine_vm_execution_mode(self) }
     #[inline(always)]
-    fn load_ahead_images(&mut self, images: AheadImages) -> () { quench_engine_vm_load_ahead_images(self, images) }
+    fn load_ahead_images(&mut self, images: AheadImages) -> () { if let Some(load) = self.execution.load_ahead_images { load(self, images) } }
     #[inline(always)]
     fn stage_images_at_load(&mut self, id: ProgramId, program: &ResidualProgram) -> () { if let Some(stage) = self.execution.stage_images_at_load { stage(self, id, program) } }
     #[inline(always)]
@@ -284,7 +293,7 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn compile_wasm_eagerly(&mut self) -> () { if let Some(compile) = self.execution.compile_wasm_eagerly { compile(self) } }
     #[inline(always)]
-    fn native_execution_rejections(&self) -> u64 { quench_engine_vm_native_execution_rejections(self) }
+    fn native_execution_rejections(&self) -> u64 { self.execution.native_execution_rejections.map_or(0, |count| count(self)) }
     #[inline(always)]
     fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver>) -> () { quench_engine_vm_set_native_program_resolver_boxed(self, resolver) }
     #[inline(always)]
