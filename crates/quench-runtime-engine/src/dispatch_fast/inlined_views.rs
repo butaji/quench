@@ -251,8 +251,10 @@ fn materialize(cx: *mut super::LaneContext, r: super::Registers, records: Ip, or
 #[cold]
 #[inline(never)]
 pub(crate) fn leave_at_exit(cx: *mut super::LaneContext, ip: Ip) -> Ip {
+    let origin = with_inlined(ip, |view, index| (view.origins[index], index));
+    // The span holds other records too.
+    if origin.is_none() { return ip; }
     if std::env::var_os("QUENCH_N7_TRACE").is_some() {
-        let origin = with_inlined(ip, |view, index| (view.origins[index], index));
         // SAFETY: a record of a live view.
         eprintln!("n7 exit {:?} handler {:p}", origin, unsafe { (*ip).handler });
     }
