@@ -101,12 +101,6 @@ pub(crate) enum Heap {
     CharCodeAt,
     /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
     ParseInt,
-    /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
-    /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
-    /// direct reference of the new record. Planned as the fast arm of the instruction's helper step
-    /// (`base_region::steps::allocation_arm`); its exit 0 is that helper step.
-    EmptyObject,
-    EmptyArray,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
@@ -295,28 +289,21 @@ impl Heap {
         matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
     }
 
-    /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
-    /// fields and array views) or tables a helper may move: not the activation's `this` and local
-    /// slots, which every run reads live, and the rows that read no heap.
-    pub(crate) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
-    }
-
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(crate) fn reads_frame_word(self) -> bool {
         matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
-    /// Whether the row's result is a tagged word whatever the registers around it hold: a value
-    /// the activation holds, not a Number the region proved.
     /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
     pub(crate) fn yields_double(self) -> bool {
         matches!(self, Heap::TypedIndex(_))
     }
 
+    /// Whether the row's result is a tagged word whatever the registers around it hold: a value
+    /// the activation holds, not a Number the region proved.
     pub(crate) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::CharCodeAt | Heap::ParseInt)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 
