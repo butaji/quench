@@ -87,7 +87,7 @@ impl Vm {
 /// int32 is its ToUint32. `None` for any other value, which the general path converts.
 fn split_limit(limit: Option<&Value>) -> Option<usize> {
     match limit {
-        Some(value) if !value.is_undefined() => value.numeric_key().map(|int| int as u32 as usize),
+        Some(value) if !value.is_undefined() => value.as_int().map(|int| int as u32 as usize),
         _ => Some(u32::MAX as usize),
     }
 }
@@ -211,7 +211,7 @@ impl Vm {
 /// default. `None` for any other argument, which the general path converts.
 fn in_place_range(native: Native, length: i64, args: &[Value]) -> Option<std::ops::Range<usize>> {
     let bound = |index: usize, default: i64| match args.get(index) {
-        Some(value) if !value.is_undefined() => value.numeric_key().map(i64::from),
+        Some(value) if !value.is_undefined() => value.as_int().map(i64::from),
         _ => Some(default),
     };
     let end_default = if native == Native::StringSubstr { string_search::SUBSTR_REST } else { length };
@@ -223,7 +223,7 @@ fn in_place_range(native: Native, length: i64, args: &[Value]) -> Option<std::op
 /// value, which the general path converts.
 fn search_argument(native: Native, argument: Option<&Value>, length: usize) -> Option<f64> {
     match argument {
-        Some(value) if !value.is_undefined() => value.numeric_key().map(f64::from),
+        Some(value) if !value.is_undefined() => value.as_int().map(f64::from),
         _ => Some(string_search::search_default(native, length)),
     }
 }

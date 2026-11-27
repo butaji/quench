@@ -256,7 +256,7 @@ fn slice_bound(value: Option<Value>, default: usize, length: usize) -> Option<us
     let Some(value) = value.filter(|value| !value.is_undefined()) else {
         return Some(default);
     };
-    match value.numeric_key() {
+    match value.as_int() {
         Some(index) => Some(crate::staged::string_search::relative_bound(i64::from(index), length)),
         None => Some(crate::units::relative_index(value.immediate_number()?, length)),
     }

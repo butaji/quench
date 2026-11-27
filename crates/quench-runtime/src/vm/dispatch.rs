@@ -634,7 +634,7 @@ impl Vm {
             if attributes.accessor {
                 return None;
             }
-            usize::try_from(self.own_property(list, self.length_atom)?.numeric_key()?).ok()?
+            usize::try_from(self.own_property(list, self.length_atom)?.as_int()?).ok()?
         } else {
             elements.len()
         };
@@ -657,7 +657,7 @@ impl Vm {
             if array.has_indexed_descriptors() {
                 return None;
             }
-            usize::try_from(self.arguments_object_length(list)?.numeric_key()?).ok()?
+            usize::try_from(self.arguments_object_length(list)?.as_int()?).ok()?
         } else {
             elements.len()
         };

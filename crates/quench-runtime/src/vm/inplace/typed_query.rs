@@ -43,7 +43,7 @@ impl Vm {
             return None;
         }
         let view = self.plain_typed_view(receiver)?;
-        let index = args.first()?.numeric_key()?;
+        let index = args.first()?.as_int()?;
         match crate::staged::typed_elements::element_at(f64::from(index), view.length) {
             Some(position) => self.typed_array_number_element(receiver, position),
             None => Some(Value::UNDEFINED),
@@ -130,7 +130,7 @@ impl Vm {
 /// other value, whose ToIntegerOrInfinity may run guest code.
 fn relative_bound(bound: Option<&Value>, default: usize, length: usize) -> Option<usize> {
     match bound.copied().filter(|value| !value.is_undefined()) {
-        Some(value) => Some(crate::units::relative_index(f64::from(value.numeric_key()?), length)),
+        Some(value) => Some(crate::units::relative_index(f64::from(value.as_int()?), length)),
         None => Some(default),
     }
 }

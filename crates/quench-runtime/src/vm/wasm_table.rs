@@ -146,7 +146,7 @@ impl Vm {
         value: Value,
         ty: crate::WasmType,
     ) -> Result<u64, JsError> {
-        match (ty, value.numeric_key(), value.bits64()) {
+        match (ty, value.as_int(), value.bits64()) {
             (crate::WasmType::I32, Some(bits), _) => return Ok(u64::from(bits as u32)),
             (crate::WasmType::I64, _, Some(bits)) => return Ok(bits),
             _ => {}

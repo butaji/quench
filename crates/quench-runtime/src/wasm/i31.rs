@@ -8,7 +8,7 @@ pub(crate) const I31_MASK: i32 = (u32::MAX >> (u32::BITS - I31_BITS)) as i32;
 const I31_SIGN_EXTENSION_SHIFT: u32 = i32::BITS - I31_BITS;
 
 pub(crate) fn bits(value: Value) -> Option<i32> {
-    value.numeric_key().filter(|bits| (0..=I31_MASK).contains(bits))
+    value.as_int().filter(|bits| (0..=I31_MASK).contains(bits))
 }
 
 pub(crate) const SIGNED_MIN: i32 = -(1 << (I31_BITS - 1));

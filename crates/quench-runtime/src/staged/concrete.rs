@@ -159,6 +159,8 @@ impl Stage for Concrete {
     // `Value::from_f64_raw`: the double's own bits, NaN canonical (decision 4.1).
     fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::from_f64_raw(f64::from_bits(number.word())).to_bits() }
     #[inline(always)]
+    fn raw_number(&mut self, bits: u64) -> u64 { crate::Value::from_bits(bits).as_number().map_or(bits, f64::to_bits) }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }

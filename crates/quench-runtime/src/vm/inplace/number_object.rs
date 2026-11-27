@@ -38,7 +38,7 @@ impl Vm {
         let radix = match args.first().copied() {
             None => DECIMAL_RADIX,
             Some(value) if value.is_undefined() => DECIMAL_RADIX,
-            Some(value) => value.numeric_key()?,
+            Some(value) => value.as_int()?,
         };
         let number = receiver.as_number()?;
         if radix == DECIMAL_RADIX {
@@ -70,6 +70,6 @@ fn fixed_digit_count(digits: Option<Value>) -> Option<usize> {
     match digits {
         None => Some(0),
         Some(value) if value.is_undefined() => Some(0),
-        Some(value) => usize::try_from(value.numeric_key()?).ok().filter(|&count| count <= MAX_FIXED_DIGITS),
+        Some(value) => usize::try_from(value.as_int()?).ok().filter(|&count| count <= MAX_FIXED_DIGITS),
     }
 }

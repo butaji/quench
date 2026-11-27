@@ -19,11 +19,18 @@ impl Vm {
     }
 
     pub fn array_index_key(&self, key: Value) -> Option<u32> {
-        if let Some(index) = key.numeric_key() {
+        if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }
-        let key = self.heap.string(key).filter(|text| may_name_index(text))?;
-        super::object_static::array_index(key.host_string())
+        // Fallback only: a double-encoded integer key (decision 4.1, R4-M2) normalizes here, never on the
+        // int32 arm above, and before any string is made of it.
+        let Some(text) = self.heap.string(key) else {
+            return key.numeric_key().and_then(|index| u32::try_from(index).ok());
+        };
+        if !may_name_index(text) {
+            return None;
+        }
+        super::object_static::array_index(text.host_string())
     }
 }
 

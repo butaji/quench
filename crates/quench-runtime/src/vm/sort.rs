@@ -180,7 +180,7 @@ impl Vm {
         right: Value,
     ) -> Result<Ordering, JsError> {
         let result = self.call_prepared(p, comparator, &[left, right])?;
-        if let Some(int) = result.numeric_key() {
+        if let Some(int) = result.as_int() {
             return Ok(int.cmp(&0));
         }
         // A Number result, nearly every comparator's, is its own ToNumber: no roots, no call.

@@ -159,7 +159,7 @@ impl Vm {
             output.extend_from_slice(b"null");
         } else if let Some(value) = value.as_bool() {
             output.extend_from_slice(if value { b"true" } else { b"false" });
-        } else if let Some(integer) = value.numeric_key() {
+        } else if let Some(integer) = value.as_int() {
             write_json_integer(integer, output);
         } else if let Some(number) = value.as_number() {
             if number.is_finite() {

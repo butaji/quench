@@ -1392,7 +1392,7 @@ impl Vm {
         // from them, held in place: the scalar decode below reaches the same values after the
         // reference and vector checks (an integer value is tagged, an in-place payload is not).
         match ty {
-            crate::WasmType::I32 if let Some(bits) = value.numeric_key() => {
+            crate::WasmType::I32 if let Some(bits) = value.as_int() => {
                 return Ok(crate::WasmValue::I32(bits));
             }
             crate::WasmType::I64 if let Some(bits) = value.bits64() => {

@@ -362,7 +362,7 @@ impl Vm {
             return Ok(value.to_bits());
         }
         Ok(match ty {
-            crate::WasmType::I32 => match value.numeric_key() {
+            crate::WasmType::I32 => match value.as_int() {
                 Some(bits) => u64::from(bits as u32),
                 None => {
                     let crate::WasmValue::I32(bits) = self.decode_wasm_value_slow(value, ty, None)? else {

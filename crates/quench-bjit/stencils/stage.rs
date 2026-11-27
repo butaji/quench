@@ -230,6 +230,15 @@ impl Stage for StencilStage {
         if value.is_nan() { crate::layout::words::CANONICAL_NAN } else { value.to_bits() }
     }
     #[inline(always)]
+    fn raw_number(&mut self, bits: u64) -> u64 {
+        // An int32 word converts to its double; any other word is a double already.
+        if bits >> crate::layout::words::TAG_SHIFT == crate::layout::words::INT_TAG >> crate::layout::words::TAG_SHIFT {
+            ((bits as u32 as i32) as f64).to_bits()
+        } else {
+            bits
+        }
+    }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }

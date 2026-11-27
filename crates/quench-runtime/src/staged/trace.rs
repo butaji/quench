@@ -91,6 +91,7 @@ impl Stage for Trace {
     fn load_f64(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_f64 w{base}+{offset}")) }
     fn box_number(&mut self, number: super::Float64<u32>) -> u32 { self.word(format!("box_number w{}", number.word())) }
     fn box_raw_number(&mut self, number: super::Float64<u32>) -> u32 { self.word(format!("box_raw_number w{}", number.word())) }
+    fn raw_number(&mut self, bits: u32) -> u32 { self.word(format!("raw_number w{bits}")) }
     fn store_u8(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u8 w{base}+{offset} w{value}")); }
     fn store_u16(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u16 w{base}+{offset} w{value}")); }
     fn store_f32(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f32 w{base}+{offset} w{value}")); }

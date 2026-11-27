@@ -106,7 +106,7 @@ impl Vm {
         let start = match args.get(1) {
             None => 0,
             Some(from) => {
-                let Some(from) = from.numeric_key() else {
+                let Some(from) = from.as_int() else {
                     return Err(None);
                 };
                 crate::units::relative_index(f64::from(from), length)

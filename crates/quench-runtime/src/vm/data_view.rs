@@ -408,7 +408,7 @@ fn data_view_width(native: Native) -> usize {
 /// through `to_index`.
 #[inline(always)]
 fn data_view_plain_index(index: Value) -> Option<usize> {
-    match index.numeric_key() {
+    match index.as_int() {
         Some(int) => usize::try_from(int).ok(),
         None => crate::units::to_index(index.immediate_number()?),
     }

@@ -99,7 +99,7 @@ impl Vm {
             if !get {
                 return Ok(Value::length(passed.len()));
             }
-            if let Some(value) = key.numeric_key().and_then(|index| usize::try_from(index).ok()).and_then(|index| passed.get(index)) {
+            if let Some(value) = key.as_int().and_then(|index| usize::try_from(index).ok()).and_then(|index| passed.get(index)) {
                 return Ok(*value);
             }
             held = self.rest_parameter_array(&passed);

@@ -193,6 +193,9 @@ pub trait Stage: crate::projection::Sealed {
     /// double's raw bits, integral values included (`Value::from_f64_raw`), NaN canonical. The binary64
     /// is a proof (`staged::Float64`).
     fn box_raw_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
+    /// The raw double word of the Number word `bits` (decision 4.1, R4-M1): an int32 converts to its
+    /// binary64, any other Number is its own bits. Only a generic writer into a Number-class slot runs it.
+    fn raw_number(&mut self, bits: Self::Word) -> Self::Word;
     /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
     fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);

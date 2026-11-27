@@ -612,7 +612,7 @@ impl Vm {
     /// effect, so the write needs neither a root nor a conversion. False leaves the store to
     /// `typed_array_set`.
     pub fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
-        if let Some(integer) = value.numeric_key()
+        if let Some(integer) = value.as_int()
             && self.typed_array_set_integer(object, index, integer)
         {
             return true;
