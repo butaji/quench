@@ -12,7 +12,7 @@ pub(crate) const MAX_CANDIDATES: usize = 8;
 
 /// The fact key a binding's value is settled under (`AotFacts::cell`), so the world says whether new code can move it.
 /// A named property read off any object is the name-wide join, which the solve keeps as `AnyField`.
-fn fact_key(key: Key) -> FactKey {
+pub(super) fn fact_key(key: Key) -> FactKey {
     match key {
         Key::Global(atom) => FactKey::Global(atom),
         Key::Slot { owner, slot } => FactKey::Slot { owner, slot },

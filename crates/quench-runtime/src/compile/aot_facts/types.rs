@@ -211,6 +211,11 @@ impl Types {
     }
 
     /// The parameter types of every function they type, for the solve's trace.
+    /// How many parameters of `function` the solve types (`parameters`): none for one whose calls do not bind them.
+    pub(super) fn param_count(&self, function: u32) -> usize {
+        self.params.get(&function).map_or(0, Vec::len)
+    }
+
     pub(super) fn parameter_types(&self) -> BTreeMap<u32, Vec<Type>> {
         self.params.iter().map(|(function, cells)| (*function, cells.iter().map(|cell| cell.ty).collect())).collect()
     }

@@ -53,6 +53,10 @@ pub(super) struct FunctionFlow {
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
     pub(super) registers: RegisterCells,
+    /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,
+    /// or the name's), element reads of an array field. Its parameters, receiver and callees' returns are
+    /// added by `AotFacts` (`dependencies`).
+    pub(super) reads: std::collections::BTreeSet<Key>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
@@ -327,6 +331,7 @@ struct Record {
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     registers: RegisterCells,
+    reads: std::collections::BTreeSet<Key>,
 }
 
 impl Record {
@@ -342,6 +347,7 @@ impl Record {
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
             registers: RegisterCells::default(),
+            reads: std::collections::BTreeSet::new(),
         }
     }
 
@@ -351,6 +357,12 @@ impl Record {
             if !state[usize::from(register)].is_number() {
                 self.unsafe_reads[usize::from(register)] = true;
             }
+        }
+        // An element read of an array a field holds reads that field's elements (`Key::Element`).
+        if instruction.op() == crate::bytecode::Op::GetIndex
+            && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
+        {
+            self.reads.insert(Key::Element(atom));
         }
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
@@ -410,6 +422,18 @@ impl Record {
             let index = usize::from(register);
             self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
         }
+        // The key a defined value was read from, where its word names one (`Origin`).
+        if let Some(defined) = instruction.defined_register() {
+            match state[usize::from(defined)].origin {
+                Some(Origin::Binding(key)) => { self.reads.insert(key); }
+                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); }
+                Some(Origin::MemberOn { class, instance, atom, .. }) => {
+                    self.reads.insert(Key::MemberOn { class, instance, atom });
+                    self.reads.insert(Key::MemberAny(atom));
+                }
+                _ => {}
+            }
+        }
     }
 
     fn finish(self, arity: Option<u16>) -> FunctionFlow {
@@ -429,6 +453,7 @@ impl Record {
             prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,
             registers: self.registers,
+            reads: self.reads,
             arity,
         }
     }
