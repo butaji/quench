@@ -11,7 +11,7 @@ use super::math::FloatUnary;
 use super::{NumberOperation, Operation};
 use crate::bytecode::{Operand, OperandKind, Register};
 use crate::typed_ir::arithmetic::number_range;
-use crate::typed_ir::{Cell, Elements, IntRange, Length, Type, language_bit};
+use crate::typed_ir::{Cell, Elements, IntRange, Length, StringLength, Type, language_bit};
 use crate::vm::operations::{binary_operator as op, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use crate::ValueType;
 
@@ -138,7 +138,7 @@ pub fn binary_type(operator: u32, left: Type, right: Type) -> Option<Type> {
     let number = |ty: Type| ty.is_subtype(Type::NUMBER);
     if bigint_operator(operator) && left.is_subtype(bigint) && right.is_subtype(bigint) { return Some(bigint); }
     if operator == op::Addition {
-        if left.is_subtype(string) || right.is_subtype(string) { return Some(string); }
+        if left.is_subtype(string) || right.is_subtype(string) { return Some(concatenation(left, right)); }
         return (number(left) && number(right)).then(|| arithmetic(NumberArithmetic::Add, left, right));
     }
     // A Number operand makes the other's coercion a Number too: a BigInt beside it throws. With neither a Number, the
@@ -347,6 +347,95 @@ fn negated(relation: NumberRelation) -> NumberRelation {
         NumberRelation::GreaterThan => NumberRelation::LessEqual,
         NumberRelation::GreaterEqual => NumberRelation::LessThan,
     }
+}
+
+/// The type `left + right` defines where one operand is a string: a fresh string, never an atom (a concatenation is built
+/// at run time), its length the sum of the operands' length ranges. An operand that is not a string converts to one whose
+/// length no rule here bounds, so its length is the full range.
+pub fn concatenation(left: Type, right: Type) -> Type {
+    let length = |ty: Type| ty.string_fact().map_or(StringLength::FULL, |fact| fact.length());
+    let (left, right) = (length(left), length(right));
+    Type::string_length(left.min.saturating_add(right.min), left.max.saturating_add(right.max))
+}
+
+/// The type `String(value)` defines over a value of type `ty`: the value itself where it is a string (the conversion
+/// returns it, so its atom survives), else a string of any length (a Number's or an object's string form is not bounded
+/// here). `NEVER` stays `NEVER`.
+pub fn to_string(ty: Type) -> Type {
+    if ty == Type::NEVER || ty.string_fact().is_some() { return ty; }
+    Type::language(ValueType::String)
+}
+
+/// The string `receiver.charAt(index)` defines: one code unit when `index` is proven within the receiver's length, else
+/// the empty string or one unit. The result is never longer than one unit whatever the receiver.
+pub fn char_at(receiver: Type, index: Type) -> Type {
+    let length = receiver.string_fact().map_or(StringLength::FULL, |fact| fact.length());
+    if within_length(Length::Fixed(length.min), index) { Type::string_length(1, 1) } else { Type::string_length(0, 1) }
+}
+
+/// The largest UTF-16 code unit: the upper bound of a `charCodeAt` result.
+const UTF16_UNIT_MAX: i64 = 0xFFFF;
+
+/// The Number `receiver.charCodeAt(index)` defines. An index proven within the receiver's length reads one code unit, an
+/// integer in `[0, 65535]`. Any other index may read NaN (`charCodeAt` past the end), and a NaN-free Number range is not
+/// representable beside it, so the Number may be NaN.
+pub fn char_code_at(receiver: Type, index: Type) -> Type {
+    match receiver.string_fact() {
+        Some(fact) if within_length(Length::Fixed(fact.length().min), index) => Type::int(IntRange { min: 0, max: UTF16_UNIT_MAX }),
+        _ => Type::NUMBER,
+    }
+}
+
+/// The clamped position hull `index` (an integer range) takes over a string of length `top`. `relative` is `slice`'s
+/// mapping, where a negative index counts from the end; otherwise `substring` clamps every index to `[0, top]`. Piecewise
+/// monotone, so the extremes are at the endpoints and at `-1` and `0`.
+fn position_hull(index: IntRange, top: i64, relative: bool) -> IntRange {
+    let map = |i: i64| if !relative { i.clamp(0, top) } else if i < 0 { (top + i).max(0) } else { i.min(top) };
+    let mut points = vec![index.min, index.max];
+    points.extend([-1, 0].into_iter().filter(|point| index.min <= *point && *point <= index.max));
+    let values: Vec<i64> = points.into_iter().map(map).collect();
+    IntRange { min: values.iter().copied().min().unwrap_or(0), max: values.iter().copied().max().unwrap_or(0) }
+}
+
+/// The string `receiver.substring(start, end)` (`relative` false) or `receiver.slice(start, end)` (`relative` true) defines:
+/// a fresh string whose length is at most the clamped end's (the clamped span, for `slice`, never negative). Exact where
+/// the receiver's length and both indices are exact; the full range of the receiver's length, else, where an index is not
+/// an integer range.
+pub fn substring_length(receiver: Type, start: Type, end: Type, relative: bool) -> Type {
+    let length = receiver.string_fact().map_or(StringLength::FULL, |fact| fact.length());
+    let (Some(start), Some(end)) = (start.int_range(), end.int_range()) else {
+        return Type::string_length(0, length.max);
+    };
+    let top = i64::from(length.max);
+    let (position_start, position_end) = (position_hull(start, top, relative), position_hull(end, top, relative));
+    let clamp = |value: i64| u32::try_from(value.clamp(0, i64::from(u32::MAX))).unwrap_or(u32::MAX);
+    if length.min == length.max && start.min == start.max && end.min == end.max {
+        let (from, to) = (position_hull(start, i64::from(length.min), relative).min, position_hull(end, i64::from(length.min), relative).min);
+        let exact = if relative { (to - from).max(0) } else { (to - from).abs() };
+        return Type::string_length(clamp(exact), clamp(exact));
+    }
+    let max = if relative { position_end.max.max(0) } else { position_end.max.max(position_start.max) };
+    Type::string_length(0, clamp(max))
+}
+
+/// Whether `left === right` between two strings is decided by their facts: `Some(true)` where both are one same atom,
+/// `Some(false)` where both name atoms and no atom is common (distinct interned atoms are distinct strings) or their
+/// length ranges are disjoint, and `None` where the facts leave it open or an operand is not a string.
+pub fn string_equality(left: Type, right: Type) -> Option<bool> {
+    let (left, right) = (left.string_fact()?, right.string_fact()?);
+    let (a, b) = (left.length(), right.length());
+    if a.max < b.min || b.max < a.min { return Some(false); }
+    if left.atoms().is_empty() || right.atoms().is_empty() { return None; }
+    if left.atoms().iter().any(|atom| right.atoms().contains(atom)) {
+        return (left.atom().is_some() && left.atom() == right.atom()).then_some(true);
+    }
+    Some(false)
+}
+
+/// Whether both operands are interned atoms: their equality is a pointer compare (`icmp`), since equal atoms are one
+/// string object and different atoms are different strings.
+pub fn both_interned(left: Type, right: Type) -> bool {
+    [left, right].into_iter().all(|ty| ty.string_fact().is_some_and(|fact| !fact.atoms().is_empty()))
 }
 
 #[cfg(test)]

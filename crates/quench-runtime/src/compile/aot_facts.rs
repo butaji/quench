@@ -363,6 +363,20 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function)?.at(pc, register)
     }
 
+    /// The interned atoms the string register `register` holds just before `pc` is one of, sorted (`typed_ir::StringFact`),
+    /// where the settled solve names some. Each is an interned string, so `===` between two atom-known operands is a
+    /// pointer compare (`staged::typing::both_interned`), and a key atom-known here reads like a named property.
+    /// Empty where the solve names none, or the register holds no string.
+    pub fn string_atoms(&self, pc: u32, register: u16) -> Vec<u32> {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map_or_else(Vec::new, |fact| fact.atoms().to_vec())
+    }
+
+    /// The UTF-16 length range of the string register `register` holds just before `pc` (`typed_ir::StringLength`), where
+    /// the settled solve reached a string there; `None` otherwise.
+    pub fn string_length(&self, pc: u32, register: u16) -> Option<crate::typed_ir::StringLength> {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
+    }
+
     /// The source of the value register `register` holds just before the instruction at `pc` (`RegisterCells::source_at`),
     /// where the solve settled: a binding it was loaded from or a property it was read off, else `Computed`. Computed also
     /// where no path reaches `pc` or the solve did not settle, the answer that assumes nothing about the value's origin.

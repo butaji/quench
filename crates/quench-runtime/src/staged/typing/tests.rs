@@ -1,6 +1,36 @@
 use super::*;
 use crate::staged::Overflow;
 
+#[test]
+fn string_typing_tracks_length_and_atoms() {
+    let text = |atom: u32, len: u32| Type::string_atoms(&[atom], len, len);
+    let joined = concatenation(text(3, 2), text(4, 1));
+    assert_eq!(joined.string_fact().unwrap().length(), StringLength { min: 3, max: 3 });
+    assert!(joined.string_fact().unwrap().atoms().is_empty());
+    assert_eq!(to_string(text(3, 2)), text(3, 2));
+    assert_eq!(to_string(Type::INT32), Type::language(ValueType::String));
+    assert_eq!(char_at(text(3, 1), range(0, 0)), Type::string_length(1, 1));
+    assert_eq!(char_at(text(3, 1), range(0, 1)).string_fact().unwrap().length(), StringLength { min: 0, max: 1 });
+    assert_eq!(char_code_at(text(3, 1), range(0, 0)), range(0, 65_535));
+    assert_eq!(char_code_at(text(3, 1), range(0, 1)), Type::NUMBER);
+    let exact = substring_length(text(3, 4), range(1, 1), range(3, 3), false);
+    assert_eq!(exact.string_fact().unwrap().length(), StringLength { min: 2, max: 2 });
+    let slice = substring_length(text(3, 4), range(-3, -3), Type::NUMBER, true);
+    assert_eq!(slice.string_fact().unwrap().length().max, 4);
+}
+
+#[test]
+fn string_equality_is_decided_by_atoms_and_lengths() {
+    let text = |atom: u32, len: u32| Type::string_atoms(&[atom], len, len);
+    assert_eq!(string_equality(text(3, 2), text(3, 2)), Some(true));
+    assert_eq!(string_equality(text(3, 2), text(4, 2)), Some(false));
+    assert_eq!(string_equality(text(3, 2), text(4, 3)), Some(false));
+    assert_eq!(string_equality(Type::language(ValueType::String), text(4, 2)), None);
+    assert!(both_interned(text(3, 2), text(4, 2)));
+    assert!(!both_interned(text(3, 2), Type::language(ValueType::String)));
+    assert_eq!(string_equality(text(3, 2), Type::INT32), None);
+}
+
 fn span(min: i64, max: i64) -> IntRange { IntRange::bounds(min, max).unwrap() }
 
 fn range(min: i64, max: i64) -> Type { Type::int(span(min, max)) }
