@@ -108,6 +108,9 @@ enum ErrorDescription {
     /// A thrown primitive, whose message is made only when read (`thrown_primitive`).
     ThrownPrimitive,
     ExecutionTerminated,
+    /// A native edge captured the chain of frames down to its base (`Vm::capture_chain_parked`).
+    /// Not a throw: the frames are gone, so no handler may run, and the run returns the chain.
+    Captured(Box<super::activation::FrameRecord>),
     DataClone(String),
     WasmTrap(crate::WasmTrap),
     WasmException,
@@ -144,6 +147,7 @@ impl fmt::Display for JsError {
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
             ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
             ErrorDescription::ExecutionTerminated => f.write_str("execution terminated"),
+            ErrorDescription::Captured(_) => f.write_str("execution captured"),
         }
     }
 }
@@ -182,6 +186,25 @@ impl JsError {
     }
 
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
+
+    /// The error a native edge returns to capture the frames of its run (`Vm::capture_chain_parked`):
+    /// the run stops at the native call with `chain` as its outcome (`into_captured`).
+    pub fn captured(chain: Box<super::activation::FrameRecord>) -> Self {
+        Self::described(ErrorDescription::Captured(chain), None)
+    }
+
+    pub fn is_captured(&self) -> bool { matches!(self.0.payload.description, ErrorDescription::Captured(_)) }
+
+    /// The chain a captured run stopped with, or the error itself when the run did not capture.
+    pub fn into_captured(self) -> Result<Box<super::activation::FrameRecord>, JsError> {
+        if !self.is_captured() {
+            return Err(self);
+        }
+        match self.0.payload.description {
+            ErrorDescription::Captured(chain) => Ok(chain),
+            _ => unreachable!("checked above"),
+        }
+    }
 
     pub fn thrown(value: Value, message: String) -> Self {
         Self::described(ErrorDescription::Text { message }, Some(value))
@@ -302,6 +325,7 @@ impl JsError {
             ErrorDescription::WasmTrap(trap) => trap.to_string(),
             ErrorDescription::WasmException => "uncaught Wasm exception".into(),
             ErrorDescription::ExecutionTerminated => "execution terminated".into(),
+            ErrorDescription::Captured(_) => "execution captured".into(),
         }
     }
 }

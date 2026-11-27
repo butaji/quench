@@ -2747,6 +2747,10 @@ impl Vm {
             match self.exception_handler_target(p, frame, function, throwing_pc, error) {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
+                    // A capture took the frames the pending calls name: the run ends with the chain.
+                    if unhandled.is_captured() {
+                        return Err(unhandled);
+                    }
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     let Some(mut pending) = pending_calls.pop() else {
@@ -2810,7 +2814,8 @@ impl Vm {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
-        if error.is_execution_terminated() { return Err(error); }
+        // A captured run's frames are gone and a termination is uncatchable: neither has a handler.
+        if error.is_execution_terminated() || error.is_captured() { return Err(error); }
         let error = self.name_non_callable_callee(program, frame, function, throwing_pc, error);
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
