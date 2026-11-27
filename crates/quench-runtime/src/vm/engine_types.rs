@@ -1374,6 +1374,9 @@ pub struct StableFacts {
     /// Whether it takes every activation's `this` as a direct object under the lane's `this` trust
     /// (`Vm::this_trust`): retiring the trust retires it (`heap::subscribe_this_trust`).
     pub this_trust: bool,
+    /// Live cell keys of the covered functions whose solved register cells it trusts (`lane_region::narrow_to_cells`):
+    /// an edge that widens one retires it (`FactWatch::subscribe_cell`).
+    pub cells: Box<[crate::typed_ir::FactKey]>,
 }
 
 /// A loop analysis failure attributed to the function PC whose requirement blocked it.
