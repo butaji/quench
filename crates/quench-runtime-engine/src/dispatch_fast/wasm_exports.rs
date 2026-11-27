@@ -130,7 +130,7 @@ impl quench_runtime::staged::wasm_activation::WasmExportCall for LaneExportCall 
         vm.materialize_lane_activations(cx);
         let caller = unsafe { (*cx).frame() };
         // SAFETY: the call record lies in the running view.
-        let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+        let call_pc = unsafe { record_pc(cx, ip) } as usize;
         vm.frames[caller].pc = call_pc + 1;
         vm.frames[caller].pc_is_resume = true;
         // The callee runs in its own program, which its frame belongs to and the loop's executing

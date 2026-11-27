@@ -17,7 +17,7 @@ script_handler! {
         vm.scope_names.probe = Some(quench_runtime::vm::name_scope::NameProbe {
             program: unsafe { (*cx).program },
             function: running_function_in_lane(cx),
-            pc: unsafe { ip.offset_from((*cx).base) } as u32,
+            pc: unsafe { record_pc(cx, ip) } as u32,
         });
         exit(ip)
     }

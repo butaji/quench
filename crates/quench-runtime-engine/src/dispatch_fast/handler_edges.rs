@@ -102,7 +102,7 @@ script_handler! {
 pub(crate) fn unwind_raised(cx: *mut LaneContext, ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as u32;
+    let pc = unsafe { record_pc(cx, ip) } as u32;
     vm.lane_raise_site = crate::compiled::raise_site(running_function_in_lane(cx), pc);
     match catch_raised(cx, ip) {
         Unwound::Caught(target) => target,
@@ -204,7 +204,7 @@ fn enter_covering(cx: *mut LaneContext, record: Ip, value: Value) -> Covered {
         return Covered::Declined;
     }
     // SAFETY: the context's program outlives the lane run; `record` lies in the running view.
-    let (code, pc) = unsafe { (&*(*cx).code, record.offset_from((*cx).base) as u32) };
+    let (code, pc) = unsafe { (&*(*cx).code, record_pc(cx, record) as u32) };
     let (function, home, keeps_locals) = handler_home(cx, vm);
     let Some(handler) = code.function(function as usize).handler_at(pc) else {
         return Covered::Not;

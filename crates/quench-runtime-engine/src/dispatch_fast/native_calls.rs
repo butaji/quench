@@ -499,7 +499,7 @@ pub(crate) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_ru
 pub(crate) fn install_math_field_call(cx: *mut LaneContext, call_ip: Ip, native: Native) {
     if math_handler(native).is_none() { return }
     // SAFETY: `call_ip` is a record of the running view, which starts at the context's base.
-    let pc = unsafe { call_ip.offset_from((*cx).base) };
+    let pc = unsafe { record_pc(cx, call_ip) } as isize;
     if pc < 2 {
         return;
     }

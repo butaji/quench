@@ -63,7 +63,7 @@ pub(crate) fn length_read(cx: *mut LaneContext, ip: Ip, i: &LaneInstruction) -> 
     let function = running_function_in_lane(cx);
     let body = code.function(function as usize);
     // SAFETY: `ip` is a record of the running view, which starts at the context's base.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let pc = unsafe { record_pc(cx, ip) } as usize;
     let read = pc + CALL_READ_RECORD;
     let Some(packed) = body.code.get(read) else {
         return false;
