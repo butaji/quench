@@ -112,7 +112,8 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
 fn numbers_over_numbers(ctx: &Ctx<'_>, state: &[Word], number: NumberOperation) -> bool {
     match number {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => is_number(ctx, state, left) && is_number(ctx, state, right),
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } | NumberOperation::Power { base: left, exponent: right, .. }
+            => is_number(ctx, state, left) && is_number(ctx, state, right),
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => is_number(ctx, state, source),
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
         _ => false,

@@ -77,6 +77,7 @@ row_twins! {
         Extreme => kernel(math_minmax),
         Imul => kernel(math_imul),
         IntCase => kernel(c_switch_dense),
+        Power => none("Math.pow of a constant exponent: no benchmark op isolates it"),
     }
 }
 

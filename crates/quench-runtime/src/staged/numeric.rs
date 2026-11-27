@@ -183,6 +183,9 @@ pub enum NumberOperation {
     /// `Math.imul` of two int32s: `staged::math::multiply`, the wrapping product. Any other value leaves.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Imul { destination: Register, left: Operand, right: Operand },
+    /// `base ** exponent` (`Math.pow`) of a Number base, where `exponent` is a constant `power::SmallPower` names:
+    /// `power::power_by`. Any other exponent, or a base that is no Number, leaves to the VM's power.
+    Power { destination: Register, base: Operand, exponent: Operand },
     /// The case slot of a `switch` over the dense int labels `minimum..=maximum` (`count` slots, the
     /// slot of label `i` at `i - minimum`): the slot of `source` where it is an int32 or an integral
     /// double in the run (`===` of that label), else `count`. Every value is decided: none leaves.
@@ -210,6 +213,7 @@ impl NumberOperation {
             Self::Unary { operation, .. } => typing::unary(operation, Type::NUMBER),
             Self::Math { operation, .. } => typing::math(operation, Type::NUMBER),
             Self::Extreme { maximum, .. } => typing::extreme(maximum, Type::NUMBER, Type::NUMBER),
+            Self::Power { .. } => Type::NUMBER,
             Self::ToNumeric { .. } => Type::NUMBER,
         }
     }
@@ -277,6 +281,7 @@ pub mod kind {
     pub const EXTREME: u8 = 11;
     pub const IMUL: u8 = 12;
     pub const INT_CASE: u8 = 13;
+    pub const POWER: u8 = 14;
 }
 
 /// `step` where the caller knows the operation's variant `KIND` (`kind`) at compile time: every other arm is
@@ -315,6 +320,8 @@ pub fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut 
             if const { KIND == kind::ANY || KIND == kind::EXTREME } { extreme(stage, frame, destination, (left, right), maximum) } else { Step::Unresolved },
         NumberOperation::Imul { destination, left, right } =>
             if const { KIND == kind::ANY || KIND == kind::IMUL } { imul(stage, frame, destination, left, right) } else { Step::Unresolved },
+        NumberOperation::Power { destination, base, exponent } =>
+            if const { KIND == kind::ANY || KIND == kind::POWER } { power(stage, frame, destination, base, exponent) } else { Step::Unresolved },
         NumberOperation::IntCase { destination, source, minimum, maximum, count } =>
             if const { KIND == kind::ANY || KIND == kind::INT_CASE } { int_case(stage, frame, destination, source, (minimum, maximum), count) } else { Step::Unresolved },
     };
@@ -338,6 +345,7 @@ fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option
     let (destination, left, right, operator) = match *operation {
         NumberOperation::Arithmetic { destination, left, right, operation, .. } => (destination, left, right, operation.binary_operator()),
         NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, binary_operator::Remainder),
+        NumberOperation::Power { destination, base, exponent } => (destination, base, exponent, binary_operator::Exponential),
         NumberOperation::Bitwise { destination, left, right, operation } => (destination, left, right, operation.binary_operator()),
         NumberOperation::RelationValue { destination, left, right, relation, .. }
             if !matches!(relation, NumberRelation::Equal | NumberRelation::NotEqual) =>
@@ -386,6 +394,23 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Float64) else { return Step::Unresolved };
     let result = super::math::extreme(stage, maximum, left, right);
+    let fact = frame.number_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
+}
+
+/// `base ** exponent` where `exponent` is a program constant `power::SmallPower` names: its product on the base's double
+/// (`power::power_by`). The exponent is read from the frame's constant, not a register, so no other exponent is proved here;
+/// a base that is no Number leaves at the miss.
+#[inline(always)]
+fn power<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, base: Operand, exponent: Operand) -> Step<S::Word, F::Control> {
+    let Some(small) = frame.constant_operand(exponent).and_then(constant_number).and_then(super::power::SmallPower::of) else {
+        return Step::Unresolved;
+    };
+    let miss = frame.miss();
+    let Some(base) = frame.number_operand(stage, base, miss).map(super::Float64::word) else { return Step::Unresolved };
+    let result = super::power::power_by(stage, small, base);
     let fact = frame.number_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)

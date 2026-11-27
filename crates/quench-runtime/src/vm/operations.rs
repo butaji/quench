@@ -1623,9 +1623,9 @@ impl Vm {
     }
 }
 
-/// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
+/// `Number ** Number` (`Math.pow`), the value `staged::power::power` computes.
 pub fn exponentiate(base: f64, exponent: f64) -> f64 {
-    crate::staged::math::power(base, exponent)
+    crate::staged::power::power(base, exponent)
 }
 
 /// The entry that runs `native`'s call. The families' membership tests keep their precedence: the
