@@ -7,13 +7,29 @@ use super::scope::Scope;
 use super::value::{Fact, Key, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 
-/// A plain call or a `new` a function makes, with its callee's fact.
+/// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
+/// function of the program the record names; or a method of its receiver, by name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    Register,
+    Known(u32),
+    Method(u32),
+}
+
+/// A call or a `new` a function makes, with its callee's fact and its arguments' facts.
 pub(super) struct Call {
     pub(super) pc: u32,
+    /// The fact of the callee register: for a `Target::Register` call only, unknown otherwise.
     pub(super) callee: Fact,
+    pub(super) target: Target,
     pub(super) construct: bool,
+    /// The fact of the `this` it passes its callee (`staged::Receiver`): a register's, the caller's own
+    /// `this` or a field of it, an allocated object's; unknown for any other receiver.
+    pub(super) receiver: Fact,
+    /// The facts of the arguments it passes (`staged::Invocation::arguments`), in order.
+    pub(super) arguments: Vec<Fact>,
 }
 
 /// What one function contributes to the closed-world facts.
@@ -31,6 +47,9 @@ pub(super) struct FunctionFlow {
     pub(super) numbers: Box<[Option<Representation>]>,
     /// The named properties stored into a function's `prototype`, in code order.
     pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
+    /// How many parameters the function binds from its arguments one to one: `None` for a rest,
+    /// generator or async function, whose parameters the calls do not type (`types::parameters`).
+    pub(super) arity: Option<u16>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -41,8 +60,8 @@ struct Solver<'a> {
 }
 
 /// The facts of function `id`, whose record is `function`.
-pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope,
-    resolved: &std::collections::BTreeMap<Key, u32>) -> FunctionFlow {
+pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
+    resolved: &std::collections::BTreeMap<Key, u32>, types: Option<&super::types::Types>) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let ctx = Ctx {
@@ -52,6 +71,9 @@ pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope,
         scope,
         resolved,
         registers: usize::from(function.registers),
+        types,
+        decode,
+        records,
     };
     let mut solver = Solver { ctx: &ctx, function, blocks: &blocks };
     let inputs = solve(&mut solver);
@@ -61,7 +83,8 @@ pub(super) fn analyze_function(id: u32, function: &Function, scope: &Scope,
             solver.replay(block, state, &mut record);
         }
     }
-    record.finish()
+    let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
+    record.finish(arity)
 }
 
 impl Dataflow for Solver<'_> {
@@ -76,7 +99,7 @@ impl Dataflow for Solver<'_> {
     }
 
     fn entry_state(&self, block: usize) -> Option<Vec<Fact>> {
-        (block == 0).then(|| vec![Fact::UNKNOWN; self.ctx.registers])
+        (block == 0).then(|| self.entry_facts())
     }
 
     fn join(&self, into: &mut Vec<Fact>, incoming: &Vec<Fact>) -> bool {
@@ -107,11 +130,26 @@ impl Dataflow for Solver<'_> {
 }
 
 impl Solver<'_> {
+    /// The facts at entry: every register unknown, but a promoted parameter holds its argument, whose
+    /// type the pass before found (`Types::param`). A parameter the body keeps as a local stays unknown:
+    /// only its promoted register holds the argument at entry (`Function::promoted_register`).
+    fn entry_facts(&self) -> Vec<Fact> {
+        let mut state = vec![Fact::UNKNOWN; self.ctx.registers];
+        if let Some(types) = self.ctx.types {
+            for index in 0..self.function.params {
+                if let Some(register) = self.function.promoted_register(index) {
+                    state[usize::from(register)] = Fact::of(types.param(self.ctx.id, index));
+                }
+            }
+        }
+        state
+    }
+
     /// Replays `block` from its input `state`, recording what its instructions do.
     fn replay(&self, block: usize, mut state: Vec<Fact>, record: &mut Record) {
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
-            record.observe(instruction, pc, &state);
+            record.observe(self.ctx, instruction, pc, &state);
             let events = step(self.ctx, pc, instruction, &mut state);
             record.commit(instruction, &state, events);
         }
@@ -147,7 +185,7 @@ impl Record {
     }
 
     /// Notes the reads and the calls `instruction` makes, from the facts before it.
-    fn observe(&mut self, instruction: WideInstruction, pc: usize, state: &[Fact]) {
+    fn observe(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: usize, state: &[Fact]) {
         for register in used_registers(instruction) {
             if !state[usize::from(register)].is_number() {
                 self.unsafe_reads[usize::from(register)] = true;
@@ -155,9 +193,24 @@ impl Record {
         }
         let traits = instruction.op().traits();
         let construct = traits.has(Traits::CONSTRUCTION);
-        if construct || traits.has(Traits::PLAIN_CALL) {
-            let callee = state[usize::from(instruction.register_b())];
-            self.calls.push(Call { pc: pc as u32, callee, construct });
+        // Every call form the staged decoder reads (`staged::Invocation`): a register call, a known
+        // function's, a method site's, a construction; not an eval, `super(...)` or an array of arguments.
+        if let Some(invocation) = crate::staged::Invocation::of(instruction, ctx.decode) {
+            let (target, callee) = match invocation.callee {
+                crate::staged::Callee::Register(register) => (Target::Register, state[usize::from(register)]),
+                crate::staged::Callee::Known(function) => (Target::Known(u32::from(function)), Fact::UNKNOWN),
+                crate::staged::Callee::Method { atom, .. } => (Target::Method(atom), Fact::UNKNOWN),
+            };
+            let arguments = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
+            let this = || ctx.types.map_or(Type::ANY, |types| types.this(ctx.id));
+            let receiver = match invocation.receiver {
+                crate::staged::Receiver::Register(register) => state[usize::from(register)],
+                crate::staged::Receiver::This { path: None } if !ctx.is_root => Fact::of(this()),
+                crate::staged::Receiver::This { path: Some((atom, _)) } => Fact::of(ctx.types.map_or(Type::ANY, |types| types.field(atom))),
+                crate::staged::Receiver::Allocated => Fact::of(Type::DIRECT_OBJECT_FAMILY),
+                _ => Fact::UNKNOWN,
+            };
+            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
         }
     }
 
@@ -174,7 +227,7 @@ impl Record {
         }
     }
 
-    fn finish(self) -> FunctionFlow {
+    fn finish(self, arity: Option<u16>) -> FunctionFlow {
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -189,6 +242,7 @@ impl Record {
             member_wild: self.wild_member,
             numbers,
             prototype_writes: self.prototype_writes,
+            arity,
         }
     }
 }

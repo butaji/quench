@@ -214,15 +214,18 @@ pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &Clo
 /// The slot observations the guessed field reads of `code` depend on (`fields`): each guard its
 /// loader resolved to a shape whose slot holds a type within Number, which a widening may recode to
 /// raw doubles, where float slots are on; under tagged slots no word is raw.
+/// The typed reads' guards (`GuardAccess::read`) depend on their slot's type whatever it is: the
+/// read takes the slot's words as its field's class, which a store of anything else widens.
 fn guard_dependencies(image: &AotImage, vm: &mut Vm, code: &quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode) -> Box<[quench_runtime::code_dependencies::SlotDependency]> {
-    if !quench_runtime::vm::switches::float_slots() { return Box::new([]); }
+    let float_slots = quench_runtime::vm::switches::float_slots();
     let mut keys: Vec<u32> = code.relocations.iter().filter(|relocation| relocation.namespace == super::lane_region::relocs::RelocKind::GuardShape as u32)
         .map(|relocation| relocation.key).collect();
     keys.sort_unstable();
     keys.dedup();
-    keys.into_iter().filter_map(|key| aot_image::symbols::guarded_shape(image, vm, key))
-        .filter(|(_, _, ty)| *ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))
-        .map(|(shape, slot, ty)| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
+    keys.into_iter().filter_map(|key| aot_image::symbols::guarded_shape(image, vm, key).map(|guarded| (aot_image::symbols::guard_read_type(key).is_some(), guarded)))
+        .filter(|(typed, (_, _, ty))| *ty != quench_runtime::typed_ir::Type::NEVER
+            && (*typed || (float_slots && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))))
+        .map(|(_, (shape, slot, ty))| quench_runtime::code_dependencies::SlotDependency { shape, slot, ty }).collect()
 }
 
 /// Whether `unit` may enter another body through the VM's call: a call of any form or a construction

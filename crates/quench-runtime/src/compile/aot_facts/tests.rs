@@ -64,3 +64,27 @@ fn an_int32_register_is_proven_int32() {
     let numbers = facts.function_facts(id as u32).numbers();
     assert!(numbers.is_some_and(|numbers| numbers.contains(&Some(Representation::Int32))));
 }
+
+#[test]
+fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
+    let program = program("function T(n) { this.link = null; this.count = 0; this.next = n; }
+        T.prototype.run = function () { this.count = this.count | 1; return this.next; };
+        function S() { this.current = null; }
+        S.prototype.go = function () { this.current = new T(null); while (this.current != null) { this.current = this.current.run(); } };
+        new S().go();");
+    let facts = analyze(&program);
+    let atom = |name: &str| program.atoms.iter().position(|atom| atom.as_ref() == name).unwrap() as u32;
+    use crate::typed_ir::Type;
+    let nullable_object = Type::DIRECT_OBJECT_FAMILY.join(Type::language(crate::ValueType::Null));
+    assert_eq!(facts.field_type(atom("count")), Type::INT32);
+    assert_eq!(facts.field_type(atom("link")), Type::language(crate::ValueType::Null));
+    assert_eq!(facts.field_type(atom("current")), nullable_object);
+}
+
+#[test]
+fn a_field_takes_the_type_of_the_argument_its_constructor_is_called_with() {
+    let program = program("function P(v) { this.v = v; } function mk() { return new P(3); } mk(); mk();");
+    let facts = analyze(&program);
+    let v = program.atoms.iter().position(|atom| atom.as_ref() == "v").expect("the field name") as u32;
+    assert_eq!(facts.field_type(v), crate::typed_ir::Type::INT32);
+}

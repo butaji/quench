@@ -67,6 +67,12 @@ impl Census {
         self.member_wild = true;
     }
 
+    /// The closures stored under name `atom` (`members`): the closed set a method call of that name may
+    /// reach, where it holds at least one and at most `MAX_CANDIDATES`.
+    pub(super) fn method_closures(&self, atom: u32) -> Option<&BTreeSet<u32>> {
+        self.members.get(&atom).filter(|set| (1..=MAX_CANDIDATES).contains(&set.len()))
+    }
+
     /// Whether `target(callee)` is a method read's guess rather than a proof.
     pub(super) fn guessed(&self, callee: Fact) -> bool {
         callee.ty.body_index().is_none() && matches!(callee.origin, Some(Origin::Member(_)))
@@ -79,7 +85,7 @@ impl Census {
             Key::Global(_) => self.global_wild,
             Key::Slot { owner, .. } => self.wild_owner.get(owner as usize).copied().unwrap_or(true),
             Key::Member(_) => self.member_wild,
-            Key::MemberOn { .. } => return None,
+            Key::MemberOn { .. } | Key::Return(_) | Key::Element(_) => return None,
         };
         match self.writes.get(&key) {
             Some(&(1, fact)) if !wild => fact.ty.body_index(),

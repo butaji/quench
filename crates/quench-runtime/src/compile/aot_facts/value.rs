@@ -12,6 +12,10 @@ pub(super) enum Key {
     Member(u32),
     /// A method `atom` stored on class `class`'s static object (`instance: false`) or its prototype.
     MemberOn { class: u32, instance: bool, atom: u32 },
+    /// The value function `0` returns: every return it makes (`types`).
+    Return(u32),
+    /// The elements of the arrays field `0` holds: every indexed store through a read of that field (`types`).
+    Element(u32),
 }
 
 /// Where a register's value was read from, which the census follows to the closure it names.
@@ -72,9 +76,14 @@ impl Fact {
         Self::from(Origin::Atom(atom))
     }
 
-    /// An instance of class `class` (`new`).
+    /// An instance of class `class` (`new`): a direct object.
     pub(super) const fn instance(class: u32) -> Self {
-        Self::from(Origin::Instance(class))
+        Self { ty: Type::DIRECT_OBJECT_FAMILY, origin: Some(Origin::Instance(class)) }
+    }
+
+    /// The value of field `atom` read off some object, of type `ty` (`types::Types::field`).
+    pub(super) const fn member(atom: u32, ty: Type) -> Self {
+        Self { ty, origin: Some(Origin::Member(atom)) }
     }
 
     /// The method `atom` read on class `class`'s static object (`instance: false`) or prototype.

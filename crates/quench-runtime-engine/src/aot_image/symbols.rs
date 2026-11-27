@@ -321,23 +321,57 @@ pub(crate) enum GuardAccess {
     /// (`Vm::holder_data_field`). The recipe names no shape of its own: it carries the holder and
     /// the name.
     Holder,
+    /// A read of a slot every store of which writes an int32 (`AotFacts::field_type`): the slot is
+    /// admitted to int32s, as its stores' guards admit it, and the read takes its words as int32s
+    /// under the slot's dependency (`ahead_images::guard_dependencies`), so a store of anything else
+    /// retires the code: the type is proven where the slot is written, never at the read.
+    ReadInt32,
+    /// A read of a slot every store of which writes a direct object or `null`, as `ReadInt32`.
+    ReadReference,
 }
 
 impl GuardAccess {
     /// The bits of the access in a guard key.
     const BITS: u32 = 3;
-    const ALL: [Self; 6] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::StoreTagged, Self::Inherited, Self::Holder];
+    const ALL: [Self; 8] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::StoreTagged, Self::Inherited, Self::Holder,
+        Self::ReadInt32, Self::ReadReference];
 
     /// The type the slot's type must hold for the access: `None` for a read.
     pub(crate) fn stored(self) -> Option<quench_runtime::typed_ir::Type> {
         use quench_runtime::typed_ir::Type;
         match self {
-            Self::Read | Self::Inherited | Self::Holder => None,
+            Self::Read | Self::Inherited | Self::Holder | Self::ReadInt32 | Self::ReadReference => None,
             Self::StoreInt32 => Some(Type::INT32),
             Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
             Self::StoreTagged => Some(Type::ANY),
         }
     }
+
+    /// The type a typed read takes its slot's words as, which the slot's type must be within: `None`
+    /// for any other access.
+    pub(crate) fn read(self) -> Option<quench_runtime::typed_ir::Type> {
+        use quench_runtime::typed_ir::Type;
+        match self {
+            Self::ReadInt32 => Some(Type::INT32),
+            Self::ReadReference => Some(Type::NULLABLE_DIRECT_OBJECT),
+            _ => None,
+        }
+    }
+
+    /// The accesses of a field whose stores all write values of type `ty` (`AotFacts::field_type`):
+    /// its reads' and its stores', typed by the one class `ty` is within, or any tagged word.
+    pub(crate) fn of_field(ty: quench_runtime::typed_ir::Type) -> (Self, Self) {
+        use quench_runtime::typed_ir::Type;
+        if ty == Type::NEVER { (Self::Read, Self::StoreTagged) }
+        else if ty.is_subtype(Type::INT32) { (Self::ReadInt32, Self::StoreInt32) }
+        else if ty.is_subtype(Type::NULLABLE_DIRECT_OBJECT) { (Self::ReadReference, Self::StoreReference) }
+        else { (Self::Read, Self::StoreTagged) }
+    }
+}
+
+/// The type the guard `key` admits its slot's words as for a typed read (`GuardAccess::read`).
+pub(crate) fn guard_read_type(key: u32) -> Option<quench_runtime::typed_ir::Type> {
+    GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?.read()
 }
 
 /// The shape recipe guard key `key` guards a slot of (`guard_key`).
@@ -376,9 +410,11 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
     // as a JIT body's writer's domain does: a field the construction made `null` holds objects
     // once the run stores one, which the image's store does in place from its first run. A
     // widening retires the slot's readers; one that would make the words raw refuses below.
-    if let Some(stored) = access.stored() { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
+    // A typed read admits the class its field's stores write, as their guards do: the slot then holds
+    // that class from its first store, and a read resolves only where it holds nothing wider.
+    if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
     let ty = vm.tagged_slot_type(shape, slot)?;
-    access.stored().is_none_or(|stored| stored.is_subtype(ty)).then_some((shape, slot, ty))
+    (access.stored().is_none_or(|stored| stored.is_subtype(ty)) && access.read().is_none_or(|read| ty.is_subtype(read))).then_some((shape, slot, ty))
 }
 
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its

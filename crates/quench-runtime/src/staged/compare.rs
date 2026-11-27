@@ -352,8 +352,21 @@ fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, te
         return Some(stage.ne_imm(word, 0u64));
     }
     let word = frame.tagged(stage, register);
-    let equal = if strict { stage.eq_imm(word, nullish_value(expected).to_bits()) } else { loosely_nullish(stage, frame, word)? };
-    frame.refine(register, if strict { Type::language(expected) } else { Type::NULLISH }, equal_edge);
+    // A direct object or `null` is nullish exactly where it is `null`: no direct object is an
+    // IsHTMLDDA cell (`loosely_nullish` tests the record families for that), and `undefined` is not
+    // among its values, so `== null`, `=== null` and `== undefined` are one compare with `null`.
+    let nullable_object = frame.register_type(register).is_some_and(|ty| ty.is_subtype(Type::NULLABLE_DIRECT_OBJECT));
+    let equal = if strict || nullable_object {
+        let compared = if nullable_object { ValueType::Null } else { expected };
+        stage.eq_imm(word, nullish_value(compared).to_bits())
+    } else { loosely_nullish(stage, frame, word)? };
+    let refined = if nullable_object { Type::language(ValueType::Null) } else if strict { Type::language(expected) } else { Type::NULLISH };
+    frame.refine(register, refined, equal_edge);
+    // Where it is not `null` it is a direct object: the other edge's reads of it test no tag.
+    if nullable_object {
+        let other = if matches!(equal_edge, Edge::Target) { Edge::Following } else { Edge::Target };
+        frame.refine(register, Type::DIRECT_OBJECT_FAMILY, other);
+    }
     Some(equal)
 }
 
@@ -366,6 +379,9 @@ fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
         Some(!strict || matches!(expected, ValueType::Null))
     } else if ty.within_languages(Type::language(ValueType::Undefined)) {
         Some(!strict || matches!(expected, ValueType::Undefined))
+    } else if strict && matches!(expected, ValueType::Undefined) && ty.is_subtype(Type::NULLABLE_DIRECT_OBJECT) {
+        // A direct object or `null` is never `undefined`.
+        Some(false)
     } else {
         // Number or Boolean, as `Type::NUMBER.join(Type::language(ValueType::Boolean))`, as a constant a
         // stencil row folds (the join is not inlined there).

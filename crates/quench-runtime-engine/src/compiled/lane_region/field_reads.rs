@@ -23,7 +23,7 @@ fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Op
 /// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
 fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     agreed_slot_type(program, fields, instruction)
-        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY)
+        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
 }
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
@@ -225,7 +225,7 @@ impl Lowering<'_, '_> {
     fn prove_held_slot(&mut self, state: &mut State, instruction: WideInstruction, (value, fresh): (ir::Value, bool),
         exit: ir::Block) -> Type {
         let Some(ty) = held_slot_type(self.program, self.fields, instruction) else { return Type::ANY };
-        if fresh && self.division().folds(BindingTime::Site) && self.reads_covered_slots(state, instruction) {
+        if fresh && (self.division().folds(BindingTime::Site) || self.closed_typed_read(instruction)) && self.reads_covered_slots(state, instruction) {
             self.hold_stable(state, exit);
         } else if ty == Type::INT32 {
             let integer = is_int_tagged(&mut self.builder, value);
@@ -237,6 +237,15 @@ impl Lowering<'_, '_> {
             return Type::ANY;
         }
         ty
+    }
+
+    /// Whether `instruction` reads only an ahead image's guessed slots of one class
+    /// (`NativeFieldLoad::closed_typed`): the closed world's field type, which the image's slot
+    /// dependencies hold (`ahead_images::guard_dependencies`), retiring it where a store widens one.
+    fn closed_typed_read(&self, instruction: WideInstruction) -> bool {
+        self.vm.closed.is_some() && self.helpers.links()
+            && last_read_site(self.program, instruction).and_then(|last| site_loads(self.fields, last))
+                .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.closed_typed()))
     }
 
     /// Gives `destination`, defined as the tagged `value`, the int32 view `int` of it.

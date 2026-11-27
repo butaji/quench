@@ -307,6 +307,12 @@ impl NativeFieldLoad {
         self.shape & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0
     }
 
+    /// Whether this is an ahead image's guess that reads its slot as one class, the class every store
+    /// of the field writes (`aot_image::symbols::GuardAccess::read`), under the slot's dependency.
+    pub(crate) fn closed_typed(self) -> bool {
+        self.guessed() && self.holder.is_none() && self.ty != quench_runtime::typed_ir::Type::ANY
+    }
+
     pub(crate) fn slot_dependency(self) -> Option<quench_runtime::code_dependencies::SlotDependency> {
         use quench_runtime::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(quench_runtime::code_dependencies::SlotDependency {
@@ -319,9 +325,10 @@ impl NativeFieldLoad {
     /// may answer, and a polymorphic site's other receivers may be cached. A monomorphic
     /// site's inherited constant proves its value exactly; its miss leaves. An ahead image's
     /// shape (`ic::SYMBOLIC_SHAPE`) is the closed world's guess, never an observation: its miss
-    /// asks the caches, so a wrong guess costs a compare, never a leave.
+    /// asks the caches, so a wrong guess costs a compare, never a leave, unless the guess reads its
+    /// slot as one class (`closed_typed`), whose miss leaves so the value keeps the class.
     pub(crate) fn probes_misses(loads: &[Self]) -> bool {
-        if loads.iter().any(|load| load.guessed()) { return true; }
+        if loads.iter().any(|load| load.guessed() && !load.closed_typed()) { return true; }
         match loads {
             [load] => load.holder.is_some() && load.inherited.is_none(),
             loads => loads.iter().any(|load| load.holder.is_some()),

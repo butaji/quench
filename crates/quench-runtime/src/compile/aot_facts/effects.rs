@@ -19,6 +19,13 @@ pub(super) struct Ctx<'a> {
     /// Bindings the census proved hold one closure, so their loads carry its fact too.
     pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
     pub(super) registers: usize,
+    /// The field and return types the pass before found (`types`), which this pass's field reads
+    /// and calls take; `None` in the passes that find call targets, which read them as any value.
+    pub(super) types: Option<&'a super::types::Types>,
+    /// The program's method sites, which a method call's operands are read from (`staged::Invocation`).
+    pub(super) decode: crate::staged::DecodeContext<'a>,
+    /// The registers the method sites list as their arguments (`ResidualProgram::method_arguments`).
+    pub(super) records: &'a [crate::bytecode::Register],
 }
 
 /// What an instruction does beyond its registers: the bindings it writes, and whether it makes
@@ -45,7 +52,27 @@ pub(super) fn decoded(instruction: WideInstruction) -> Option<Operation<(), ()>>
 pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &mut [Fact]) -> Events {
     let mut events = Events::default();
     let operation = decoded(instruction);
-    let value = value_of(ctx, instruction, operation, state, &mut events);
+    // A typed pass reads each value through the program's tables (`Ctx::decode`): an operator with a constant
+    // operand decodes only with them.
+    let typed_operation = match ctx.types {
+        Some(_) => Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or(operation),
+        None => operation,
+    };
+    let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
+    // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
+    if let Some(ty) = ctx.types.and_then(|types| types.call(ctx.id, pc as u32)) {
+        value = Fact::of(ty);
+    }
+    // A return, or an operation whose result completes the frame, writes the function's result.
+    if instruction.op().is_return() {
+        events.writes.push((Key::Return(ctx.id), state[usize::from(instruction.register_a())]));
+    } else if instruction.returns_from_frame() {
+        events.writes.push((Key::Return(ctx.id), value));
+    }
+    // A numeric operation that stores its result into a local writes that slot with the value.
+    if let Some(local) = instruction.numeric_local_target() {
+        write(ctx, pc, true, &mut events, Key::Slot { owner: ctx.id, slot: local }, value);
+    }
     writes(ctx, pc, instruction, operation, state, &mut events);
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -61,8 +88,11 @@ fn is_global_load(instruction: WideInstruction) -> bool {
 }
 
 /// The fact of a load from `key`: the closure the census proved there, else the binding.
+/// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
-    ctx.resolved.get(&key).copied().map_or_else(|| Fact::from(Origin::Binding(key)), Fact::closure)
+    ctx.resolved.get(&key).copied().map_or_else(
+        || Fact { ty: ctx.types.map_or(Type::ANY, |types| types.binding(key)), origin: Some(Origin::Binding(key)) },
+        Fact::closure)
 }
 
 /// The fact of the value `instruction` defines, read from the facts before it.
@@ -75,10 +105,11 @@ fn value_of(
 ) -> Fact {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::atom(atom); }
+        if let Some(ty) = ctx.scope.immediates.get(index).copied().flatten() { return Fact::of(ty); }
         return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::UNKNOWN, Fact::number);
     }
     // A method read (`o.m(...)`) also writes `this`, which takes no fact (`step`): its value is the method all the same.
-    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
         && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
     {
         let owner = base.register_index().map(|register| state[usize::from(register)]);
@@ -88,13 +119,23 @@ fn value_of(
             return Fact::from(Origin::Prototype(prototype));
         }
         return match owner.and_then(Fact::class_site) {
-            Some((class, instance)) => Fact::member_on(class, instance, atom),
-            None => Fact::from(Origin::Member(atom)),
+            Some((class, instance)) => Fact { ty: ctx.types.map_or(Type::ANY, |types| types.field(atom)), ..Fact::member_on(class, instance, atom) },
+            None => Fact::member(atom, ctx.types.map_or(Type::ANY, |types| types.field(atom))),
         };
+    }
+    // A nested lookup (`base.first.second`) delivers its last field's value.
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
+        && let Some(crate::bytecode::FieldLookup::Site(index)) = instruction.field_lookup()
+        && let Some(atom) = ctx.scope.site_reads.get(index).copied().flatten()
+    {
+        return Fact::member(atom, ctx.types.map_or(Type::ANY, |types| types.field(atom)));
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::UNKNOWN);
         if let Some(class) = callee.ty.body_index() { return Fact::instance(class); }
+        // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the
+        // object it allocated.
+        if ctx.types.is_some() { return Fact::of(Type::language(crate::ValueType::Object)); }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -104,6 +145,16 @@ fn value_of(
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Fact::closure(function);
+    }
+    // A `Binary` record, whatever operation it decodes to (none over a constant operand, a numeric one over
+    // registers): its operator and operands are the record's.
+    // An increment or decrement defines a Number, or a BigInt off one.
+    if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
+        let source = state[usize::from(instruction.register_b())].ty;
+        return Fact::of(if source == Type::NEVER { Type::NEVER } else if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(crate::ValueType::BigInt)) });
+    }
+    if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
+        return binary_value(ctx.scope, state, (instruction.operand_b(), instruction.operand_c()), instruction.binary_operator());
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -117,7 +168,23 @@ fn value_of(
             .owner(ctx.id, depth)
             .map_or(Fact::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::closure(function),
+        // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
+        Some(Operation::LoadThis { .. }) if !ctx.is_root => Fact::of(ctx.types.map_or(Type::ANY, |types| types.this(ctx.id))),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
+        // The operations whose result is a Boolean, whatever their operands: an equality, a negation, a
+        // `typeof` test or an `instanceof`.
+        Some(Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. }) =>
+            Fact::of(Type::language(crate::ValueType::Boolean)),
+        Some(Operation::Void { .. }) => Fact::of(Type::language(crate::ValueType::Undefined)),
+        // An indexed read of the array a field holds: the field's element type, or `undefined` for a hole or an
+        // index past its length.
+        _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
+        Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
+            (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
+                Fact::of(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined))),
+            _ => Fact::UNKNOWN,
+        },
+        Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
         _ => Fact::UNKNOWN,
     }
 }
@@ -146,9 +213,21 @@ fn operand_fact(scope: &Scope, state: &[Fact], operand: Operand) -> Fact {
 /// operation of an operand that is not one may run guest code or yield a string.
 fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact {
     let fact = |operand: Operand| operand_fact(scope, state, operand);
-    let both = |left: Operand, right: Operand| fact(left).is_number() && fact(right).is_number();
-    let one = |source: Operand| fact(source).is_number();
+    // An operand no value reaches yet (`Type::NEVER`, the type solve's bottom) is a Number among the
+    // others: what reaches it later is joined in a later pass, and an operation over it defines none yet.
+    let numeric = |fact: Fact| fact.ty.is_subtype(Type::NUMBER);
+    let both = |left: Operand, right: Operand| numeric(fact(left)) && numeric(fact(right));
+    let one = |source: Operand| numeric(fact(source));
     let register = |source: u16| state[usize::from(source)];
+    let reached = |operands: &[Fact]| operands.iter().all(|fact| fact.ty != Type::NEVER);
+    let operands: Vec<Fact> = match number {
+        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
+        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
+        _ => Vec::new(),
+    };
+    if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Fact::of(Type::NEVER); }
     match number {
         NumberOperation::Arithmetic { left, right, .. }
         | NumberOperation::Remainder { left, right, .. }
@@ -164,8 +243,42 @@ fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact 
         }
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Fact::of(Type::NUMBER),
         NumberOperation::BitwiseNot { source, .. } if one(source) => Fact::of(Type::INT32),
-        NumberOperation::IncDec { source, .. } if register(source).is_number() => Fact::of(Type::NUMBER),
-        NumberOperation::ToNumeric { source, .. } if register(source).is_number() => register(source),
+        NumberOperation::IncDec { source, .. } if numeric(register(source)) => Fact::of(Type::NUMBER),
+        NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
+        _ => Fact::UNKNOWN,
+    }
+}
+
+/// The fact of an indexed read of `base`: the element type of the field it was read from (`Key::Element`) or
+/// `undefined` (a hole, an index past the length); any value off anything else.
+fn element_value(ctx: &Ctx<'_>, base: Fact) -> Fact {
+    match (base.origin, ctx.types) {
+        (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
+            Fact::of(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined))),
+        _ => Fact::UNKNOWN,
+    }
+}
+
+/// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; an
+/// arithmetic, shift or bitwise operator over Numbers a Number (an int32 for the shifts and bitwise ones, whose
+/// results ToInt32 makes); over anything else whatever its operands' coercion makes. An operand no value
+/// reaches yet (the type solve's bottom) makes none either.
+fn binary_value(scope: &Scope, state: &[Fact], (left, right): (Operand, Operand), operator: u32) -> Fact {
+    use crate::vm::operations::binary_operator as op;
+    let boolean = || Fact::of(Type::language(crate::ValueType::Boolean));
+    let (left, right) = (operand_fact(scope, state, left), operand_fact(scope, state, right));
+    let number = |fact: Fact| fact.ty.is_subtype(Type::NUMBER);
+    if left.ty == Type::NEVER || right.ty == Type::NEVER {
+        return if matches!(operator, op::In | op::Instanceof) { Fact::UNKNOWN } else { Fact::of(Type::NEVER) };
+    }
+    // A Number operand makes the other's coercion a Number too: a BigInt beside it throws. With neither known a
+    // Number, a numeric operator defines a Number or a BigInt, whatever valueOf the operands run.
+    let numeric = |ty: Type| if number(left) || number(right) { ty } else { ty.join(Type::language(crate::ValueType::BigInt)) };
+    match operator {
+        op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan => boolean(),
+        op::ShiftLeft | op::ShiftRight | op::BitwiseOR | op::BitwiseXOR | op::BitwiseAnd => Fact::of(numeric(Type::INT32)),
+        op::ShiftRightZeroFill | op::Subtraction | op::Multiplication | op::Division | op::Remainder => Fact::of(numeric(Type::NUMBER)),
+        op::Addition if number(left) && number(right) => Fact::of(Type::NUMBER),
         _ => Fact::UNKNOWN,
     }
 }
@@ -195,6 +308,13 @@ fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), (
             events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
         }
     }
+    // An indexed store (`SetIndex a=value b=base c=key`) into the array a field holds joins the field's element
+    // type (`Key::Element`), whatever form it decodes to.
+    if instruction.op() == crate::bytecode::Op::SetIndex
+        && let Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) = state[usize::from(instruction.register_b())].origin
+    {
+        events.writes.push((Key::Element(atom), state[usize::from(instruction.register_a())]));
+    }
     match operation {
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
@@ -215,8 +335,7 @@ fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), (
 }
 
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and
-/// global stores (`with`, `delete`, sloppy declarations), writes to a numeric local, and writes
-/// through a computed key, which may name a global or an element of an arguments object.
+/// global stores (`with`, `delete`, sloppy declarations), and writes through a computed key, which may name a global or an element of an arguments object.
 fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, events: &mut Events) {
     let traits = instruction.op().traits();
     let global_store = matches!(operation, Some(Operation::GlobalWrite { .. }));
@@ -226,9 +345,6 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         && !global_store
     {
         events.wild_global = true;
-        events.wild_owner = true;
-    }
-    if instruction.writes_numeric_local() {
         events.wild_owner = true;
     }
     match operation {

@@ -18,6 +18,11 @@ pub(super) struct Scope {
     pub(super) prototype: Option<u32>,
     /// Each String constant's atom, by constant index.
     pub(super) constant_atoms: Vec<Option<u32>>,
+    /// Each `null`, `undefined` or Boolean constant's type, by constant index.
+    pub(super) immediates: Vec<Option<crate::typed_ir::Type>>,
+    /// Each nested field lookup's last field (`FieldSite`: `base.first.second`, or `base.first`): the field
+    /// its read delivers, by site index; `None` for a site with a sink, which stores rather than reads.
+    pub(super) site_reads: Vec<Option<u32>>,
 }
 
 impl Scope {
@@ -46,6 +51,17 @@ impl Scope {
                 Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
                 _ => None,
             }).collect(),
+            immediates: program.constants.iter().map(|constant| {
+                use crate::typed_ir::Type;
+                use crate::ValueType;
+                match constant {
+                    Constant::Null => Some(Type::language(ValueType::Null)),
+                    Constant::Undefined => Some(Type::language(ValueType::Undefined)),
+                    Constant::Boolean(_) => Some(Type::language(ValueType::Boolean)),
+                    _ => None,
+                }
+            }).collect(),
+            site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
         }
     }
 

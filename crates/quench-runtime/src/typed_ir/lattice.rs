@@ -89,6 +89,9 @@ impl Type {
     /// The canonical direct-object tag only: no object-table range, base,
     /// shape or storage permission follows from this refinement.
     pub const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
+    /// A direct object or `null`: what a field every store of which writes an object or `null` holds
+    /// (`compile::aot_facts::types`), `DIRECT_OBJECT_FAMILY.join(Null)` as a constant a stencil names.
+    pub const NULLABLE_DIRECT_OBJECT: Self = Self(TypeKind::NullableDirectObjectFamily(language_bit(ValueType::Null)));
     /// Internal control discriminant emitted by the typeof-test rewrite.
     #[cfg(test)]
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));

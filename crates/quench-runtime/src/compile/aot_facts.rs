@@ -17,6 +17,7 @@ mod effects;
 mod flow;
 mod gate;
 mod scope;
+mod types;
 mod value;
 #[cfg(test)]
 mod tests;
@@ -50,6 +51,9 @@ pub struct AotFacts {
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
     /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
     pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
+    /// Per field name, the type of the values every store of it writes (`types`): what a slot of
+    /// that name holds, which a tier keeps only under the slot's dependency.
+    pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
 }
 
 impl AotFacts {
@@ -62,6 +66,21 @@ impl AotFacts {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.call_targets.is_empty() && self.call_candidates.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
+    }
+
+    /// The type of the values every store of field `atom` writes (`types`): a guess of what its
+    /// slots hold, which a tier holds as the slot's type under the slot's dependency, so a store of
+    /// anything else retires the code. Any value where a store may write the name unseen.
+    pub fn field_type(&self, atom: u32) -> crate::typed_ir::Type {
+        self.field_types.get(&atom).copied().unwrap_or(crate::typed_ir::Type::ANY)
+    }
+
+    /// The Any ratchet: how many field names the program stores whose type is `any`, and how many
+    /// field names it stores at all (`field_types`). A proof that sharpens a field's type lowers the
+    /// first count, so it can only fall as the solve and the lowerings sharpen the types.
+    pub fn any_fields(&self) -> (usize, usize) {
+        let any = self.field_types.values().filter(|ty| **ty == crate::typed_ir::Type::ANY).count();
+        (any, self.field_types.len())
     }
 
     /// The functions some construction (`new`) always constructs.
@@ -137,11 +156,13 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         census
     };
     let scope = Scope::of(program);
-    let analyze = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>| -> Vec<FunctionFlow> {
+    let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, types: Option<&types::Types>| -> Vec<FunctionFlow> {
         (0..program.function_count())
-            .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function, &scope, resolved)))
+            .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, types)))
             .collect()
     };
+    let analyze = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>| analyze_typed(resolved, None);
     // The first pass finds the bindings that hold one closure; the second reads their loads as
     // that closure, so a class object or prototype reached through a binding keeps its identity
     // and its methods prove per class, not per property name.
@@ -152,7 +173,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     let mut facts = AotFacts::default();
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
-        for call in &flow.calls {
+        for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register) {
             if !call.construct && let Some(set) = census.candidates(call.callee) {
                 facts.call_candidates.insert((id, call.pc), set.iter().copied().collect());
             }
@@ -174,7 +195,28 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             facts.numbers.insert(id, flow.numbers.clone());
         }
     }
+    // The field, return, parameter and binding types, solved from the bottom (`types`): each pass reads
+    // the types the one before found, and the call targets the passes above proved; the least solution is
+    // the first pass that changes nothing. A solve that does not settle in `TYPE_PASSES` keeps no type.
+    let mut found = types::Types::of(&flows, &facts, &census).bottom();
+    let mut settled = false;
+    for _ in 0..types::TYPE_PASSES {
+        let next = types::Types::of(&analyze_typed(&resolved, Some(&found)), &facts, &census);
+        settled = next == found;
+        found = next;
+        if settled { break; }
+    }
     if crate::trace::Channel::AotLanes.on() {
+        let name = |id: u32| program.with_record(id as usize, |function| function.name).and_then(|atom| program.atoms.get(atom as usize)).map_or("?", |name| name.as_ref());
+        eprintln!("aot-lanes: types settled {settled}; parameters {:?}", found.parameter_types().iter().filter(|(_, types)| !types.is_empty()).map(|(id, types)| (name(*id), types)).collect::<Vec<_>>());
+    }
+    // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
+    if settled { facts.field_types = found.fields.into_iter().map(|(atom, ty)| (atom, if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty })).collect(); }
+    if crate::trace::Channel::AotLanes.on() {
+        let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
+        eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());
+        let (any, total) = facts.any_fields();
+        eprintln!("aot-lanes: any fields {any} of {total}");
         eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len());
     }
     facts
