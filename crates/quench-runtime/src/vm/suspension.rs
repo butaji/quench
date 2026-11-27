@@ -18,7 +18,7 @@ impl Vm {
     pub(super) fn staged_suspend(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction, pc: &mut usize)
         -> Result<StepResult, JsError> {
         let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a suspension decodes");
-        let mut stage = Concrete::over_vm(self);
+        let mut stage = crate::staged::concrete_over_vm(self);
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut stage, &mut frame, row) {
             Step::Value(_) => Ok(StepResult::Continue),

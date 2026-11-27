@@ -53,7 +53,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
-            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
+            let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             let raw_result = mode & quench_runtime::staged::raw_bit(0) != 0;
             frame.raw_result = raw_result;
@@ -155,7 +155,7 @@ sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
         macro_rules! step_b { ($flag:expr) => {{
             let fields = LaneFields::<B, { $flag }>(i);
             let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane, r, ip, view) };
-            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
+            let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             // `B` is the last link: its double result stays raw where the next record reads it (`MODE_RAW_OUT`).
             let raw_result = mode & quench_runtime::staged::MODE_RAW_OUT != 0;
@@ -207,7 +207,7 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! link_flag { ($ip:ident, $i:ident, $L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
-            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
+            let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             let raw_result = mode & quench_runtime::staged::raw_bit($k) != 0;
             frame.raw_result = raw_result;
@@ -230,7 +230,7 @@ sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
         macro_rules! last_flag { ($ip:ident, $i:ident, $L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane, r, $ip, view) };
-            let mut stage = Concrete::over_vm(unsafe { vm(cx) });
+            let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
             let mut frame = row_frame::<$L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`, `MODE_RAW_OUT`).
             let raw_result = mode & quench_runtime::staged::MODE_RAW_OUT != 0;

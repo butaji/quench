@@ -114,7 +114,7 @@ pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
 pub use compare::{nullish_of, Comparison}; pub use generic::{decide as equality_decided, number_strict_equal};
-pub use concrete::Concrete;
+pub use concrete::{Concrete, concrete_over_arena, concrete_over_vm};
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub mod builtins;

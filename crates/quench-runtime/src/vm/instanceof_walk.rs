@@ -42,7 +42,7 @@ impl Vm {
     #[inline(always)]
     fn instanceof_by_words(&self, value: Value, target: ProtoLink) -> Option<bool> {
         let records = self.heap.object_record_base()? as u64;
-        let mut stage = crate::staged::Concrete::over_vm(self);
+        let mut stage = crate::staged::concrete_over_vm(self);
         crate::staged::object::instanceof_by_words(&mut stage, records, value.to_bits(), u64::from(target.bits()), ())
     }
 
