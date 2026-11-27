@@ -733,11 +733,12 @@ impl LaneView {
     }
 
 
-    /// Whether its body left too often and specializes again at its next entry.
+    /// Whether its body specializes again at its next entry: it left too often, or its quick body (an ahead
+    /// image's included) repaid the optimizing compile (`optimize_due`).
     #[inline]
     pub(crate) fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0 || self.optimize_due())
     }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
@@ -7032,7 +7033,8 @@ fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, now: 
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
         if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
-        let installed = own.install_ahead_lane_body(body_entry_row(), || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
+        let quick_ir = crate::compiled::ahead_images::ahead_quick_ir(vm.programs.tiers(), code, function);
+        let installed = own.install_ahead_lane_body(body_entry_row(), quick_ir, || crate::compiled::admission::ahead_unit(function).and_then(|unit| vm.install_ahead_body(unit, code, function, None, &[])));
         if !published && own.entry_published() {
             unsafe { self::vm(cx) }.unprove_view_entries(own);
         }

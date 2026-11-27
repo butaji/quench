@@ -262,6 +262,14 @@ fn proven_site<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, functio
 
 pub use quench_runtime::vm::engine_types::AheadImages;
 
+/// The price of `function`'s image body: the ladder's first rung, a quick body of its bytecodes' IR. Once its runs repay
+/// the optimizing compile, the JIT respecializes it on what the run observed, its call targets above all, as it does a
+/// quick JIT body (`LaneView::optimize_due`, `respecializes`).
+pub(crate) fn ahead_quick_ir(tiers: &quench_runtime::vm::tier_policy::Tiers, program: &ResidualProgram, function: u32) -> usize {
+    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
+    usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX)
+}
+
 
 use quench_runtime::vm::engine_types::recorded;
 

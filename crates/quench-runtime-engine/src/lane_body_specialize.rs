@@ -100,14 +100,18 @@ impl LaneView {
     /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
     /// gate, since an image has no profiling phase. It is the ladder's first body: its leaves
     /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
-    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
+    /// It is priced as a quick body of `quick_ir` IR instructions: once its runs repay the optimizing compile, the
+    /// JIT respecializes it on what the run observed, its call targets above all (`LaneView::optimize_due`).
+    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, quick_ir: usize, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
+                let published = matches!(outcome, crate::compiled::LaneBodyOutcome::Published(_));
                 *body = self.body_after(outcome, entry, 0, recompiles, stuck, 0);
+                if published { self.note_compile_level(true, quick_ir); }
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }

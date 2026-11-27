@@ -722,8 +722,14 @@ impl Vm {
         loop {
             let (generic, budget) = pending;
             // A function with an ahead-of-time body takes it where a first compile would.
+            // One the image's body repaid the optimizing compile for (`LaneView::optimize_due`) compiles instead.
             if let Some(unit) = super::admission::ahead_unit(function)
-                && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
+                && !caller.is_some_and(|view| view.optimize_due())
+                && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic)
+            {
+                if let Some(view) = caller { view.note_compile_level(true, super::ahead_images::ahead_quick_ir(self.programs.tiers(), program, function)); }
+                return LaneBodyOutcome::Published(published);
+            }
             let direct = direct(self);
             let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, (observed, looped), called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
