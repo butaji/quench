@@ -90,7 +90,7 @@ pub struct CalleeRecord {
 
 /// The per-site record of a direct-call row, one cache line, patched into the row as the one 64-bit value hole 0
 /// (its address). Everything a call site knows that does not belong to the callee: the caller's call record and base,
-/// the descriptor and packed word's flags and argc of the site, the caller registers the call names, where each leading
+/// the flags and argc of the plain header, the caller registers the call names, where each leading
 /// argument's word is (`argument_places`: a place code, `MEM` for the caller's window slot, else the pinned register
 /// holding the value), the caller's proven Number arguments, and the pointer to the callee's `CalleeRecord`. The plan
 /// owns the record and must outlive the code.
