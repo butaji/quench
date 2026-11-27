@@ -262,14 +262,16 @@ struct LocalProofs {
     /// (a copy, an inlined frame's `this`). A later header of any of them reads its shape through it, with
     /// no family test and no record lookup: the untagged view of a proven object (R2, facts on values).
     records: smallvec::SmallVec<[(ir::Value, ObjectRecord, bool); INLINE_FIELD_BINDINGS]>,
-    /// A fixed receiver (`None`) or register's complete own-slot projection.
-    layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
+    /// The complete own-slot projection of an object, by its resolved tagged word and exact shape: a fact of the
+    /// object, which any register holding the word shares (`keep_layout`).
+    layouts: BTreeMap<(ir::Value, u32), CheckedObject>,
     /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
     /// until an effect that may move the property arena retires it, as `layouts`.
     global: Option<(CheckedObject, usize)>,
-    /// The exact shape a register's object had before a call (`kept_shapes.rs`), which the code
-    /// holds again at the register's next use where the VM holds the shape stable.
-    kept_shapes: BTreeMap<Register, u32>,
+    /// The exact shape of an object, by its resolved tagged word, that the object had when a proof
+    /// (or definition) of it made the shape its type, and which a call keeps (`kept_shapes.rs`): the
+    /// code holds it again at a use where the VM holds the shape stable.
+    kept_shapes: BTreeMap<ir::Value, u32>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
     /// Immutable reads; receiver definitions and memory effects retire these facts.
@@ -360,6 +362,10 @@ impl State {
             if fact.value.representation == Representation::Tagged && ty != fact.value.ty && ty.is_subtype(fact.value.ty) {
                 self.values[usize::from(register)] = RegisterFact { tagged: fact.tagged,
                     ..RegisterFact::definition(ty, Representation::Tagged) };
+                // The word this refinement names, where the register holds one without a builder (`kept_shapes`).
+                if let (Some(shape), TaggedView::Value(word)) = (ty.object_shape(), fact.tagged) {
+                    self.proofs.kept_shapes.insert(word, shape);
+                }
             }
         }
     }
@@ -367,7 +373,6 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
-        self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
         self.proofs.arrays.clear();
         self.proofs.keep_typed_views();
@@ -1184,6 +1189,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             headers::prove_header_shape(&mut self.builder, state, word, header, shape, exit);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::narrowest(Type::direct_object(shape)) };
+            state.proofs.kept_shapes.insert(word, shape);
         }
     }
 

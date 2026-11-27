@@ -202,7 +202,7 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
         // run, so the store writes the run with no form test.
         [arm] if arm.layout => {
             super::property::guard_receiver_layout(stage, frame, (owner, true), &at, arm.shape, miss)?;
-            if let Some(base) = kept_flat(frame, owner, *arm) {
+            if let Some(base) = kept_flat(frame, owner, object, *arm) {
                 return tagged_through_layout(stage, (base, object), *arm, value, named, miss);
             }
             arm_store_flat(stage, (at.record, object), *arm, value, named, miss)
@@ -210,9 +210,9 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
         [arm] => {
             let shaped = guard_receiver_shape(stage, frame, (owner, true), &at, arm.shape, miss)?;
             if let (true, Some(number)) = (arm.raw_double, value.2) {
-                return raw_through_layout(stage, frame, (owner, &Reached { shaped: Some(shaped), ..at }), *arm, number, miss);
+                return raw_through_layout(stage, frame, (owner, object, &Reached { shaped: Some(shaped), ..at }), *arm, number, miss);
             }
-            if let Some(base) = kept_flat(frame, owner, *arm) {
+            if let Some(base) = kept_flat(frame, owner, object, *arm) {
                 return tagged_through_layout(stage, (base, object), *arm, value, named, miss);
             }
             arm_store(stage, (at.record, object), *arm, value, named, miss)
@@ -224,8 +224,8 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
 /// The flat run a read of `owner`'s object of `arm`'s shape proved and the frame kept, where it
 /// holds `arm`'s slot: a store through it needs neither the storage form nor the run tested again.
 #[inline(always)]
-fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, arm: StoreArm) -> Option<S::Word> {
-    match frame.kept_layout(owner, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len)?.slots {
+fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, object: S::Word, arm: StoreArm) -> Option<S::Word> {
+    match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len)?.slots {
         super::object::Slots::Flat(base) => Some(base),
         _ => None,
     }
@@ -266,14 +266,14 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
 /// shape the caller proved: through the layout the frame kept of the object (a read of it proved
 /// its run wide), else the one this store proves and keeps, as a read does (`property::kept_slot`).
 #[inline(always)]
-fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, at): (Owner, &Reached<S::Word, S::Cond>),
+fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object, at): (Owner, S::Word, &Reached<S::Word, S::Cond>),
     arm: StoreArm, number: S::Word, miss: S::Miss) -> Option<()> {
     let storage_len = usize::from(arm.slot) + 1;
-    let layout = match frame.kept_layout(owner, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len) {
+    let layout = match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len) {
         Some(layout) => layout,
         None => {
             let layout = ic::slot_layout(stage, at, super::Form::Arena, storage_len, miss)?;
-            frame.keep_layout(owner, (arm.shape, at.shaped.expect("a slot store follows the guard of its shape").fact()), layout);
+            frame.keep_layout(owner, object, (arm.shape, at.shaped.expect("a slot store follows the guard of its shape").fact()), layout);
             layout
         }
     };

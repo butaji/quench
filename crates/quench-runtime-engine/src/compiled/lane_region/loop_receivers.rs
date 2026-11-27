@@ -19,6 +19,8 @@ pub(crate) struct LoopShape {
     header: usize,
     end: usize,
     register: Register,
+    /// The register's resolved word at the entering edge, which holds the object across the loop (the register is not written).
+    word: ir::Value,
     shape: u32,
 }
 
@@ -75,7 +77,8 @@ impl Lowering<'_, '_> {
             headers::prove_header_shape(&mut self.builder, state, word, proof, shape, exit);
             state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
-            let held = LoopShape { header, end, register, shape };
+            state.proofs.kept_shapes.insert(word, shape);
+            let held = LoopShape { header, end, register, word, shape };
             if !self.loop_shapes.iter().any(|known| known.header == header && known.register == register) { self.loop_shapes.push(held); }
         }
     }
@@ -86,7 +89,7 @@ impl Lowering<'_, '_> {
         for held in self.loop_shapes.iter().filter(|held| (held.header..=held.end).contains(&pc)) {
             let fact = state.values[usize::from(held.register)];
             if fact.value.ty.object_shape().is_none() && fact.value.representation == Representation::Tagged && fact.tagged.current() {
-                state.proofs.kept_shapes.insert(held.register, held.shape);
+                state.proofs.kept_shapes.insert(held.word, held.shape);
             }
         }
     }
