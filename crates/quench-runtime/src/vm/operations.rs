@@ -687,31 +687,7 @@ impl Vm {
         result
     }
 
-    /// The family whose entry runs `native` (`NativeFamily`): the native alone decides it, so
-    /// each native's is derived once, on its first call, and read after.
-    #[inline(always)]
-    fn native_family_of(&mut self, native: Native) -> NativeFamily {
-        let index = native as usize;
-        if let Some(&family) = self.native_families.get(index)
-            && family != NativeFamily::Unresolved
-        {
-            return family;
-        }
-        self.resolve_native_family(native)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn resolve_native_family(&mut self, native: Native) -> NativeFamily {
-        let family = Self::native_family(native);
-        let index = native as usize;
-        if self.native_families.len() <= index {
-            self.native_families.resize(index + 1, NativeFamily::Unresolved);
-        }
-        self.native_families[index] = family;
-        family
-    }
-
+    /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
     fn call_native_dispatch(
         &mut self,
@@ -720,57 +696,13 @@ impl Vm {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        match self.native_family_of(native) {
-            NativeFamily::WasmExport => self.call_wasm_exported_function(p, args),
-            NativeFamily::Generator => self.generator_prototype_method(p, native, this, args),
-            NativeFamily::ArrayCallback => self.array_callback_native(p, native, this, args),
-            NativeFamily::StringHtml => self
-                .string_html_method(p, native, this, args)
-                .expect("an HTML method's family is its own"),
-            NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
-            NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
-            NativeFamily::Collection => self.call_collection_native(p, native, this, args),
-            #[cfg(feature = "wasm")]
-            NativeFamily::WasmJs => self.call_wasm_js_routed(p, native, this, args),
-            #[cfg(not(feature = "wasm"))]
-            NativeFamily::WasmJs => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
-            NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
-            NativeFamily::ShadowRealmCalled => {
-                Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
-            }
-            NativeFamily::WeakCalled => {
-                let constructor = match native {
-                    Native::WeakMap => "WeakMap",
-                    Native::WeakSet => "WeakSet",
-                    _ => "WeakRef",
-                };
-                Err(self.type_error(p, format!("Constructor {constructor} requires 'new'")))
-            }
-            NativeFamily::TypedArray => self
-                .maybe_call_typed_array_native(p, native, this, args)
-                .expect("a typed array method's family is its own"),
-            NativeFamily::TypedArrayCalled => {
-                Err(self.type_error(p, "typed array constructor requires new".into()))
-            }
-            NativeFamily::Atomics => self.atomics_native(p, native, args),
-            NativeFamily::Test262Agent => self.call_test262_agent(p, args),
-            NativeFamily::BigInt => self.bigint_native(p, native, this, args),
-            NativeFamily::Promise => self.call_promise_native(p, native, this, args),
-            NativeFamily::AsyncReaction => self.call_async_reaction_native(p, native, args),
-            NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
-            NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
-            NativeFamily::ProxyRevoke => {
-                let callee = self
-                    .active_native_callable()
-                    .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-                self.proxy_revoke(callee)
-            }
-            NativeFamily::DataView => self.data_view_native(p, native, this, args),
-            NativeFamily::Table | NativeFamily::Unresolved => self.call_native_table(p, native, this, args),
+        match self.native_table.entry(native) {
+            Some(entry) => entry(self, p, native, this, args),
+            None => Err(JsError("native has no entry in this runtime's table".into())),
         }
     }
 
-    /// The reaction natives of async iteration (`NativeFamily::AsyncReaction`), by kind.
+    /// The reaction natives of async iteration (`native_entry`'s async reaction entry), by kind.
     fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
         match native {
             Native::AsyncFromSyncValue => self.async_from_sync_value(args),
@@ -2180,106 +2112,198 @@ pub fn exponentiate(base: f64, exponent: f64) -> f64 {
     crate::staged::math::power(base, exponent)
 }
 
-/// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
-/// natives that share an implementation; `Table` for the natives no family claims.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(super) enum NativeFamily {
-    /// Not derived yet (`Vm::native_families`).
-    Unresolved,
-    WasmExport,
-    Generator,
-    ArrayCallback,
-    StringHtml,
-    Finalization,
-    Disposal,
-    Collection,
-    WasmJs,
-    ShadowRealm,
-    ShadowRealmCalled,
-    WeakCalled,
-    TypedArray,
-    TypedArrayCalled,
-    Atomics,
-    Test262Agent,
-    BigInt,
-    Promise,
-    /// The reaction natives of async-from-sync iteration and async generators' `return`.
-    AsyncReaction,
-    ObjectStatic,
-    LazyDataProperty,
-    ProxyRevoke,
-    DataView,
-    Table,
+/// The entry that runs `native`'s call. The families' membership tests keep their precedence: the
+/// first group that claims a native decides it, and the string, RegExp and Math methods belong to
+/// no family after them. The natives' table (`native_table::NativeTable::all`) holds each entry,
+/// built once from here.
+pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
+    head_entry(native)
+        .or_else(|| method_entry(native))
+        .or_else(|| realm_entry(native))
+        .or_else(|| value_entry(native))
+        .unwrap_or(enter_table)
 }
 
-impl Vm {
-/// `native`'s family, by the families' own membership tests in their precedence order: the
-/// string, RegExp and Math methods belong to none of the families after them.
-fn native_family(native: Native) -> NativeFamily {
-    use NativeFamily as F;
+/// The natives that enter before every other family: wasm exports and generator methods.
+fn head_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
-        Native::WasmExportedFunction => return F::WasmExport,
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => return F::Generator,
-        _ => {}
+        Native::WasmExportedFunction => Some(enter_wasm_export),
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => Some(enter_generator),
+        _ => None,
     }
+}
+
+/// The method families: string, array callbacks, HTML, the collections and the other keyed families.
+fn method_entry(native: Native) -> Option<native_table::NativeFn> {
     if native.is_string_regexp_or_math() {
-        return F::Table;
+        return Some(enter_table);
     }
     if native.is_array_callback() {
-        return F::ArrayCallback;
+        return Some(enter_array_callback);
     }
     if super::string::is_string_html_method(native) {
-        return F::StringHtml;
+        return Some(enter_string_html);
     }
-    if Self::is_finalization_native(native) {
-        return F::Finalization;
+    if Vm::is_finalization_native(native) {
+        return Some(enter_finalization);
     }
-    if Self::is_disposal_native(native) {
-        return F::Disposal;
+    if Vm::is_disposal_native(native) {
+        return Some(enter_disposal);
     }
-    if Self::is_collection_native(native) {
-        return F::Collection;
+    if Vm::is_collection_native(native) {
+        return Some(enter_collection);
     }
     #[cfg(feature = "wasm")]
     if super::wasm_js::is_wasm_js_native(native) {
-        return F::WasmJs;
+        return Some(enter_wasm_js);
     }
+    None
+}
+
+/// The realm-level families: ShadowRealm, weak references, typed arrays and Atomics.
+fn realm_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
         Native::ShadowRealmEvaluate
         | Native::ShadowRealmImportValue
         | Native::ShadowRealmImportValueFulfilled
-        | Native::ShadowRealmWrappedFunction => return F::ShadowRealm,
-        Native::ShadowRealm => return F::ShadowRealmCalled,
-        Native::WeakMap | Native::WeakSet | Native::WeakRef => return F::WeakCalled,
+        | Native::ShadowRealmWrappedFunction => return Some(enter_shadow_realm),
+        Native::ShadowRealm => return Some(enter_shadow_realm_called),
+        Native::WeakMap | Native::WeakSet | Native::WeakRef => return Some(enter_weak_called),
         _ => {}
     }
     if native.is_typed_array_method() || native.is_typed_array_iterator() {
-        return F::TypedArray;
+        return Some(enter_typed_array);
     }
     if native.is_typed_array_constructor() {
-        return F::TypedArrayCalled;
+        return Some(enter_typed_array_called);
     }
     if native.is_atomics_native() {
-        return F::Atomics;
+        return Some(enter_atomics);
     }
+    None
+}
+
+/// The value families: Test262's agent, BigInt, Promise, async reactions, Object statics, lazy
+/// properties, proxy revocation and DataView.
+fn value_entry(native: Native) -> Option<native_table::NativeFn> {
     match native {
-        Native::Test262Agent => return F::Test262Agent,
-        _ if native.is_bigint_native() => return F::BigInt,
-        _ if native.is_promise_native() => return F::Promise,
+        Native::Test262Agent => return Some(enter_test262_agent),
+        _ if native.is_bigint_native() => return Some(enter_bigint),
+        _ if native.is_promise_native() => return Some(enter_promise),
         Native::AsyncFromSyncValue
         | Native::AsyncFromSyncValueRejected
         | Native::AsyncGeneratorReturnFulfilled
         | Native::AsyncGeneratorReturnRejected
-        | Native::AsyncGeneratorDelegateReturnStart => return F::AsyncReaction,
-        _ if native.is_object_static() => return F::ObjectStatic,
-        Native::LazyDataProperty => return F::LazyDataProperty,
-        Native::ProxyRevoke => return F::ProxyRevoke,
-        _ if native.is_data_view_native() => return F::DataView,
-        _ => {}
+        | Native::AsyncGeneratorDelegateReturnStart => return Some(enter_async_reaction),
+        _ if native.is_object_static() => return Some(enter_object_static),
+        Native::LazyDataProperty => return Some(enter_lazy_data_property),
+        Native::ProxyRevoke => return Some(enter_proxy_revoke),
+        _ if native.is_data_view_native() => return Some(enter_data_view),
+        _ => None,
     }
-    F::Table
 }
+
+// The entries `native_entry` names: each runs one family's dispatch, as the family match did.
+
+fn enter_wasm_export(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_wasm_exported_function(p, args)
+}
+
+fn enter_generator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.generator_prototype_method(p, native, this, args)
+}
+
+fn enter_array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_callback_native(p, native, this, args)
+}
+
+fn enter_string_html(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.string_html_method(p, native, this, args).expect("an HTML method's family is its own")
+}
+
+fn enter_finalization(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_finalization_registry_native(p, native, this, args)
+}
+
+fn enter_disposal(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_disposal_native(p, native, this, args)
+}
+
+fn enter_collection(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_collection_native(p, native, this, args)
+}
+
+#[cfg(feature = "wasm")]
+fn enter_wasm_js(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_wasm_js_routed(p, native, this, args)
+}
+
+fn enter_shadow_realm(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_native(p, native, this, args)
+}
+
+fn enter_shadow_realm_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "ShadowRealm constructor requires 'new'".into()))
+}
+
+fn enter_weak_called(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let constructor = match native {
+        Native::WeakMap => "WeakMap",
+        Native::WeakSet => "WeakSet",
+        _ => "WeakRef",
+    };
+    Err(vm.type_error(p, format!("Constructor {constructor} requires 'new'")))
+}
+
+fn enter_typed_array(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.maybe_call_typed_array_native(p, native, this, args).expect("a typed array method's family is its own")
+}
+
+fn enter_typed_array_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "typed array constructor requires new".into()))
+}
+
+fn enter_atomics(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.atomics_native(p, native, args)
+}
+
+fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_test262_agent(p, args)
+}
+
+fn enter_bigint(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.bigint_native(p, native, this, args)
+}
+
+fn enter_promise(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_promise_native(p, native, this, args)
+}
+
+fn enter_async_reaction(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_async_reaction_native(p, native, args)
+}
+
+fn enter_object_static(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_object_native(p, native, args)
+}
+
+fn enter_lazy_data_property(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.lazy_data_property_access(p, this, args)
+}
+
+fn enter_proxy_revoke(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let callee = vm
+        .active_native_callable()
+        .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
+    vm.proxy_revoke(callee)
+}
+
+fn enter_data_view(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.data_view_native(p, native, this, args)
+}
+
+fn enter_table(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_native_table(p, native, this, args)
 }
 
 impl Vm {
