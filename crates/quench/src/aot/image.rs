@@ -3,7 +3,9 @@
 
 use super::cli::{BOOTSTRAP_WORKER_OPTION, WAIT_WORKER_OPTION};
 use super::{CompiledSources, DependencyGraph, NativeSupport, SourceManifest};
+use quench_layers::engine::ExecutionTableSpec;
 use quench_runtime::native_link::{NativeImageInputs, NativeLinkAudit};
+use quench_runtime::ReachableRealm;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
@@ -34,11 +36,12 @@ pub(super) fn compile_sources(
     manifest.compile_closed(&source, file.kind)
 }
 
-/// Stage the host services, saved runs and bootstrap an image links: a core image links none,
-/// a Node image takes the operation table its program can reach and a snapshot of the builtins
-/// it names. Returns the image inputs, the operations an image that starts from a saved heap
-/// keeps, and its saved runs (`dump_saved_waits`). A `strict` image whose entry reads a process
-/// input runs it from the startup snapshot alone (`RESTORED`).
+/// Stage the host services, saved runs and bootstrap an image links: a core image saves its
+/// realm and program as a startup snapshot on its closed world (`core_rest`), which it restores
+/// at each start; a Node image takes the operation table its program can reach and a snapshot of
+/// the builtins it names. Returns the image inputs, the operations an image that starts from a
+/// saved heap keeps, and its saved runs (`dump_saved_waits`). A `strict` image whose entry reads
+/// a process input runs it from the startup snapshot alone (`RESTORED`).
 pub(super) fn stage_image(
     core: bool,
     strict: bool,
@@ -47,12 +50,17 @@ pub(super) fn stage_image(
     native_entry: &Path,
     inputs: NativeImageInputs,
     waits: &[super::strict::Answers],
+    closed: Option<(&ReachableRealm, ExecutionTableSpec)>,
     report: &mut Value,
 ) -> Result<(NativeImageInputs, Option<BTreeSet<u32>>, Vec<SavedWait>), String> {
     if core {
         report["unlinked_host_operations"] = json!(0);
-        report["bootstrap"] = json!({"status": "not_required", "reason": "Variant::Core runs on the runtime's own host"});
-        return Ok((inputs, None, Vec::new()));
+        let (realm, execution) = closed.ok_or("a core image has no closed world to save its realm on")?;
+        let rest = work.join("core-rest.bin");
+        super::core_rest::build_rest(native_entry, &rest, realm, &execution)?;
+        let bytes = fs::metadata(&rest).map_err(|error| error.to_string())?.len();
+        report["bootstrap"] = json!({"status": "prepared", "kind": "closed_world_realm", "bytes": bytes, "runs_entry_at_start": true});
+        return Ok((inputs.with_bootstrap(rest), None, Vec::new()));
     }
     // A program whose build-time runs wait for input before reading any resumes the run whose
     // answers hold as it starts: no entry run and no installation, so no startup snapshot.

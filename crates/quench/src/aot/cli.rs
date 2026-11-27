@@ -313,7 +313,9 @@ fn compile(options: Options) -> Result<(), String> {
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
-    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
+    // A core image's closed world: the realm and engine entries its catalog names, which its saved realm is built on.
+    let closed = realm.as_ref().map(|realm| (realm, demand.execution_table()));
+    let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, closed, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
             fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?
