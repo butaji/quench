@@ -119,9 +119,8 @@ pub(crate) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
     // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
-    // A raw-double slot takes no tagged write: neither row writes its binary64 word, so it stores through the gate.
-    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| !load.raw_double && stores_number(load.ty)).map(ic_hole)).flatten();
-    let slot = own_slot_load(known, site).filter(|load| !load.raw_double);
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| stores_number(load.ty)).map(ic_hole)).flatten();
+    let slot = own_slot_load(known, site);
     Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: slot.map(|load| load.ty), slot_shape: slot.map(|load| load.shape), ic, ..Decoded::heap(heap, None, value, None) })
 }
 
@@ -146,12 +145,10 @@ fn own_flat_load(known: Known, site: u16) -> Option<crate::compiled::object_slot
 /// The dependency that proves the one own flat entry's slot holds one type a read may keep: a Number type
 /// (`NativeFieldLoad::ty` a subtype of Number), whose words are tagged so each is an int word or a double
 /// whatever the receiver's storage form, or exactly `DIRECT_OBJECT_FAMILY`, whose words are direct object
-/// words (`SlotDependency::ty` names which, so the consumer branches on it). A raw-double slot (`raw_double`)
-/// is left to the tested read: its words are binary64 bits, which a non-canonical NaN may leave outside the
-/// double tag range.
+/// words (`SlotDependency::ty` names which, so the consumer branches on it).
 fn typed_slot(load: crate::compiled::object_slots::NativeFieldLoad) -> Option<quench_runtime::code_dependencies::SlotDependency> {
     let kept = load.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) || load.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY;
-    (!load.raw_double && kept).then(|| load.slot_dependency()).flatten()
+    kept.then(|| load.slot_dependency()).flatten()
 }
 
 /// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte

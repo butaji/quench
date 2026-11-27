@@ -9,7 +9,6 @@ impl Heap {
     pub fn alloc_planned_object<const N: usize>(&mut self, header: InlineObjectHeader, prototype: Value, values: &[Value; N], len: usize) -> Value {
         debug_assert!(self.prototype_flagged(prototype));
         self.properties.note_plan_values(header.shape(), &values[..len]);
-        self.settle_widened();
         let object = if len <= INLINE_PROPERTY_COUNT {
             // A fixed-length select per slot: a copy of `len` values was a `memcpy` call,
             // which gave every planned construct a frame.
@@ -19,7 +18,7 @@ impl Heap {
         } else if cfg!(feature = "profile-aggregate") {
             None
         } else {
-            self.properties.young_run_padded(values, len, header.shape()).map(|start| Object::from_run_header(header, start))
+            self.properties.young_run_padded(values, len).map(|start| Object::from_run_header(header, start))
         };
         match object {
             Some(object) => match self.claim_object_record() {
@@ -149,7 +148,6 @@ impl Heap {
             return false;
         }
         data.append_reserved(properties, slot, value, shape);
-        self.settle_widened();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
         self.memory_profile.object_slots_changed(value, slot + 1);

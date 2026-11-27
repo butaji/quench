@@ -2839,12 +2839,11 @@ const STORE_INLINE: usize = OWN_FORMS.len() + 12;
 
 /// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
 /// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
-/// `HINTED_FORM` reads the hint layout's own bits.
-const OWN_FORMS: [u32; 9] = {
-    use quench_runtime::staged::TAGGED_SLOTS;
+/// `HINTED_FORM` reads the hint layout's own bits. Every slot word is the one `Value` word, so
+/// each form is its storage form alone.
+const OWN_FORMS: [u32; 6] = {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    [HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
-        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS]
+    [HINTED_FORM, INLINE_FORM, NARROW_FORM, 0, EXTRAS_FORM, EXTRAS_FORM | INLINE_FORM]
 };
 
 
@@ -3054,9 +3053,7 @@ macro_rules! own_sites {
     ($each:ident) => {
         [$each!(own_site(true, 0)), $each!(own_site(false, 0)), $each!(own_site(true, 1)), $each!(own_site(false, 1)),
             $each!(own_site(true, 2)), $each!(own_site(false, 2)), $each!(own_site(true, 3)), $each!(own_site(false, 3)),
-            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5)),
-            $each!(own_site(true, 6)), $each!(own_site(false, 6)), $each!(own_site(true, 7)), $each!(own_site(false, 7)),
-            $each!(own_site(true, 8)), $each!(own_site(false, 8))]
+            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5))]
     };
 }
 

@@ -36,9 +36,6 @@ fn store_class(value: Value) -> Option<SlotType> {
 /// every later store of it (`store_class`).
 pub(crate) fn record_store_class(vm: &mut Vm, site: u16, value: Value) {
     let Some(class) = store_class(value) else { return };
-    // A native store writes the value's tagged word, which a slot of raw doubles does not hold.
-    let entry = vm.field_cache_entry(site);
-    if vm.heap_reads().slot_holds_raw_doubles(entry.receiver, usize::from(entry.slot)) { return; }
     let index = vm.field_cache_index(site);
     if !vm.field_cache_records(index) {
         return;
