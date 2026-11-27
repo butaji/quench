@@ -8,26 +8,88 @@ use super::flow::{FunctionFlow, conditional_target, whole_literals};
 use super::lengths::{Lengths, Relation, advance, proves_below, refine};
 use super::scope::Scope;
 use super::types::Types;
-use super::value::{Key, Word};
+use super::value::{Key, Origin, Word};
 use super::FunctionFacts;
-use crate::bytecode::{ControlEdge, Function, Register, Successors};
-use crate::staged::DecodeContext;
-use std::collections::BTreeMap;
+use crate::bytecode::{Class, ControlEdge, FieldLookup, Function, Register, Successors, WideInstruction, used_registers};
+use crate::staged::{DecodeContext, Operation};
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+/// What one round's length relations prove, which the next round's solve reads (`Ctx`): the allocations filled, the element
+/// stores that write no hole, and the element reads in bounds, each by (function, pc). Round 1 solves with none; a round's
+/// relations depend on the bytecode and on the words the solve settled, and a fact here only refines the next solve.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct Feedback {
+    pub(super) filled: BTreeSet<(u32, u32)>,
+    pub(super) hole_free_stores: BTreeSet<(u32, u32)>,
+    pub(super) in_bounds_reads: BTreeSet<(u32, u32)>,
+}
+
+impl Feedback {
+    /// The feedback the settled relations of every function prove (`Settled`).
+    pub(super) fn of(settled: &BTreeMap<u32, Settled>) -> Self {
+        let mut feedback = Self::default();
+        for (&function, settled) in settled {
+            feedback.filled.extend(settled.filled.iter().map(|&pc| (function, pc)));
+            feedback.hole_free_stores.extend(settled.hole_free_stores.iter().map(|&pc| (function, pc)));
+            feedback.in_bounds_reads.extend(settled.in_bounds_reads.iter().map(|&pc| (function, pc)));
+        }
+        feedback
+    }
+}
+
 /// The relations of every point of a function, by the pc each holds them before (`flow::Record`): a point that holds none
-/// is absent.
+/// is absent. It also names the allocations the function's settled points prove filled, the element stores that write no hole
+/// and the element reads proven in bounds (`Settled::record`).
 #[derive(Default)]
 pub(crate) struct Settled {
     points: Vec<(u32, Box<[Relation]>)>,
+    filled: BTreeSet<u32>,
+    hole_free_stores: BTreeSet<u32>,
+    in_bounds_reads: BTreeSet<u32>,
+    /// The allocations (pcs) the function's settled points use, and those a use of which needs the array complete.
+    allocations: BTreeSet<u32>,
+    unfilled: BTreeSet<u32>,
 }
 
 impl Settled {
-    /// Records the relations the instruction at `pc` finds before it, where any hold.
-    pub(super) fn push(&mut self, pc: u32, relations: &[Relation]) {
+    /// Records the relations and the facts the instruction at `pc` finds before it, from the words before it. An allocation
+    /// is filled when every use of it other than a hole-free store, a length read or a compare finds the array complete
+    /// (`Relation::Complete`): the array is then read, escaped, stored and returned only once its elements are all written.
+    fn record(&mut self, ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction, words: &[Word], relations: &[Relation]) {
         if !relations.is_empty() {
             self.points.push((pc, relations.into()));
         }
+        let store = match Operation::<u64, ()>::of(instruction) {
+            Some(Operation::ElementWrite { base, key, .. }) => Some((base, key)),
+            _ => None,
+        };
+        let fill = store.filter(|&(base, key)| relations.contains(&Relation::Filled { array: base, index: key }));
+        if fill.is_some() {
+            self.hole_free_stores.insert(pc);
+        }
+        if instruction.op() == crate::bytecode::Op::GetIndex && proves_below(relations, instruction.register_c(), instruction.register_b(), 0) {
+            self.in_bounds_reads.insert(pc);
+        }
+        let length_read = matches!(instruction.op().class(), Class::GetField)
+            && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if ctx.scope.length == Some(atom));
+        let compare = matches!(Operation::<u64, ()>::of(instruction), Some(Operation::CompareJump { .. }));
+        for register in used_registers(instruction) {
+            let Some(Origin::Alloc { function, pc: allocated }) = words.get(usize::from(register)).and_then(|word| word.origin) else { continue };
+            if function != ctx.id || allocated == pc {
+                continue;
+            }
+            self.allocations.insert(allocated);
+            let allowed = fill.is_some_and(|(base, _)| base == register) || length_read || compare;
+            if !allowed && !relations.contains(&Relation::Complete { array: register }) {
+                self.unfilled.insert(allocated);
+            }
+        }
+    }
+
+    /// Settles the allocations: filled where no use of them found its array incomplete.
+    fn finish(&mut self) {
+        self.filled = self.allocations.difference(&self.unfilled).copied().collect();
     }
 
     /// Orders the points by pc, so the lookups binary-search them.
@@ -79,12 +141,13 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
         }
     }
     settled.sort();
+    settled.finish();
     settled
 }
 
 /// The length relations of function `id` (`settle`), from its settled solve `flow` and the settled facts of the program.
 pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow, (scope, decode, records): (&Scope, DecodeContext<'_>, &[Register]),
-    resolved: &BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>) -> Settled {
+    resolved: &BTreeMap<Key, u32>, accessors: &BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>, feedback: &Feedback) -> Settled {
     let whole = whole_literals(function);
     let ctx = Ctx {
         id,
@@ -98,6 +161,9 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         decode,
         records,
         accessors,
+        filled: &feedback.filled,
+        hole_free_stores: &feedback.hole_free_stores,
+        in_bounds_reads: &feedback.in_bounds_reads,
     };
     settle(&ctx, function, &flow.entries, facts)
 }
@@ -109,7 +175,7 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
     for pc in range {
         let instruction = function.instruction_at(pc);
         if let Some(settled) = record.as_mut() {
-            settled.push(pc as u32, lengths.relations());
+            settled.record(ctx, pc as u32, instruction, &words, lengths.relations());
         }
         advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
     }
