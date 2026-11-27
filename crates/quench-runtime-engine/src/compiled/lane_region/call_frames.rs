@@ -94,10 +94,9 @@ pub(crate) struct ProvenCall {
     pub(crate) layout: Option<u32>,
     /// Whether the call's plan has no miss (`Miss::None`): the arms name every receiver the call can have.
     pub(crate) closed: bool,
-    /// The slot of the call's method in its arm's receiver class's prototype layout (`AotFacts::prototype_layout`): the
-    /// index of its class's method vector (`Symbol::ClassMethods`) the indirect form reads. `None` where the arm names no
-    /// method, or its class's prototype does not hold it.
-    pub(crate) slot: Option<u16>,
+    /// The selector of the call's method (`SymbolTable::selector`): the index of its record in each class's method vector
+    /// (`Symbol::ClassMethods`), which the indirect form reads. `None` where the call names no method.
+    pub(crate) selector: Option<u32>,
     /// Whether the call's plan inlines its arms (`tier_policy::arms_inline`), which keeps the class-layout compare form.
     pub(crate) inline: bool,
 }
