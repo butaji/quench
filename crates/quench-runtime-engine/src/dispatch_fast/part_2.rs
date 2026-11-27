@@ -223,11 +223,15 @@ pub(super) fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r
     // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and only an admitted one reaches here.
     debug_assert!(!vm.with_scope_entered);
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
+    // SAFETY: the record's window of `r` holds its values.
+    let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    if returns && tail_reuse_admitted_in_lane(cx, r, ip, target, argc, false) {
+        let (registers, base) = reuse_frame_in_lane(cx, r, target, passed, argc, this);
+        return Some(Resumed::At(registers, base, Carried::script(cx)));
+    }
     if returns && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    // SAFETY: the record's window of `r` holds its values.
-    let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
     // A callee whose entry cell holds a body that pays its entry runs it before any activation exists.
     if !returns && unsafe { (*target.view).enters_cell_body() } {
         if let Some(resumed) = enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
