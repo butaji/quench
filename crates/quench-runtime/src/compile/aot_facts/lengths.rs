@@ -30,7 +30,7 @@ use crate::typed_ir::Length;
 use relations::{delta, holds_array, is_string, way};
 use transfer::{Resize, moves_bits, shift_kind, step_of_constant, sum_of_registers};
 
-pub(super) use ceilings::{IndexRange, Interval, index_ranges, loops_of};
+pub(super) use ceilings::{IndexRange, Interval, index_ranges, loops_of, parameter_registers};
 pub(super) use relations::{Relation, proves_below, store_span};
 pub(super) use transfer::{advance, refine};
 

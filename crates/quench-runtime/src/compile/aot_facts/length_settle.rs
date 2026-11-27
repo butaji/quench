@@ -6,7 +6,7 @@ use super::blocks::Blocks;
 use super::class_ids::ClassIds;
 use super::effects::{Ctx, step};
 use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
-use super::lengths::{IndexRange, Interval, Lengths, Relation, advance, index_ranges, loops_of, proves_below, refine, store_span};
+use super::lengths::{IndexRange, Interval, Lengths, Relation, advance, index_ranges, loops_of, parameter_registers, proves_below, refine, store_span};
 use super::scope::Scope;
 use super::types::Types;
 use super::value::{Key, Origin, Word};
@@ -96,7 +96,7 @@ impl Settled {
             self.in_bounds_reads.insert(pc);
         }
         if let Some((_, key)) = read && words.get(usize::from(key)).is_some_and(|word| word.is_number()) {
-            self.index_intervals.insert(pc, lengths.interval(key));
+            self.index_intervals.insert(pc, lengths.typed_interval(words, key));
         }
         let length_read = matches!(instruction.op().class(), Class::GetField)
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if ctx.scope.length == Some(atom));
@@ -199,7 +199,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
     }
     settled.sort();
     settled.finish();
-    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks));
+    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks), &parameter_registers(function));
     settled
 }
 

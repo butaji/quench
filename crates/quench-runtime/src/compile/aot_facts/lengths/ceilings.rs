@@ -77,6 +77,26 @@ impl Bound {
         Self { terms: self.terms.map(|slot| slot.map(|form| form.shifted(by))) }
     }
 
+    /// This end with each form over a register of `parameters` (`parameter_registers`) rewritten over that parameter's entry value.
+    fn rebased(self, parameters: &[(Register, u16)]) -> Option<Self> {
+        let mut bound: Option<Self> = None;
+        for form in self.forms() {
+            let mut mapped = Affine::constant(form.offset);
+            for &(base, coefficient) in form.terms.iter().flatten() {
+                let base = match base {
+                    Base::Register(register) => parameters.iter().find(|&&(held, _)| held == register).map_or(base, |&(_, index)| Base::Parameter(index)),
+                    Base::Parameter(_) => base,
+                };
+                mapped = mapped.plus(Affine { offset: 0, terms: [Some((base, coefficient)), None] })?;
+            }
+            bound = Some(match bound {
+                Some(held) => held.union(Self::of(mapped))?,
+                None => Self::of(mapped),
+            });
+        }
+        bound
+    }
+
     /// Whether a form of this end is the value of `register`.
     fn names(&self, register: Register) -> bool {
         self.forms().any(|form| form.terms.iter().flatten().any(|&(base, _)| base == Base::Register(register)))
@@ -90,13 +110,16 @@ pub struct Interval {
     pub(super) floor: Option<Bound>,
     pub(super) ceiling: Option<Bound>,
     pub(super) nan: bool,
+    /// Whether the value is an integer wherever it is not NaN: a truncation, a Number constant with no fraction, an Int-typed
+    /// register (`typed_interval`), or a sum or shift of integral values.
+    pub(super) integral: bool,
 }
 
 impl Interval {
     /// The interval of a register holding its own value: it bounds itself, and it may be NaN.
     fn exact(register: Register) -> Self {
         let own = Some(Bound::of(Affine::register(register)));
-        Self { floor: own, ceiling: own, nan: true }
+        Self { floor: own, ceiling: own, nan: true, integral: false }
     }
 
     /// Whether a form of either end is the value of `register`.
@@ -106,12 +129,12 @@ impl Interval {
 
     /// The interval of a value that is either one of two (their ends joined; NaN where either may be).
     fn join(self, other: Self) -> Self {
-        Self { floor: side_union(self.floor, other.floor), ceiling: side_union(self.ceiling, other.ceiling), nan: self.nan || other.nan }
+        Self { floor: side_union(self.floor, other.floor), ceiling: side_union(self.ceiling, other.ceiling), nan: self.nan || other.nan, integral: self.integral && other.integral }
     }
 
     /// The interval shifted by the integer `by`.
     fn shifted(self, by: i64) -> Self {
-        Self { floor: self.floor.map(|bound| bound.shifted(by)), ceiling: self.ceiling.map(|bound| bound.shifted(by)), nan: self.nan }
+        Self { floor: self.floor.map(|bound| bound.shifted(by)), ceiling: self.ceiling.map(|bound| bound.shifted(by)), nan: self.nan, integral: self.integral }
     }
 
     /// The interval of `x | 0`: trunc is monotone, so the floor is at least the min of trunc's floor and 0, and the ceiling at most
@@ -122,6 +145,7 @@ impl Interval {
             floor: self.floor.and_then(|bound| bound.union(zero)),
             ceiling: self.ceiling.and_then(|bound| bound.union(zero)),
             nan: false,
+            integral: true,
         }
     }
 }
@@ -162,6 +186,13 @@ fn mirrored(relation: NumberRelation) -> Option<NumberRelation> {
 }
 
 impl Lengths {
+    /// The interval `register` holds here with its integrality from its type at this point (`words`): an Int-typed register is integral.
+    pub(in crate::compile::aot_facts) fn typed_interval(&self, words: &[Word], register: Register) -> Interval {
+        let mut interval = self.interval(register);
+        interval.integral |= words.get(usize::from(register)).is_some_and(|word| word.cell.ty.int_range().is_some());
+        interval
+    }
+
     /// The interval `register` holds at this point: its entry, or its own value.
     pub(in crate::compile::aot_facts) fn interval(&self, register: Register) -> Interval {
         self.bounds.iter().find(|(held, _)| *held == register).map_or_else(|| Interval::exact(register), |(_, interval)| *interval)
@@ -183,9 +214,9 @@ impl Lengths {
 
     /// The interval of `source` as an operand of a result written to `destination`: its entry, or its own value where the entry names
     /// `destination` (the value `destination` held before the write).
-    fn operand_interval(&self, source: Register, destination: Register) -> Interval {
-        let interval = self.interval(source);
-        if interval.names(destination) { Interval::exact(source) } else { interval }
+    fn operand_interval(&self, words: &[Word], source: Register, destination: Register) -> Interval {
+        let interval = self.typed_interval(words, source);
+        if interval.names(destination) { Interval { integral: interval.integral, ..Interval::exact(source) } } else { interval }
     }
 
     /// The interval an instruction gives its destination, from the state before it: a Number constant (`LoadConst`), a copy of a Number,
@@ -201,34 +232,46 @@ impl Lengths {
             if value.is_nan() {
                 return None;
             }
-            let interval = Interval { floor: round_down(value).map(Bound::of), ceiling: round_up(value).map(Bound::of), nan: false };
+            let interval = Interval {
+                floor: round_down(value).map(Bound::of),
+                ceiling: round_up(value).map(Bound::of),
+                nan: false,
+                integral: value.fract() == 0.0,
+            };
             return Some((instruction.result_register(), interval));
         }
         if let Some(Operation::Move { destination, source }) = Operation::<u64, ()>::of(instruction) {
-            return number(source).then(|| (destination, self.operand_interval(source, destination)));
+            return number(source).then(|| (destination, self.operand_interval(words, source, destination)));
         }
         if let Some((destination, source, delta)) = step_of_constant(ctx, instruction) {
-            return (source != destination && number(source)).then(|| (destination, self.operand_interval(source, destination).shifted(delta)));
+            return (source != destination && number(source)).then(|| (destination, self.operand_interval(words, source, destination).shifted(delta)));
         }
         if let Some((destination, first, second)) = sum_of_registers(instruction) {
             if first == destination || second == destination || !number(first) || !number(second) {
                 return None;
             }
-            let (a, b) = (self.operand_interval(first, destination), self.operand_interval(second, destination));
+            let (a, b) = (self.operand_interval(words, first, destination), self.operand_interval(words, second, destination));
             let floor = a.floor.zip(b.floor).and_then(|(a, b)| a.plus(b));
             let ceiling = a.ceiling.zip(b.ceiling).and_then(|(a, b)| a.plus(b));
-            return Some((destination, Interval { floor, ceiling, nan: a.nan || b.nan }));
+            return Some((destination, Interval { floor, ceiling, nan: a.nan || b.nan, integral: a.integral && b.integral }));
         }
-        if let Some(Operation::Number(NumberOperation::Bitwise { destination, left, right, operation: NumberBitwise::Or })) = Operation::<u64, ()>::of(instruction) {
-            let source = if constant_value(ctx, right) == Some(0.0) {
-                left
+        if let Some(Operation::Number(NumberOperation::Bitwise { destination, left, right, operation })) = Operation::<u64, ()>::of(instruction) {
+            let truncated = if operation != NumberBitwise::Or {
+                None
+            } else if constant_value(ctx, right) == Some(0.0) {
+                Some(left)
             } else if constant_value(ctx, left) == Some(0.0) {
-                right
+                Some(right)
             } else {
-                return None;
+                None
             };
-            return source.register_index().filter(|&source| source != destination && number(source))
-                .map(|source| (destination, self.operand_interval(source, destination).truncated()));
+            if let Some(source) = truncated {
+                return source.register_index().filter(|&source| source != destination && number(source))
+                    .map(|source| (destination, self.operand_interval(words, source, destination).truncated()));
+            }
+            // Any other Number bitwise operation yields an integer, never NaN, whose bounds are unknown.
+            let numeric = [left, right].into_iter().all(|operand| operand.register_index().is_none_or(number));
+            return numeric.then_some((destination, Interval { floor: None, ceiling: None, nan: false, integral: true }));
         }
         None
     }
@@ -352,28 +395,44 @@ pub struct IndexRange {
     pub floor: Bound,
     pub ceiling: Bound,
     pub nan: bool,
+    /// The index is an integer wherever it is not NaN (`Interval::integral`). Inside the loop version whose entering edge checked the
+    /// range (0 <= floor, ceiling < length, below 2^31), the index is an int32 with no representation guard (known-types law).
+    pub integral: bool,
 }
 
 /// The index ranges of the reads a settled solve recorded (`intervals`, by pc), each paired with the outermost loop containing it in
 /// which its forms are unwritten. A read in no such loop has none.
-pub(super) fn index_ranges(intervals: &BTreeMap<u32, Interval>, loops: &[Loop]) -> BTreeMap<u32, IndexRange> {
-    intervals.iter().filter_map(|(&pc, interval)| index_range(pc, interval, loops).map(|range| (pc, range))).collect()
+pub(super) fn index_ranges(intervals: &BTreeMap<u32, Interval>, loops: &[Loop], parameters: &[(Register, u16)]) -> BTreeMap<u32, IndexRange> {
+    intervals.iter().filter_map(|(&pc, interval)| index_range(pc, interval, loops, parameters).map(|range| (pc, range))).collect()
+}
+
+/// The parameters (`index`, and the register that holds it) no instruction of `function` writes, so each holds its value on entry at
+/// every point: a form over such a register is a form over `Base::Parameter(index)`. A function that reads its `arguments` object may
+/// write its parameters through it, so it has none.
+pub(super) fn parameter_registers(function: &Function) -> Vec<(Register, u16)> {
+    let reads_arguments = (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
+    if reads_arguments {
+        return Vec::new();
+    }
+    let written: BTreeSet<Register> = (0..function.code.len()).flat_map(|pc| function.instruction_at(pc).written_registers()).collect();
+    (0..function.params).filter_map(|index| {
+        function.promoted_register(index).filter(|register| !written.contains(register)).map(|register| (register, index))
+    }).collect()
 }
 
 /// The index range of the read at `pc` (`index_ranges`). Loops are in header order, so the first invariant one containing `pc` is the
 /// outermost. A form over a parameter (its entry value) is not an invariant of a loop here, so such a read has none.
-fn index_range(pc: u32, interval: &Interval, loops: &[Loop]) -> Option<IndexRange> {
-    let (floor, ceiling) = (interval.floor?, interval.ceiling?);
+fn index_range(pc: u32, interval: &Interval, loops: &[Loop], parameters: &[(Register, u16)]) -> Option<IndexRange> {
+    let (floor, ceiling) = (interval.floor?.rebased(parameters)?, interval.ceiling?.rebased(parameters)?);
     let mut bases = Vec::new();
     for form in floor.forms().chain(ceiling.forms()) {
         for &(base, _) in form.terms.iter().flatten() {
-            match base {
-                Base::Register(register) => bases.push(register),
-                Base::Parameter(_) => return None,
+            if let Base::Register(register) = base {
+                bases.push(register);
             }
         }
     }
     let inside = |lp: &&Loop| lp.ranges.iter().any(|range| range.contains(&(pc as usize)));
     let lp = loops.iter().filter(inside).find(|lp| bases.iter().all(|base| !lp.written.contains(base)))?;
-    Some(IndexRange { header: lp.header, floor, ceiling, nan: interval.nan })
+    Some(IndexRange { header: lp.header, floor, ceiling, nan: interval.nan, integral: interval.integral })
 }
