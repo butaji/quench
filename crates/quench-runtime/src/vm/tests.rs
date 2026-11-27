@@ -9037,7 +9037,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
 
 #[test]
 fn coerced_binary_operands_restore_roots_after_each_completion() {
-    use oxc_ast::ast::BinaryOperator;
+    use crate::operator::BinaryOperator;
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
@@ -13004,7 +13004,7 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 
 #[test]
 fn shared_number_arithmetic_maps_all_four_numeric_operators() {
-    use oxc_ast::ast::BinaryOperator;
+    use crate::operator::BinaryOperator;
     use super::operations::NumberArithmetic;
 
     for (operator, expected) in [

@@ -140,7 +140,7 @@ impl Temporaries {
             return None;
         };
         let operator = binary.binary_operator();
-        use oxc_syntax::operator::BinaryOperator;
+        use crate::operator::BinaryOperator;
         (BinaryOperator::Addition as u32..=BinaryOperator::BitwiseAnd as u32).contains(&operator)
             .then_some(InitializerValue::Numeric { parameter, operator: operator as u8, constant: *constant })
     }

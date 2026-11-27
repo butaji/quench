@@ -8,7 +8,7 @@
 use std::cmp::Ordering;
 
 use num_bigint::{BigInt, Sign};
-use oxc_ast::ast::BinaryOperator;
+use crate::operator::BinaryOperator;
 
 use crate::bigint::{Error, JsBigInt};
 

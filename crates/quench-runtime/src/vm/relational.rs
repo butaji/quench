@@ -423,7 +423,7 @@ impl Vm {
     /// leaves any other case (a key a side-table descriptor holds, a namespace, a proxy, an
     /// exotic object, a primitive operand) to the general path.
     pub fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
-        if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
+        if op != crate::operator::BinaryOperator::In as u32 || !self.heap.is_string(key) {
             return None;
         }
         self.heap.ordinary_object(object)?;
@@ -489,7 +489,7 @@ impl Vm {
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]
     pub fn instanceof_truthy(&mut self, op: u32, left: Value, right: Value) -> Option<bool> {
-        if op != oxc_ast::ast::BinaryOperator::Instanceof as u32 {
+        if op != crate::operator::BinaryOperator::Instanceof as u32 {
             return None;
         }
         self.ordinary_instanceof(left, right)
