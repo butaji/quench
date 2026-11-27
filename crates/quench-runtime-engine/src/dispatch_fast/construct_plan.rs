@@ -451,6 +451,19 @@ pub(crate) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objec
     }
 }
 
+/// Whether program code may read field `atom` of the instances `callee` constructs (`AotFacts::field_has_reader`),
+/// settled once when a plan is built. Where the callee has no class of the running program, or its program has no
+/// facts, there is no fact to ask, and every field has a reader, as `field_has_reader` answers without a reader set.
+pub(crate) fn field_reader(vm: &Vm, callee: Value) -> impl Fn(u32) -> bool {
+    let (facts, class) = match vm.same_realm_user_target(callee).filter(|&(program, _, _)| program == vm.active_program) {
+        Some((program, class, _)) => (vm.programs.aot_facts(program), Some(class)),
+        None => (None, None),
+    };
+    move |atom| class.map_or(true, |class| facts.as_ref().map_or(true, |facts| {
+        facts.field_has_reader(quench_runtime::typed_ir::FactKey::Field { class, instance: true, atom })
+    }))
+}
+
 /// `initialize_fields_in_lane` of the stores `adds` makes to the receiver it is given, each passed
 /// to its `each` as a cached add runs, a nested construction's value (`InitializerValue::Construct`)
 /// made by its `nested` from the callee's closure environment `env`: the receiver, and whether
