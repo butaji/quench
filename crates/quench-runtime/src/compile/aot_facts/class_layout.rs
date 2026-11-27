@@ -320,6 +320,9 @@ fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, 
     }
     let mut fields: Vec<u32> = facts.class_layout(class).map_or_else(Vec::new, <[u32]>::to_vec);
     let on_prototype = instance_stores(program, flows, census, class, &mut fields)?;
+    // A field no reachable read observes takes no slot (4.13 dead payload): its stores are skipped
+    // (`field_has_reader`), so the layout is the observed fields alone.
+    fields.retain(|&atom| facts.field_has_reader(FactKey::Field { class, instance: true, atom }));
     let mut entries = Vec::with_capacity(fields.len());
     for atom in fields {
         if text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name)) { return None; }

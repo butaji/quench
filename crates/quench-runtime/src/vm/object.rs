@@ -1672,6 +1672,7 @@ impl Vm {
         // ordinary holder entry `cached_ordinary_holder_field_value` has already probed), and a
         // field inherited from beyond the immediate prototype.
         if let Some(value) = self.cell_own_field_hit(p, object, site)
+            .or_else(|| self.class_holder_field_hit(p, object, site))
             .or_else(|| self.inherited_field_hit(p, object, site)) {
             return FieldCacheProbe::Hit(value);
         }
@@ -1952,7 +1953,8 @@ impl Vm {
     /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<crate::vm::engine_types::NativeFieldLoad> {
-        if entry.receiver == NO_FIELD_RECEIVER { return None; }
+        // A class key names a live cell and its holder cell by granule, which no shape-guarded plan reads.
+        if entry.receiver == NO_FIELD_RECEIVER || is_class_key(entry.receiver) { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
         if usize::from(entry.slot) >= storage_len { return None; }
@@ -2029,8 +2031,10 @@ impl Vm {
             return false;
         }
         let Some(record_id) = object.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
-            // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
-            return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
+            // A live class cell takes its store by its class key; an object without a record, as a
+            // RegExp's `lastIndex` store reaches, is out of line.
+            return self.primary_class_cell_store_hit::<LOGS>(object, value, site)
+                || (LOGS && self.primary_cell_field_store_hit(object, value, site, layout));
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
@@ -2136,6 +2140,32 @@ impl Vm {
         };
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.slot, value) }
+    }
+
+    /// The store of `value` through the site's primary entry into the field of a live class cell whose class
+    /// key the entry names (`Heap::live_class_key`), in place (`Heap::class_cell_store`). Without `LOGS`, `false`
+    /// also leaves a store the barrier would log, or any store while slot representations are tracked: the
+    /// class cell's store takes no Number-slot conversion (`staged::slot_store::class_word`).
+    #[inline(always)]
+    fn primary_class_cell_store_hit<const LOGS: bool>(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let Some(granule) = self.heap.live_class_cell(object) else {
+            return false;
+        };
+        let cache = self.field_cache_entry(site);
+        if self.heap.live_class_key(object) != Some(cache.receiver) || cache.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        let open = if LOGS {
+            !self.heap.tracks_slot_values()
+        } else {
+            self.heap.store_unlogged(crate::staged::StagedRecordSpace::Class, granule, value)
+        };
+        if !open {
+            return false;
+        }
+        self.heap.class_cell_store(granule, usize::from(cache.slot), value);
+        self.profile.field_cache_hit(0, 0);
+        true
     }
 
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
@@ -2493,6 +2523,37 @@ impl Vm {
         Some((self.receiver_layout_hint(object)?, cache.slot))
     }
 
+    /// The data field a live class cell's held entry names (`class_held_field_hit`): the read a
+    /// class-keyed site answers beside `cell_own_field_hit`.
+    #[inline(always)]
+    pub fn class_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.specialized_operations_enabled(p));
+        let value = self.class_held_field_hit(self.field_cache_entry(site), object)?;
+        self.profile.field_cache_hit(0, 1);
+        Some(value)
+    }
+
+    /// The held field of a class-keyed entry `cache` for the live cell `object`: the receiver's class
+    /// key matches (`Heap::live_class_key`), and the field is the holder cell's at the entry's slot. A
+    /// shape-keyed or own entry is no held read here.
+    #[inline(always)]
+    fn class_held_field_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
+        // A departed holder is an edge: it makes a collection due, and the collection clears the
+        // caches before any later op reads (`drop_departed_holder_entries`), so no holder test here.
+        if !is_class_key(cache.receiver) || cache.holder == NO_FIELD_HOLDER {
+            return None;
+        }
+        if cache.receiver != self.heap.live_class_key(object)? {
+            return None;
+        }
+        Some(self.heap.class_cell_field(cache.holder_cell, usize::from(cache.slot)))
+    }
+
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
     /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
     #[inline(always)]
@@ -2503,6 +2564,10 @@ impl Vm {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
+        if let Some(value) = self.class_held_field_hit(self.field_cache_entry(site), object) {
+            self.profile.field_cache_hit(0, 1);
+            return Some(value);
+        }
         let receiver = self.heap.object(object)?;
         let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver.record_only()?)?;
         self.profile
@@ -3483,6 +3548,7 @@ impl Vm {
         atom: Atom,
         site: usize,
     ) -> Result<Value, JsError> {
+        self.drop_departed_holder_entries();
         // A getter the site's accessor entry answers is the `[[Get]]` result's whole
         // computation: its call with the receiver, without the data walk, which it would fail.
         // A trivial getter's forward is that call's value (getters-as-calls.md).
@@ -3796,18 +3862,35 @@ impl Vm {
         {
             #[cfg(feature = "profile-lane-exits")]
             self.record_field_probe_path(site, atom, 4);
-            if let Some(proto) = self.heap.object(object).map(|object| object.proto()) {
-                self.heap.note_holder_cell(proto);
+            let proto = self.heap.object(object).map(|object| object.proto());
+            match self.heap.live_class_key(object) {
+                // A live cell is keyed by its class, which fixes its prototype link. Its held entry names
+                // the holder cell by granule, so the holder must be a live cell too; a record holder takes
+                // no entry (a class key has no record path to read it by).
+                Some(key) => {
+                    let Some(proto) = proto else { return Some(value) };
+                    let Some(granule) = self.heap.live_class_cell(proto) else { return Some(value) };
+                    self.heap.note_holder_cell(proto);
+                    self.record_field_cache(
+                        site,
+                        FieldCache { receiver: key, holder: holder_shape, slot: slot as u16, holder_cell: granule },
+                    );
+                }
+                None => {
+                    if let Some(proto) = proto {
+                        self.heap.note_holder_cell(proto);
+                    }
+                    self.record_field_cache(
+                        site,
+                        FieldCache {
+                            receiver: receiver.shape(),
+                            holder: holder_shape,
+                            slot: slot as u16,
+                            holder_cell,
+                        },
+                    );
+                }
             }
-            self.record_field_cache(
-                site,
-                FieldCache {
-                    receiver: receiver.shape(),
-                    holder: holder_shape,
-                    slot: slot as u16,
-                    holder_cell,
-                },
-            );
             return Some(value);
         }
         // A shape holds every own name of an ordinary object, every named own property of a

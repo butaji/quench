@@ -15,7 +15,7 @@ use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
 use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
 use crate::value::Value;
-use crate::value_vec::INLINE_PROPERTY_COUNT;
+use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT};
 
 impl Heap {
     /// The granule of `value` when it names a live class cell: one in a cell region whose header
@@ -38,14 +38,17 @@ impl Heap {
     }
 
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
-    /// storage: its class id OR'd with `CLASS_KEY`. A class id names the shape and the prototype link
-    /// (`layouts::intern_class`), so the key fixes the cell's own slots and its holder. `None` for any
+    /// storage and not under a constant mark: its class id OR'd with `CLASS_KEY`. A class id names the
+    /// shape and the prototype link (`layouts::intern_class`), so the key fixes the cell's own slots and
+    /// its holder. A constant-marked class has no key: a store through a key (the staged store, which
+    /// writes the field without `note_cell_write`) would leave the mark standing. A cell that takes the
+    /// mark moves to another class id, so the key of its old class matches nothing. `None` for any
     /// other value, a record, and a departed cell.
     #[inline(always)]
     pub(crate) fn live_class_key(&self, value: Value) -> Option<u32> {
         let granule = self.live_class_cell(value)?;
         let class = header_class(self.class_space.header(granule));
-        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64) == 0).then_some(class | CLASS_KEY)
+        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64 | CONSTANT_FORM as u64) == 0).then_some(class | CLASS_KEY)
     }
 
     /// The field `slot` of the live class cell `value` names (`live_class_cell`), `None` otherwise.
@@ -53,6 +56,13 @@ impl Heap {
     pub(crate) fn live_class_field(&self, value: Value, slot: usize) -> Option<Value> {
         let granule = self.live_class_cell(value)?;
         Some(self.class_space.field(granule, slot))
+    }
+
+    /// The field `slot` of the live class cell at `granule`, a holder cell a class-keyed held entry names
+    /// (`FieldCache::holder_cell`). The caller holds the entry's key, which fixes the holder's identity.
+    #[inline(always)]
+    pub(crate) fn class_cell_field(&self, granule: u32, slot: usize) -> Value {
+        self.class_space.field(granule, slot)
     }
 
     /// The departure edge: the ordinary object `value` names becomes a record, if it is a live class
@@ -92,8 +102,12 @@ impl Heap {
         self.class_space.delete_slack(granule, length);
         self.properties.note_class_departure(shape);
         // A holder cell's departure ends its direct field reads (the holder-cell edge, R4-D1b(d)).
+        // The edge raises the one service word (`request_collection`): the next service point (after
+        // this op, `Vm::serviced`, or a poll) collects, and every collection drains the departure
+        // first (`Vm::drop_departed_holder_entries`), so no read in execution tests it.
         if self.class_space.take_holder_cell(granule) {
             self.class_space.note_holder_departure();
+            self.request_collection();
         }
         Some(record_id)
     }

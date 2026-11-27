@@ -523,7 +523,8 @@ pub(super) fn holder_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Optio
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
     if object.direct_object_index().is_some() {
-        vm.primary_holder_field_hit(code, object, i.c)
+        // A live class cell's held entry is class-keyed, so it reads through the class (`class_holder_field_hit`).
+        vm.primary_holder_field_hit(code, object, i.c).or_else(|| vm.class_holder_field_hit(code, object, i.c))
     } else {
         vm.cell_holder_field_hit(code, object, i.c)
     }

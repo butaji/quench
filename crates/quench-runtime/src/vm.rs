@@ -789,7 +789,9 @@ pub struct FieldCache {
     pub slot: u16,
     /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
     /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
-    /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare.
+    /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare. A
+    /// class-keyed entry (`receiver` is a class key) holds the holder cell's granule instead: its
+    /// held read is the class compare and the cell's field (`Vm::class_held_field_hit`).
     holder_cell: u32,
 }
 

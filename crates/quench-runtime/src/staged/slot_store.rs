@@ -113,17 +113,18 @@ pub(crate) fn held_gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value
     stage.guard(open, miss)
 }
 
-/// The store gate of a gated `value` into object record `id` over the slot's current value `old`: an int over
-/// an int widens no observed slot type, whose join already holds `old` (tracking joins every live value and
-/// every store), so only the barrier's log is asked (`Stage::held_store_gate`); any other store asks the whole
-/// gate (`Stage::store_gate`), which refuses while slot types are tracked.
+/// The store gate of a gated `value` into record `id` of `space` (an object record, or a live class cell's
+/// granule) over the slot's current value `old`: an int over an int widens no observed slot type, whose join
+/// already holds `old` (tracking joins every live value and every store), so only the barrier's log is asked
+/// (`Stage::held_store_gate`); any other store asks the whole gate (`Stage::store_gate`), which refuses while
+/// slot types are tracked.
 #[inline(always)]
-pub(crate) fn int_over_int_gate<S: Stage>(stage: &mut S, (id, old): (S::Word, S::Word), value: S::Word) -> S::Cond {
+pub(crate) fn int_over_int_gate<S: Stage>(stage: &mut S, (space, id, old): (super::StagedRecordSpace, S::Word, S::Word), value: S::Word) -> S::Cond {
     let old_int = super::value::is_int(stage, old);
     let new_int = super::value::is_int(stage, value);
     let same = stage.all(old_int, new_int);
-    let held = stage.held_store_gate(super::StagedRecordSpace::Object, id, value);
-    let whole = stage.store_gate(super::StagedRecordSpace::Object, id, value);
+    let held = stage.held_store_gate(space, id, value);
+    let whole = stage.store_gate(space, id, value);
     stage.pick(same, held, whole)
 }
 
