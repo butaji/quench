@@ -200,6 +200,18 @@ impl Stage for Concrete {
             Table::PropertyValues => self.tables[0],
             // A static's address: no field to load.
             Table::Layouts => crate::heap::layouts::table_base() as u64,
+            Table::SlotAdmits => crate::typed_ir::slot_classes::SLOT_ADMITS.as_ptr() as u64,
+            // The owner tables are the heap's: a stage that reads them is a store's (`storing`).
+            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => {
+                debug_assert!(!self.heap.is_null(), "a slot owner table is read by a stage that holds its heap");
+                // SAFETY: a stage that reads the owner tables holds its live heap (`store_gate`).
+                let [chains, owners, types] = unsafe { (*self.heap).owner_table_bases() };
+                match table {
+                    Table::SlotChains => chains,
+                    Table::ChainOwners => owners,
+                    _ => types,
+                }
+            }
         }
     }
     #[inline(always)]

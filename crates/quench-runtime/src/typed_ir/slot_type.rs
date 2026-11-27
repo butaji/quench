@@ -1,4 +1,5 @@
 //! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
+use super::slot_classes::{CLASS_BOOLEAN, CLASS_DOUBLE, CLASS_INT, CLASS_NULL, CLASS_OBJECT, CLASS_OTHER, CLASS_STRING, CLASS_UNDEFINED, SLOT_ADMITS, SLOT_NUMBER};
 use super::{Representation, Type, TypeKind};
 use crate::{Value, ValueType};
 
@@ -82,24 +83,13 @@ impl SlotType {
 
     /// Whether this representation already holds `value`'s class: `join(of(value)) == self`
     /// with no class computed or joined, so a store into a slot that holds its class pays one
-    /// test, and only a widening store joins (`ValueArena::note_exact_slot_word`).
+    /// test, and only a widening store joins (`ValueArena::note_exact_slot_word`). The classes
+    /// are the staged `value_class`, the masks `SLOT_ADMITS`: a tracked store reads the same
+    /// test from the owner tables.
     #[inline(always)]
     pub(crate) fn admits(self, value: Value) -> bool {
-        match self {
-            Self::Tagged => true,
-            Self::None => false,
-            Self::Int32 => value.as_int().is_some(),
-            Self::Number => value.as_number().is_some(),
-            Self::Null => value.is_null(),
-            Self::Undefined => value.is_undefined(),
-            Self::Nullish => value.is_null() || value.is_undefined(),
-            Self::DirectObject => value.direct_object_index().is_some(),
-            Self::DirectObjectOrNull => value.is_null() || value.direct_object_index().is_some(),
-            Self::DirectObjectOrUndefined => value.is_undefined() || value.direct_object_index().is_some(),
-            Self::DirectObjectOrNullish => value.is_null() || value.is_undefined() || value.direct_object_index().is_some(),
-            Self::String => value.direct_string_index().is_some(),
-            Self::Boolean => value.as_bool().is_some(),
-        }
+        let class = crate::staged::slot_store::value_class(&mut crate::staged::Concrete::new(std::ptr::null()), value.to_bits());
+        (SLOT_ADMITS[self as usize] & (class as u8)) != 0
     }
 
     /// The join of `ty()`s, as a union of value classes (`CLASSES`). Strings, booleans and numbers
@@ -109,12 +99,12 @@ impl SlotType {
         if self == other { return self; }
         let classes = CLASSES[self as usize] | CLASSES[other as usize];
         match classes {
-            STRING => Self::String,
-            BOOLEAN => Self::Boolean,
-            _ if classes & (STRING | BOOLEAN | OTHER) != 0 => Self::Tagged,
-            _ => match (classes & NUMBERS, classes >> 2) {
+            CLASS_STRING => Self::String,
+            CLASS_BOOLEAN => Self::Boolean,
+            _ if classes & (CLASS_STRING | CLASS_BOOLEAN | CLASS_OTHER) != 0 => Self::Tagged,
+            _ => match (classes & (CLASS_INT | CLASS_DOUBLE), classes >> 2) {
                 (0, rest @ 0..=7) => NON_NUMBERS[usize::from(rest)],
-                (INT32, 0) => Self::Int32,
+                (CLASS_INT, 0) => Self::Int32,
                 (_, 0) => Self::Number,
                 _ => Self::Tagged,
             },
@@ -147,17 +137,9 @@ impl SlotType {
 /// Each type's value classes, by discriminant: int32 and other numbers (the low two bits), then
 /// null, undefined and direct objects (the bits `NON_NUMBERS` indexes), then the classes that mix
 /// with nothing: strings, booleans and any other value.
-const INT32: u8 = 1;
-const NUMBERS: u8 = 3;
-const NULL: u8 = 4;
-const UNDEFINED: u8 = 8;
-const DIRECT_OBJECT: u8 = 16;
-const STRING: u8 = 32;
-const BOOLEAN: u8 = 64;
-const OTHER: u8 = 128;
 const CLASSES: [u8; 13] = [
-    0, INT32, NUMBERS, NULL, UNDEFINED, NULL | UNDEFINED, DIRECT_OBJECT, DIRECT_OBJECT | NULL,
-    DIRECT_OBJECT | UNDEFINED, DIRECT_OBJECT | NULL | UNDEFINED, STRING, BOOLEAN, OTHER,
+    0, CLASS_INT, (CLASS_INT | CLASS_DOUBLE), CLASS_NULL, CLASS_UNDEFINED, CLASS_NULL | CLASS_UNDEFINED, CLASS_OBJECT, CLASS_OBJECT | CLASS_NULL,
+    CLASS_OBJECT | CLASS_UNDEFINED, CLASS_OBJECT | CLASS_NULL | CLASS_UNDEFINED, CLASS_STRING, CLASS_BOOLEAN, CLASS_OTHER,
 ];
 /// The type of a union of null (1), undefined (2) and direct objects (4), indexed by it.
 const NON_NUMBERS: [SlotType; 8] = [
@@ -167,6 +149,8 @@ const NON_NUMBERS: [SlotType; 8] = [
 
 const _: () = assert!(std::mem::size_of::<SlotType>() == std::mem::size_of::<u8>());
 const _: () = assert!(CLASSES.len() == SlotType::ALL.len());
+const _: () = assert!(SLOT_ADMITS.len() == SlotType::ALL.len());
+const _: () = assert!(SlotType::Number as u8 == SLOT_NUMBER);
 
 #[cfg(test)]
 mod tests {

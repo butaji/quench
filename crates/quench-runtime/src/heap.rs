@@ -4821,6 +4821,13 @@ impl Heap {
     pub fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
     }
+
+    /// The base addresses of the arena's slot owner tables: `shape_chains`, `chain_owners`,
+    /// `owner_types` (`ValueArena::owner_table_bases`), valid until the arena next grows them.
+    #[inline(always)]
+    pub(crate) fn owner_table_bases(&self) -> [u64; 3] {
+        self.properties.owner_table_bases()
+    }
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
     /// RegExp, Map, Date or any other object without a record) whose exact shape is `shape`:
     /// one owner lookup; `false` leaves any other value to the caller unchanged.

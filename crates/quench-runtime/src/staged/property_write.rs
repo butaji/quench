@@ -8,7 +8,7 @@ use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, Proper
 use super::store::{admit_named, own_store, own_store_proved, own_store_raw, slot_holds, uncallable};
 use super::Stage;
 use crate::bytecode::{FieldBase, Register};
-use crate::typed_ir::Type;
+use crate::typed_ir::{Representation, Type};
 
 /// A stored value: its tagged word (`None` where no arm needs it before the VM's completion,
 /// which reads it from the register), its type, and its binary64 word where the frame holds one.
@@ -102,8 +102,17 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             let base = base.map_or(FieldBase::THIS, FieldBase::register);
             let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
             let tagged = source.tagged(stage, frame);
-            if frame.field_store_hinted(stage, at.1, atom, site, tagged, (id, slot), narrow).is_none() {
-                vm_store(stage, frame, join, at, (atom, site), (tagged, fact), miss)?;
+            let slow = #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+                if frame.field_store_hinted(stage, at.1, atom, site, tagged, (id, slot), narrow).is_none() {
+                    vm_store(stage, frame, join, at, (atom, site), (tagged, fact), miss)?;
+                }
+                Some(())
+            };
+            if S::SLOT_TABLES && super::slot_store::hinted_arena(id, narrow) {
+                frame.stored(stage, at.0, miss,
+                    #[inline(always)] |stage, frame, miss| hinted_arena_store(stage, frame, at, (id, slot), tagged, miss), slow)?;
+            } else {
+                slow(stage, frame, miss)?;
             }
             return Some(source.answer());
         }
@@ -143,6 +152,22 @@ fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (ow
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     let record_id = stage.and_imm(object, u64::from(u32::MAX));
     own_store(stage, at.record, record_id, id, true, slot, value, miss)
+}
+
+/// The tracked store of `value` into `object`'s arena-form record through the hint `(id, slot)`,
+/// which `hinted_arena` admits: the method cache's admission, the receiver's record, its payload
+/// once the layout compare, the slot owner's held type and the barrier's log admit the store
+/// (`held_payload`), then the arena's slot. Nothing
+/// takes effect before a guard, so a refusal leaves to the frame's VM store, the host path's store.
+#[inline(always)]
+fn hinted_arena_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    frame.store_admitted(stage, miss)?;
+    let at = frame.receiver_record(stage, owner, object, false, miss)?;
+    let record_id = stage.and_imm(object, u64::from(u32::MAX));
+    let payload = super::slot_store::held_payload(stage, at.record, record_id, (id, slot), value, miss)?;
+    super::slot_store::store_flat(stage, payload, slot, (value, Representation::Tagged));
+    Some(())
 }
 
 /// The VM's completion of the store of `value`: its own-field hit, through the bound slot

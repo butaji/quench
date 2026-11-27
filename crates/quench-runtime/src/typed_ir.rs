@@ -16,6 +16,7 @@ pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
 pub use representation::Representation;
 mod slot_type;
 pub use slot_type::SlotType;
+pub(crate) mod slot_classes;
 #[allow(unused_imports)]
 pub use int_range::{IntRange, WIDENING_ROUNDS};
 

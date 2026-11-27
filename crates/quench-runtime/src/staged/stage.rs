@@ -299,6 +299,10 @@ pub trait Stage: crate::projection::Sealed {
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;
+    /// Whether the stage reads the arena's slot owner tables (`Table::SlotChains` to
+    /// `Table::SlotAdmits`), so a tracked store runs in place; a stage without them stores
+    /// through the frame's VM call, which is the same store.
+    const SLOT_TABLES: bool = true;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
@@ -384,6 +388,16 @@ pub enum Table {
     /// The object layout table (`heap::layouts`): a record's header words at its layout id
     /// times eight. Entries never change once written.
     Layouts,
+    /// The arena's chain start per shape (`ValueArena::shape_chains`), a `u32` each. Changes
+    /// as shapes are made, so a read of it is never hoisted.
+    SlotChains,
+    /// The owner of each chain slot (`ValueArena::chain_owners`), a `u32` each.
+    ChainOwners,
+    /// The representation each owner holds (`ValueArena::owner_types`), one `SlotType` byte each.
+    OwnerTypes,
+    /// The value classes each `SlotType` admits (`typed_ir::slot_classes::SLOT_ADMITS`), one byte each. A
+    /// static of the runtime, as `Layouts` is.
+    SlotAdmits,
 }
 
 

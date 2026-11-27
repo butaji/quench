@@ -104,7 +104,13 @@ pub(crate) mod typed_ir {
     pub(crate) use super::lattice::{Type, TypeKind, language_bit};
     pub(crate) use super::representation::Representation;
     pub(crate) use super::binding::{BindingTime, Division, Proof};
+    pub(crate) use super::slot_classes;
 }
+
+/// The value classes a tracked store tests and the masks slot types admit them by, unchanged from the runtime.
+#[path = "../../quench-runtime/src/typed_ir/slot_classes.rs"]
+#[allow(dead_code)] // the rows reach the masks through the slot tables alone
+pub(crate) mod slot_classes;
 
 /// The runtime's Number conversions (ToInt32 and its kin), which a row folds into a constant operand.
 #[path = "../../quench-runtime/src/value/number_conversion.rs"]
@@ -128,12 +134,18 @@ pub(crate) mod value {
     }
 }
 
+/// The constant-mark bit of an object's auxiliary word, unchanged from the runtime.
+#[path = "../../quench-runtime/src/value_vec/aux_form.rs"]
+#[allow(dead_code)] // the rows test the mark through the layout's id
+pub(crate) mod aux_form;
+
 /// ToInt32 and the clamp the staged rows convert by (`units.rs`).
 #[path = "units.rs"]
 pub(crate) mod units;
 
 pub(crate) mod value_vec {
     pub(crate) use crate::layout::INLINE_PROPERTIES as INLINE_PROPERTY_COUNT;
+    pub(crate) use super::aux_form::CONSTANT_FORM;
     /// What the shared rows' interpreter-side readers ask of an arena word; no stencil row calls it.
     pub(crate) const fn decode_staged_word(word: u64) -> super::Value {
         super::Value::from_bits(word)
@@ -154,7 +166,7 @@ pub(crate) mod heap {
     /// The object layout table (`heap::layouts`) at its fixed address (`LAYOUT_TABLE_BASE`).
     pub(crate) mod layouts {
         /// Distinct headers the table holds (`heap::layouts::LAYOUT_CAPACITY`).
-        const LAYOUT_CAPACITY: usize = 1 << 22;
+        pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
         /// `heap::layouts::word`: the header word of the interned layout `id`.
         #[inline(always)]
         pub(crate) fn word(id: u32) -> u64 {
