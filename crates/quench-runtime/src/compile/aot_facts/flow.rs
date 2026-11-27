@@ -49,9 +49,40 @@ pub(super) struct FunctionFlow {
     pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
+    pub(super) registers: RegisterCells,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
+}
+
+/// The cells a function's registers hold at every point, kept compactly: each reachable block's cells at
+/// entry, and each instruction's register writes with the cells written. The cell of a register before
+/// the instruction at `pc` is its last write earlier in `pc`'s block, else its cell at the block's entry.
+#[derive(Default)]
+pub struct RegisterCells {
+    /// By block, its first PC and its registers' cells at entry, in PC order; a block no path reaches is absent.
+    entries: Vec<(u32, Box<[crate::typed_ir::Cell]>)>,
+    /// By PC, in order, the registers the instruction there writes, with their cells after it.
+    writes: Vec<(u32, Box<[(u16, crate::typed_ir::Cell)]>)>,
+}
+
+impl RegisterCells {
+    /// The cell `register` holds just before the instruction at `pc`: none where no path reaches `pc`.
+    pub fn at(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
+        let block = self.entries.partition_point(|(start, _)| *start <= pc).checked_sub(1)?;
+        let (start, entry) = &self.entries[block];
+        let from = self.writes.partition_point(|(at, _)| *at < *start);
+        let to = self.writes.partition_point(|(at, _)| *at < pc);
+        let written = self.writes[from..to].iter().rev()
+            .find_map(|(_, cells)| cells.iter().find(|(written, _)| *written == register).map(|(_, cell)| *cell));
+        written.or_else(|| entry.get(usize::from(register)).copied())
+    }
+
+    /// The cells of every register at the entry of the block that starts at `pc`, where one does.
+    pub fn entry(&self, pc: u32) -> Option<&[crate::typed_ir::Cell]> {
+        self.entries.binary_search_by_key(&pc, |(start, _)| *start).ok().map(|index| &*self.entries[index].1)
+    }
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -82,9 +113,12 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut record = Record::new(ctx.registers);
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
+            record.registers.entries.push((blocks.ranges[block].start as u32, state.iter().map(|word| word.cell).collect()));
             solver.replay(block, state, &mut record);
         }
     }
+    record.registers.entries.sort_by_key(|(start, _)| *start);
+    record.registers.writes.sort_by_key(|(pc, _)| *pc);
     let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
     record.finish(arity)
 }
@@ -154,6 +188,8 @@ impl Solver<'_> {
             record.observe(self.ctx, instruction, pc, &state);
             let events = step(self.ctx, pc, instruction, &mut state);
             record.commit(instruction, &state, events);
+            let written: Box<[_]> = instruction.written_registers().map(|register| (u16::from(register), state[usize::from(register)].cell)).collect();
+            if !written.is_empty() { record.registers.writes.push((pc as u32, written)); }
         }
     }
 }
@@ -171,6 +207,7 @@ struct Record {
     /// Per register, whether a read saw a value that is not a Number.
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    registers: RegisterCells,
 }
 
 impl Record {
@@ -185,6 +222,7 @@ impl Record {
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
+            registers: RegisterCells::default(),
         }
     }
 
@@ -258,6 +296,7 @@ impl Record {
             numbers,
             prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,
+            registers: self.registers,
             arity,
         }
     }

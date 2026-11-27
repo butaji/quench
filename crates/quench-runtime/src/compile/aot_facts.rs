@@ -33,6 +33,7 @@ use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
+pub use flow::RegisterCells;
 
 /// The facts of one program, solved in `world`.
 pub struct AotFacts {
@@ -67,6 +68,9 @@ pub struct AotFacts {
     /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
     /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
     pub(crate) access_classes: BTreeMap<(u32, u32), crate::typed_ir::Classes>,
+    /// Per function, the cells its registers hold at every point of the settled solve (`flow::RegisterCells`):
+    /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
+    pub(crate) registers: BTreeMap<u32, flow::RegisterCells>,
 }
 
 impl AotFacts {
@@ -170,6 +174,19 @@ impl<'a> FunctionFacts<'a> {
         self.access_classes(pc).single().map(|(class, _)| class)
     }
 
+    /// The cell register `register` holds just before the instruction at `pc` in the settled solve
+    /// (`RegisterCells::at`): its type with its range, the classes of its objects and what its arrays keep.
+    /// None where the solve did not settle or no path reaches `pc`. A tier lowers the instruction from it:
+    /// a guard the cell decides is never built.
+    pub fn cell_at(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
+        self.facts.registers.get(&self.function)?.at(pc, register)
+    }
+
+    /// The cells of every register at the entry of the block starting at `pc` (`RegisterCells::entry`).
+    pub fn block_entry(&self, pc: u32) -> Option<&'a [crate::typed_ir::Cell]> {
+        self.facts.registers.get(&self.function)?.entry(pc)
+    }
+
     /// The classes of the objects the named field access at `pc` reads or stores, or of the receiver the call at
     /// `pc` passes (`AotFacts::access_classes`): a closed union a class switch dispatches on, a guess.
     pub fn access_classes(&self, pc: u32) -> crate::typed_ir::Classes {
@@ -270,8 +287,9 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
     if settled {
-        for (id, flow) in analyze_typed(&resolved, Some(&found)).iter().enumerate() {
+        for (id, mut flow) in analyze_typed(&resolved, Some(&found)).into_iter().enumerate() {
             let id = id as u32;
+            facts.registers.insert(id, std::mem::take(&mut flow.registers));
             for (&pc, &classes) in &flow.field_owners {
                 if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }
