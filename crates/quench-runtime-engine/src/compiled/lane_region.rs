@@ -4050,8 +4050,8 @@ impl Lowering<'_, '_> {
         };
         let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
         let loaded = self.receiver_layout(state, site.receiver, missed);
-        // The class's vector: entry `class` of the table at `class * size_of::<usize>()` past its base.
-        let base = self.raw_const(Lane::I64, quench_runtime::tier_surface::layouts::class_methods_base() as u64 as i64);
+        // The class's vector: entry `class` of the table at `class * size_of::<usize>()` past its base (`Symbol::ClassMethods`).
+        let base = crate::symbol_words::symbol_address(&mut self.builder, RelocKind::ClassMethods as u32, 0);
         let offset = self.raw_binary_imm(Binary::Mul, loaded, std::mem::size_of::<usize>() as i64);
         let entry = self.raw_binary(Binary::Add, base, offset);
         let vector = self.raw_load(Lane::I64, record_flags, entry, 0);

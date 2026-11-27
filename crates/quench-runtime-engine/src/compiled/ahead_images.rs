@@ -337,10 +337,9 @@ fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
             let plan = plans.get(&site.pc);
             let class = plan.and_then(|plan| plan.arms.iter().find(|arm| arm.function == site.callee)).and_then(|arm| arm.class);
             let recipe = class.and_then(|class| aot_image::class_recipe::class_recipe(facts, class, symbols));
-            // The class's layout and its method vector, both keyed by the recipe the instances build (the loader fills them).
-            let layout = recipe.clone().map(|recipe| symbols.class_layout(recipe))
+            // The class's layout, keyed by the recipe the instances build.
+            let layout = recipe.map(|recipe| symbols.class_layout(recipe))
                 .and_then(|symbol| match symbol { Symbol::ClassLayout(key) => Some(key), _ => None });
-            if let Some(recipe) = recipe.clone() { symbols.class_methods(recipe); }
             // The method's selector: the index of its record in each class's method vector.
             let selector = plan.and_then(|plan| plan.method).map(|atom| symbols.selector(atom));
             let closed = plan.is_some_and(|plan| matches!(plan.miss, quench_runtime::compile::call_plan::Miss::None));

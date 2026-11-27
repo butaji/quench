@@ -263,11 +263,20 @@ impl EmitFrame<'_> {
     /// leaving at `miss`.
     fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
         let word = std::mem::size_of::<Value>() as u64;
-        let registers = callee.registers()?;
         let top = self.values_top(stage);
         let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_end));
-        // The next window's context words follow the callee's registers (`lane_values::CONTEXT`).
-        let next = stage.add_imm(top, (u64::from(registers) + quench_runtime::vm::register_file::FRAME_CONTEXT as u64) * word);
+        // The next window's context words follow the callee's registers (`lane_values::CONTEXT`), which an indirect callee's
+        // record holds at run time.
+        let context = quench_runtime::vm::register_file::FRAME_CONTEXT as u64;
+        let next = match callee.registers() {
+            Some(registers) => stage.add_imm(top, (u64::from(registers) + context) * word),
+            None => {
+                let registers = self.record_of(stage, callee, std::mem::offset_of!(CallRecord, registers))?;
+                let bytes = stage.mul_imm(registers, word);
+                let at = stage.add(top, bytes);
+                stage.add_imm(at, context * word)
+            }
+        };
         let recovery = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, recovery)));
         let recovered_values = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, values)));
         let bytes = stage.mul_imm(recovered_values, word);
@@ -289,7 +298,6 @@ impl EmitFrame<'_> {
     /// The link (`native_frames::link_header`) fills the call record, caller base, argc and side record.
     fn push_native(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, this: ir::Value, caller_registers: ir::Value, room: Room<ir::Value>) -> Option<()> {
         use quench_runtime::staged::{frame::CONTEXT_THIS, protocol};
-        let function = callee.function()?;
         let window = room.top;
         let at = Region::Frame.mutable();
         // The words the callee's identity fixes are constants (its function's packed word); the words the binding
@@ -309,7 +317,17 @@ impl EmitFrame<'_> {
             ),
         };
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
-        let packed = stage.constant(u64::from(function) | quench_runtime::staged::frame::PLAIN_FLAG | quench_runtime::staged::frame::NATIVE_FLAG);
+        let flags = quench_runtime::staged::frame::PLAIN_FLAG | quench_runtime::staged::frame::NATIVE_FLAG;
+        // A proven callee's packed word is its function's constant; an indirect callee's record holds its function's
+        // packed word, whose function bits are the callee's, so the header takes those bits and the flags.
+        let packed = match callee.function() {
+            Some(function) => stage.constant(u64::from(function) | flags),
+            None => {
+                let word = self.record_of(stage, callee, std::mem::offset_of!(CallRecord, packed))?;
+                let function = stage.and_imm(word, u64::from(u32::MAX));
+                stage.or_imm(function, flags)
+            }
+        };
         // Unlike the b-jit call row, which writes the receiver only where the body's `uses_this` cell word says it
         // reads `this`, this writes it always: loading that word here would add a load and a branch to the
         // emitted header, and an unread receiver word is harmless.
@@ -354,8 +372,8 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.proven_arguments.set(false);
         self.rebinds.set(false);
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
-        // A callee whose window the plan cannot name (`DirectSite::registers`) is entered by the helper.
-        let Some(registers) = callee.registers() else { return CallEntry::Helper };
+        // An indirect callee's window is read at run time (`call_registers_dynamic`), so the plan's is unused for it.
+        let registers = callee.registers().unwrap_or(0);
         self.proven_arguments.set(self.arguments_proven(site, callee));
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
         let (identity, sloppy) = match callee {
@@ -379,7 +397,12 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
                 if !matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_)) { return CallEntry::Helper; }
                 (Identity::Guarded(crate::aot_image::unbound_callee()), proven.sloppy.then(crate::aot_image::unbound_callee))
             }
-            DirectSite::Indirect(_) => return CallEntry::Helper,
+            // An indirect callee's identity is its record's, which the closed-set guard checked: the register's identity is
+            // guarded again here as a proven callee's is, and its sloppiness and window are its record's at run time.
+            DirectSite::Indirect(_) => {
+                if !matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_)) { return CallEntry::Helper; }
+                (Identity::Guarded(crate::aot_image::unbound_callee()), None)
+            }
         };
         let plan = DirectPlan { kind, identity, sloppy, registers, returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
@@ -404,6 +427,22 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         let helper = self.helpers.target(&mut stage.builder, LaneHelper::ConstructReceiver);
         Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor]))
+    }
+
+    /// An indirect callee's window is its record's words, read at run time.
+    fn call_registers_dynamic(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        match self.call_site()?.callee? {
+            callee @ DirectSite::Indirect(_) => self.record_of(stage, callee, std::mem::offset_of!(CallRecord, registers)),
+            DirectSite::Owned(_) | DirectSite::Proven(_) => None,
+        }
+    }
+
+    /// An indirect callee's sloppiness is its record's word, read at run time.
+    fn call_sloppy_dynamic(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
+        match self.call_site()?.callee? {
+            callee @ DirectSite::Indirect(_) => self.record_of(stage, callee, std::mem::offset_of!(CallRecord, sloppy)),
+            DirectSite::Owned(_) | DirectSite::Proven(_) => None,
+        }
     }
 
     fn call_room(&mut self, stage: &mut Emit<'_, '_>, miss: ir::Block) -> Option<Room<ir::Value>> {
