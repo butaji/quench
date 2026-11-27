@@ -318,16 +318,18 @@ impl FieldStores {
 /// header pushed or its leaf entered: the callee's registers and first record, the context already
 /// switched to them.
 pub(crate) type CallActivation =
-    unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> (Registers, Ip);
+    unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> Resumed;
 
 /// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
 /// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
-/// and whether its receiver is its function's `undefined` register (`script_call_miss`'s `PLAIN`).
+/// whether its receiver is its function's `undefined` register (`script_call_miss`'s `PLAIN`), and
+/// whether it returns its callee's completion (`protocol_misses::script_call::RETURNS`).
 #[derive(Clone, Copy)]
 pub(crate) struct CallForm {
     leaf: LeafForm,
     argc: u16,
     plain: bool,
+    returns: bool,
 }
 
 /// The call record a call row runs (`protocol_row`), erased of its host so the frame names no `H`:
@@ -3794,14 +3796,14 @@ pub(crate) const fn call_form(miss: u16) -> Option<CallForm> {
     use super::protocol_misses::script_call as code;
     let parameters = protocol_family::parameters(miss);
     match protocol_family::of(miss) {
-        protocol_family::SCRIPT_CALL if parameters & !code::PLAIN <= code::ARGC_ANY => {
-            let argc = parameters & !code::PLAIN;
+        protocol_family::SCRIPT_CALL if parameters & !(code::PLAIN | code::RETURNS) <= code::ARGC_ANY => {
+            let argc = parameters & !(code::PLAIN | code::RETURNS);
             let argc = if argc == code::ARGC_ANY { ANY_ARGC } else { argc as u16 };
-            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0 })
+            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
         }
         protocol_family::LEAF_CALL => match super::protocol_misses::leaf_call::leaf_of(parameters) {
             Some((leaf, argc)) if leaf >= PLAIN_LEAF && leaf <= THIS_LEAF && argc <= FIXED_ARGUMENT_COPIES =>
-                Some(CallForm { leaf, argc, plain: false }),
+                Some(CallForm { leaf, argc, plain: false, returns: false }),
             _ => None,
         },
         _ => None,
@@ -3843,8 +3845,9 @@ const fn call_activation(miss: u16) -> CallActivation {
 /// The plain activation of `target` past the lane frame's admission of the call record `record` at
 /// `ip` (`CallActivation`): the proved arm of `lane_plain_activation!` from its window on, its
 /// window filled from the record's (`fill_window_in_lane`) and its header pushed straight below it at
-/// the admitted `depth` (`enter_plain_window`). `ARGC` is the record's argument count
-/// (`call_argument_count`).
+/// the admitted `depth` (`enter_plain_window`). A call that does not return its completion first runs
+/// an entry cell's body (`enter_cell_body_in_lane`), as the proved arm does; a declined body re-reads
+/// the depth, which it may have moved. `ARGC` is the record's argument count (`call_argument_count`).
 ///
 /// # Safety
 /// `context` is the running lane's context and `record` the call record at `ip` of the caller's
@@ -3853,7 +3856,7 @@ const fn call_activation(miss: u16) -> CallActivation {
 /// unpublished entry cell (its proof), and `this` the receiver it binds.
 #[inline(always)]
 unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers, ip: Ip, record: *const LaneInstruction,
-    target: *const ScriptCallTarget, depth: usize, this: Value) -> (Registers, Ip) {
+    target: *const ScriptCallTarget, depth: usize, this: Value) -> Resumed {
     let cx = context.cast::<LaneContext>();
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
@@ -3863,8 +3866,20 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    let mut depth = depth;
+    // A callee whose entry cell holds a body that pays its entry runs it before any activation exists;
+    // a returning call's completion is its caller's, which no body runs before.
+    if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 && unsafe { (*target.view).enters_cell_body() } {
+        if let Some(resumed) = super::enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
+            return resumed;
+        }
+        // A declined body may have made the plain activations records: the push writes over the depth it left.
+        depth = vm.lane_stack.plain.depth.get();
+        if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
+    }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this);
+    Resumed::At(registers, base, Carried::script(cx))
 }
 
 /// The leaf call of `target` of form `LEAF` past the lane frame's admission of the call record
@@ -3876,9 +3891,10 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
 /// values.
 #[inline(always)]
 unsafe fn leaf_call_activation<const LEAF: u8, const ARGC: u16>(context: *mut (), r: Registers, ip: Ip,
-    record: *const LaneInstruction, target: *const ScriptCallTarget, _depth: usize, this: Value) -> (Registers, Ip) {
+    record: *const LaneInstruction, target: *const ScriptCallTarget, _depth: usize, this: Value) -> Resumed {
     // SAFETY: the function's contract.
-    unsafe { super::leaf_calls::lane_run_leaf::<LEAF, ARGC>(context.cast(), r, ip, &*record, &*target, this) }
+    let (registers, base) = unsafe { super::leaf_calls::lane_run_leaf::<LEAF, ARGC>(context.cast(), r, ip, &*record, &*target, this) };
+    Resumed::At(registers, base, Carried::script(context.cast()))
 }
 
 /// The frame a call row of `MISS` steps over (`protocol_row`): the register file and the carried view,
@@ -3915,7 +3931,7 @@ pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &
     let vm = unsafe { vm(cx) };
     let mut frame = LaneFrame::<ACC_NONE>::new(r, Carried::script(cx));
     frame.call = Some(LaneCall { context: cx.cast(), stack: &raw const *vm.lane_stack, globals: &raw const vm.realm.globals,
-        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false }, target: std::cell::Cell::new(target),
+        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
         depth: 0, activate, base });
     frame
 }

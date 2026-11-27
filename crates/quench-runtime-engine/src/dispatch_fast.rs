@@ -8970,8 +8970,10 @@ impl Vm {
             for function in 0..residual.functions.len() as u32 {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
+                let proper_tail_calls = self.host.proper_tail_calls();
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false, self.programs.tiers())
+                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
+                        proper_tail_calls, self.programs.tiers())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -9283,58 +9285,48 @@ const fn call_row<const MISS: u16>() -> Handler {
     protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, MISS>()
 }
 
-/// The protocol row of a `Call` record whose argument count is `argc` (`ANY_ARGC` past four),
-/// not `PLAIN` (`protocol_misses::script_call`).
-const fn script_call_row(argc: u16) -> Handler {
+/// The protocol row of a `Call` record whose argument count is `argc` (`ANY_ARGC` past four), `PLAIN`
+/// where its receiver is `undefined` and `RETURNS` where it returns its callee's completion
+/// (`protocol_misses::script_call`).
+const fn script_call_row(argc: u16, plain: bool, returns: bool) -> Handler {
     use protocol_misses::script_call as code;
-    match argc {
-        0 => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_0 as u16 }>(),
-        1 => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_1 as u16 }>(),
-        2 => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_2 as u16 }>(),
-        3 => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_3 as u16 }>(),
-        4 => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_4 as u16 }>(),
-        _ => call_row::<{ protocol_family::SCRIPT_CALL | code::ARGC_ANY as u16 }>(),
-    }
-}
-
-/// `script_call_row` of a record whose receiver is its function's `undefined` register, `PLAIN`.
-const fn plain_script_call_row(argc: u16) -> Handler {
-    use protocol_misses::script_call as code;
-    match argc {
-        0 => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_0 as u16 }>(),
-        1 => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_1 as u16 }>(),
-        2 => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_2 as u16 }>(),
-        3 => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_3 as u16 }>(),
-        4 => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_4 as u16 }>(),
-        _ => call_row::<{ protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_ANY as u16 }>(),
-    }
-}
-
-/// The protocol row of a call record whose immediate is `imm`: that of its argument count where
-/// the copy of its window is one fixed move (`FIXED_ARGUMENT_COPIES`), else the general one.
-fn script_call_handler(imm: u32) -> Handler {
-    script_call_handler_of::<false>(imm)
-}
-
-/// `script_call_handler` of a record whose receiver is its function's `undefined` register
-/// where `PLAIN`.
-fn script_call_handler_of<const PLAIN: bool>(imm: u32) -> Handler {
-    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    let argc = ImmediateLayout::argument_count(imm);
-    if PLAIN { plain_script_call_row(argc) } else { script_call_row(argc) }
-}
-
-/// Gives each call record the protocol row of its argument count, and of a receiver that is the
-/// function's `undefined` register (`undefined`).
-fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>) {
-    let general = script_call_row(ANY_ARGC) as *const ();
-    for record in records.iter_mut().filter(|record| record.handler == general) {
-        let handler = if undefined.is_some_and(|register| u16::from(register) == record.c) {
-            script_call_handler_of::<true>(record.imm())
-        } else {
-            script_call_handler(record.imm())
+    macro_rules! by_argc {
+        ($parameters:expr) => {
+            match argc {
+                0 => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_0 as u16 }>(),
+                1 => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_1 as u16 }>(),
+                2 => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_2 as u16 }>(),
+                3 => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_3 as u16 }>(),
+                4 => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_4 as u16 }>(),
+                _ => call_row::<{ protocol_family::SCRIPT_CALL | $parameters | code::ARGC_ANY as u16 }>(),
+            }
         };
-        record.handler = handler as *const ();
+    }
+    match (plain, returns) {
+        (false, false) => by_argc!(0),
+        (true, false) => by_argc!(code::PLAIN as u16),
+        (false, true) => by_argc!(code::RETURNS as u16),
+        (true, true) => by_argc!((code::PLAIN | code::RETURNS) as u16),
+    }
+}
+
+/// The general protocol row of a call record whose immediate is `imm`: that of its argument count, not
+/// `PLAIN` nor `RETURNS`, which the record's requickened form takes (`specialize_script_calls`).
+fn script_call_handler(imm: u32) -> Handler {
+    script_call_row(ImmediateLayout::argument_count(imm), false, false)
+}
+
+/// Gives each call record the protocol row of its argument count, of a receiver that is the function's
+/// `undefined` register (`undefined`), and, where `admits_returns` (`concrete_admits_returning_call` for
+/// the host and the function), of a returning record (`RETURN_REGISTER`), whose completion the row admits.
+fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool) {
+    let general = script_call_row(ANY_ARGC, false, false) as *const ();
+    for record in records.iter_mut().filter(|record| record.handler == general) {
+        let plain = undefined.is_some_and(|register| u16::from(register) == record.c);
+        let returns = admits_returns && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
+        let argc = ImmediateLayout::argument_count(record.imm());
+        const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
+        record.handler = script_call_row(argc, plain, returns) as *const ();
     }
 }
 
@@ -13674,7 +13666,6 @@ fn enter_plain_window(
     this: Value,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::protocol::{push_plain_at, PlainHeader};
-    callee_registers.set_this(this);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the running lane's context.
     let (caller_base, program) = unsafe { ((*cx).base, (*cx).program) };
@@ -13697,8 +13688,10 @@ fn enter_plain_window(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    callee_registers.set_env(target.env);
-    callee_registers.set_capture(target.capture);
+    quench_runtime::staged::call_keeping::enter_context(
+        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
+        this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
+    );
     // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
     // tier's diagnostics count entries: then this cold branch does, so they observe the same path.
     if vm.programs.js_jit_diagnostics_enabled() { count_proved_entry_in_lane(vm, target); }
@@ -16226,7 +16219,7 @@ const fn other_handler(opcode: Op) -> Option<Handler> {
         _ if quench_runtime::staged::element_read_family(opcode) => Some(protocol_row!(ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }) as Handler),
         _ if quench_runtime::staged::element_write_family(opcode) => Some(protocol_row!(ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }) as Handler),
         _ if quench_runtime::staged::known_call_family(opcode) => Some(known_call_handler()),
-        _ if quench_runtime::staged::call_family(opcode) => Some(script_call_row(ANY_ARGC)),
+        _ if quench_runtime::staged::call_family(opcode) => Some(script_call_row(ANY_ARGC, false, false)),
         _ if quench_runtime::staged::call_array_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::CALL_ARRAY as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }) as Handler),
         _ if quench_runtime::staged::call_spread_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::CALL_SPREAD as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }) as Handler),
         _ if quench_runtime::staged::delete_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::DELETE_ROW as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }) as Handler),
@@ -16762,9 +16755,12 @@ fn derive_lane_view<'live>(
     sites: &[quench_runtime::bytecode::FieldSite],
     plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
+    proper_tail_calls: bool,
     tiers: &'static Tiers,
 ) -> LaneView {
     let loop_tier = plan.loop_sites;
+    // A returning call is admitted by its function and host (`returning_call_admitted`), both fixed here.
+    let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(proper_tail_calls, function.strict);
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free
@@ -17055,7 +17051,7 @@ fn derive_lane_view<'live>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_constant_returns(&mut records);
-        specialize_script_calls(&mut records, function.undefined_register);
+        specialize_script_calls(&mut records, function.undefined_register, admits_returns);
         specialize_proved_arrays(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
@@ -18327,7 +18323,7 @@ impl Vm {
         live: &dyn Fn() -> Option<&'a std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>, sites: &[quench_runtime::bytecode::FieldSite], image: bool) -> LaneView {
         let mut view = derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites,
             crate::compiled::admission::record_plan(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
-            self.programs.reports_on_drop(), self.programs.tiers());
+            self.programs.reports_on_drop(), self.host.proper_tail_calls(), self.programs.tiers());
         // Where an image's bodies are the only code, the lane takes on every record they leave at.
         if image && !self.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
         view

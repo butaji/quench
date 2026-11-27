@@ -203,13 +203,13 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         if site.receiver == Receiver::Base {
             return getter_entry(call, site);
         }
-        // The form the proved calls make: a callee and a receiver register and a window, a
-        // result defined, not returned (a returning call's admission is the run's,
-        // `returning_call_admitted`, which the miss arm makes).
+        // The form the proved calls make: a callee and a receiver register and a window. A returning
+        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // where `returning_call_admitted` holds for the function); a forwarding call is never.
         let (Callee::Register(_), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
         };
-        if site.returns || site.forwards {
+        if site.returns != call.form.returns || site.forwards {
             return quench_runtime::staged::CallEntry::Helper;
         }
         // SAFETY: the running lane's stack, which nothing below changes.
@@ -298,10 +298,9 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.
-        let (registers, start) = unsafe {
+        let resumed = unsafe {
             (call.activate)(call.context, self.registers, call.ip, call.record, call.target.get(), call.depth, Value::from_bits(this))
         };
-        // The callee's view is the caller's script view: the same context, no accumulator.
-        Some(LaneControl::Resumed(Resumed::At(registers, start, Carried { acc: Slot::unset(), ..self.view })))
+        Some(LaneControl::Resumed(resumed))
     }
 }
