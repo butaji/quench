@@ -71,7 +71,8 @@ fn element_runs_guest_code(facts: &FunctionFacts<'_>, instruction: WideInstructi
 /// The register an element access reads its key from: a `GetIndex`'s third operand, or an element operation's key.
 fn element_key(instruction: WideInstruction) -> Option<Register> {
     match Operation::<u64, ()>::of(instruction) {
-        Some(Operation::ElementRead { key, .. } | Operation::ElementWrite { key, .. }) => Some(key),
+        Some(Operation::ElementRead { key, .. }) => key.register_index(),
+        Some(Operation::ElementWrite { key, .. }) => Some(key),
         _ => (instruction.op() == crate::bytecode::Op::GetIndex).then(|| instruction.register_c()),
     }
 }
@@ -92,8 +93,12 @@ pub(in crate::compile::aot_facts) fn advance(ctx: &Ctx<'_>, facts: &FunctionFact
         Some(Operation::ElementWrite { base, key, .. }) if lengths.relations.contains(&Relation::Filled { array: base, index: key }) => Some((base, key)),
         _ => None,
     };
+    // The step's graded effects (`site_effects`) say whether it may run guest code, which may write any field.
+    let calls_js = facts.site_effects(pc as u32).may_call_js;
     let events = run(words);
     lengths.write(ctx, instruction, words, &events, resize, stored_below);
+    lengths.clobber_loads(&events, calls_js);
+    lengths.record_load(instruction, calls_js);
     if let Some((array, index)) = filled_store {
         lengths.insert(Relation::FilledThrough { array, index });
     }

@@ -31,10 +31,22 @@ pub(in crate::compile::aot_facts) enum Relation {
     AtLeast { index: Register, bound: Register },
     /// `array` holds elements `[0, length)`, all written: a fill loop ran to the length of `array` (`Length`).
     Complete { array: Register },
+    /// `dest` holds the value `base` holds under the field `key` (an atom), read where no guest code runs. It holds until a
+    /// store of the name (`Lengths::clobber_loads`), or a write of `dest` or `base` (`names`): the same field read again is the
+    /// same value, which is what makes a loop's bound the length the loop's array was allocated with.
+    Loaded { dest: Register, base: Register, key: u32 },
+    /// `first` and `second` hold the same value. Two loads of one field from one base, both holding, read the same value. `first`
+    /// is the lower register, so a pair has one relation whichever way it was recorded.
+    Equal { first: Register, second: Register },
 }
 
 impl Relation {
-    /// Whether the relation names `register`, as its length, sum, index, array or bound.
+    /// The relation that `a` and `b` hold the same value, in the canonical order (`Equal`).
+    pub(super) fn equal(a: Register, b: Register) -> Self {
+        Self::Equal { first: a.min(b), second: a.max(b) }
+    }
+
+    /// Whether the relation names `register`, as its length, sum, index, array, bound, load or equal value.
     pub(super) fn names(self, register: Register) -> bool {
         match self {
             Self::Length { length, array } => length == register || array == register,
@@ -45,6 +57,8 @@ impl Relation {
             Self::Filled { array, index } | Self::FilledThrough { array, index } => array == register || index == register,
             Self::AtLeast { index, bound } => index == register || bound == register,
             Self::Complete { array } => array == register,
+            Self::Loaded { dest, base, .. } => dest == register || base == register,
+            Self::Equal { first, second } => first == register || second == register,
         }
     }
 
@@ -84,10 +98,22 @@ impl Relation {
             Self::FilledThrough { array, index } => Self::FilledThrough { array: swap(array), index: swap(index) },
             Self::AtLeast { index, bound } => Self::AtLeast { index: swap(index), bound: swap(bound) },
             Self::Complete { array } => Self::Complete { array: swap(array) },
+            Self::Loaded { dest, base, key } => Self::Loaded { dest: swap(dest), base: swap(base), key },
+            Self::Equal { first, second } => Self::equal(swap(first), swap(second)),
         })
     }
 }
 
+/// Whether `a` and `b` hold one value under `relations`: the same register, or two registers `Equal` names.
+pub(super) fn same(relations: &[Relation], a: Register, b: Register) -> bool {
+    a == b || relations.contains(&Relation::equal(a, b))
+}
+
+/// Whether `relations` hold the length of `array` as `length`, or as a register holding the same value (`same`).
+fn measures(relations: &[Relation], length: Register, array: Register) -> bool {
+    relations.iter().any(|relation| matches!(*relation, Relation::Length { length: held, array: held_array }
+        if held_array == array && same(relations, held, length)))
+}
 
 /// Whether `relations` prove `index + offset < length(array)`.
 pub(in crate::compile::aot_facts) fn proves_below(relations: &[Relation], index: Register, array: Register, offset: i64) -> bool {
@@ -100,10 +126,11 @@ pub(in crate::compile::aot_facts) fn proves_below(relations: &[Relation], index:
 fn below(relations: &[Relation], index: Register, array: Register, offset: i64, depth: usize) -> bool {
     relations.iter().any(|relation| match *relation {
         Relation::Within { index: held, array: held_array, reach } => held == index && held_array == array && reach > offset,
-        Relation::Length { length, array: held_array } => length == index && held_array == array && offset < 0,
+        Relation::Length { length: held, array: held_array } => same(relations, held, index) && held_array == array && offset < 0,
         Relation::Sum { sum, index: base, offset: by } => sum == index && depth > 0 && below(relations, base, array, by + offset, depth - 1),
         Relation::Less { index: held, bound } => held == index && depth > 0 && below(relations, bound, array, offset - 1, depth - 1),
-        Relation::Twice { .. } | Relation::Filled { .. } | Relation::FilledThrough { .. } | Relation::AtLeast { .. } | Relation::Complete { .. } => false,
+        Relation::Twice { .. } | Relation::Filled { .. } | Relation::FilledThrough { .. } | Relation::AtLeast { .. } | Relation::Complete { .. }
+        | Relation::Loaded { .. } | Relation::Equal { .. } => false,
     })
 }
 
@@ -112,7 +139,7 @@ fn below(relations: &[Relation], index: Register, array: Register, offset: i64, 
 /// loop that ran `index` to `bound` with the array's length as the bound has written every element.
 pub(super) fn complete_arrays(relations: &[Relation], index: Register, bound: Register) -> Vec<Register> {
     relations.iter().filter_map(|relation| match *relation {
-        Relation::Filled { array, index: filled } if filled == index && relations.contains(&Relation::Length { length: bound, array }) => Some(array),
+        Relation::Filled { array, index: filled } if filled == index && measures(relations, bound, array) => Some(array),
         _ => None,
     }).collect()
 }
@@ -121,8 +148,8 @@ pub(super) fn complete_arrays(relations: &[Relation], index: Register, bound: Re
 /// shortfall), and a register with a `Within` (`bound + reach <= length`) is at most `reach` short of it. The smallest shortfall is kept.
 pub(super) fn bound_of(relations: &[Relation], bound: Register) -> Option<(Register, i64)> {
     relations.iter().filter_map(|relation| match *relation {
-        Relation::Length { length, array } if length == bound => Some((array, 0)),
-        Relation::Within { index, array, reach } if index == bound => Some((array, reach)),
+        Relation::Length { length, array } if same(relations, length, bound) => Some((array, 0)),
+        Relation::Within { index, array, reach } if same(relations, index, bound) => Some((array, reach)),
         _ => None,
     }).min_by_key(|&(_, reach)| reach)
 }

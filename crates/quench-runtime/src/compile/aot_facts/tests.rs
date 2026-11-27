@@ -751,3 +751,27 @@ fn a_fill_loop_that_stops_short_of_the_length_keeps_the_holes() {
     let f = function_named(&program, "f") as u32;
     assert!(!facts.function_facts(f).return_cell().ty.is_subtype(Type::NUMBER), "the last element is never written, so a read may find a hole");
 }
+
+#[test]
+fn a_loop_bounded_by_the_field_the_array_was_allocated_with_is_below_its_length() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); for (var i = 0; i < this.t; i++) { a[i] = 0; } return a[1]; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`this.t` loaded again is the length `new Array(this.t)` made, at {pc}");
+    }
+}
+
+#[test]
+fn a_store_to_the_field_between_the_allocation_and_the_loop_retires_the_bound() {
+    let program = program("function C() { this.t = 3; } C.prototype.f = function f() { var a = new Array(this.t); this.t = 5; for (var i = 0; i < this.t; i++) { a[i] = 0; } return 0; } new C().f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "the store to `this.t` kills the load the allocation read, so the store at {pc} is not proven");
+    }
+}

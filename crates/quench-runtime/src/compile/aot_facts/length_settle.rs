@@ -68,7 +68,12 @@ impl Settled {
         if fill.is_some() {
             self.hole_free_stores.insert(pc);
         }
-        if instruction.op() == crate::bytecode::Op::GetIndex && proves_below(relations, instruction.register_c(), instruction.register_b(), 0) {
+        // An element read the relations prove within its array's length, a `GetIndex` or an element read of the operation row.
+        let read = match Operation::<u64, ()>::of(instruction) {
+            Some(Operation::ElementRead { base, key, .. }) => key.register_index().map(|key| (base, key)),
+            _ => (instruction.op() == crate::bytecode::Op::GetIndex).then(|| (instruction.register_b(), instruction.register_c())),
+        };
+        if read.is_some_and(|(base, key)| proves_below(relations, key, base, 0)) {
             self.in_bounds_reads.insert(pc);
         }
         let length_read = matches!(instruction.op().class(), Class::GetField)

@@ -207,7 +207,8 @@ impl Lengths {
             | Relation::FilledThrough { array, .. } | Relation::Complete { array } => {
                 words.get(usize::from(array)).is_some_and(|word| is_string(word) || !(every || resize.touches(word)))
             }
-            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. } => true,
+            Relation::Sum { .. } | Relation::Less { .. } | Relation::Twice { .. } | Relation::AtLeast { .. }
+            | Relation::Loaded { .. } | Relation::Equal { .. } => true,
         });
         if !self.define(ctx, instruction, words) {
             for register in instruction.written_registers() {
@@ -215,5 +216,40 @@ impl Lengths {
             }
         }
         self.read_length(ctx, instruction, words);
+    }
+
+    /// Retires the field loads (`Relation::Loaded`) a step may change: a load of `key` from any base, at a write of the name
+    /// (`Key::Member`, `MemberOn`, `MemberAny` of `key`), at a write through a key the analysis cannot name, a shape change, or
+    /// a step that may run guest code (`calls_js`: a call or an accessor may write any field). `Equal` names registers, not
+    /// fields, so a store leaves it.
+    fn clobber_loads(&mut self, events: &Events, calls_js: bool) {
+        let wild = calls_js || events.wild_member || events.wild_owner || events.shape.is_some();
+        let names = |written: &Key, key: u32| matches!(*written, Key::Member(atom) | Key::MemberAny(atom) | Key::MemberOn { atom, .. } if atom == key);
+        self.relations.retain(|relation| match *relation {
+            Relation::Loaded { key, .. } => !wild && !events.writes.iter().any(|(written, _)| names(written, key)),
+            _ => true,
+        });
+    }
+
+    /// Records the field read `dest = base.key` (`read_length`'s field, any name) where it runs no guest code (`calls_js` false):
+    /// `dest` holds `base`'s `key` (`Relation::Loaded`), and every other load of `key` from `base` that holds equals it (`Equal`).
+    /// A read into `base` itself holds no load, since the base is gone once it is written.
+    fn record_load(&mut self, instruction: WideInstruction, calls_js: bool) {
+        if calls_js || instruction.result_flags() != 0 || !matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
+            return;
+        }
+        let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return };
+        let (dest, Some(base)) = (instruction.result_register(), base.register_index()) else { return };
+        if dest == base {
+            return;
+        }
+        let earlier: Vec<Register> = self.relations.iter().filter_map(|relation| match *relation {
+            Relation::Loaded { dest: held, base: held_base, key } if held_base == base && key == atom => Some(held),
+            _ => None,
+        }).collect();
+        self.insert(Relation::Loaded { dest, base, key: atom });
+        for held in earlier {
+            self.insert(Relation::equal(held, dest));
+        }
     }
 }

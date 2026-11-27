@@ -331,6 +331,10 @@ fn value_of(
         // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
         Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
             state[usize::from(source)],
+        // An element read of the operation row, as the indexed `GetIndex` reads its element (`element_read`), so the previous
+        // round's in-bounds proof reaches it too.
+        Some(Operation::ElementRead { base, key, .. }) =>
+            Word::of_cell(element_read(ctx, pc, &before, settled(ctx, state[usize::from(base)]), typing::operand_cell(&before, key))),
         _ => operation.as_ref().and_then(|operation| typing::value(operation, &before)).map_or(Word::UNKNOWN, Word::of_cell),
     }
 }
@@ -339,10 +343,7 @@ fn value_of(
 /// may hold a hole or the index is not within its length, unless the previous round proved the read in bounds
 /// (`in_bounds_reads`), which settles the index within the length.
 fn element_read(ctx: &Ctx<'_>, pc: usize, before: &Before<'_, '_>, base: Cell, index: Cell) -> Cell {
-    let Some(unnamed) = before.unnamed_elements() else { return Cell::ANY };
-    let elements = base.elements.join(unnamed);
-    let in_bounds = ctx.in_bounds_reads.contains(&(ctx.id, pc as u32)) || typing::within_length(elements.length, index.ty);
-    elements.element(in_bounds)
+    typing::element(before, base, index, ctx.in_bounds_reads.contains(&(ctx.id, pc as u32)))
 }
 
 /// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).
