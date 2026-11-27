@@ -373,29 +373,6 @@ pub(crate) fn derive_lane_view<'live>(
             .map(|acc| (backward, acc))
         })
     };
-    // Runs of vector instructions execute as one record each (`vector_region`): placed
-    // before the fusions below, which then leave each region's first record alone. Only a
-    // body with SIMD operators derives the liveness they read.
-    let vectors = wasm
-        && decoded.iter().any(|instruction| quench_runtime::staged::wasm_simd(instruction.op()) || quench_runtime::staged::wasm_simd_shuffle(instruction.op()));
-    let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
-        Some(live) => vector_region::vector_regions(
-            &decoded,
-            constants,
-            heap,
-            memory_register,
-            live,
-            &entries,
-            &exits,
-            &produced,
-        ),
-        None => Vec::new(),
-    }
-    .into_boxed_slice();
-    for region in &vector_regions {
-        records[region.first()].handler = vector_region::region_handler() as *const ();
-        records[region.first()].operand = LaneOperand { region };
-    }
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -467,8 +444,8 @@ pub(crate) fn derive_lane_view<'live>(
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
     // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
-    // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
+    // A loop kernel writes its registers from its own code, under no kind.
+    let int_kinds = (!wasm && loop_kernels.is_empty())
         .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
             resolves_names, plan.speculates))
         .flatten();
@@ -590,7 +567,6 @@ pub(crate) fn derive_lane_view<'live>(
         returns_from_entry,
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
-        vector_regions,
         _loop_kernels: loop_kernels.into_iter().map(|kernel| kernel as Box<dyn std::any::Any>).collect(),
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {

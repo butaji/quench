@@ -29,12 +29,10 @@ use crate::staged::record_heads::CallContextHead;
 use crate::heap::TableWords;
 use super::dispatch_frame::PendingGeneralCall;
 use crate::typed_ir::Type;
-use crate::wasm::simd::SimdKernel;
 use crate::code_dependencies::Invalidation;
 use crate::staged::js_step_head::JsStepHead;
 use quench_bjit::call_record::CallRecord;
 use super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-use crate::wasm::integer::I32BinaryOperator;
 use super::lane_values::LaneValues;
 use super::lane_activations::LaneActivations;
 use super::activation::FrameRecord;
@@ -308,10 +306,6 @@ pub struct LaneView {
     /// it closes: a leave finds its loop by a binary search over the few loops, where a table
     /// over every instruction cost 4 bytes per instruction of every view.
     pub loop_at_backedge: Box<[(u32, u32)]>,
-    /// The vector regions whose first records point into them (`vector_region`): only
-    /// those records read them.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub vector_regions: Box<[VectorRegion]>,
     /// The loop kernels whose test records name them (`loop_kernel`).
     pub _loop_kernels: Box<[Box<dyn std::any::Any>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
@@ -1295,25 +1289,6 @@ pub struct Records {
     pub first: Ip,
 }
 
-/// A run of records one record executes (`vector_region_row`).
-pub struct VectorRegion {
-    /// The run's first record.
-    pub first: usize,
-    pub steps: Box<[Step]>,
-    /// The staged operations the run's `Step::Row`s run.
-    pub rows: Box<[Row]>,
-    pub spills: Box<[u16]>,
-    /// The records the run covers; the record after them continues.
-    pub records: usize,
-    pub end: Leave,
-    /// The register the record after the run reads as its carried accumulator, which its
-    /// producer, the run's last record, wrote; `NO_ACCUMULATOR` for none.
-    pub acc: u16,
-    /// The i32 comparison jump after the run when it closes a loop the run begins: the run
-    /// then takes the back edge itself, its bank kept across iterations.
-    pub looping: Option<RegionLoop>,
-}
-
 /// A b-jit body's row entries in its code, as the cell publishes them: its row entry (`rows`), its proven-arguments
 /// row entry (`proven`, past the Number guards `numbers` names) and whether it reads `this` from its context header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1903,18 +1878,6 @@ pub enum RegionDecline {
     Stub,
 }
 
-/// A loop a region runs itself (`VectorRegion::looping`): its closing jump's comparison of
-/// register `left` and `right`, and the bank registers boxed before leaving from a repeated
-/// iteration, where registers the first iteration had not yet entered may be newer in the
-/// bank than in their slots.
-#[derive(Clone, Copy)]
-pub struct RegionLoop {
-    pub comparison: I32BinaryOperator,
-    pub left: u16,
-    pub right: I32Right,
-    pub carried: Leave,
-}
-
 /// A forwarding constructor whose activation a construction skipped
 /// (`forwarded_construction_in_lane`): what its frame holds when activations become frames,
 /// pending at its forwarding call.
@@ -2074,38 +2037,6 @@ pub struct Block {
     pub offset: u32,
 }
 
-/// One step of a run: the entry of a register into the bank, a record's staged row, or the
-/// computation of a record no staged row answers. A step that may leave names its record (`at`,
-/// from the run's first) and the registers boxed first.
-#[derive(Clone, Copy)]
-pub enum Step {
-    Unbox { register: u16, at: u32, leave: Leave },
-    /// The staged row `rows[op]` of the record `at`.
-    Row { op: u32, at: u32, leave: Leave },
-    /// A SIMD operator with an i32 result, which no staged row answers: its kernel's bits.
-    Lanes { kernel: &'static SimdKernel, lane: u8, a: u16, b: Place, c: Option<Place> },
-    /// A whole-vector copy of a bank register, which no staged row answers.
-    VectorMove { a: u16, b: u16 },
-    /// A constant written to its register's slot where a slot read or liveness needs it.
-    Constant { a: u16, value: Value },
-    /// A v128 constant, which no staged row answers.
-    VectorConstant { a: u16, bits: u128 },
-    /// A v128 load of the memory in `address`, which no staged row answers.
-    Load { a: u16, address: u16, at: u32, leave: Leave },
-    /// A v128 store to the memory in `address`, which no staged row answers.
-    Store { value: u16, address: u16, at: u32, leave: Leave },
-}
-
-/// A record's staged operation, decoded once when the region is built (`Operation::decode`).
-pub type Row = crate::staged::Operation<u64, ()>;
-
-/// The registers boxed where the run leaves its record: a range of `VectorRegion::spills`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Leave {
-    pub start: u32,
-    pub end: u32,
-}
-
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
 /// The array is the register's value at entry, or, with `field`, the value of that cached
@@ -2208,13 +2139,6 @@ pub enum ForOfTest {
     Threaded,
 }
 
-/// The right operand of an i32 comparison: a register or an immediate.
-#[derive(Clone, Copy, Debug)]
-pub enum I32Right {
-    Register(u16),
-    Immediate(i32),
-}
-
 
 #[derive(Clone, Copy)]
 pub struct IdentityBranch {
@@ -2262,13 +2186,6 @@ pub enum MemoLeaf {
 
 
 
-
-/// A scalar or vector operand of a lane operator.
-#[derive(Clone, Copy, Debug)]
-pub enum Place {
-    Bank(u16),
-    I32(u16),
-}
 
 #[derive(Clone, Copy, Default)]
 pub struct ReferenceCallSiteCounts {
@@ -2778,8 +2695,6 @@ pub union LaneOperand {
     pub call: CallOperand,
     pub jump: isize,
     pub constant: Value,
-    /// The first record of a vector region: the region, which the view owns.
-    pub region: *const VectorRegion,
 }
 
 /// A field of a plan that takes a fresh object of `constructor`, constructed from the
