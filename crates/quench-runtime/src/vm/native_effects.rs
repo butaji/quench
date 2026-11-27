@@ -19,6 +19,9 @@ pub(super) struct NativeEffects {
     pub(super) constructs: bool,
     /// Resolves or chains a promise, so reads a value's `then`.
     pub(super) resolves: bool,
+    /// Reads the clock or the random source (a build-time input, `clock::note_input`): the input
+    /// edge captures the caller chain at its entry (`Vm::capture_input_native`).
+    pub(super) reads_input: bool,
 }
 
 /// The effects of `native`. Each fact is its own list: a native may have several.
@@ -106,6 +109,7 @@ pub(super) fn native_effects(native: Native) -> NativeEffects {
             Native::PromiseAllKeyed | Native::PromiseRace | Native::PromiseAllSettled |
             Native::PromiseAllSettledKeyed | Native::PromiseAny | Native::PromiseAggregateJob
         ),
+        reads_input: matches!(native, Native::Date | Native::DateNow | Native::MathRandom),
         resolves: matches!(
             native,
             Native::AsyncIteratorSelf | Native::AsyncGeneratorNext | Native::AsyncGeneratorReturn |

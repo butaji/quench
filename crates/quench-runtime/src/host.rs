@@ -635,17 +635,17 @@ impl<'a> HostContext<'a> {
         match capability {
             CapabilityId::WriteLine => {
                 // Output past the host's streams, which a build-time evaluation cannot keep.
-                crate::clock::note_input("the host's direct output");
+                crate::clock::note_input();
                 self.host.write_line(text.unwrap_or_default());
                 0.0
             }
             CapabilityId::WriteErr => {
-                crate::clock::note_input("the host's direct output");
+                crate::clock::note_input();
                 self.host.write_err(text.unwrap_or_default());
                 0.0
             }
             CapabilityId::ClockMillis => {
-                crate::clock::note_input("the clock");
+                crate::clock::note_input();
                 self.host.clock_millis()
             }
             CapabilityId::Done => {

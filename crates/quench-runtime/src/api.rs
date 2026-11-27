@@ -325,8 +325,15 @@ impl<H: Host> Runtime<H> {
     /// Collects a closed world's realm down to what `program` and `roots` reach (C5 D3), after
     /// `install_native_at_rest` and before the state is dumped. The entry is the image's whole
     /// program: a core build has no units (`compile_closed`).
-    pub fn collect_closed_world(&mut self, program: &crate::ResidualProgram, roots: crate::RealmRoots<'_>) -> Result<(), JsError> {
-        self.vm.collect_for_image(program, &[], roots)
+    pub fn collect_closed_world(&mut self, program: &crate::ResidualProgram, roots: crate::RealmRoots<'_>, resume: Option<&crate::vm::activation::FrameRecord>) -> Result<(), JsError> {
+        self.vm.collect_for_image(program, &[], roots, resume)
+    }
+
+    /// Resumes a build's input chain (C5 D1c): the captured frames run again, and the parked native
+    /// call at their top is performed through the ordinary call path, delivering its result to the
+    /// top frame (`Vm::resume_chain`).
+    pub fn resume_input_chain(&mut self, chain: Box<crate::vm::activation::FrameRecord>) -> Result<(), JsError> {
+        self.vm.resume_chain(chain)
     }
 
     /// The running runtime as a snapshot, where nothing runs and nothing waits but host
