@@ -2711,17 +2711,33 @@ impl Lowering<'_, '_> {
         self.proven_result(pc, self.unit.instructions[pc].result_register())
     }
 
+    /// The origin function, its PC and the local register of unit register `register` at `unit_pc`, as the solve
+    /// names them: the caller's own register, or an inlined callee's at its own. None where the instruction is no
+    /// origin's, or the register is not the callee's.
+    fn origin_local(&self, unit_pc: usize, register: Register) -> Option<(u32, u32, Register)> {
+        match self.unit.origins.get(unit_pc)? {
+            super::lane_unit::Origin::Caller(pc) => Some((self.function_id, *pc, register)),
+            super::lane_unit::Origin::Inlined { frame, pc } => {
+                let frame = &self.unit.frames[*frame];
+                Some((frame.target.function, *pc, register.checked_sub(frame.base)?))
+            }
+        }
+    }
+
+    /// Whether index register `index` is non-negative and below the length of `array` before the unit instruction at
+    /// `unit_pc`, as the solve proves it (`FunctionFacts::below_length` with the index's solved range): an access
+    /// `array[index]` there needs no bounds test. A string receiver is its own length's array.
+    pub(crate) fn proven_below_length(&self, unit_pc: usize, index: Register, array: Register) -> bool {
+        let Some(facts) = self.vm.facts else { return false };
+        let (Some((function, pc, index_local)), Some((_, _, array_local))) =
+            (self.origin_local(unit_pc, index), self.origin_local(unit_pc, array)) else { return false };
+        let non_negative = self.cell_before(unit_pc, index).ty.int_range().is_some_and(|range| range.min >= 0);
+        non_negative && facts.function_facts(function).below_length(pc, index_local, array_local)
+    }
+
     fn solved_cell(&self, unit_pc: usize, register: Register, after: bool) -> quench_runtime::typed_ir::Cell {
         let Some(facts) = self.vm.facts else { return quench_runtime::typed_ir::Cell::ANY };
-        let (function, pc, local) = match self.unit.origins.get(unit_pc) {
-            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc, Some(register)),
-            Some(super::lane_unit::Origin::Inlined { frame, pc }) => {
-                let frame = &self.unit.frames[*frame];
-                (frame.target.function, *pc, register.checked_sub(frame.base))
-            }
-            None => return quench_runtime::typed_ir::Cell::ANY,
-        };
-        let Some(local) = local else { return quench_runtime::typed_ir::Cell::ANY };
+        let Some((function, pc, local)) = self.origin_local(unit_pc, register) else { return quench_runtime::typed_ir::Cell::ANY };
         let function = facts.function_facts(function);
         let cell = if after { function.cell_after(pc, local) } else { function.cell_at(pc, local) };
         cell.unwrap_or(quench_runtime::typed_ir::Cell::ANY)

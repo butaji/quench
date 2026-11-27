@@ -90,7 +90,7 @@ impl IntRanges {
     }
 
     /// Whether the string read at `pc` (a `charCodeAt` call or a `base[index]` of a string) has an
-    /// index below its string's length, so its row takes no bounds test (`Point::string_index_proven`).
+    /// index below its string's length, so its row takes no bounds test (`Lowering::proven_below_length`).
     pub(crate) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
@@ -198,12 +198,13 @@ impl Lowering<'_, '_> {
         pc: usize, point: &Point) {
         let instruction = instructions[pc];
         if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
-        match point.index_proof(model, pc, instruction) {
+        let below = |index: Register, array: Register| self.proven_below_length(pc, index, array);
+        match point.index_proof(model, pc, instruction, &below) {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
             proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
         }
         if let Some((receiver, index)) = self.string_read(pc, instruction)
-            && point.int_range(index).is_some_and(|range| range.min >= 0) && point.string_index_proven(receiver, index) {
+            && self.proven_below_length(pc, index, receiver) {
             proved.string_bounds.insert(pc);
         } else {
             proved.string_bounds.remove(pc);
