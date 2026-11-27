@@ -445,9 +445,8 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
 
 /// A loop over a typed array runs as a b-jit region whose element and `length` rows read the typed view its entry
 /// recorded (`LoopEntry::push_array`), one row per element kind; the stores convert as the interpreter's do (the clamp,
-/// ToInt32, the binary32 rounding). Each loop carries two recurrences, which the interpreter's kernel would interpret
-/// per iteration, so the loop is b-jit's and not the kernel's. The functions that index a typed parameter
-/// have no body (it would leave at its first element), so nothing leaves.
+/// ToInt32, the binary32 rounding). The functions that index a typed parameter have no body (it would leave at
+/// its first element), so nothing leaves.
 #[test]
 fn a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves() {
     for kind in ["Float64Array", "Int32Array", "Uint8ClampedArray", "Float32Array", "Int8Array"] {

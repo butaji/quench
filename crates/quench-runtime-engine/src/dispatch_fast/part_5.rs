@@ -452,14 +452,6 @@ pub(crate) fn derive_lane_view<'live>(
         specialize_script_calls(&mut records, function.undefined_register, admits_returns);
         specialize_proved_arrays(&decoded, &mut records);
     }
-    // Loop kernels take their test records last, keeping each record's final handler.
-    // Every mode runs them: a loop a kernel takes keeps no tier site (`loop_sites`), since the
-    // compiled tiers project the interpreter's fastest form of the loop, its kernel.
-    let loop_kernels = if !wasm {
-        loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records, live().map(|masks| &**masks))
-    } else {
-        Box::default()
-    };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
@@ -467,8 +459,8 @@ pub(crate) fn derive_lane_view<'live>(
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
     // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
-    // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
+    // A vector region writes its registers from its own code, under no kind.
+    let int_kinds = (!wasm && vector_regions.is_empty())
         .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
             resolves_names, plan.speculates))
         .flatten();
@@ -591,7 +583,6 @@ pub(crate) fn derive_lane_view<'live>(
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
-        _loop_kernels: loop_kernels.into_iter().map(|kernel| kernel as Box<dyn std::any::Any>).collect(),
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -765,9 +756,6 @@ pub(super) fn install_loop_sites<'live>(
         })
         .collect();
     let mut sites = sites;
-    // The tiers run a loop the interpreter's kernel takes slower than the kernel does (`Recurrence::beats_rows`): in
-    // every mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    sites.retain(|(pc, site)| !loop_kernel::LoopKernel::beats_rows(decoded, constants, function, (site.header as usize, *pc), live().map(|masks| &**masks)));
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
         // The header names its site by the distance to the site's jump (`header_site_in_lane`).

@@ -68,7 +68,6 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         loops: Box::new([]),
         loop_at_backedge: Box::new([]),
         vector_regions: Box::new([]),
-        _loop_kernels: Box::new([]),
         start: std::cell::Cell::new(base),
         prologue: std::cell::UnsafeCell::new(Records::blank()),
         tier_direct: std::cell::Cell::new(None),

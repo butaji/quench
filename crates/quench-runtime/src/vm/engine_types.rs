@@ -312,8 +312,6 @@ pub struct LaneView {
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
     pub vector_regions: Box<[VectorRegion]>,
-    /// The loop kernels whose test records name them (`loop_kernel`).
-    pub _loop_kernels: Box<[Box<dyn std::any::Any>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     pub start: std::cell::Cell<Ip>,

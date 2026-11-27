@@ -179,7 +179,7 @@ def jump_target(text):
     return int(match.group(1)) if match else None
 
 
-LOOP_UPDATE = re.compile(r'_loop(<|$)|loop_kernel')
+LOOP_UPDATE = re.compile(r'_loop(<|$)')
 TEST_JUMP = re.compile(r'_jump(<|$)')
 
 

@@ -5142,8 +5142,6 @@ inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/lane_frames.rs::L
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/lane_roots.rs::Vm::context_for_start 54
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/leaf_calls.rs::cross_leaf_call_in_lane 53
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/leaf_calls.rs::lane_enter_leaf 43
-inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/loop_kernel/recur.rs::Fold::fold 56
-inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/loop_kernel/typed.rs::store 44
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/native_calls.rs::builtin_row_value 42
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/native_calls.rs::in_place_row_value 44
 inline_always_lines crates/quench-runtime/src/vm/dispatch_fast/unary_values.rs::unary_value 43
