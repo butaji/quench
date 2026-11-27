@@ -52,7 +52,7 @@ pub(super) struct ParallelMark<'a> {
 /// that table's order: the view field `$view` holds `$elem`'s records as `$field`'s space
 /// shares them. The struct's other fields and `new` are written here.
 macro_rules! parallel_mark_view {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         /// The heap as workers see it while the mutator is stopped for one parallel round. `Cell`
         /// and records contain `Rc` and other `!Sync` payloads, so workers only borrow them and walk
         /// immutable edges: they may not clone or drop an `Rc`, mutate a cell or record, or retain

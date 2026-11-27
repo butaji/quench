@@ -45,7 +45,7 @@ fn locate(heap: &Heap, value: Value) -> Option<(RecordSpaceId, RecordId)> {
 /// `with_space!`'s arms, one per record family (`for_each_record_space!`): `$body` runs with
 /// `$space` bound to the family's space, shared.
 macro_rules! with_space_arms {
-    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident,)*) => {
         match $family {
             $(RecordSpaceId::$family_id => { let $space = &$heap.$field; $body })*
         }
@@ -54,7 +54,7 @@ macro_rules! with_space_arms {
 
 /// `with_space_mut!`'s arms: as `with_space_arms`, with the space mutable.
 macro_rules! with_space_mut_arms {
-    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident,)*) => {
         match $family {
             $(RecordSpaceId::$family_id => { let $space = &mut $heap.$field; $body })*
         }
@@ -87,20 +87,21 @@ const RC_CASCADE_BATCH: usize = 16;
 const RC_FULL_GROWTH: usize = 4;
 const RC_FULL_FLOOR: usize = 16 * 1024;
 
-/// Runs `$body` once for each record space, mutably, with its value constructor.
+/// Runs `$body` once for each record space, mutably, as `$space`; a record's `Value` is
+/// `$space.value_of(id)`.
 macro_rules! for_each_space_mut {
-    ($heap:expr, |$space:ident, $handle:ident| $body:expr) => {{
-        { let $space = &mut $heap.object_records; let $handle: fn(RecordId) -> Value = Value::direct_object; $body }
-        { let $space = &mut $heap.array_records; let $handle: fn(RecordId) -> Value = Value::direct_array; $body }
-        { let $space = &mut $heap.function_records; let $handle: fn(RecordId) -> Value = Value::direct_function; $body }
-        { let $space = &mut $heap.promise_records; let $handle: fn(RecordId) -> Value = Value::direct_promise; $body }
-        { let $space = &mut $heap.await_records; let $handle: fn(RecordId) -> Value = Value::direct_await; $body }
-        { let $space = &mut $heap.iterator_records; let $handle: fn(RecordId) -> Value = Value::direct_iterator; $body }
-        { let $space = &mut $heap.collection_records; let $handle: fn(RecordId) -> Value = Value::direct_collection; $body }
-        { let $space = &mut $heap.string_records; let $handle: fn(RecordId) -> Value = Value::direct_string; $body }
-        { let $space = &mut $heap.small_strings; let $handle: fn(RecordId) -> Value = small_strings::small_string_value; $body }
-        { let $space = &mut $heap.v128_records; let $handle: fn(RecordId) -> Value = Value::direct_v128; $body }
-        { let $space = &mut $heap.wasm_gc_records; let $handle: fn(RecordId) -> Value = Value::direct_wasm_gc; $body }
+    ($heap:expr, |$space:ident| $body:expr) => {{
+        { let $space = &mut $heap.object_records; $body }
+        { let $space = &mut $heap.array_records; $body }
+        { let $space = &mut $heap.function_records; $body }
+        { let $space = &mut $heap.promise_records; $body }
+        { let $space = &mut $heap.await_records; $body }
+        { let $space = &mut $heap.iterator_records; $body }
+        { let $space = &mut $heap.collection_records; $body }
+        { let $space = &mut $heap.string_records; $body }
+        { let $space = &mut $heap.small_strings; $body }
+        { let $space = &mut $heap.v128_records; $body }
+        { let $space = &mut $heap.wasm_gc_records; $body }
     }};
 }
 
@@ -122,7 +123,7 @@ impl Heap {
             COUNTS_SEEN.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         self.refresh_store_watch();
-        for_each_space_mut!(self, |space, _handle| space.set_rc(on));
+        for_each_space_mut!(self, |space| space.set_rc(on));
         if on {
             self.rc_pin_epoch += 1;
             self.rc_recount();
@@ -141,7 +142,7 @@ impl Heap {
         if values.is_empty() {
             return;
         }
-        for_each_space_mut!(self, |space, _handle| space.rc_ensure());
+        for_each_space_mut!(self, |space| space.rc_ensure());
         for &value in values {
             if let Some((family, id)) = locate(self, value) {
                 with_space!(self, family, |space| space.rc_pin(id));
@@ -220,10 +221,10 @@ impl Heap {
     pub(super) fn rc_pre_mark(&mut self, work: &mut Vec<Value>) {
         let mut decrements: Vec<Value> = Vec::new();
         let mut logged: Vec<Value> = Vec::new();
-        for_each_space_mut!(self, |space, handle| {
+        for_each_space_mut!(self, |space| {
             let (copied, written) = space.take_rc_epoch();
             decrements.extend(copied);
-            logged.extend(written.into_iter().map(handle));
+            logged.extend(written.into_iter().map(|id| space.value_of(id)));
         });
         let started = std::time::Instant::now();
         let mut children = Vec::new();
@@ -341,10 +342,12 @@ impl Heap {
         let counted = std::mem::take(&mut self.rc_counted);
         let mut survivors = Vec::new();
         let mut family = 0..;
-        for_each_space_mut!(self, |space, handle| {
+        for_each_space_mut!(self, |space| {
             space.rc_ensure();
             if family.next().is_some_and(|family| (2..7).contains(&family)) {
-                space.for_each_young_survivor(|id| survivors.push(handle(id)));
+                let mut young = Vec::new();
+                space.for_each_young_survivor(|id| young.push(id));
+                survivors.extend(young.into_iter().map(|id| space.value_of(id)));
             }
         });
         let mut children = Vec::new();
@@ -357,7 +360,11 @@ impl Heap {
         // Every survivor has counted its children now; those left at 0, re-marked candidates
         // among them (aged), are found a word of counts at a time.
         let mut zero = std::mem::take(&mut self.rc_zero);
-        for_each_space_mut!(self, |space, handle| space.rc_zero_survivors(|id| zero.push(handle(id))));
+        for_each_space_mut!(self, |space| {
+            let mut zeroed = Vec::new();
+            space.rc_zero_survivors(|id| zeroed.push(id));
+            zero.extend(zeroed.into_iter().map(|id| space.value_of(id)));
+        });
         self.rc_zero = zero;
     }
 
@@ -368,11 +375,11 @@ impl Heap {
         let mut decrements: Vec<Value> = Vec::new();
         let mut logged: Vec<Value> = Vec::new();
         let mut old = Vec::new();
-        for_each_space_mut!(self, |space, handle| {
+        for_each_space_mut!(self, |space| {
             let (copied, written) = space.take_rc_epoch();
             old.push(space.rc_old_bits(&written));
             decrements.extend(copied);
-            logged.extend(written.into_iter().map(handle));
+            logged.extend(written.into_iter().map(|id| space.value_of(id)));
         });
         let mut children = Vec::new();
         self.rc_increment_children(logged, &mut children);
@@ -394,10 +401,14 @@ impl Heap {
         let mut survivors = Vec::new();
         let mut dead = Vec::new();
         let mut olds = old.iter();
-        for_each_space_mut!(self, |space, handle| {
+        for_each_space_mut!(self, |space| {
             space.rc_ensure();
             if let Some(bits) = olds.next() {
-                space.rc_full_changes(bits, |id, survived| if survived { survivors.push(handle(id)) } else { dead.push(handle(id)) });
+                let mut kept = Vec::new();
+                let mut gone = Vec::new();
+                space.rc_full_changes(bits, |id, survived| if survived { kept.push(id) } else { gone.push(id) });
+                survivors.extend(kept.into_iter().map(|id| space.value_of(id)));
+                dead.extend(gone.into_iter().map(|id| space.value_of(id)));
             }
         });
         let mut children = Vec::new();
@@ -442,9 +453,9 @@ impl Heap {
         }
         let mut reported = 0;
         let mut children = Vec::new();
-        for (family, handle) in self.record_families() {
+        for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
-                let holder = handle(id);
+                let holder = family.value_of(id);
                 if !self.rc_is_old(holder) {
                     return;
                 }
@@ -487,25 +498,25 @@ impl Heap {
     /// Recounts every live record's references from scratch, as counting starts, and
     /// forgets the epoch's buffers.
     pub(super) fn rc_recount(&mut self) {
-        for_each_space_mut!(self, |space, _handle| {
+        for_each_space_mut!(self, |space| {
             space.rc_clear();
             space.take_rc_epoch();
         });
         // Only old (marked) records hold counted references and have counts: young ones are
         // counted when they survive a minor collection.
         let mut children = Vec::new();
-        for (family, handle) in self.record_families() {
+        for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
-                let value = handle(id);
+                let value = family.value_of(id);
                 if self.rc_is_old(value) {
                     self.rc_increment_children([value], &mut children);
                 }
             });
         }
         let mut zero = Vec::new();
-        for (family, handle) in self.record_families() {
+        for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
-                let value = handle(id);
+                let value = family.value_of(id);
                 if self.rc_is_old(value) && self.rc_count_of(value) == Some(0) {
                     zero.push(value);
                 }
@@ -521,9 +532,9 @@ impl Heap {
     pub(super) fn rc_mismatches(&self) -> Vec<(Value, u32, usize)> {
         let mut references: std::collections::HashMap<Value, usize> = std::collections::HashMap::new();
         let mut children = Vec::new();
-        for (family, handle) in self.record_families() {
+        for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
-                self.rc_children(handle(id), &mut children);
+                self.rc_children(family.value_of(id), &mut children);
                 for child in children.drain(..) {
                     if locate(self, child).is_some() {
                         *references.entry(child).or_default() += 1;
@@ -532,9 +543,9 @@ impl Heap {
             });
         }
         let mut mismatches = Vec::new();
-        for (family, handle) in self.record_families() {
+        for family in self.record_families() {
             family.for_each_live_id(&mut |id| {
-                let value = handle(id);
+                let value = family.value_of(id);
                 let (family, id) = locate(self, value).expect("a record");
                 let count = with_space!(self, family, |space| space.rc_exact_count(id));
                 let held = references.get(&value).copied().unwrap_or(0);

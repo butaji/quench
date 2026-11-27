@@ -1005,8 +1005,8 @@ impl Heap {
     }
 
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
-        for (family, handle) in self.record_families() {
-            family.for_each_live_id(&mut |record_id| visit(handle(record_id)));
+        for family in self.record_families() {
+            family.for_each_live_id(&mut |record_id| visit(family.value_of(record_id)));
         }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {

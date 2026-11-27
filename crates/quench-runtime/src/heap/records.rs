@@ -63,9 +63,19 @@ const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
 
+/// The `Value` of a record of one family, named by the family's element type. A family names its
+/// records by id, except the ordinary object, whose `Value` is its stub granule, which its record
+/// holds (`OrdinaryRecord::stub`).
+pub(super) trait RecordValue: Sized {
+    /// The `Value` of record `id` of `space`. The id names a live record of `space` (`RecordFamily::value_of`).
+    fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value;
+}
+
 /// What the collector does to every record family alike, whatever its record type: the
 /// per-collection passes iterate `Heap::record_families` instead of naming each space.
 pub(super) trait RecordFamily {
+    /// The `Value` of record `id`, which must be live in this family (`RecordValue::value_of`).
+    fn value_of(&self, id: RecordId) -> Value;
     /// Every record becomes young: a full collection's starting state.
     fn clear_marks(&mut self);
     /// The records the barrier logged since the last collection; each is unmarked.
@@ -101,7 +111,10 @@ pub(super) trait RecordFamily {
     fn return_free_pages(&mut self);
 }
 
-impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+impl<T: RecordValue, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+    fn value_of(&self, id: RecordId) -> Value {
+        T::value_of(self, id)
+    }
     fn clear_marks(&mut self) {
         RecordSpace::clear_marks(self);
     }
@@ -626,6 +639,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     pub(super) fn cursor_take(&mut self) -> Option<RecordId> {
         let mut stage = crate::staged::Concrete::new(core::ptr::null());
         crate::staged::bump::cursor_take(&mut stage, (&raw mut self.cursor) as u64, ()).map(|id| id as RecordId)
+    }
+
+    /// Whether the cursor's run has an id left, which `cursor_take` would hand out.
+    #[inline(always)]
+    pub(super) fn cursor_open(&self) -> bool {
+        self.cursor.next < self.cursor.limit
     }
 
     /// Claims the rest of the block the high water mark is in as the cursor's run, occupying
