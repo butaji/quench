@@ -16,6 +16,9 @@
 //! write (a shape transition, a prototype change) costs a hash, two loads and a compare in the
 //! common case.
 
+use super::cell::{ProtoLink, header_word};
+use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS};
+use crate::value_vec::{CONSTANT_FORM, SHAPE_LIMIT, SHAPE_MASK};
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
 #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
@@ -161,6 +164,43 @@ pub(crate) fn intern(word: u64) -> u32 {
     intern_slow(word, slot)
 }
 
+/// The class word's flag bits beyond shape and link, in header-word positions: the
+/// auxiliary flags (constant mark, exotic access, dictionary storage) in the low half, the meta
+/// flags (array, non-extensible, frozen) in the high half. `intern_class` takes them as `flags`.
+pub(crate) const CLASS_FLAG_MASK: u64 = (CONSTANT_FORM | EXOTIC_ACCESS | DICTIONARY_STORAGE) as u64
+    | ((OBJECT_ARRAY | NON_EXTENSIBLE | FROZEN) as u64) << u32::BITS;
+
+/// The class id of an ordinary object with prototype link `link`, exact shape `shape` and `flags`
+/// (`CLASS_FLAG_MASK` bits): the interned header word, so equal classes share one id as every
+/// header does. The capacity of a cell is its region's (`class_space::region_capacity`), not a
+/// bit of the class word, so the word has no capacity field.
+pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
+    assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
+    assert!(flags & !CLASS_FLAG_MASK == 0, "class flags outside the class word");
+    assert!(link.bits() & !PROTO_INDEX_BITS == 0, "prototype link outside its field");
+    let meta = link.bits() | (flags >> u32::BITS) as u32;
+    let auxiliary = shape | flags as u32;
+    intern(header_word(meta, auxiliary))
+}
+
+/// The shape of class `id`: the shape bits of its auxiliary word.
+#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
+pub(crate) fn class_shape(id: u32) -> u32 {
+    auxiliary(id) & SHAPE_MASK
+}
+
+/// The prototype link of class `id`: the index bits of its meta word.
+#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
+pub(crate) fn class_link(id: u32) -> ProtoLink {
+    ProtoLink::from_bits((word(id) >> u32::BITS) as u32 & PROTO_INDEX_BITS)
+}
+
+/// The flags of class `id`, in `CLASS_FLAG_MASK` positions.
+#[allow(dead_code)] // R4-C3/C4 consume it; tests below cover it now.
+pub(crate) fn class_flags(id: u32) -> u64 {
+    word(id) & CLASS_FLAG_MASK
+}
+
 #[cold]
 #[inline(never)]
 fn intern_slow(word: u64, slot: usize) -> u32 {
@@ -194,5 +234,25 @@ mod tests {
         assert_eq!(word(b), 0x0fed_cba9_8765_4321);
         let other = std::thread::spawn(|| intern(0x1234_5678_9abc_def0)).join().unwrap();
         assert_eq!(other, a);
+    }
+
+    #[test]
+    fn class_round_trips_shape_link_and_flags() {
+        let link = ProtoLink::from_bits(0x0123_4567 & PROTO_INDEX_BITS);
+        let flags = CONSTANT_FORM as u64 | ((FROZEN | OBJECT_ARRAY) as u64) << u32::BITS;
+        let id = intern_class(1234, link, flags);
+        assert_eq!(class_shape(id), 1234);
+        assert_eq!(class_link(id), link);
+        assert_eq!(class_flags(id), flags);
+        assert_eq!(intern_class(1234, link, flags), id, "interning is stable");
+        assert_ne!(intern_class(1235, link, flags), id, "a shape is part of the class");
+    }
+
+    #[test]
+    fn plain_class_is_the_plain_header_word_of_link_and_shape() {
+        let id = ProtoLink::NULL.class(5);
+        assert_eq!(word(id), header_word(ProtoLink::NULL.bits(), 5));
+        assert_eq!(class_flags(id), 0);
+        assert_eq!(class_shape(id), 5);
     }
 }

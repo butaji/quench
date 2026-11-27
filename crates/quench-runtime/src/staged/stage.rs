@@ -419,8 +419,13 @@ pub enum ImageWord {
     HolderLink,
     /// The value the holder's slot holds at link.
     HolderValue,
-    /// The layout id (`ProtoLink::arena_layout`) of the objects a construction makes, by a field
+    /// The layout id (`ProtoLink::class`) of the objects a construction makes, by a field
     /// guard key: one compare of a record's own word with it proves the exact shape, the plain
     /// arena run and the prototype link (`ic::IcOp::GuardFormed` of an `ic::SYMBOLIC_SHAPE` id).
     Layout,
+    /// The layout id (`ProtoLink::class`) of the instances a shape recipe builds, by the recipe's key in the
+    /// image's shape table, resolved where the image links: the header word those instances carry while their values
+    /// are a plain arena run, or an id no record has where the recipe may stay inline (`symbols::class_layout_id`).
+    /// A lowering names it by the recipe key, `stage.image_word(ImageWord::ClassLayout, key)`.
+    ClassLayout,
 }

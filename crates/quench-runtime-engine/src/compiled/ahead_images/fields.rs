@@ -18,8 +18,8 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::FieldLookup;
-use crate::aot_image::symbols::{GuardAccess, HeapValueRecipe, ShapeRecipe};
-use super::constructions::ADDED_FIELD;
+use crate::aot_image::symbols::{GuardAccess, ShapeRecipe};
+use super::constructions::construction_recipe;
 
 /// The most shape guards one field-cache site's loads take: a family of shapes behind one guard each
 /// (`object_slots::field_load_groups`). A site over the bound keeps no load and asks the VM's caches.
@@ -111,10 +111,8 @@ fn slot_of(fields: &[u32], atom: u32) -> Option<u16> {
 /// name (`GuardAccess::Holder`), both by symbol; the slot is read live, so a method stored again
 /// reads its new value, and a prototype given another layout misses its guard and asks the caches.
 fn holder_load(fields: &[u32], (function, slot, len): (u32, u16, usize), atom: u32, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
-    let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
-    let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
-    let receiver = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
-    let holder = ShapeRecipe { prototype: Some(prototype), constructor: None, fields: Box::new([(atom, 0)]) };
+    let receiver = construction_recipe(function, fields.iter().copied(), symbols)?;
+    let holder = ShapeRecipe { prototype: receiver.prototype, constructor: None, fields: Box::new([(atom, 0)]) };
     let symbolic = quench_runtime::staged::ic::SYMBOLIC_SHAPE;
     let receiver = symbols.guard_shape(receiver, 0, GuardAccess::Inherited).filter(|key| *key < symbolic)?;
     let holder = symbols.guard_shape(holder, slot, GuardAccess::Holder).filter(|key| *key < symbolic)?;
@@ -127,9 +125,7 @@ fn holder_load(fields: &[u32], (function, slot, len): (u32, u16, usize), atom: u
 /// The load of `slot` of the shape a construction of `function` makes, its guard named by symbol:
 /// a read's of any value, a store's of the class of values `access` stores (`GuardAccess::stored`).
 fn own_load((function, slot): (u32, u16), fields: &[u32], access: GuardAccess, symbols: &mut SymbolTable) -> Option<NativeFieldLoad> {
-    let Symbol::HeapValue(prototype) = symbols.heap_value(HeapValueRecipe::PrototypeOf(function)) else { return None };
-    let Symbol::HeapValue(constructor) = symbols.heap_value(HeapValueRecipe::ClosureOf(function)) else { return None };
-    let recipe = ShapeRecipe { prototype: Some(prototype), constructor: Some(constructor), fields: fields.iter().map(|atom| (*atom, ADDED_FIELD)).collect() };
+    let recipe = construction_recipe(function, fields.iter().copied(), symbols)?;
     let key = symbols.guard_shape(recipe, slot, access)?;
     (key < quench_runtime::staged::ic::SYMBOLIC_SHAPE).then_some(NativeFieldLoad {
         shape: quench_runtime::staged::ic::SYMBOLIC_SHAPE | key, holder: None, slot, storage_len: fields.len(), storage: None,

@@ -37,6 +37,8 @@ pub(crate) mod file;
 mod page;
 #[path = "aot_image/demand.rs"]
 pub(crate) mod demand;
+#[path = "aot_image/class_recipe.rs"]
+pub(crate) mod class_recipe;
 
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::compile::aot_facts::AotFacts;

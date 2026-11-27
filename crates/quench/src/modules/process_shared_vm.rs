@@ -1068,6 +1068,8 @@ pub(crate) fn stream_write(
             // Preserve the embedding API's existing text-only sink contract.
             output(&String::from_utf8_lossy(&bytes));
         } else {
+            // Lines the runtime's host wrote earlier sit in its buffer: they go first.
+            quench_runtime::host::flush_stdout();
             let mut stdout = std::io::stdout().lock();
             stdout
                 .write_all(&bytes)

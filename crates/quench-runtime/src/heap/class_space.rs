@@ -124,6 +124,14 @@ pub(super) const fn locate(g: u32) -> (u32, u32) {
     (region, (g & REGION_MASK) >> region)
 }
 
+/// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A
+/// cell's capacity class is its address's region, so no class word records it.
+pub(crate) const fn region_capacity(granule: u32) -> u32 {
+    let (region, _) = locate(granule);
+    assert!((region as usize) < CAPACITY_CLASSES, "granule past the class space");
+    (1 << region) - 1
+}
+
 /// The header word of a live class cell: the class id in the low half, zero above.
 pub(super) const fn live_header(class: u32) -> u64 {
     class as u64
