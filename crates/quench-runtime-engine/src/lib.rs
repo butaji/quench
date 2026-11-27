@@ -227,7 +227,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::osr_loop::receivers::FieldReceiverOps1 as _;
     pub use crate::compiled::wasm_table_ops_stage::CompiledWasmTableOpsStageVm as _;
     pub use crate::dispatch_fast::LaneInstructionOps1 as _;
-    pub use crate::dispatch_fast::LoopSiteOps1 as _;
     pub use crate::dispatch_fast::LoopSiteOps2 as _;
     pub use crate::dispatch_fast::IndirectSlotOps1 as _;
     pub use crate::dispatch_fast::LaneViewOps1 as _;

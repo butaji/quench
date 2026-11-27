@@ -30,38 +30,6 @@ impl LoopTier {
         if let Some(pending) = &self.pending { crate::compiled::pending_osr_ref(&**pending).retire_named_shapes(); }
     }
 
-    /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
-    /// times joins the widened ones and the code goes, where a compilation remains: the next
-    /// entry compiles the loop holding that operation's result as a double.
-    pub(crate) fn left_at(&mut self, tiers: &Tiers, pc: usize, read: bool) {
-        let widened = self.widened.binary_search(&pc).is_ok();
-        if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= tiers.loops.max_compilations { return; }
-        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
-        self.leaves[at].1 += 1;
-        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
-        self.leaves.swap_remove(at);
-        let list = if widened { &mut self.abandoned } else { &mut self.widened };
-        list.push(pc);
-        list.sort_unstable();
-        if let Some(code) = self.code.take() { code.retire(); }
-    }
-
-    /// Counts a run that left at the field store at `pc`, whose in-place arms missed
-    /// (`Lowering::store_leaves`). The first time it has left `widen_after_leaves` times the code
-    /// goes and the next compilation plans the store again from what its cache learned since
-    /// (a store the loop had not run yet had no plan); after that it widens as `left_at` does.
-    pub(crate) fn left_store(&mut self, tiers: &Tiers, pc: usize) {
-        if self.refed.binary_search(&pc).is_ok() { return self.left_at(tiers, pc, false); }
-        if self.compilations >= tiers.loops.max_compilations { return; }
-        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
-        self.leaves[at].1 += 1;
-        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
-        self.leaves.swap_remove(at);
-        self.refed.push(pc);
-        self.refed.sort_unstable();
-        if let Some(code) = self.code.take() { code.retire(); }
-    }
-
     /// Whether code over the element `views` an entry found may run: typed code of no kind runs
     /// over any typed kind; code over any other views goes where a compilation remains, which the
     /// entry then makes over these, or over no kind where two kinds were found.

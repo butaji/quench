@@ -728,7 +728,6 @@ pub(super) fn install_loop_sites<'live>(
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     entering: std::cell::Cell::new(true),
                     enclosing: std::cell::OnceCell::new(),
-                    declines: Default::default(),
                     diagnostics,
                     tiers,
                     lane_backedge_count: std::cell::Cell::new(0),
