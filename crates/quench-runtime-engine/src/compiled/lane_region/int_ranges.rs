@@ -15,6 +15,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
 use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::affine_reach::Ends;
 
 /// The facts one analysis proves, by unit PC.
 pub(crate) struct IntRanges {
@@ -179,7 +180,10 @@ impl Lowering<'_, '_> {
         let bound_of = |index: Register| self.bound_below(pc, index);
         match point.index_proof(model, pc, instruction, &below, &bound_of) {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
-            proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
+            proof => {
+                seen.shapes.extend(self.shape(instructions, pc, point, proof));
+                seen.ends.extend(self.index_ends(pc).map(|ends| (pc, ends)));
+            }
         }
         if let Some((receiver, index)) = self.string_read(pc, instruction)
             && self.proven_below_length(pc, index, receiver) {
@@ -261,7 +265,11 @@ impl Lowering<'_, '_> {
         proved.bounds = self.plan_bounds(nest, &seen.bounds);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
-        let resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        let mut resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        // An access its shape proves keeps that proof; the index range proves the rest.
+        let affine: Vec<Resolved> = seen.ends.iter().filter(|(pc, _)| resolved.iter().all(|found| found.version.pc != *pc))
+            .filter_map(|(pc, ends)| self.affine_resolve(nest, *pc, ends)).collect();
+        resolved.extend(affine);
         let candidates: Vec<Version> = resolved.iter().map(|resolved| resolved.version).collect();
         let settled = self.settled_versions(nest.loops, candidates);
         for resolved in resolved {
@@ -301,4 +309,6 @@ struct Seen {
     decisions: Vec<usize>,
     /// The relation jumps' PCs with the register each orders against an int32 counter (`int_bound`).
     bounds: Vec<(usize, Register)>,
+    /// The accesses the point leaves to their index range (`Lowering::index_ends`), by PC.
+    ends: Vec<(usize, Ends)>,
 }
