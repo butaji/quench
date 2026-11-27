@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(registered.len(), 2);
         assert!(registered.contains(&prototype) && registered.contains(&record_prototype) && !registered.contains(&plain));
         for value in [prototype, record_prototype] {
-            assert!(restored.object_ref(value).and_then(|object| object.watched_subject()).is_some());
+            assert!(restored.object(value).and_then(|object| object.watched_subject()).is_some());
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");

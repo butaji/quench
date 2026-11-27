@@ -376,7 +376,7 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(shape as i32 * 10), shape);
         }
-        let shape = heap.object_ref(object).unwrap().exact_shape();
+        let shape = heap.object(object).unwrap().exact_shape();
         (object, shape)
     }
 
@@ -385,7 +385,7 @@ mod tests {
         let mut heap = Heap::new();
         let count = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
         let (object, shape) = object_of(&mut heap, count);
-        let record = heap.object_ref(object).unwrap().record();
+        let record = heap.object(object).unwrap().record();
         for slot in 0..count as u16 {
             let entry = stored(shape, ENTRY.own_holder, u32::from(slot));
             let by_entry = concrete_read_entry(&heap, object, &entry);
@@ -410,7 +410,7 @@ mod tests {
         for shape in 1..=wide as u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let shape_of = |heap: &Heap, object: Value| heap.object_ref(object).unwrap().exact_shape();
+        let shape_of = |heap: &Heap, object: Value| heap.object(object).unwrap().exact_shape();
         let stray = heap.alloc_object(Object::new(Value::NULL));
         for count in [crate::value_vec::INLINE_PROPERTY_COUNT, wide] {
             let prototype = heap.alloc_object(Object::new(Value::NULL));
@@ -446,7 +446,7 @@ mod tests {
         let (outer, plain) = (heap.alloc_object(Object::new(Value::NULL)), heap.alloc_object(Object::new(Value::NULL)));
         heap.property_add(outer, leaf, 1);
         heap.property_add(plain, Value::integer(4), 1);
-        let shape = heap.object_ref(leaf).unwrap().exact_shape();
+        let shape = heap.object(leaf).unwrap().exact_shape();
         let entries = [stored(shape, ENTRY.own_holder, 0), stored(shape, ENTRY.own_holder, 0)];
         let records = heap.object_record_base().expect("object records exist") as u64;
         let read = |object: Value| {
