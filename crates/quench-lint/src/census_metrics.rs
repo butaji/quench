@@ -382,6 +382,12 @@ pub fn fact_homes(file: &syn::File) -> usize {
         .count()
 }
 
+/// Structs and enums named `*Fact` or `*Facts` declared outside `typed_ir/cell.rs`, the one home
+/// of fact types (`fact_types.txt` lists the ones that predate the rule).
+pub fn fact_types(file: &str, syntax: &syn::File) -> usize {
+    crate::fact_types::outside_home(file, syntax).len()
+}
+
 /// Struct fields named `*epoch`: each is a validity counter a reader compares per use, which a
 /// code dependency replaces for stable facts (P1).
 pub fn epoch_fields(file: &syn::File) -> usize {
@@ -562,6 +568,14 @@ mod tests {
     fn fact_homes_count_memo_cache_hint_and_proof_types() {
         let file = parse("struct ConcatMemo; struct FieldCache; struct HolderHint; struct LocalProofs; struct Cached; mod m { struct ReadMemo; }");
         assert_eq!(fact_homes(&file), 5);
+    }
+
+    #[test]
+    fn fact_types_count_fact_and_facts_items_outside_the_cell() {
+        let source = "struct IntFact; enum ExitFacts { A } struct Facter;";
+        let file = parse(source);
+        assert_eq!(fact_types("crates/quench-runtime/src/staged/proof.rs", &file), 2);
+        assert_eq!(fact_types("crates/quench-runtime/src/typed_ir/cell.rs", &file), 0);
     }
 
     #[test]

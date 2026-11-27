@@ -1,7 +1,8 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Class, Fact, Key, Origin, PrototypeBase};
+use super::value::{Word, Key, Origin, PrototypeBase};
+use crate::typed_ir::{Cell, Classes};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -32,7 +33,7 @@ pub(super) struct Ctx<'a> {
 /// writes the analysis cannot follow.
 #[derive(Default)]
 pub(super) struct Events {
-    pub(super) writes: Vec<(Key, Fact)>,
+    pub(super) writes: Vec<(Key, Word)>,
     pub(super) wild_global: bool,
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
@@ -49,7 +50,7 @@ pub(super) fn decoded(instruction: WideInstruction) -> Option<Operation<(), ()>>
 }
 
 /// Applies `instruction` at `pc` to `state`, the facts before it, and returns its binding effects.
-pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &mut [Fact]) -> Events {
+pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &mut [Word]) -> Events {
     let mut events = Events::default();
     let operation = decoded(instruction);
     // A typed pass reads each value through the program's tables (`Ctx::decode`): an operator with a constant
@@ -60,8 +61,8 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     };
     let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
     // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
-    if let Some(types) = ctx.types && let Some(ty) = types.call(ctx.id, pc as u32) {
-        value = Fact::of_class(ty, types.call_class(ctx.id, pc as u32));
+    if let Some(types) = ctx.types && let Some(cell) = types.call(ctx.id, pc as u32) {
+        value = Word::of_cell(cell);
     }
     // A return, or an operation whose result completes the frame, writes the function's result.
     if instruction.op().is_return() {
@@ -76,7 +77,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     writes(ctx, pc, instruction, operation, state, &mut events);
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
-        state[usize::from(register)] = if Some(register) == defined { value } else { Fact::UNKNOWN };
+        state[usize::from(register)] = if Some(register) == defined { value } else { Word::UNKNOWN };
     }
     events
 }
@@ -89,11 +90,10 @@ fn is_global_load(instruction: WideInstruction) -> bool {
 
 /// The fact of a load from `key`: the closure the census proved there, else the binding.
 /// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
-fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
+fn resolved(ctx: &Ctx<'_>, key: Key) -> Word {
     ctx.resolved.get(&key).copied().map_or_else(
-        || Fact { ty: ctx.types.map_or(Type::ANY, |types| types.binding(key)), origin: Some(Origin::Binding(key)),
-            class: ctx.types.map_or(Class::Many, |types| types.class(key)) },
-        Fact::closure)
+        || Word { origin: Some(Origin::Binding(key)), ..Word::of_cell(ctx.types.map_or(Cell::ANY, |types| types.cell(key))) },
+        Word::closure)
 }
 
 /// The fact of the value `instruction` defines, read from the facts before it.
@@ -101,13 +101,13 @@ fn value_of(
     ctx: &Ctx<'_>,
     instruction: WideInstruction,
     operation: Option<Operation<(), ()>>,
-    state: &[Fact],
+    state: &[Word],
     events: &mut Events,
-) -> Fact {
+) -> Word {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
-        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Fact::atom(atom); }
-        if let Some(ty) = ctx.scope.immediates.get(index).copied().flatten() { return Fact::of(ty); }
-        return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::UNKNOWN, Fact::number);
+        if let Some(atom) = ctx.scope.constant_atoms.get(index).copied().flatten() { return Word::atom(atom); }
+        if let Some(ty) = ctx.scope.immediates.get(index).copied().flatten() { return Word::of(ty); }
+        return ctx.scope.constants.get(index).copied().flatten().map_or(Word::UNKNOWN, Word::number);
     }
     // A method read (`o.m(...)`) also writes `this`, which takes no fact (`step`): its value is the method all the same.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -117,12 +117,12 @@ fn value_of(
         // `F.prototype`: the object a function's methods are stored on, off a closure (the class's
         // prototype) or a binding the census resolves to one.
         if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
-            return Fact::from(Origin::Prototype(prototype));
+            return Word::from(Origin::Prototype(prototype));
         }
-        let (ty, class) = member_type(ctx, base_fact(ctx, base, state), atom);
-        return match owner.and_then(Fact::class_site) {
-            Some((owner, instance, guess)) => Fact { ty, class, ..Fact::member_on(owner, instance, atom, guess) },
-            None => Fact::member(atom, ty, class),
+        let cell = member_type(ctx, base_fact(ctx, base, state), atom);
+        return match owner.and_then(Word::class_site) {
+            Some((owner, instance, guess)) => Word { cell, ..Word::member_on(owner, instance, atom, guess) },
+            None => Word::member(atom, cell),
         };
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
@@ -130,21 +130,18 @@ fn value_of(
         && let Some(crate::bytecode::FieldLookup::Site(index)) = instruction.field_lookup()
         && let Some((base, first, second)) = ctx.scope.site_paths.get(index).copied().flatten()
     {
-        let (ty, class) = member_type(ctx, base_fact(ctx, base, state), first);
+        let cell = member_type(ctx, base_fact(ctx, base, state), first);
         return match second {
-            Some(second) => {
-                let (ty, class) = member_type(ctx, Some(Fact::of_class(ty, class)), second);
-                Fact::member(second, ty, class)
-            }
-            None => Fact::member(first, ty, class),
+            Some(second) => Word::member(second, member_type(ctx, Some(Word::of_cell(cell)), second)),
+            None => Word::member(first, cell),
         };
     }
     if instruction.op() == crate::bytecode::Op::Construct {
-        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Fact::UNKNOWN);
-        if let Some(class) = callee.ty.body_index() { return Fact::instance(class); }
+        let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
+        if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
         // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the
         // object it allocated.
-        if ctx.types.is_some() { return Fact::of(Type::language(crate::ValueType::Object)); }
+        if ctx.types.is_some() { return Word::of(Type::language(crate::ValueType::Object)); }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -153,14 +150,14 @@ fn value_of(
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
-        return Fact::closure(function);
+        return Word::closure(function);
     }
     // A `Binary` record, whatever operation it decodes to (none over a constant operand, a numeric one over
     // registers): its operator and operands are the record's.
     // An increment or decrement defines a Number, or a BigInt off one.
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
-        let source = state[usize::from(instruction.register_b())].ty;
-        return Fact::of(if source == Type::NEVER { Type::NEVER } else if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(crate::ValueType::BigInt)) });
+        let source = state[usize::from(instruction.register_b())].cell.ty;
+        return Word::of(if source == Type::NEVER { Type::NEVER } else if source.is_subtype(Type::NUMBER) { Type::NUMBER } else { Type::NUMBER.join(Type::language(crate::ValueType::BigInt)) });
     }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return binary_value(ctx.scope, state, (instruction.operand_b(), instruction.operand_c()), instruction.binary_operator());
@@ -175,43 +172,43 @@ fn value_of(
         Some(Operation::LoadCapture { depth, slot, .. }) => ctx
             .scope
             .owner(ctx.id, depth)
-            .map_or(Fact::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
-        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Fact::closure(function),
+            .map_or(Word::UNKNOWN, |owner| resolved(ctx, Key::Slot { owner, slot })),
+        Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Word::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
         Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
         Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
         // The operations whose result is a Boolean, whatever their operands: an equality, a negation, a
         // `typeof` test or an `instanceof`.
         Some(Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. }) =>
-            Fact::of(Type::language(crate::ValueType::Boolean)),
-        Some(Operation::Void { .. }) => Fact::of(Type::language(crate::ValueType::Undefined)),
+            Word::of(Type::language(crate::ValueType::Boolean)),
+        Some(Operation::Void { .. }) => Word::of(Type::language(crate::ValueType::Undefined)),
         // An indexed read of the array a field holds: the field's element type, or `undefined` for a hole or an
         // index past its length.
         _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
         Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
             (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-                Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
-            _ => Fact::UNKNOWN,
+                Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
+            _ => Word::UNKNOWN,
         },
         Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
-        _ => Fact::UNKNOWN,
+        _ => Word::UNKNOWN,
     }
 }
 
 /// The type and class a read of field `atom` off `owner` takes (`types::Types::field`): the class the
 /// stores into that field of `owner`'s class wrote (`Key::MemberOn`), else every store of the name's
 /// (`Key::Member`); any value in the passes that find call targets.
-fn member_type(ctx: &Ctx<'_>, owner: Option<Fact>, atom: u32) -> (Type, Class) {
-    let Some(types) = ctx.types else { return (Type::ANY, Class::Many) };
-    // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its class comes with a later pass.
-    if owner.is_some_and(|owner| owner.class == Class::Never) { return (types.field(atom), Class::Never); }
-    let on = owner.and_then(Fact::class_site).and_then(|(class, instance, _)| types.class_on(class, instance, atom));
-    (types.field(atom), on.unwrap_or_else(|| types.class(Key::Member(atom))))
+fn member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
+    let Some(types) = ctx.types else { return Cell::ANY };
+    let named = types.cell(Key::Member(atom));
+    // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
+    if owner.is_some_and(|owner| owner.cell.classes == Classes::Never) { return Cell { classes: Classes::Never, ..named }; }
+    owner.and_then(Word::class_site).and_then(|(class, instance, _)| types.cell_on(class, instance, atom)).unwrap_or(named)
 }
 
 /// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
 /// lookup's last owner, the value of its first field), a `SetField`'s base or the function's `this`.
-pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Fact]) -> Option<Fact> {
+pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
         return match instruction.field_lookup()? {
             crate::bytecode::FieldLookup::Atom { base, .. } => base_fact(ctx, base, state),
@@ -219,8 +216,7 @@ pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[
                 let (base, first, second) = ctx.scope.site_paths.get(index).copied().flatten()?;
                 let owner = base_fact(ctx, base, state);
                 if second.is_none() { return owner; }
-                let (ty, class) = member_type(ctx, owner, first);
-                Some(Fact::of_class(ty, class))
+                Some(Word::of_cell(member_type(ctx, owner, first)))
             }
         };
     }
@@ -232,7 +228,7 @@ pub(super) fn field_owner(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[
 }
 
 /// The fact of a field lookup's base: its register's, or the function's own `this`.
-fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Fact]) -> Option<Fact> {
+fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Word]) -> Option<Word> {
     match base.register_index() {
         Some(register) => state.get(usize::from(register)).copied(),
         None if base == crate::bytecode::FieldBase::THIS && !ctx.is_root => Some(this_fact(ctx)),
@@ -240,14 +236,21 @@ fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Fact]) ->
     }
 }
 
+/// The fact of a read of field `atom` off the function's own `this` (a receiver `this.task` of a method call):
+/// its class's own field where the solve names `this`'s class (`member_type`).
+pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Word {
+    let this = (!ctx.is_root).then(|| this_fact(ctx));
+    Word::of_cell(member_type(ctx, this, atom))
+}
+
 /// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
-fn this_fact(ctx: &Ctx<'_>) -> Fact {
-    ctx.types.map_or(Fact::UNKNOWN, |types| Fact::of_class(types.this(ctx.id), types.this_class(ctx.id)))
+fn this_fact(ctx: &Ctx<'_>) -> Word {
+    ctx.types.map_or(Word::UNKNOWN, |types| Word::of_cell(types.this(ctx.id)))
 }
 
 /// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
-fn prototype_base(base: Fact) -> Option<PrototypeBase> {
-    if let Some(function) = base.ty.body_index() { return Some(PrototypeBase::Closure(function)); }
+fn prototype_base(base: Word) -> Option<PrototypeBase> {
+    if let Some(function) = base.cell.ty.body_index() { return Some(PrototypeBase::Closure(function)); }
     match base.origin? {
         Origin::Binding(key) => Some(PrototypeBase::Binding(key)),
         _ => None,
@@ -255,63 +258,63 @@ fn prototype_base(base: Fact) -> Option<PrototypeBase> {
 }
 
 /// The fact of a numeric operand: its register's, or the Number of its constant.
-fn operand_fact(scope: &Scope, state: &[Fact], operand: Operand) -> Fact {
+fn operand_fact(scope: &Scope, state: &[Word], operand: Operand) -> Word {
     match (operand.register_index(), operand.kind()) {
         (Some(register), _) => state[usize::from(register)],
         (None, Some(OperandKind::Constant)) => {
-            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Fact::UNKNOWN, Fact::number)
+            scope.constants.get(usize::from(operand.payload())).copied().flatten().map_or(Word::UNKNOWN, Word::number)
         }
-        _ => Fact::UNKNOWN,
+        _ => Word::UNKNOWN,
     }
 }
 
 /// The fact of the Number a numeric operation defines, when its operands are Numbers: the
 /// operation of an operand that is not one may run guest code or yield a string.
-fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact {
+fn number_value(scope: &Scope, state: &[Word], number: NumberOperation) -> Word {
     let fact = |operand: Operand| operand_fact(scope, state, operand);
     // An operand no value reaches yet (`Type::NEVER`, the type solve's bottom) is a Number among the
     // others: what reaches it later is joined in a later pass, and an operation over it defines none yet.
-    let numeric = |fact: Fact| fact.ty.is_subtype(Type::NUMBER);
+    let numeric = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
     let both = |left: Operand, right: Operand| numeric(fact(left)) && numeric(fact(right));
     let one = |source: Operand| numeric(fact(source));
     let register = |source: u16| state[usize::from(source)];
-    let reached = |operands: &[Fact]| operands.iter().all(|fact| fact.ty != Type::NEVER);
-    let operands: Vec<Fact> = match number {
+    let reached = |operands: &[Word]| operands.iter().all(|fact| fact.cell.ty != Type::NEVER);
+    let operands: Vec<Word> = match number {
         NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
         | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
         NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
         NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
         _ => Vec::new(),
     };
-    if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Fact::of(Type::NEVER); }
+    if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Word::of(Type::NEVER); }
     match number {
         NumberOperation::Arithmetic { left, right, .. }
         | NumberOperation::Remainder { left, right, .. }
         | NumberOperation::Extreme { left, right, .. }
             if both(left, right) =>
         {
-            Fact::of(Type::NUMBER)
+            Word::of(Type::NUMBER)
         }
         NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. }
             if both(left, right) =>
         {
-            Fact::of(Type::INT32)
+            Word::of(Type::INT32)
         }
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Fact::of(Type::NUMBER),
-        NumberOperation::BitwiseNot { source, .. } if one(source) => Fact::of(Type::INT32),
-        NumberOperation::IncDec { source, .. } if numeric(register(source)) => Fact::of(Type::NUMBER),
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Word::of(Type::NUMBER),
+        NumberOperation::BitwiseNot { source, .. } if one(source) => Word::of(Type::INT32),
+        NumberOperation::IncDec { source, .. } if numeric(register(source)) => Word::of(Type::NUMBER),
         NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
-        _ => Fact::UNKNOWN,
+        _ => Word::UNKNOWN,
     }
 }
 
 /// The fact of an indexed read of `base`: the element type of the field it was read from (`Key::Element`) or
 /// `undefined` (a hole, an index past the length); any value off anything else.
-fn element_value(ctx: &Ctx<'_>, base: Fact) -> Fact {
+fn element_value(ctx: &Ctx<'_>, base: Word) -> Word {
     match (base.origin, ctx.types) {
         (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-            Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
-        _ => Fact::UNKNOWN,
+            Word::of_cell(types.cell(Key::Element(atom)).join(Cell::of(Type::language(crate::ValueType::Undefined)))),
+        _ => Word::UNKNOWN,
     }
 }
 
@@ -319,23 +322,23 @@ fn element_value(ctx: &Ctx<'_>, base: Fact) -> Fact {
 /// arithmetic, shift or bitwise operator over Numbers a Number (an int32 for the shifts and bitwise ones, whose
 /// results ToInt32 makes); over anything else whatever its operands' coercion makes. An operand no value
 /// reaches yet (the type solve's bottom) makes none either.
-fn binary_value(scope: &Scope, state: &[Fact], (left, right): (Operand, Operand), operator: u32) -> Fact {
+fn binary_value(scope: &Scope, state: &[Word], (left, right): (Operand, Operand), operator: u32) -> Word {
     use crate::vm::operations::binary_operator as op;
-    let boolean = || Fact::of(Type::language(crate::ValueType::Boolean));
+    let boolean = || Word::of(Type::language(crate::ValueType::Boolean));
     let (left, right) = (operand_fact(scope, state, left), operand_fact(scope, state, right));
-    let number = |fact: Fact| fact.ty.is_subtype(Type::NUMBER);
-    if left.ty == Type::NEVER || right.ty == Type::NEVER {
-        return if matches!(operator, op::In | op::Instanceof) { Fact::UNKNOWN } else { Fact::of(Type::NEVER) };
+    let number = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
+    if left.cell.ty == Type::NEVER || right.cell.ty == Type::NEVER {
+        return if matches!(operator, op::In | op::Instanceof) { Word::UNKNOWN } else { Word::of(Type::NEVER) };
     }
     // A Number operand makes the other's coercion a Number too: a BigInt beside it throws. With neither known a
     // Number, a numeric operator defines a Number or a BigInt, whatever valueOf the operands run.
     let numeric = |ty: Type| if number(left) || number(right) { ty } else { ty.join(Type::language(crate::ValueType::BigInt)) };
     match operator {
         op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan => boolean(),
-        op::ShiftLeft | op::ShiftRight | op::BitwiseOR | op::BitwiseXOR | op::BitwiseAnd => Fact::of(numeric(Type::INT32)),
-        op::ShiftRightZeroFill | op::Subtraction | op::Multiplication | op::Division | op::Remainder => Fact::of(numeric(Type::NUMBER)),
-        op::Addition if number(left) && number(right) => Fact::of(Type::NUMBER),
-        _ => Fact::UNKNOWN,
+        op::ShiftLeft | op::ShiftRight | op::BitwiseOR | op::BitwiseXOR | op::BitwiseAnd => Word::of(numeric(Type::INT32)),
+        op::ShiftRightZeroFill | op::Subtraction | op::Multiplication | op::Division | op::Remainder => Word::of(numeric(Type::NUMBER)),
+        op::Addition if number(left) && number(right) => Word::of(Type::NUMBER),
+        _ => Word::UNKNOWN,
     }
 }
 
@@ -346,7 +349,7 @@ fn writes(
     pc: usize,
     instruction: WideInstruction,
     operation: Option<Operation<(), ()>>,
-    state: &[Fact],
+    state: &[Word],
     events: &mut Events,
 ) {
     unfollowed_writes(ctx, instruction, operation, events);
@@ -356,7 +359,7 @@ fn writes(
 
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
-fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
@@ -374,24 +377,26 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
     match operation {
         Some(Operation::SetField { value, atom, base, .. }) => {
             events.writes.push((Key::Member(atom), state[usize::from(value)]));
-            let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Fact::UNKNOWN };
+            let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
             if let Some(Origin::Prototype(prototype)) = owner.origin {
                 events.prototype_write = Some((prototype, atom));
             }
-            // A store into an object of a known class (`Fact::class_site`) is that class's own field, as a class
+            // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
-            if let Some((class, true, _)) = owner.class_site() {
-                events.writes.push((Key::MemberOn { class, instance: true, atom }, state[usize::from(value)]));
-            }
+            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`).
+            let key = match owner.class_site() { Some((class, true, _)) => Key::MemberOn { class, instance: true, atom }, _ => Key::MemberAny(atom) };
+            events.writes.push((key, state[usize::from(value)]));
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
-            events.writes.push((Key::Member(atom), Fact::UNKNOWN));
+            events.writes.push((Key::Member(atom), Word::UNKNOWN));
+            events.writes.push((Key::MemberAny(atom), Word::UNKNOWN));
         }
         Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
         Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
-            events.writes.push((Key::Member(instruction.atom_index()), Fact::UNKNOWN));
+            events.writes.push((Key::Member(instruction.atom_index()), Word::UNKNOWN));
+            events.writes.push((Key::MemberAny(instruction.atom_index()), Word::UNKNOWN));
         }
         _ => {}
     }
@@ -423,7 +428,7 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
 }
 
 /// Records the binding stores `operation` makes, with the facts they store.
-fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
     match operation {
         // A captured or global binding is no parameter: a store of it stays as the flow proves
         // it even in the prologue, where a register store may be overwritten by an argument.
@@ -441,7 +446,7 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             }
         },
         Some(Operation::IncDecLocal { local, .. }) => {
-            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Fact::UNKNOWN);
+            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot: local }, Word::UNKNOWN);
         }
         Some(Operation::GlobalWrite { source, atom, .. }) => {
             write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
@@ -451,13 +456,13 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             | Operation::StoreField { atom, .. }
             | Operation::FieldStoreMiss { atom, .. }
             | Operation::FieldAdd { atom, .. },
-        ) => write(ctx, pc, true, events, Key::Global(atom), Fact::UNKNOWN),
+        ) => write(ctx, pc, true, events, Key::Global(atom), Word::UNKNOWN),
         _ => {}
     }
 }
 
 /// Records a write of `fact` to `key` at `pc`; a store before the parameters end binds an argument.
-fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, fact: Fact) {
-    let fact = if !stable && pc < ctx.parameter_end { Fact::UNKNOWN } else { fact };
+fn write(ctx: &Ctx<'_>, pc: usize, stable: bool, events: &mut Events, key: Key, fact: Word) {
+    let fact = if !stable && pc < ctx.parameter_end { Word::UNKNOWN } else { fact };
     events.writes.push((key, fact));
 }

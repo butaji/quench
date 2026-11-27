@@ -1,8 +1,11 @@
 //! Weak native publications indexed by the shape or slot owner they depend on.
 //! These notifications do not turn observations into unchecked read permissions.
 
-use std::{num::NonZeroU32, rc::{Rc, Weak}};
+use std::{collections::BTreeMap, num::NonZeroU32, rc::{Rc, Weak}};
 use crate::{folded_roots::{FoldedRoots, RootedCode}, typed_ir::Type};
+
+mod cells;
+pub use cells::CellReaders;
 
 pub trait DependentCode {
     fn is_published(&self) -> bool;
@@ -145,16 +148,126 @@ struct Reader {
     next: Link,
 }
 
+/// The heads of one table's reader lists, one per key: where a key's list starts.
+pub trait HeadTable<K>: Default {
+    /// The first reader of `key`'s list, `None` where the key has none.
+    fn head(&self, key: K) -> Link;
+    fn set_head(&mut self, key: K, head: Link);
+    /// Whether any key has a reader listed.
+    fn has_heads(&self) -> bool;
+    fn clear(&mut self);
+    /// The bytes the heads hold.
+    fn bytes(&self) -> usize;
+}
+
+/// The keys a `Readers` table lists readers under, each with the head storage its keys fit.
+pub trait ReaderKey: Copy + Ord {
+    type Heads: HeadTable<Self>;
+}
+
+/// Heads of owner ids, indexed by owner: dense, so a retirement's "no readers" test is one load.
+/// `linked` counts the owners with a head, so `has_heads` is O(1) too.
 #[derive(Default)]
-pub struct CodeReaders {
+pub struct DenseHeads {
     heads: Vec<Link>,
+    linked: usize,
+}
+
+impl HeadTable<u32> for DenseHeads {
+    #[inline(always)]
+    fn head(&self, owner: u32) -> Link {
+        self.heads.get(owner as usize).copied().flatten()
+    }
+
+    fn set_head(&mut self, owner: u32, head: Link) {
+        let owner = owner as usize;
+        if head.is_some() && owner >= self.heads.len() {
+            self.heads.resize(owner + 1, None);
+        }
+        let Some(slot) = self.heads.get_mut(owner) else { return };
+        match (slot.is_some(), head.is_some()) {
+            (false, true) => self.linked += 1,
+            (true, false) => self.linked -= 1,
+            _ => {}
+        }
+        *slot = head;
+    }
+
+    fn has_heads(&self) -> bool {
+        self.linked != 0
+    }
+
+    fn clear(&mut self) {
+        self.heads.clear();
+        self.linked = 0;
+    }
+
+    fn bytes(&self) -> usize {
+        self.heads.capacity() * size_of::<Link>()
+    }
+}
+
+impl ReaderKey for u32 {
+    type Heads = DenseHeads;
+}
+
+/// Heads of sparse keys, ordered: a lookup is O(log n) in the keys that have readers.
+impl<K: Ord + Copy> HeadTable<K> for BTreeMap<K, NonZeroU32> {
+    fn head(&self, key: K) -> Link {
+        self.get(&key).copied()
+    }
+
+    fn set_head(&mut self, key: K, head: Link) {
+        match head {
+            Some(link) => {
+                self.insert(key, link);
+            }
+            None => {
+                self.remove(&key);
+            }
+        }
+    }
+
+    fn has_heads(&self) -> bool {
+        !self.is_empty()
+    }
+
+    fn clear(&mut self) {
+        BTreeMap::clear(self);
+    }
+
+    fn bytes(&self) -> usize {
+        self.len() * size_of::<(K, NonZeroU32)>()
+    }
+}
+
+/// Weak readers, each listed under its key: an owner's id for code (`CodeReaders`), a fact cell's
+/// key for code that trusts the cell (`cells::CellReaders`). A key's readers form one list through
+/// `Reader::next`, so a retirement walks only the readers of the key it names. The arena, pruning,
+/// deduplication and free list are the same for every key; only the heads differ (`ReaderKey`).
+pub struct Readers<K: ReaderKey> {
+    heads: K::Heads,
     readers: Vec<Reader>,
     free: Link,
 }
 
-impl CodeReaders {
+/// The readers of each owner: a shape, a slot owner, a global, a method atom.
+pub type CodeReaders = Readers<u32>;
+
+impl<K: ReaderKey> Default for Readers<K> {
+    fn default() -> Self {
+        Self { heads: Default::default(), readers: Vec::new(), free: None }
+    }
+}
+
+impl<K: ReaderKey> Readers<K> {
     pub(crate) fn memory_bytes(&self) -> usize {
-        self.heads.capacity() * size_of::<Link>() + self.readers.capacity() * size_of::<Reader>()
+        self.heads.bytes() + self.readers.capacity() * size_of::<Reader>()
+    }
+
+    /// Whether no key has a reader listed.
+    pub fn is_empty(&self) -> bool {
+        !self.heads.has_heads()
     }
 
     fn release(&mut self, link: NonZeroU32) -> Link {
@@ -167,12 +280,10 @@ impl CodeReaders {
     }
 
     /// Publication is cold: prune expired readers and deduplicate the same code
-    /// here, rather than accumulating dead weak handles on an unchanged owner.
-    pub fn subscribe(&mut self, owner: u32, code: &Rc<dyn DependentCode>) -> bool {
-        let owner = owner as usize;
-        self.heads.resize(self.heads.len().max(owner + 1), None);
+    /// here, rather than accumulating dead weak handles on an unchanged key.
+    pub fn subscribe(&mut self, key: K, code: &Rc<dyn DependentCode>) -> bool {
         let weak = Rc::downgrade(code);
-        let mut cursor = self.heads[owner];
+        let mut cursor = self.heads.head(key);
         let mut previous: Link = None;
         while let Some(link) = cursor {
             let reader = &self.readers[(link.get() - 1) as usize];
@@ -185,7 +296,7 @@ impl CodeReaders {
                 cursor = self.release(link);
                 match previous {
                     Some(previous) => self.readers[(previous.get() - 1) as usize].next = cursor,
-                    None => self.heads[owner] = cursor,
+                    None => self.heads.set_head(key, cursor),
                 }
             }
         }
@@ -203,38 +314,38 @@ impl CodeReaders {
                 link
             }
         };
-        self.readers[(link.get() - 1) as usize] = Reader { code: Some(weak), next: self.heads[owner] };
-        self.heads[owner] = Some(link);
+        let next = self.heads.head(key);
+        self.readers[(link.get() - 1) as usize] = Reader { code: Some(weak), next };
+        self.heads.set_head(key, Some(link));
         true
     }
 
-    /// A widening visits only this owner's readers, before the incompatible effect. An owner
-    /// without readers, every owner of a run without native code, is the test alone; the
-    /// walk is out of line (`retire_readers`).
-    /// Whether the owner had readers.
+    /// A widening visits only this key's readers, before the incompatible effect. A key without
+    /// readers is the test alone; the walk is out of line (`retire_readers`).
+    /// Whether the key had readers.
     #[inline(always)]
-    pub(crate) fn retire(&mut self, owner: u32) -> bool {
-        let readers = self.heads.get(owner as usize).is_some_and(Option::is_some);
+    pub(crate) fn retire(&mut self, key: K) -> bool {
+        let readers = self.heads.head(key).is_some();
         if readers {
-            self.retire_readers(owner);
+            self.retire_readers(key);
         }
         readers
     }
 
     #[inline(never)]
-    fn retire_readers(&mut self, owner: u32) {
-        self.take(owner).into_iter().for_each(|code| code.retire());
+    fn retire_readers(&mut self, key: K) {
+        self.take(key).into_iter().for_each(|code| code.retire());
     }
 
     pub(crate) fn reset(&mut self) {
         self.take_all().into_iter().for_each(|code| code.retire());
     }
 
-    /// Unlinks `owner`'s readers and gives the code still alive among them, for a caller to
+    /// Unlinks `key`'s readers and gives the code still alive among them, for a caller to
     /// retire once it no longer holds the table these readers live in (`heap::Dependencies`).
-    pub(crate) fn take(&mut self, owner: u32) -> Vec<Rc<dyn DependentCode>> {
-        let Some(head) = self.heads.get_mut(owner as usize) else { return Vec::new() };
-        let mut cursor = head.take();
+    pub(crate) fn take(&mut self, key: K) -> Vec<Rc<dyn DependentCode>> {
+        let mut cursor = self.heads.head(key);
+        self.heads.set_head(key, None);
         let mut taken = Vec::new();
         while let Some(link) = cursor {
             taken.extend(self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade));
@@ -243,7 +354,7 @@ impl CodeReaders {
         taken
     }
 
-    /// `take` of every owner: an event no owner names.
+    /// `take` of every key: an event no key names.
     pub(crate) fn take_all(&mut self) -> Vec<Rc<dyn DependentCode>> {
         let taken = self.readers.iter_mut().filter_map(|reader| reader.code.take().and_then(|code| code.upgrade())).collect();
         self.heads.clear();
@@ -253,7 +364,7 @@ impl CodeReaders {
     }
 }
 
-impl Drop for CodeReaders {
+impl<K: ReaderKey> Drop for Readers<K> {
     fn drop(&mut self) { self.reset(); }
 }
 

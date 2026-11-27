@@ -1,10 +1,13 @@
-//! Closed-world facts for AOT: what holds of the program alone when no `eval`, `Function` or
-//! dynamic import can add code (`SourceDemands`). Each fact is a dependency in the one
-//! dependency system (`code_dependencies`), never a per-use check, and is read by every tier
-//! that lowers the program (lane bodies, BaseJIT bodies), so no layer re-derives it.
+//! Facts for AOT: what holds of the program, solved the same way in every world (`gate::World`).
+//! A fact is a guess held under an edge where new code can move its key: a `Function`, `eval` or
+//! dynamic import may add code that changes it (`AotFacts::live`). Each fact is a dependency in the
+//! one dependency system (`code_dependencies`), never a per-use check, and is read by every tier
+//! that lowers the program (lane bodies, BaseJIT bodies), so no layer re-derives it. A key that is
+//! not live is settled for good: its readers keep no subscription.
 //!
 //! - Call targets: a call whose callee register holds a closure, or a binding written exactly
-//!   once with one (`census`), names that function (direct call, inlinable).
+//!   once with one (`census`), names that function (direct call, inlinable). A live binding's or
+//!   member's target is a guess the call's record guards.
 //! - Number representations: registers that hold only Numbers at every read and write, as
 //!   `Int32` or `Float64` (`flow`), so lane bodies keep them unboxed.
 //!
@@ -30,15 +33,18 @@ use census::Census;
 use flow::FunctionFlow;
 use scope::Scope;
 pub use gate::World;
+pub use flow::RegisterCells;
 
-/// The facts of one program.
-#[derive(Default)]
+/// The facts of one program, solved in `world`.
 pub struct AotFacts {
+    /// The world the facts were solved in: which keys new code can move (`live`).
+    world: World,
     /// `(function, pc)` of a plain call → the function it always calls, or, for a method read
     /// (`guessed_calls`), the one closure every store of its name writes.
     pub(crate) call_targets: BTreeMap<(u32, u32), u32>,
-    /// The `call_targets` that are a method read's guess, not a proof: the receiver may hold another
-    /// value of that name (a builtin's, a closure made again, a store through a computed key). Only a
+    /// The `call_targets` that are guesses, not proofs: a method read (the receiver may hold another
+    /// value of that name: a builtin's, a closure made again, a store through a computed key), or a
+    /// target read from a live key (`World::live`: new code may store another closure there). Only a
     /// row that guards the callee it reaches takes one (`FunctionFacts::call_target`); one that drops
     /// the guard takes the proven ones only (`FunctionFacts::proven_call_target`).
     pub(crate) guessed_calls: std::collections::BTreeSet<(u32, u32)>,
@@ -51,17 +57,46 @@ pub struct AotFacts {
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
     /// Per function, the names its `prototype` is given, in code order (`prototype_fields`).
     pub(crate) prototype_fields: BTreeMap<u32, Vec<u32>>,
-    /// Per field name, the type of the values every store of it writes (`types`): what a slot of
-    /// that name holds, which a tier keeps only under the slot's dependency.
+    /// Per field name, the type of the values every store of it writes, into an object of any class: the
+    /// join of the name's `FactKey::Field` and `FactKey::AnyField` cells, which a tier keeps only under the
+    /// slot's dependency.
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
-    /// `(function, pc)` of a named field read or store → the class (constructed function) of every object it
-    /// reads or stores, from the settled types (`value::Class`): a guess, as the types are.
-    pub(crate) field_owners: BTreeMap<(u32, u32), u32>,
-    /// Per function, the class of every `this` its recorded calls pass, from the settled types: a guess.
-    pub(crate) this_classes: BTreeMap<u32, u32>,
+    /// The settled cell of every key of the program (`typed_ir::FactKey`): each class's own fields (joined
+    /// with the stores into objects of no one class), returns, bindings, array fields' elements, parameters
+    /// and receivers. The one store of the solve's facts: code that trusts a cell subscribes to its key.
+    pub(crate) cells: BTreeMap<crate::typed_ir::FactKey, crate::typed_ir::Cell>,
+    /// `(function, pc)` of a named field access → the classes of the objects it reads or stores, and of a call →
+    /// the classes of its receiver, where the settled cells list them (`typed_ir::Classes::Set`): a guess.
+    pub(crate) access_classes: BTreeMap<(u32, u32), crate::typed_ir::Classes>,
+    /// Per function, the cells its registers hold at every point of the settled solve (`flow::RegisterCells`):
+    /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
+    pub(crate) registers: BTreeMap<u32, flow::RegisterCells>,
 }
 
 impl AotFacts {
+    /// No fact yet, solved in `world`: the solve fills the maps.
+    fn unsolved(world: World) -> Self {
+        Self {
+            world,
+            call_targets: BTreeMap::new(),
+            guessed_calls: std::collections::BTreeSet::new(),
+            call_candidates: BTreeMap::new(),
+            construct_targets: BTreeMap::new(),
+            numbers: BTreeMap::new(),
+            prototype_fields: BTreeMap::new(),
+            field_types: BTreeMap::new(),
+            cells: BTreeMap::new(),
+            access_classes: BTreeMap::new(),
+        }
+    }
+
+    /// Whether new code (`World`) can move `key`. A tier that trusts a live key's fact subscribes to
+    /// the key (its `code_dependencies` cell readers), and an edge retires those readers. A key that is
+    /// not live needs no subscription and no recovery: a closed unit has no exits.
+    pub fn live(&self, key: crate::typed_ir::FactKey) -> bool {
+        self.world.live(key)
+    }
+
     /// The names stored into `function`'s `prototype`, each once, in the order the program's code
     /// first stores them (`AotFacts::prototype_fields`): a guess of its prototype's layout after
     /// `constructor`, which a loader checks against the object it finds (`aot_image::symbols`).
@@ -69,15 +104,22 @@ impl AotFacts {
         self.prototype_fields.get(&function).map_or(&[], |fields| fields.as_slice())
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.call_targets.is_empty() && self.call_candidates.is_empty() && self.construct_targets.is_empty() && self.numbers.is_empty()
-    }
-
     /// The type of the values every store of field `atom` writes (`types`): a guess of what its
     /// slots hold, which a tier holds as the slot's type under the slot's dependency, so a store of
     /// anything else retires the code. Any value where a store may write the name unseen.
     pub fn field_type(&self, atom: u32) -> crate::typed_ir::Type {
         self.field_types.get(&atom).copied().unwrap_or(crate::typed_ir::Type::ANY)
+    }
+
+    /// The type of field `atom` of class `class`'s instances (`class_field_types`), else the name's (`field_type`):
+    /// a guess held as the slot's type under the slot's dependency, as `field_type` is.
+    pub fn field_type_on(&self, class: u32, atom: u32) -> crate::typed_ir::Type {
+        self.cell(crate::typed_ir::FactKey::Field { class, instance: true, atom }).map_or_else(|| self.field_type(atom), |cell| cell.ty)
+    }
+
+    /// The settled cell of `key` (`cells`), none where the solve keeps none.
+    pub fn cell(&self, key: crate::typed_ir::FactKey) -> Option<crate::typed_ir::Cell> {
+        self.cells.get(&key).copied()
     }
 
     /// The Any ratchet: how many field names the program stores whose type is `any`, and how many
@@ -106,8 +148,8 @@ pub struct FunctionFacts<'a> {
 }
 
 impl<'a> FunctionFacts<'a> {
-    /// The function the plain call at `pc` calls: proven, or a method read's guess (`AotFacts::guessed_calls`).
-    /// A row taking it guards the callee it reaches.
+    /// The function the plain call at `pc` calls: proven, or a guess (`AotFacts::guessed_calls`: a method
+    /// read's, or one read from a live key). A row taking it guards the callee it reaches.
     pub fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
     }
@@ -120,7 +162,8 @@ impl<'a> FunctionFacts<'a> {
         }
     }
 
-    /// The function the plain call at `pc` always calls, proven: a row may drop its callee guard for it.
+    /// The function the plain call at `pc` always calls, proven (not a guess under `guessed_calls`): a row may
+    /// drop its callee guard for it.
     pub fn proven_call_target(&self, pc: u32) -> Option<u32> {
         self.call_target(pc).filter(|_| !self.facts.guessed_calls.contains(&(self.function, pc)))
     }
@@ -128,12 +171,31 @@ impl<'a> FunctionFacts<'a> {
     /// The class (constructed function) of every object the named field read or store at `pc` reads or stores,
     /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
     pub fn field_owner(&self, pc: u32) -> Option<u32> {
-        self.facts.field_owners.get(&(self.function, pc)).copied()
+        self.access_classes(pc).single().map(|(class, _)| class)
+    }
+
+    /// The cell register `register` holds just before the instruction at `pc` in the settled solve
+    /// (`RegisterCells::at`): its type with its range, the classes of its objects and what its arrays keep.
+    /// None where the solve did not settle or no path reaches `pc`. A tier lowers the instruction from it:
+    /// a guard the cell decides is never built.
+    pub fn cell_at(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
+        self.facts.registers.get(&self.function)?.at(pc, register)
+    }
+
+    /// The cells of every register at the entry of the block starting at `pc` (`RegisterCells::entry`).
+    pub fn block_entry(&self, pc: u32) -> Option<&'a [crate::typed_ir::Cell]> {
+        self.facts.registers.get(&self.function)?.entry(pc)
+    }
+
+    /// The classes of the objects the named field access at `pc` reads or stores, or of the receiver the call at
+    /// `pc` passes (`AotFacts::access_classes`): a closed union a class switch dispatches on, a guess.
+    pub fn access_classes(&self, pc: u32) -> crate::typed_ir::Classes {
+        self.facts.access_classes.get(&(self.function, pc)).copied().unwrap_or(crate::typed_ir::Classes::Many)
     }
 
     /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
     pub fn this_class(&self) -> Option<u32> {
-        self.facts.this_classes.get(&self.function).copied()
+        self.facts.cell(crate::typed_ir::FactKey::Receiver(self.function)).and_then(|cell| cell.classes.single()).map(|(class, _)| class)
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -147,7 +209,7 @@ impl<'a> FunctionFacts<'a> {
     }
 }
 
-/// The facts of `program`, or none where the program can add code at run time.
+/// The facts of `program`, solved in the world its source proves (`world`).
 pub fn analyze(program: &ResidualProgram) -> AotFacts {
     analyze_as(program, world(program))
 }
@@ -159,18 +221,9 @@ pub fn world(program: &ResidualProgram) -> World {
     gate::world(program)
 }
 
-/// The facts of `program` in `world`: none where it is open.
+/// The facts of `program`, solved the same way in every world: `world` only marks the keys new code
+/// can move (`AotFacts::live`), whose facts the census keeps as guesses (`Census::guessed`).
 pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
-    if world == World::Open {
-        return AotFacts::default();
-    }
-    // Code added as global code (`World::Locals`) may write any global or named member, so no
-    // binding of either names one closure (`Census::open_to_global_code`).
-    let census_of = |flows: &[FunctionFlow]| {
-        let mut census = Census::of(flows);
-        if world == World::Locals { census.open_to_global_code(); }
-        census
-    };
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<super::aot_facts::value::Key, u32>, types: Option<&types::Types>| -> Vec<FunctionFlow> {
         (0..program.function_count())
@@ -183,10 +236,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     // that closure, so a class object or prototype reached through a binding keeps its identity
     // and its methods prove per class, not per property name.
     let first = analyze(&std::collections::BTreeMap::new());
-    let resolved = census_of(&first).singles();
+    let resolved = Census::of(&first, world).singles();
     let flows = analyze(&resolved);
-    let census = census_of(&flows);
-    let mut facts = AotFacts::default();
+    let census = Census::of(&flows, world);
+    let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
         let id = id as u32;
         for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register) {
@@ -230,16 +283,19 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         let named = |atom: u32| program.atoms.get(atom as usize).map_or("?", |name| name.as_ref()).to_string();
         eprintln!("aot-lanes: classes {:?}", found.class_trace().into_iter().map(|(key, class)| (match key { value::Key::Member(atom) => named(atom), other => format!("{other:?}") }, class)).collect::<Vec<_>>());
     }
-    // A method read off a value whose class the solve found (`value::Class`, a field holding instances of one
+    // A method read off a value whose class the solve found (`crate::typed_ir::Classes`, a field holding instances of one
     // class) resolves per class (`Origin::MemberOn`, a guess): the calls the passes above found no target for
     // take it from a flow over the settled types.
     if settled {
-        for (id, flow) in analyze_typed(&resolved, Some(&found)).iter().enumerate() {
+        for (id, mut flow) in analyze_typed(&resolved, Some(&found)).into_iter().enumerate() {
             let id = id as u32;
-            for (&pc, &class) in &flow.field_owners {
-                if let value::Class::One { class, .. } = class { facts.field_owners.insert((id, pc), class); }
+            facts.registers.insert(id, std::mem::take(&mut flow.registers));
+            for (&pc, &classes) in &flow.field_owners {
+                if matches!(classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, pc), classes); }
             }
-            if let value::Class::One { class, .. } = found.this_class(id) { facts.this_classes.insert(id, class); }
+            for call in &flow.calls {
+                if matches!(call.receiver.cell.classes, crate::typed_ir::Classes::Set { .. }) { facts.access_classes.insert((id, call.pc), call.receiver.cell.classes); }
+            }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
                 let Some(target) = census.target(call.callee) else { continue };
@@ -250,13 +306,21 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         }
     }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
-    if settled { facts.field_types = found.fields.into_iter().map(|(atom, ty)| (atom, if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty })).collect(); }
+    let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
+    if settled {
+        facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
+        facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
+    }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
         eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());
+        eprintln!("aot-lanes: class field types {:?}", facts.cells.iter().filter_map(|(key, cell)| match *key {
+            crate::typed_ir::FactKey::Field { class, instance: true, atom } if facts.field_types.get(&atom) != Some(&cell.ty) => Some((class, named(&atom), cell.ty)),
+            _ => None,
+        }).collect::<Vec<_>>());
         let (any, total) = facts.any_fields();
         eprintln!("aot-lanes: any fields {any} of {total}");
-        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} field owners, {} this classes", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.field_owners.len(), facts.this_classes.len());
+        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} access classes, {} cells", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.access_classes.len(), facts.cells.len());
     }
     facts
 }

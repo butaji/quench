@@ -37,6 +37,8 @@ enum Source {
 #[derive(Clone, Copy)]
 enum Extract {
     Syntax(fn(&syn::File) -> usize),
+    /// A syntax count that depends on the file's path (the one home of a fact type is exempt).
+    SyntaxAt(fn(&str, &syn::File) -> usize),
     Text(fn(&str) -> usize),
 }
 
@@ -172,6 +174,14 @@ const METRICS: &[Metric] = &[
         direction: Direction::Down,
         sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::fact_homes),
+    },
+    // The one home of fact types is `typed_ir::cell`; each fact type declared anywhere else is a second home.
+    // Shrinks as the listed types move onto the cell (`fact_types.txt`), and a new one fails the lint at once.
+    Metric {
+        name: "fact_types",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
+        extract: Extract::SyntaxAt(extract::fact_types),
     },
     Metric {
         name: "epoch_fields",
@@ -319,6 +329,9 @@ fn count_file(path: &Path, how: Extract) -> Result<usize, String> {
         Extract::Text(count) => Ok(count(&text)),
         Extract::Syntax(count) => syn::parse_file(&text)
             .map(|syntax| count(&syntax))
+            .map_err(|error| format!("{name}:{}: {error}", error.span().start().line)),
+        Extract::SyntaxAt(count) => syn::parse_file(&text)
+            .map(|syntax| count(&path.to_string_lossy(), &syntax))
             .map_err(|error| format!("{name}:{}: {error}", error.span().start().line)),
     }
 }
