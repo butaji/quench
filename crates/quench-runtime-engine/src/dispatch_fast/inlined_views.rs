@@ -206,41 +206,74 @@ pub(crate) fn leave(cx: *mut super::LaneContext, r: super::Registers, ip: Ip) ->
         Origin::Caller(pc) => (r, unsafe { records.add(pc as usize) }, super::carried_at_in_lane(cx, original, r, pc)),
         Origin::Inlined { frame, pc } => {
             let _ = caller_registers;
-            materialize(cx, r, records, original, &frames, frame, pc)
+            materialize(cx, r, records, &frames, frame, pc,
+                |vm, code, callee| vm.resolve_script_call_target(code, callee),
+                |call, _, sink| {
+                    for register in 0..call.registers {
+                        sink(register, r.get(call.base + register));
+                    }
+                })
         }
     }
 }
 
-/// The activations the calls of inlined `frame` and the frames around it make, outermost first
-/// (`push_passed_in_lane`), each holding its registers as the unit's window `r` holds them; the
-/// innermost's record at `pc`. Each marker proved its callee the frame's.
-fn materialize(cx: *mut super::LaneContext, r: super::Registers, records: Ip, original: *const LaneView, frames: &[InlinedCall], frame: usize, pc: u32)
-    -> (super::Registers, Ip, super::Carried) {
+/// The frame `frame` and the frames around it, innermost first, along the parent links of `frames`
+/// (`lane_unit::Unit::chain` is this walk, outermost first, over the unit's own frames).
+fn frame_chain(frames: &[InlinedCall], frame: usize) -> Vec<usize> {
     let mut chain = vec![frame];
     while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
         chain.push(parent);
     }
+    chain
+}
+
+/// One frame meaning (C4): the interpreter activations that the inlined frames of a unit mean at an
+/// exit, built from the unit's origins (the frame chain, each call's PC, its callee and its register
+/// window) at the moment control leaves. Compiled code never writes the interpreter frame ahead: the
+/// activations exist only once control leaves, and closed-world units have no exits, so this never
+/// runs for them.
+///
+/// The activations are the calls of inlined `frame` and the frames around it, outermost first
+/// (`push_passed_in_lane`), the innermost resuming at its record `pc`. `base` holds the records of the
+/// function the unit leaves from, where the outermost frame's call sits. Each frame's callee is its
+/// call's identity, or the function its callee register holds (a closed-world frame names no closure);
+/// a cache miss resolves it through `resolve`. The tier supplies only what it keeps: `resolve` (how a
+/// miss resolves a callee) and `leaving`, which hands a frame's registers to `sink` as the leaving tier
+/// holds them, at the leave's PC `at` in the frame's function (the interpreter's window, or the compiled
+/// body's spilled values).
+pub(crate) fn materialize(
+    cx: *mut super::LaneContext,
+    r: super::Registers,
+    base: Ip,
+    frames: &[InlinedCall],
+    frame: usize,
+    pc: u32,
+    resolve: impl Fn(&mut super::Vm, &quench_runtime::ResidualProgram, Value) -> Option<quench_runtime::vm::engine_types::ScriptCallTarget>,
+    leaving: impl Fn(&InlinedCall, u32, &mut dyn FnMut(u16, Value)),
+) -> (super::Registers, Ip, super::Carried) {
+    let chain = frame_chain(frames, frame);
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let (mut registers, mut records, mut view) = (r, records, original);
-    for &index in chain.iter().rev() {
+    let (mut registers, mut records, mut view) = (r, base, std::ptr::null::<LaneView>());
+    for (depth, &index) in chain.iter().enumerate().rev() {
         let call = frames[index];
         let vm = unsafe { super::vm(cx) };
-        let callee = call.target.identity().expect("an inlined callee has its identity");
+        let parent = call.parent_base(frames);
+        let callee = call.target.identity().unwrap_or_else(|| registers.get(call.callee_register - parent));
         // SAFETY: copy the cache row before anything changes the cache.
         let target = vm.script_call_entry(callee).map(|target| unsafe { *target })
-            .or_else(|| vm.resolve_script_call_target(code, callee))
-            .expect("an inlined callee resolves");
+            .or_else(|| resolve(&mut *vm, code, callee))
+            .unwrap_or_else(|| panic!("an inlined callee resolves: {:#x} (frame {index} of {}, callee register {}, parent {parent}, function {}, call {})",
+                callee.to_bits(), frames.len(), call.callee_register, call.target.function, call.call));
         // SAFETY: the record is the call's in its parent's records.
         let record = unsafe { records.add(call.call as usize) };
-        let parent = call.parent_base(frames);
         let this = super::call_this_in_lane(vm, &target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
         // SAFETY: the call's window of `registers` holds its values.
         let passed = unsafe { registers.0.add(usize::from(call.window - parent)).cast_const() };
         let (callee_registers, _) = super::push_passed_in_lane::<false, false>(cx, registers, record, &target, passed, call.arguments, this, false);
-        for register in 0..call.registers {
-            callee_registers.set(register, r.get(call.base + register));
-        }
+        // The leave's PC in this frame's function: the inner frame's call, or the leave's own PC for the innermost.
+        let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
+        leaving(&call, at, &mut |register: u16, value: Value| callee_registers.set(register, value));
         // SAFETY: the running lane's context, whose base the push made the callee's records.
         (registers, records, view) = (callee_registers, unsafe { (*cx).base }, target.view);
     }
