@@ -81,7 +81,7 @@ const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size == L::NATI
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_offset == L::NATIVE_FIELD_CACHE_LAYOUT.slot_offset);
-const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_id_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_id_offset);
+const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_cell_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_cell_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);

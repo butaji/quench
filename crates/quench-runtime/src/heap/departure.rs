@@ -12,7 +12,8 @@
 use super::cell::Object;
 use super::class_space::{header_class, header_record, is_cell_granule, live_header, region_capacity};
 use super::{Heap, OrdinaryRecord, layouts};
-use crate::staged::object_encoding::{DEPARTED_CLASS, departed_header};
+use crate::staged::field_cache_layout::CLASS_KEY;
+use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 
@@ -26,6 +27,24 @@ impl Heap {
             return None;
         }
         (header_class(self.class_space.header(granule)) != DEPARTED_CLASS).then_some(granule)
+    }
+
+    /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
+    /// storage: its class id OR'd with `CLASS_KEY`. A class id names the shape and the prototype link
+    /// (`layouts::intern_class`), so the key fixes the cell's own slots and its holder. `None` for any
+    /// other value, a record, and a departed cell.
+    #[inline(always)]
+    pub(crate) fn live_class_key(&self, value: Value) -> Option<u32> {
+        let granule = self.live_class_cell(value)?;
+        let class = header_class(self.class_space.header(granule));
+        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64) == 0).then_some(class | CLASS_KEY)
+    }
+
+    /// The field `slot` of the live class cell `value` names (`live_class_cell`), `None` otherwise.
+    #[inline(always)]
+    pub(crate) fn live_class_field(&self, value: Value, slot: usize) -> Option<Value> {
+        let granule = self.live_class_cell(value)?;
+        Some(self.class_space.field(granule, slot))
     }
 
     /// The departure edge: the ordinary object `value` names becomes a record, if it is a live class
@@ -64,7 +83,24 @@ impl Heap {
         self.class_space.write_header(granule, departed_header(record_id));
         self.class_space.delete_slack(granule, length);
         self.properties.note_class_departure(shape);
+        // A holder cell's departure ends its direct field reads (the holder-cell edge, R4-D1b(d)).
+        if self.class_space.take_holder_cell(granule) {
+            self.class_space.note_holder_departure();
+        }
         Some(record_id)
+    }
+
+    /// Marks the live class cell `holder` as the holder of a field entry, so its departure is an edge
+    /// the VM drains (`take_holder_departure`). A record holder needs no mark: its record stays put.
+    pub(crate) fn note_holder_cell(&mut self, holder: Value) {
+        if let Some(granule) = self.live_class_cell(holder) {
+            self.class_space.mark_holder_cell(granule);
+        }
+    }
+
+    /// Whether a holder cell departed since the last call; the caller clears the field caches.
+    pub(crate) fn take_holder_departure(&mut self) -> bool {
+        self.class_space.take_holder_departure()
     }
 
     /// The departure edge for a record-only view of `value` (`object_record_mut`, `object_and_arena_mut`,
