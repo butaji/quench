@@ -85,11 +85,6 @@ impl Word {
         Self::of(Type::function_body(function))
     }
 
-    /// The property-key constant `atom`.
-    pub(super) const fn atom(atom: u32) -> Self {
-        Self::from(Origin::Atom(atom))
-    }
-
     /// An instance of class `class` (`new`): a direct object, the construction's own result.
     pub(super) fn instance(class: u32) -> Self {
         Self { cell: Cell::instance(class), origin: Some(Origin::Instance(class)) }
@@ -143,11 +138,6 @@ impl Word {
     /// The word both describe: the join of their cells, from the origin both share.
     pub(super) fn join(self, other: Self) -> Self {
         Self { cell: self.cell.join(other.cell), origin: if self.origin == other.origin { self.origin } else { None } }
-    }
-
-    /// The word of the Number `value`: an int32 unless it is not one, or is `-0`.
-    pub(super) fn number(value: f64) -> Self {
-        Self::of(if crate::value::exact_int32(value).is_some() { Type::INT32 } else { Type::NUMBER })
     }
 
     /// The representation a register holding this word at every point has (`Cell::representation`).

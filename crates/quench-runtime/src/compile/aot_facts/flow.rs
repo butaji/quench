@@ -2,7 +2,8 @@
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
 use super::blocks::Blocks;
-use super::effects::{Ctx, Events, step};
+use super::effects::{Ctx, Events, operand_fact, step};
+use super::numeric;
 use super::scope::Scope;
 use super::value::{Word, Key, Origin, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
@@ -183,11 +184,20 @@ impl Dataflow for Solver<'_> {
     }
 
     /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal
-    /// edge carries the fact its block's conditional jump proves on it (`Solver::refine`).
+    /// edge carries the fact its block's conditional jump proves on it (`Solver::refine`). A backedge (to a block
+    /// no later than its source: every loop has one) settles the integer ranges it carries (`numeric::settle`),
+    /// so a loop's header is joined within finitely many rounds.
     fn transfer_edge_at(&self, block: usize, index: usize, out: &Vec<Word>) -> Vec<Word> {
         match self.blocks.kinds[block][index] {
             ControlEdge::Handler => vec![Word::UNKNOWN; out.len()],
-            ControlEdge::Normal => self.refine(block, self.blocks.targets[block][index], out),
+            ControlEdge::Normal => {
+                let target = self.blocks.targets[block][index];
+                let mut edge = self.refine(block, target, out);
+                if target <= block {
+                    for word in &mut edge { word.cell.ty = numeric::settle(word.cell.ty); }
+                }
+                edge
+            }
         }
     }
 }
@@ -216,11 +226,34 @@ impl Solver<'_> {
         let edge = self.blocks.ranges[target].start;
         // A jump to the next instruction has one edge that two indices name: no test tells them apart.
         if jump == fallthrough || (edge != jump && edge != fallthrough) { return out.clone(); }
+        if let Some(refined) = self.refine_ranges(instruction, out, edge == jump) { return refined; }
         let Some((register, fact)) = edge_fact(instruction, out, edge == jump) else { return out.clone() };
         let word = out[register];
         let mut refined = out.clone();
         refined[register] = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
         refined
+    }
+
+    /// The state an edge of a relational jump carries when its two operands are integer ranges: each keeps the range
+    /// the comparison leaves it on that edge (`numeric::relation_edge`). `None` where the jump compares no two integer
+    /// ranges, one register against itself, or no value reaches the edge (the edge then keeps the state it has).
+    fn refine_ranges(&self, instruction: WideInstruction, out: &Vec<Word>, to_target: bool) -> Option<Vec<Word>> {
+        let Some(Operation::CompareJump { comparison: Comparison::Relation { relation, .. }, left, right, negate }) =
+            Operation::<u64, ()>::of(instruction) else { return None };
+        let operands = [left, right];
+        if left.register_index().is_some() && left.register_index() == right.register_index() { return None; }
+        let [Some(left_range), Some(right_range)] = operands.map(|operand| operand_fact(self.ctx.scope, out, operand).cell.ty.int_range())
+            else { return None };
+        // The jump is taken where the comparison fails when `negate`, so its target's edge holds the relation false.
+        let [left_kept, right_kept] = numeric::relation_edge(relation, to_target != negate, left_range, right_range)?;
+        let mut refined = out.clone();
+        for (operand, range) in operands.into_iter().zip([left_kept, right_kept]) {
+            if let Some(register) = operand.register_index() {
+                let word = refined[usize::from(register)];
+                refined[usize::from(register)] = Word { cell: Cell { ty: Type::int(range), ..word.cell }, origin: word.origin };
+            }
+        }
+        Some(refined)
     }
 }
 
