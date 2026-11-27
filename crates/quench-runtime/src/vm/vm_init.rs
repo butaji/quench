@@ -135,7 +135,7 @@ impl Vm {
             prepared_roots: vec![],
             step_native_proofs: Default::default(),
             with_stack: vec![],
-            with_scope_entered: false, this_trust: std::cell::Cell::new(0), scope_names: Default::default(),
+            with_scope_entered: false, this_trust: std::cell::Cell::new(1), scope_names: Default::default(),
             test262_agent: Default::default(),
             shared_async_waiters: Vec::new(),
             programs: ProgramStore::default(),
