@@ -17,7 +17,7 @@ pub(super) const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-compact] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-image] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -31,7 +31,8 @@ struct Options {
     output: PathBuf,
     report: Option<PathBuf>,
     sdk_report: Option<PathBuf>,
-    profile: String,
+    /// `None` selects the support's default: `aot-image` for a static image, `release` for a dynamic-source one.
+    profile: Option<String>,
     strict: bool,
     support: SourceSupport,
     target: NativeTarget,
@@ -104,9 +105,8 @@ impl Options {
                 }
             }
         }
-        let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if !matches!(profile.as_str(), "experiment" | "release" | "iteration" | "aot-compact") {
-            return Err("compile profile must be experiment, release, iteration or aot-compact".into());
+        if profile.as_deref().is_some_and(|profile| !matches!(profile, "experiment" | "release" | "iteration" | "aot-image")) {
+            return Err("compile profile must be experiment, release, iteration or aot-image".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,
@@ -244,9 +244,12 @@ fn compile(options: Options) -> Result<(), String> {
     }) {
         return Err("report and executable must have different destinations".into());
     }
+    let profile = options.profile.clone().unwrap_or_else(|| {
+        (if support.allows_dynamic_source() { "release" } else { "aot-image" }).to_owned()
+    });
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": profile, "support_variant": variant.name(),
         "support_features": support_features(&graph, support),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
@@ -319,8 +322,14 @@ fn compile(options: Options) -> Result<(), String> {
             // A dynamic-source image links the standard build's library (`cargo build -p quench`, default
             // features), which that build left fresh: this cargo run only reports it. A static image's
             // support leaves out the JIT and the bundled sources, a build of its own.
+            // A minimal static support also builds its standard library for size: `panic_immediate_abort`
+            // drops the panic-message formatting, `optimize_for_size` selects the library's size-oriented code paths.
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1");
+            if !support.allows_dynamic_source() && profile == "aot-image" {
+                cargo.args(["-Zbuild-std=std,panic_abort", "-Zbuild-std-features=panic_immediate_abort,optimize_for_size"]);
+            }
+            cargo.args(["build", "--locked", "--profile", &profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
                 let features = support_features(&graph, support);
                 cargo.args(["--no-default-features", "--features", &features]);
@@ -474,7 +483,7 @@ mod tests {
             output: output.clone(),
             report: Some(report.clone()),
             sdk_report: None,
-            profile: "iteration".into(),
+            profile: Some("iteration".into()),
             strict: false,
             support: SourceSupport::Static,
             target: NativeTarget::default(),
@@ -504,7 +513,7 @@ mod tests {
                 output: destination,
                 report,
                 sdk_report: None,
-                    profile: "iteration".into(),
+                    profile: Some("iteration".into()),
                 strict: false,
                 support: SourceSupport::Static,
                 target: NativeTarget::default(),

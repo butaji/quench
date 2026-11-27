@@ -290,7 +290,7 @@ impl NativeSupport {
             command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
         if self.rust_lto {
-            command.args(["-C", "lto=thin"]);
+            command.args(["-C", "lto=fat"]);
         }
         self.apply_platform_flags(command, inputs, executable)?;
         for path in &self.native_paths {
@@ -323,6 +323,7 @@ impl NativeSupport {
             std::fs::write(&script, DISCARD_UNWIND_TABLES).map_err(|error| format!("{}: {error}", script.display()))?;
             command.arg("-C").arg("link-arg=-Wl,--no-eh-frame-hdr")
                 .arg("-C").arg(format!("link-arg=-Wl,-T,{}", script.display()));
+            apply_static_layout_flags(command);
         }
         // Apple Silicon's macOS floor already supports chained fixups. Request them explicitly:
         // rustc's default deployment target otherwise selects classic relocations, dirtying every
@@ -368,6 +369,23 @@ impl NativeSupport {
             }
         }
     }
+}
+
+/// The static image's section and code layout: unreferenced sections are collected, and identical
+/// functions fold. Folding (`--icf`) is an lld feature, so the link uses lld when it is on the
+/// path. `-z norelro` drops the RELRO page: a static non-PIE image has no dynamic relocations
+/// for it to protect.
+#[cfg(target_os = "linux")]
+fn apply_static_layout_flags(command: &mut Command) {
+    command.args(["-C", "link-arg=-Wl,--gc-sections", "-C", "link-arg=-Wl,-z,norelro"]);
+    if lld_on_path() {
+        command.args(["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Wl,--icf=all"]);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn lld_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join("ld.lld").is_file()))
 }
 
 // LLVM's raw and wrapper bitcode signatures (BitCodeFormat.html). Detect

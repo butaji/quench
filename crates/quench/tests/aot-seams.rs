@@ -90,7 +90,7 @@ fn core_links_runtime_alone_with_the_quench_allocator() {
 #[test]
 fn core_installs_only_reachable_intrinsic_families() {
     let directory = workspace("families");
-    let (hello, report) = compile_with_profile(&directory, "console.log('hello');\n", "core-families-none", false, "aot-compact");
+    let (hello, report) = compile_with_profile(&directory, "console.log('hello');\n", "core-families-none", false, "aot-image");
     assert_eq!(report["support_variant"], "core");
     assert_eq!(report["builtin_families"], 0);
     assert_eq!(String::from_utf8_lossy(&run(&hello).stdout), "hello\n");
@@ -104,7 +104,7 @@ fn core_installs_only_reachable_intrinsic_families() {
         "console.log(new RegExp('a').test('cat'));\n",
         "console.log(typeof Promise.resolve(3).then);\n",
     );
-    let (binary, report) = compile_with_profile(&directory, source, "core-families-all", false, "aot-compact");
+    let (binary, report) = compile_with_profile(&directory, source, "core-families-all", false, "aot-image");
     assert_eq!(report["support_variant"], "core");
     assert_ne!(report["builtin_families"], 0);
     let output = run(&binary);
@@ -163,7 +163,7 @@ fn static_multifamily_smoke_runs_like_the_interpreter() {
 #[test]
 fn static_argv_links_no_openssl_or_iconv() {
     let directory = workspace("argv");
-    let (binary, report) = compile_with_profile(&directory, "console.log(process.argv.length);\n", "static-argv", false, "aot-compact");
+    let (binary, report) = compile_with_profile(&directory, "console.log(process.argv.length);\n", "static-argv", false, "aot-image");
     assert_eq!(report["support_variant"], "static");
     let links = links(&binary);
     for absent in ["libssl", "libcrypto", "libiconv"] {
