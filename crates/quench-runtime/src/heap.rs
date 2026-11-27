@@ -254,6 +254,17 @@ pub use cell::*;
 pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub use view_holders::{subscribe_typed_views, typed_views_stable};
 pub(crate) use view_holders::live_view_changed;
+
+/// The most fields a class cell holds: the capacity of the largest region (`class_space`).
+const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
+
+/// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
+/// holds them (an empty object's is region 1). `None` past the largest region, where the object keeps its record.
+pub(crate) fn cell_region_for(fields: usize) -> Option<u32> {
+    (1..crate::staged::object_encoding::CAPACITY_CLASSES as u32)
+        .find(|&region| fields <= crate::staged::object_encoding::region_field_capacity(region))
+}
+
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
@@ -1585,6 +1596,13 @@ impl Heap {
         self.alloc_object_of(object, prototype)
     }
 
+    /// `alloc_object` of `object` whose class cell holds at least `capacity` fields (a constructor's learned
+    /// storage or union layout, `Vm::alloc_construct_receiver`).
+    pub(crate) fn alloc_object_with_capacity(&mut self, object: Object, capacity: usize) -> Value {
+        let prototype = object.proto();
+        self.alloc_object_of_capacity(object, prototype, capacity)
+    }
+
     /// `alloc_object_with_properties` of a planned object: `header`, derived once for
     /// `prototype` and an inline shape (`InlineObjectHeader::of`), and its `inline` values.
     #[inline(always)]
@@ -1599,27 +1617,6 @@ impl Heap {
         };
         debug_assert!(object.proto() == prototype);
         self.alloc_object_of(object, prototype)
-    }
-
-    /// `alloc_object_with_properties` of an object whose values outgrow its inline slots, or
-    /// that they cannot hold: `header`, derived for `prototype` and an arena shape
-    /// (`InlineObjectHeader::of_run`), over a new run of the first `len` of `values`.
-    #[inline(always)]
-    pub(crate) fn alloc_object_from_run_header<const N: usize>(
-        &mut self,
-        header: InlineObjectHeader,
-        prototype: Value,
-        values: &[Value; N],
-        len: usize,
-    ) -> Value {
-        self.properties.assert_shape_length(header.shape(), len);
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc_object_with_properties(prototype, header.shape(), &values[..len]);
-        }
-        match self.properties.young_run_padded(values, len) {
-            Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
-            None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
-        }
     }
 
     /// `alloc_object_from_header` of values the payload word cannot hold: arena storage.
@@ -1752,14 +1749,61 @@ impl Heap {
         self.object(prototype).is_none_or(|object| object.was_used_as_prototype())
     }
 
-    /// The record of `object`, an ordinary object's only allocation, charged as one allocation
-    /// with no payload or external bytes (`allocated += 1` only). The caller admits the
-    /// object's initial values (`admit_object_contents`) and marks its prototype, or leaves them
-    /// as they are where placeholders must record nothing. The object record space holds
-    /// `OBJECT_RECORD_CAPACITY` (2^30) records, so a full space is a panic; no legacy slot takes
-    /// an object.
+    /// The allocation of ordinary object `object`: a class cell (`insert_object_as_cell`) where it has
+    /// the cell form, else its record. The caller admits the object's initial values
+    /// (`admit_object_contents`) and marks its prototype, or leaves them as they are where
+    /// placeholders must record nothing.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
+        self.insert_object_with_capacity(object, 0)
+    }
+
+    /// `insert_object_record` where the object's cell holds at least `capacity` fields: the learned
+    /// storage of its constructor, or the closed world's union layout of its class.
+    #[inline(always)]
+    pub(crate) fn insert_object_with_capacity(&mut self, object: Object, capacity: usize) -> Value {
+        match self.insert_object_as_cell(object, capacity) {
+            Ok(value) => value,
+            Err(object) => self.insert_object_as_record(object),
+        }
+    }
+
+    /// `object` as a class cell (R4-C2): its class is its shape and prototype link with no flags, its
+    /// fields its values, its slack `Value::DELETED`, in the smallest region holding the larger of its
+    /// fields and `capacity`. Its arena storage moves into the cell, so that storage is released.
+    /// `Err(object)`, unchanged, where the object has a record's form (extras, an array, a class flag,
+    /// more fields than a cell holds) or its region is full.
+    fn insert_object_as_cell(&mut self, object: Object, capacity: usize) -> Result<Value, Object> {
+        if cfg!(feature = "profile-aggregate")
+            || object.is_array()
+            || object.has_extras()
+            || layouts::word(object.layout_id()) & layouts::CLASS_FLAG_MASK != 0
+        {
+            return Err(object);
+        }
+        let shape = object.shape();
+        let length = self.properties.shape_length(shape);
+        let Some(region) = cell_region_for(length.max(capacity)) else {
+            return Err(object);
+        };
+        let mut fields = [Value::DELETED; MAX_CELL_FIELDS];
+        for (slot, field) in fields.iter_mut().enumerate().take(length) {
+            *field = self.property_get(&object, slot).unwrap_or(Value::UNDEFINED);
+        }
+        let class = layouts::intern_class(shape, object.proto_link(), 0);
+        let Some(granule) = self.class_space.claim_cell(region, class, &fields[..length], &mut self.allocated) else {
+            return Err(object);
+        };
+        object.release_storage(&mut self.properties);
+        Ok(Value::direct_object(granule))
+    }
+
+    /// The record of `object`, an ordinary object's only allocation, charged as one allocation
+    /// with no payload or external bytes (`allocated += 1` only). The object record space holds
+    /// `OBJECT_RECORD_CAPACITY` (2^30) records, so a full space is a panic; no legacy slot takes
+    /// an object. The record form, kept for the objects a cell cannot hold.
+    #[inline(always)]
+    fn insert_object_as_record(&mut self, object: Object) -> Value {
         // An object owns no payload or external bytes: its record is the whole charge, made
         // with its cursor run (`RecordSpace::bump_id`), with no `charge_allocation` on the hot path.
         #[cfg(feature = "profile-aggregate")]
@@ -1778,7 +1822,7 @@ impl Heap {
     /// Publishes object record `record_id`, whose record is written: claims its stub in region 0,
     /// writes the stub's header (the record id, `departed_header`), stores the granule in the record,
     /// and returns the direct object `Value` the granule names. A record claimed but not yet written
-    /// (`claim_object_record`) may be published first: only its stub field is written here.
+    /// may be published first: only its stub field is written here.
     #[inline(always)]
     pub(crate) fn publish_object_record(&mut self, record_id: u32) -> Value {
         let granule = self
@@ -2074,9 +2118,8 @@ impl Heap {
         }
         Value::heap(index as u32)
     }
-    /// Inline into the literal-pair paths (`Vm::object_pair`): as a call, its frame cost ~21
-    /// Ir of the ~120 an allocation took.
-    #[inline(always)]
+    /// The literal pair of `Vm::object_pair`: `alloc_object_values` of its two values.
+    #[inline]
     pub(crate) fn alloc_object_pair(
         &mut self,
         proto: Value,
@@ -2084,32 +2127,59 @@ impl Heap {
         first: Value,
         second: Value,
     ) -> Value {
-        if let Some(object) = Object::with_inline_values(proto, shape, &[first, second]) {
-            return self.alloc_object(object);
-        }
-        // Values the inline slots cannot hold take a run of the smallest class, as a planned
-        // receiver's do (`alloc_object_from_run_header`).
-        let padded = [first, second, Value::UNDEFINED, Value::UNDEFINED];
-        self.alloc_object_from_run_header(InlineObjectHeader::of_run(proto, shape), proto, &padded, INLINE_PROPERTY_COUNT)
+        self.alloc_object_values(proto, shape, &[first, second], 0)
     }
+
+    /// `alloc_object` of an ordinary object of prototype `proto`, shape `shape` and fields `values`: a class
+    /// cell (`claim_values_cell`) holding at least `capacity` fields, else the object's record.
     pub fn alloc_object_with_properties(
         &mut self,
         proto: Value,
         shape: u32,
         values: &[Value],
     ) -> Value {
+        self.alloc_object_values(proto, shape, values, 0)
+    }
+
+    /// `alloc_object_with_properties` where the cell holds at least `capacity` fields.
+    pub(crate) fn alloc_object_values(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> Value {
         self.properties.assert_shape_length(shape, values.len());
-        if values.len() <= INLINE_PROPERTY_COUNT
+        if let Some(granule) = self.claim_values_cell(proto, shape, values, capacity) {
+            return Value::direct_object(granule);
+        }
+        let object = if values.len() <= INLINE_PROPERTY_COUNT
             && let Some(object) = Object::with_inline_values(proto, shape, values)
         {
-            return self.alloc_object(object);
+            object
+        } else {
+            let properties = self.properties.with_values(shape, values);
+            Object::with_property_storage(proto, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT])
+        };
+        self.alloc_object_of_capacity(object, proto, capacity)
+    }
+
+    /// `alloc_object_of` where the object's cell holds at least `capacity` fields.
+    #[inline(always)]
+    pub(crate) fn alloc_object_of_capacity(&mut self, object: Object, prototype: Value, capacity: usize) -> Value {
+        self.mark_prototype(prototype);
+        self.admit_object_contents(&object);
+        self.insert_object_with_capacity(object, capacity)
+    }
+
+    /// The class cell of an ordinary object of prototype `proto`, shape `shape` and fields `values` (the
+    /// literal and empty-object allocations): its class is `ProtoLink::of(proto)`'s class of `shape`, which
+    /// the object would take with no flags. The prototype is marked as `alloc_object` marks it, and the
+    /// shape's values are noted as `initialize_object_properties` notes them. `None`, with nothing charged,
+    /// where the values exceed a cell or the region is full: the caller takes the record.
+    fn claim_values_cell(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> Option<u32> {
+        if cfg!(feature = "profile-aggregate") {
+            return None;
         }
-        let properties = self.properties.with_values(shape, values);
-        self.alloc_object(Object::with_property_storage(
-            proto,
-            properties,
-            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-        ))
+        let region = cell_region_for(values.len().max(capacity))?;
+        let class = ProtoLink::of(proto).class(shape);
+        self.mark_prototype(proto);
+        self.properties.note_shape_values(shape, values);
+        self.class_space.claim_cell(region, class, values, &mut self.allocated)
     }
     /// `alloc_array` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
@@ -2139,6 +2209,8 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
+        // Replacing storage is a record edit: a class cell departs first, so the owner is a record.
+        self.depart_for_mutation(owner);
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)

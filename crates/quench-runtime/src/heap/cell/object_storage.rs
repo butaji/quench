@@ -277,29 +277,6 @@ impl Object {
         ValueArena::appends_in_place(self.properties(), slot)
     }
 
-    /// Whether a cached add at `slot`, as for `admits_plain_append`, to this object, which has
-    /// no extras, appends into the young run reserved for it past its length's class
-    /// (`ValueArena::reserved_room`): the receiver of a constructor whose learned field count
-    /// reserved that run (`Heap::reserve_receiver_run`).
-    #[inline(always)]
-    pub(crate) fn admits_reserved_append(&self, properties: &ValueArena, slot: usize) -> bool {
-        debug_assert!(self.admits_cached_add());
-        self.extras_pointer().is_none()
-            && self.meta() & OBJECT_INLINE_STORAGE == 0
-            && properties.reserved_room(self.properties(), slot + 1)
-    }
-
-    /// Appends `value` at `slot` and moves to `shape`, the add `admits_reserved_append`
-    /// admitted: `append_plain` into the reservation.
-    #[inline(always)]
-    pub(crate) fn append_reserved(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-        properties.note_shape_value(shape, slot, value);
-        debug_assert!(self.admits_reserved_append(properties, slot));
-        // SAFETY: `admits_reserved_append` found the reservation's room for the value.
-        unsafe { properties.push_reserved(self.properties(), slot, value) };
-        self.set_shape(shape, properties);
-    }
-
     /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
     /// Without extras it was never a prototype; the move still retires shape readers.
     #[inline(always)]
