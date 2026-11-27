@@ -516,7 +516,7 @@ fn class_layout_id(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
     let shape = shape(image, vm, key)?;
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape))
 }
 
 /// The data attributes of a field's attribute bits.
