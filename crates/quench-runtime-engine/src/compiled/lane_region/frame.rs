@@ -240,7 +240,7 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let at = if self.arrays_fixed { quench_runtime::staged::Region::RecordBases.readonly() } else { quench_runtime::staged::Region::RecordBases.mutable() };
+        let at = regions::record_base(self.arrays_fixed);
         let arrays = quench_runtime::staged::Stage::load_u64(stage, at, self.payload,
             std::mem::offset_of!(super::super::JsStepDispatch, head.array_record_base) as i32);
         let objects = super::super::emit_js_payload_word(stage.builder, self.payload,

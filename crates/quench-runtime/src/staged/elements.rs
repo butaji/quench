@@ -447,10 +447,15 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 /// length past int32.
 #[inline(always)]
 pub fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+    array_length_as(stage, record_base, base, miss, Region::Elements.mutable())
+}
+
+/// `array_length` reading the length word with `length`.
+pub fn array_length_as<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss, length_access: Access) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     // Only an array without extras takes this read (`ArrayRecord::plain_header`).
     let header = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?.plain_header(stage, miss)?;
-    let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
+    let length = stage.load_u32(length_access, header, ARRAY.header_length_offset as i32);
     // A narrow or double backing flags its length's top bits (capacities stay below them): the
     // count is the word without them, as the interpreter reads it.
     let length = stage.and_imm(length, u64::from(!crate::heap::ENCODED_LEN));

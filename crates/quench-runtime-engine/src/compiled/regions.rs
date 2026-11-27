@@ -60,6 +60,25 @@ pub(crate) fn backing_access(effects: Effects) -> BackingAccess {
     BackingAccess { header: LoadFact::of_unit(effects, Region::Payload).access(), length: LoadFact::of_unit(effects, Region::Elements).access() }
 }
 
+/// The access of the array record table's base word (`JsStepDispatch::head.array_record_base`): readonly in a unit where
+/// arrays stay put (`arrays_fixed`, `Lowering::arrays_stay_put`), so its loads hoist and merge; mutable otherwise.
+pub(crate) fn record_base(arrays_fixed: bool) -> Access {
+    if arrays_fixed { Region::RecordBases.readonly() } else { Region::RecordBases.mutable() }
+}
+
+/// Every word an array access reads, each decided once per unit: the record table's base (`record`) and the backing's
+/// header and length (`backing`).
+#[derive(Clone, Copy)]
+pub(crate) struct ArrayAccess {
+    pub(crate) record: Access,
+    pub(crate) backing: BackingAccess,
+}
+
+/// The accesses of an array access in a unit whose effect row is `effects` and whose arrays stay put iff `arrays_fixed`.
+pub(crate) fn array_access(effects: Effects, arrays_fixed: bool) -> ArrayAccess {
+    ArrayAccess { record: record_base(arrays_fixed), backing: backing_access(effects) }
+}
+
 /// The (class, atom) a named property is keyed by: the proven class of its receiver and its atom.
 pub(crate) type FieldKey = (u32, u32);
 
@@ -173,6 +192,14 @@ mod tests {
             assert!(!mutable.readonly() && !mutable.can_move());
             assert!(readonly.readonly() && readonly.can_move());
         }
+    }
+
+    #[test]
+    fn the_record_base_is_readonly_only_where_arrays_stay_put() {
+        let (fixed, moving) = (flags(record_base(true)), flags(record_base(false)));
+        assert!(fixed.readonly() && fixed.can_move() && fixed.notrap() && fixed.aligned());
+        assert!(!moving.readonly() && !moving.can_move());
+        assert_eq!(fixed.alias_region(), moving.alias_region());
     }
 
     #[test]
