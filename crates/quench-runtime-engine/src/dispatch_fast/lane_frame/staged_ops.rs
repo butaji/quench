@@ -206,7 +206,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // The form the proved calls make: a callee and a receiver register and a window. A returning
         // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
         // where `returning_call_admitted` holds for the function); a forwarding call is never.
-        let (Callee::Register(_), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
+        let (Callee::Register(callee_register), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
         };
         if site.returns != call.form.returns || site.forwards {
@@ -219,7 +219,22 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         let index = usize::from(unsafe { (*call.record).call_link.get() }) & (entries.len() - 1);
         // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the masked
         // index lies within it; nothing before the hand-off resolves a target or collects.
-        let target = unsafe { entries.get_unchecked(index) };
+        let linked = unsafe { entries.get_unchecked(index) };
+        // A site meeting another callee than its link names (a polymorphic `this.task.run(p)`) finds the
+        // callee's own entry in its set's two ways (`Vm::script_call_index`), which the link names from then
+        // on: the row admits it as it would the linked one, and only a callee no set holds declines.
+        let callee = self.registers.get(callee_register);
+        let target = if linked.callee == callee { linked } else {
+            let Some(set) = stack.script_targets.set(callee) else { return quench_runtime::staged::CallEntry::Helper };
+            let Some((way, entry)) = [set, set | 1].into_iter()
+                .find_map(|way| entries.get(way).filter(|entry| entry.callee == callee).map(|entry| (way, entry))) else {
+                return quench_runtime::staged::CallEntry::Helper;
+            };
+            if entry.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
+            // SAFETY: the call record the row runs; the entry count stays below `PLAIN_LINK` (`SCRIPT_CALL_TARGETS`).
+            unsafe { (*call.record).call_link.set(way as u16 | crate::dispatch_fast::PLAIN_LINK) };
+            entry
+        };
         // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
