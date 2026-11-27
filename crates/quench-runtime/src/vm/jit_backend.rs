@@ -136,16 +136,15 @@ pub fn target_isa() -> Option<Arc<TargetIsa>> {
 }
 
 /// The ISA of an AOT lane body for `target`: the JIT's, with the frame pointers its leaves' tail
-/// calls to the base body's entries need, as the stencils that base body is built from have, and the
-/// IR verifier on: a lane body is an extra tier, so a body whose IR is invalid is dropped (the
-/// compile's error) rather than aborting the ahead compile, which can afford the check.
+/// calls to the base body's entries need, as the stencils that base body is built from have. No IR
+/// verifier and no register-allocation checker: the ahead compile runs at load in every default run.
 pub fn ahead_lane_isa(target: &NativeTarget) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
     {
         static ISAS: OnceLock<Mutex<Vec<(NativeTarget, Arc<TargetIsa>)>>> = OnceLock::new();
         let mut isas = ISAS.get_or_init(Default::default).lock().ok()?;
         if let Some((_, isa)) = isas.iter().find(|(built, _)| built == target) { return Some(Arc::clone(isa)); }
-        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), target, true).ok()?;
+        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), target, false).ok()?;
         isas.push((target.clone(), Arc::clone(&isa)));
         Some(isa)
     }

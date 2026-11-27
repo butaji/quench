@@ -13,7 +13,6 @@ pub mod engine_calls2;
 pub(crate) use engine_calls2::*;
 #[cfg(feature = "native-execution")]
 pub use engine_calls::{define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
-pub mod lane_body_audit;
 pub mod intl_core;
 pub mod layer_hooks;
 pub mod realm_table;

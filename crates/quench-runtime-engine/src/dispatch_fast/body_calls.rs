@@ -588,10 +588,6 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     // SAFETY: the program's views outlive the lane run; this record is the view's.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
         .expect("a published body's entry runs in its view");
-    // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-    if own.audit_entry(true, || vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base)) {
-        return Resumed::At(r, base, Carried::script_in(cx, view));
-    }
     // A function of a program with a loaded AOT image takes the image's body at its first entry, no warm-up.
     // One the image holds no lane body for gives its prologue back, once: its entries run its records,
     // not this path and the image lookup again (as `tier_enter_in_lane` releases a declined body).
