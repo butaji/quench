@@ -5430,11 +5430,8 @@ impl Analysis<'_> {
 
     /// The function's plan, assuming every function in `callable` compiles.
     fn plan(&self, index: usize, callable: &quench_runtime::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
-        let plan_started = self
-            .compile_rejections
-            .as_ref()
-            .map(|_| std::time::Instant::now());
-        let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
+        let diagnose = self.compile_rejections.is_some();
+        let memory_before = diagnose.then(jit_memory_snapshot).flatten();
         let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
@@ -5568,8 +5565,8 @@ impl Analysis<'_> {
                     .unwrap_or_default()
             })
             .collect();
-        if let Some(started) = plan_started {
-            plan_report::report(index, started, memory_before, instructions.len(), registers, &states);
+        if diagnose {
+            plan_report::report(index, memory_before, instructions.len(), registers, &states);
         }
         Some(Plan {
             params,

@@ -265,10 +265,9 @@ impl Lowered {
         if replans && ir * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES {
             return Self::Oversized;
         }
-        let started = std::time::Instant::now();
         let code = image::compile(native, lowered.scalar.take(), lowered.proven.take(), level);
         if let Some(census) = census {
-            eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
+            eprintln!("{}", Census { ir, ..census }.report(code.as_ref().map_or(0, |image| image.code.len())));
         }
         Self::Compiled { lowered, ir, code }
     }
@@ -602,7 +601,6 @@ impl Vm {
             super::admission::Decision::Short => return Err(Unstarted::Short),
         };
         super::base_region::count(super::base_region::Event::BodyPlanned);
-        let plan_started = std::time::Instant::now();
         let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
@@ -666,10 +664,9 @@ impl Vm {
             global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
-        let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
-            generic: generic.len(), direct: direct.len(), budget, closed, plan_us });
+            generic: generic.len(), direct: direct.len(), budget, closed });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;

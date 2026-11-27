@@ -205,16 +205,12 @@ pub(crate) fn measured_ir_per_bytecode(loops: &tier_policy::Loops, lowers: Lower
 pub(crate) struct Census {
     pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,
     pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) budget: usize, pub(crate) closed: bool,
-    /// The planning, proofs and lowering on the VM's own thread, which the background `us`
-    /// excludes and the measured window pays.
-    pub(crate) plan_us: u64,
 }
 
 impl Census {
-    pub(crate) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, budget, closed, plan_us } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
-            took.as_micros())
+    pub(crate) fn report(&self, bytes: usize) -> String {
+        let Self { function, osr, unit, ir, key, generic, direct, budget, closed } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"key\":\"{key:016x}\",\"closed\":{closed},\"bytes\":{bytes}}}")
     }
 }
 
