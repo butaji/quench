@@ -286,7 +286,8 @@ fn row(instruction: WideInstruction, site: Site<'_>) -> Body {
     }
 }
 
-/// The steps of `program`'s function `function`, in code order.
+/// The steps of `program`'s function `function`, in code order. A field access that runs an accessor is a call of the
+/// accessor's arms (`AotFacts::accessor_arms`), so its step is their composed signature rather than its kind row.
 fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Body> {
     let decode = DecodeContext::of(program);
     program.with_record(function as usize, |record| {
@@ -295,6 +296,11 @@ fn bodies(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Vec<Bod
             match Invocation::of(instruction, decode) {
                 Some(invocation) => Body::Call { pc, targets: reached(facts, function, pc, &invocation, instruction),
                     site: facts.function_facts(function).call_site(pc).cloned() },
+                None if facts.function_facts(function).accessor_arms(pc).is_some() => Body::Call {
+                    pc,
+                    targets: facts.function_facts(function).call_targets(pc).into_boxed_slice(),
+                    site: facts.function_facts(function).call_site(pc).cloned(),
+                },
                 None => row(instruction, Site { program, facts, function, pc }),
             }
         }).collect()

@@ -84,7 +84,7 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
 
 /// The length relations of function `id` (`settle`), from its settled solve `flow` and the settled facts of the program.
 pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow, (scope, decode, records): (&Scope, DecodeContext<'_>, &[Register]),
-    resolved: &BTreeMap<Key, u32>, types: &Types, facts: &FunctionFacts<'_>) -> Settled {
+    resolved: &BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>) -> Settled {
     let whole = whole_literals(function);
     let ctx = Ctx {
         id,
@@ -97,6 +97,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         types: Some(types),
         decode,
         records,
+        accessors,
     };
     settle(&ctx, function, &flow.entries, facts)
 }

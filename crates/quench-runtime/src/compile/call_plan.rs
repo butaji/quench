@@ -140,6 +140,14 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
     Some(CallPlan { form, arms, miss, tail: false, method: Some(atom), argc: 0 })
 }
 
+/// The plan of a field access that runs an accessor (`AotFacts::accessor_arms`): its arms are the accessor per class of the
+/// receiver's union, and it has no miss path, since the proof read no key that is live (`accessors::accessor_arms`). Its
+/// one argument is the stored value of a setter (`setter`), and no argument for a getter.
+fn accessor_plan(setter: bool, arms: &[Arm], signatures: &Signatures, inlinable: impl Fn(u32) -> bool) -> CallPlan {
+    let form = form_of(arms, &inlinable, |function| signatures.of(function));
+    CallPlan { form, arms: arms.into(), miss: Miss::None, tail: false, method: None, argc: u16::from(setter) }
+}
+
 /// The plan of the call at `pc` of `caller` whose callee is in `register`, or None where the site keeps its own
 /// path. Three facts name its one target, in order:
 ///
@@ -186,7 +194,7 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
             Some((pc as u32, instruction.op().traits().has(Traits::CONSTRUCTION), invocation))
         }).collect()
     });
-    calls.into_iter().filter_map(|(pc, construct, invocation)| {
+    let planned = calls.into_iter().filter_map(|(pc, construct, invocation)| {
         let site_plan = if construct {
             facts.function_facts(function).construct_target(pc).map(|target| single_target(target, Miss::None, signatures, &inlinable))
         } else {
@@ -201,7 +209,10 @@ pub fn call_plans(program: &ResidualProgram, facts: &AotFacts, signatures: &Sign
             site_plan.argc = invocation.arguments.count();
             (pc, site_plan)
         })
-    }).collect()
+    });
+    let accessors = facts.function_facts(function).accessor_sites()
+        .map(|(pc, site)| (pc, accessor_plan(site.setter, &site.arms, signatures, &inlinable)));
+    planned.chain(accessors).collect()
 }
 
 #[cfg(test)]
