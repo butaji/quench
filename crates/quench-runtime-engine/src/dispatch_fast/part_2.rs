@@ -52,7 +52,7 @@ pub(crate) fn frame_memory_view(
 }
 
 /// A taken safepoint jump whose fuel ran out (`script_fuel_out`): leave the lane when a
-/// collection is due or termination requested, otherwise refill the fuel, credit the work
+/// byte charges made a collection due (`Vm::byte_due`) or termination is requested, otherwise refill the fuel, credit the work
 /// clock and dispatch the target from the lane loop,
 /// which unwinds the stack, with the accumulator `acc` the jump carries
 /// (`LaneContext::resumed_acc`): a loop head whose every edge carries a
@@ -63,7 +63,7 @@ pub(crate) fn frame_memory_view(
 pub(super) fn safepoint_at(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
     let cx = context_in_lane();
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(cx) }.collection_due() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
+    if unsafe { vm(cx) }.byte_due() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
         // SAFETY: as above.
         unsafe { (*cx).fuel = 0 };
         return exit(ip);
