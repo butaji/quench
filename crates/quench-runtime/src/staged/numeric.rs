@@ -1,7 +1,9 @@
 //! Number x Number semantics over `Stage`/`Frame`, shared by the interpreter and native tiers.
 
+use super::value::language;
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
+use crate::typed_ir::Type;
 #[cfg(not(stencil_build))]
 use crate::vm::operations::binary_operator;
 use crate::vm::operations::{
@@ -184,6 +186,44 @@ pub enum NumberOperation {
     /// slot of label `i` at `i - minimum`): the slot of `source` where it is an int32 or an integral
     /// double in the run (`===` of that label), else `count`. Every value is decided: none leaves.
     IntCase { destination: Register, source: Operand, minimum: i32, maximum: i32, count: u16 },
+}
+
+impl NumberOperation {
+    /// The type of the value this operation defines for proven-number operands, where its row continues. An arithmetic
+    /// or an increment is an int32 where its overflow leaves rather than widens, and a Number otherwise; a remainder is an
+    /// int32 in the int32 domain; a bitwise, `~` or `Math.imul` is an int32 (`>>>` excepted: its uint32 result may pass
+    /// `i32::MAX`, so it is a Number); a relation defines a Boolean; the Math functions and `ToNumeric` are Numbers, and so
+    /// is a unary in the int32 domain, whose operand that is no int32 takes the float row.
+    #[cfg_attr(stencil_build, allow(dead_code))]
+    pub fn result_domain(self) -> Type {
+        match self {
+            Self::Arithmetic { operation, domain, overflow, .. } =>
+                if !matches!(operation, NumberArithmetic::Divide) && domain == Domain::Int32 && overflow != Overflow::Widen { Type::INT32 } else { Type::NUMBER },
+            Self::Relation { .. } | Self::RelationValue { .. } => Type::languages(language::BOOLEAN),
+            Self::Bitwise { operation, .. } => if operation == NumberBitwise::ShiftRightUnsigned { Type::NUMBER } else { Type::INT32 },
+            Self::BitwiseNot { .. } | Self::Imul { .. } | Self::IntCase { .. } => Type::INT32,
+            Self::Remainder { domain, .. } => if domain == Domain::Int32 { Type::INT32 } else { Type::NUMBER },
+            Self::IncDec { overflow, .. } => if overflow == Overflow::Widen { Type::NUMBER } else { Type::INT32 },
+            Self::Unary { .. } | Self::ToNumeric { .. } | Self::Math { .. } | Self::Extreme { .. } => Type::NUMBER,
+        }
+    }
+
+    /// Whether the left operand is the result where the right operand is the int32 `constant`: `x + 0` (int32 domain),
+    /// `x - 0`, `x * 1` (any domain), and `x | 0`, `x ^ 0`, `x << 0`, `x >> 0`, `x & -1` (on an int32 `x`, which the bitwise
+    /// operator reads as ToInt32). A commutative operation with the constant on the left is the same identity: the caller
+    /// swaps the operands first.
+    #[cfg_attr(stencil_build, allow(dead_code))]
+    pub fn identity(self, constant: i32) -> bool {
+        let neutral = match self {
+            Self::Arithmetic { operation: NumberArithmetic::Add, domain: Domain::Int32, .. }
+            | Self::Arithmetic { operation: NumberArithmetic::Subtract, .. } => 0,
+            Self::Arithmetic { operation: NumberArithmetic::Multiply, .. } => 1,
+            Self::Bitwise { operation: NumberBitwise::Or | NumberBitwise::Xor | NumberBitwise::ShiftLeft | NumberBitwise::ShiftRight, .. } => 0,
+            Self::Bitwise { operation: NumberBitwise::And, .. } => -1,
+            _ => return false,
+        };
+        constant == neutral
+    }
 }
 
 /// A constant operand's int32 and Number readings (`NumericFrame::constant_operand`). The stencil
