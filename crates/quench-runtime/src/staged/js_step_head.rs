@@ -76,16 +76,13 @@ pub struct JsStepHead<V> {
     /// The word of the storage the running lane body's environment-owned locals live in, which its
     /// environment rows read through (`staged::environment::environment_slot`).
     pub environment_storage: u64,
-    /// The empty allocations' inputs (`heap_rows::empty_row`, `lane_region::frame_calls`): the region 0 stub
-    /// cursor (`ClassSpace`'s, whose run is granules), which an empty object's stub is bumped from; the object
-    /// space's record cursor and the empty object's captured template (layout, payload and the prototype it was
-    /// captured under), then the same for the array space and the zero-length array. A template word of zero
-    /// means none is captured, and a cursor of zero that the space has none; either sends the allocation to
-    /// its helper.
-    pub stub_cursor: usize,
-    pub object_cursor: usize,
-    pub empty_object_layout: u64,
-    pub empty_object_payload: u64,
+    /// The empty allocations' inputs (`heap_rows::empty_row`, `lane_region::frame_calls`): the region 1 class cell
+    /// cursor (`Heap::native_cell_cursor(1)`), which an empty object's class cell is claimed from, and the empty
+    /// object's captured class (its header word, which names its shape and prototype link) with the prototype it was
+    /// captured under; then the same for the array space and the zero-length array. A class or template word of zero
+    /// means none is captured, and a cursor of zero that the space has none; either sends the allocation to its helper.
+    pub empty_object_cursor: usize,
+    pub empty_object_class: u64,
     pub empty_object_proto: u64,
     pub array_cursor: usize,
     pub empty_array_layout: u64,

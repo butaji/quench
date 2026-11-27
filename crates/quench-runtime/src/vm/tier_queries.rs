@@ -222,10 +222,10 @@ heap_reads! {
     fn live_array_records() -> *const ArrayObject;
     /// The live string records (`Heap::live_string_records`).
     fn live_string_records() -> *const JsString;
-    /// The region 0 stub cursor an inline empty object allocation bumps (`Heap::native_stub_cursor`).
-    fn native_stub_cursor() -> usize;
-    /// The native object allocation cursor (`Heap::native_object_cursor`).
-    fn native_object_cursor() -> usize;
+    /// The allocation cursor of class cell region `region`, which an inline class cell claim bumps (`Heap::native_cell_cursor`).
+    fn native_cell_cursor(region: u32) -> usize;
+    /// The class header word of `value` when it names a live class cell (`Heap::live_class_header`).
+    fn live_class_header(value: Value) -> Option<u64>;
     /// The native array allocation cursor (`Heap::native_array_cursor`).
     fn native_array_cursor() -> usize;
     /// The native objects' mark blocks (`Heap::native_object_mark_blocks`).

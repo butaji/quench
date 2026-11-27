@@ -28,6 +28,14 @@ impl Heap {
         (header_class(self.class_space.header(granule)) != DEPARTED_CLASS).then_some(granule)
     }
 
+    /// The header word of `value`'s class cell when it is a live class cell (`live_class_cell`): the class id, which an
+    /// inline empty object claim takes as its header (`JsStepDispatch::empty_object_class`).
+    #[inline(always)]
+    pub(crate) fn live_class_header(&self, value: Value) -> Option<u64> {
+        let granule = self.live_class_cell(value)?;
+        Some(self.class_space.header(granule))
+    }
+
     /// The departure edge: the ordinary object `value` names becomes a record, if it is a live class
     /// cell. Returns the record id that names the object from now on; a record's or a departed
     /// cell's id is returned unchanged. `None` for a value that is no ordinary object.
