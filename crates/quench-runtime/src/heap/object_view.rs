@@ -107,6 +107,16 @@ impl<'a> ObjectMut<'a> {
         }
     }
 
+    /// The record view for a mutation of record-only state, consuming the view so the record outlives it.
+    /// R4-C4 departs a cell first; until then this is the Record arm only.
+    #[inline(always)]
+    pub fn record_mut_departing(self) -> &'a mut Object {
+        match self {
+            ObjectMut::Record(object) => object,
+            ObjectMut::Cell(_) => unreachable!("R4-C2: no class cells are allocated yet"),
+        }
+    }
+
     // Reads share `ObjectRef`'s methods through `as_shared`.
     #[inline(always)]
     pub fn layout_id(&self) -> u32 {

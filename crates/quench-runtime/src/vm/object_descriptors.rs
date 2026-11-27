@@ -523,8 +523,8 @@ impl Vm {
             }
         }
         let value = if self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
+            .heap.object(target)
+            .is_some_and(|object| object.is_module_namespace())
         {
             self.module_namespace_value(p, target, atom)?
         } else {
@@ -537,8 +537,8 @@ impl Vm {
             .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let writable = self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
+            .heap.object(target)
+            .is_some_and(|object| object.is_module_namespace())
             || attributes.writable;
         Ok(Some((
             value,
@@ -587,8 +587,8 @@ impl Vm {
             }
             None => {
                 if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
-                    || !self.object_data(object)
-                        .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
+                    || !self.heap.object(object)
+                        .is_some_and(|data| !data.is_module_namespace() && data.record().deferred_module().is_none()) // record-only: deferred module
                 {
                     return None;
                 }

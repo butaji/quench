@@ -195,7 +195,7 @@ impl Vm {
             return Ok(());
         }
         // A program's atom ids are the VM's, so the name's atom is known without interning.
-        let before = self.object_data(function).map(|data| (data.shape(), data.layout_id()));
+        let before = self.heap.object(function).map(|data| (data.shape(), data.layout_id()));
         let value = self
             .inferred_function_name_slot(function)
             .map(|slot| (slot, self.atom_string(name)));
@@ -279,7 +279,7 @@ impl Vm {
         if !self.heap.string(current).is_some_and(|value| value.units().is_empty()) {
             return None;
         }
-        self.shape_slot(self.object_data(function)?.shape(), name_atom)
+        self.shape_slot(self.heap.object(function)?.shape(), name_atom)
     }
 
     pub(super) fn is_constructable(&self, value: Value) -> bool {
@@ -626,7 +626,7 @@ impl Vm {
 
     /// The shape of an object `closure_in_realm` just made.
     fn closure_shape(&self, object: Value) -> u32 {
-        self.object_data(object)
+        self.heap.object(object)
             .expect("a new closure or prototype is an object")
             .shape()
     }
@@ -1025,7 +1025,7 @@ impl Vm {
     pub fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)?;
-        self.object_data(prototype)?;
+        self.heap.object(prototype)?;
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, constructor, constructor == new_target);
         Some(object)
@@ -1120,7 +1120,7 @@ impl Vm {
             Some(prototype) => prototype,
             None => self.get_property(p, constructor, prototype_atom)?,
         };
-        if self.object_data(prototype).is_some() {
+        if self.heap.object(prototype).is_some() {
             return Ok(prototype);
         }
         let has_function_realm = self.is_function(constructor)
@@ -1163,7 +1163,7 @@ impl Vm {
         intrinsic: impl FnOnce(&mut Self, &ResidualProgram, Value) -> Result<Value, JsError>,
     ) -> Result<Value, JsError> {
         let prototype = self.constructor_prototype_value(p, new_target)?;
-        if self.object_data(prototype).is_some() {
+        if self.heap.object(prototype).is_some() {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
@@ -1185,7 +1185,7 @@ impl Vm {
         let constructor = self.get_property(p, realm, name_atom)?;
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         Ok(match intrinsic {
-            Some(intrinsic) if self.object_data(prototype).is_none() => intrinsic,
+            Some(intrinsic) if self.heap.object(prototype).is_none() => intrinsic,
             _ => prototype,
         })
     }
@@ -1207,7 +1207,7 @@ impl Vm {
         new_target: Value,
         native: Native,
     ) -> Result<Value, JsError> {
-        let Some(current) = self.object_data(result).map(Object::proto) else {
+        let Some(current) = self.heap.object(result).map(|object| object.proto()) else {
             return Ok(result);
         };
         // GetPrototypeFromConstructor reading an own data `prototype` runs no guest code, and
@@ -1270,7 +1270,7 @@ impl Vm {
     ) -> Result<Option<Value>, JsError> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
+        let prototype = if prototype.is_null() || self.heap.object(prototype).is_none() {
             let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(TypedArrayKind::name)
                 .or_else(|| match native {
                     Native::Object => Some("Object"),
@@ -1323,7 +1323,7 @@ impl Vm {
                 let constructor = self.get_property(p, realm, constructor_atom)?;
                 self.get_property(p, constructor, prototype_atom)?
             };
-            if self.object_data(prototype).is_none() {
+            if self.heap.object(prototype).is_none() {
                 return Ok(None);
             }
             prototype
@@ -1402,7 +1402,7 @@ impl Vm {
                     return Ok(self.object());
                 }
                 if let Some(value) = args.first().copied() {
-                    if self.object_data(value).is_some() {
+                    if self.heap.object(value).is_some() {
                         return Ok(value);
                     }
                     if !value.is_null() && !value.is_undefined() {
