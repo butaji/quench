@@ -28,6 +28,9 @@ pub(super) struct Ctx<'a> {
     pub(super) scope: &'a Scope,
     /// Bindings the census proved hold one closure, so their loads carry its fact too.
     pub(super) resolved: &'a std::collections::BTreeMap<Key, u32>,
+    /// The class ids of the program's constructors (`class_ids::ClassIds`): a construction's instance and a prototype read
+    /// take the class of the closure's body and the key it was read from.
+    pub(super) classes: &'a super::class_ids::ClassIds,
     pub(super) registers: usize,
     /// Per PC, whether the `MakeArray` there is a literal whose element definitions cover every index, so it
     /// holds no hole (`flow::whole_literals`).
@@ -209,12 +212,13 @@ pub(super) fn root_this(ctx: &Ctx<'_>) -> Word {
     Word::of_cell(cell)
 }
 
-/// The fact of a load from `key`: the closure the census proved there, else the binding.
+/// The fact of a load from `key`: the closure the census proved there, else the binding. The closure keeps its origin, so
+/// a construction through it takes the class of the body and key it was read from (`ClassIds::of_word`).
 /// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Word {
-    ctx.resolved.get(&key).copied().map_or_else(
+    ctx.resolved.get(&key).map_or_else(
         || Word { origin: Some(Origin::Binding(key)), ..Word::of_cell(ctx.types.map_or(Cell::ANY, |types| types.cell(key))) },
-        Word::closure)
+        |&function| Word { origin: Some(Origin::Binding(key)), ..Word::closure(function) })
 }
 
 /// The fact of the value `instruction` defines, read from the facts before it.
@@ -238,7 +242,7 @@ fn value_of(
         let owner = base.register_index().map(|register| state[usize::from(register)]);
         // `F.prototype`: the object a function's methods are stored on, off a closure (the class's
         // prototype) or a binding the census resolves to one.
-        if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
+        if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(|owner| prototype_base(ctx.classes, owner)) {
             return Word::from(Origin::Prototype(prototype));
         }
         if let Some(length) = string_length(ctx, base_fact(ctx, base, state), atom) {
@@ -269,10 +273,12 @@ fn value_of(
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
-        if let Some(class) = callee.cell.ty.body_index() {
-            // The instance, or the global object a constructor returns in its place (`Types::returns_global`).
+        if let Some(body) = callee.cell.ty.body_index() {
+            // The instance of the constructor's class (`ClassIds::of_word`), or the global object a constructor returns in its
+            // place (`Types::returns_global`).
+            let class = ctx.classes.of_word(callee).unwrap_or(body);
             let mut word = Word::instance(class);
-            word.cell.global = ctx.types.is_some_and(|types| types.returns_global(class));
+            word.cell.global = ctx.types.is_some_and(|types| types.returns_global(body));
             return word;
         }
         // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the

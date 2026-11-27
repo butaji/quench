@@ -2,6 +2,7 @@
 //! names.
 
 use super::accessors::Accessors;
+use super::class_ids::ClassIds;
 use super::flow::FunctionFlow;
 use super::gate::World;
 use super::phase::Fold;
@@ -100,10 +101,12 @@ pub(super) struct Census {
     pub(super) phases: BTreeMap<(u32, bool, u32), Fold>,
     /// The accessors the program defines and what may shadow them (`accessors::Accessors`).
     pub(super) accessors: Accessors,
+    /// The class ids of the program's constructors (`class_ids::ClassIds`): a binding's prototype owner is its class.
+    pub(super) classes: ClassIds,
 }
 
 impl Census {
-    pub(super) fn of(flows: &[FunctionFlow], world: World) -> Self {
+    pub(super) fn of(flows: &[FunctionFlow], world: World, classes: ClassIds) -> Self {
         let mut writes: BTreeMap<Key, (u32, Word)> = BTreeMap::new();
         for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
             let entry = writes.entry(key).or_insert((0, fact));
@@ -136,6 +139,7 @@ impl Census {
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
             phases: BTreeMap::new(),
             accessors: Accessors::default(),
+            classes,
         };
         census.accessors = Accessors::of(flows, &census);
         census
@@ -257,11 +261,12 @@ impl Census {
         self.phases.get(&(class, instance, atom)).filter(|fold| fold.read_sees(function, pc)).map(|fold| fold.closure)
     }
 
-    /// The function whose `prototype` a `prototype` read off `base` takes.
+    /// The class whose `prototype` a `prototype` read off `base` takes: a closure's class, or the class of the one closure a
+    /// binding holds, read from that binding (`ClassIds::of`).
     pub(super) fn prototype_owner(&self, base: PrototypeBase) -> Option<u32> {
         match base {
-            PrototypeBase::Closure(function) => Some(function),
-            PrototypeBase::Binding(key) => self.single(key),
+            PrototypeBase::Closure(class) => Some(class),
+            PrototypeBase::Binding(key) => self.single(key).map(|body| self.classes.of(body, key)),
         }
     }
 }

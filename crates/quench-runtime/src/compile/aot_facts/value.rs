@@ -63,6 +63,19 @@ pub(super) enum Origin {
     MemberOn { class: u32, instance: bool, atom: u32, guess: bool },
 }
 
+impl Origin {
+    /// The key a value read from this origin was read from, where the origin names one: a binding, or the named property a
+    /// read takes (`Key::Member`, or a class's own method `Key::MemberOn`). `ClassIds::of_word` splits a closure by it.
+    pub(super) fn key(self) -> Option<Key> {
+        match self {
+            Self::Binding(key) => Some(key),
+            Self::Member(atom) => Some(Key::Member(atom)),
+            Self::MemberOn { class, instance, atom, .. } => Some(Key::MemberOn { class, instance, atom }),
+            _ => None,
+        }
+    }
+}
+
 /// An accessor a definition makes: `get atom()` (a getter) or `set atom(v)` (`setter`), on the object of class `site`
 /// (its class, and whether the instances' or the static object's) where the solve proves one class, and by the function it
 /// names where the solve knows it, at instruction `pc` (`accessors::accessor_definition`).
@@ -75,7 +88,8 @@ pub(super) struct Accessor {
     pub(super) pc: u32,
 }
 
-/// What a `prototype` read was read off: a closure, or a binding the census resolves to one.
+/// What a `prototype` read was read off: a closure, or a binding the census resolves to one. `Closure` holds the closure's
+/// class id (`ClassIds::of_word`), its body unless the body is constructed under several keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PrototypeBase {
     Closure(u32),
