@@ -1,6 +1,7 @@
 //! The pure-ECMAScript image driver: the same compiled program and image tables as the Node
 //! driver, executed on the runtime's own host. It links `quench_runtime` alone, so the
 //! executable carries no Node host, no bootstrap snapshot and no operation table.
+#![no_main]
 
 use quench_runtime::{ExecutionMode, MemoryPolicy, NativeProgramNamespace, Runtime, SystemHost};
 
@@ -37,7 +38,7 @@ fn apply_allocator_policy(policy: MemoryPolicy) {
     let _ = policy;
 }
 
-fn run() -> Result<std::process::ExitCode, String> {
+fn run() -> Result<u8, String> {
     // SAFETY: the compiler emits the catalog, metadata and objects together.
     let entry = unsafe { bind_entry() }?;
     let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
@@ -59,9 +60,9 @@ fn run() -> Result<std::process::ExitCode, String> {
         Err(error) => return Err(uncaught(&error)),
     }
     if runtime.module_evaluation_pending(program).map_err(|error| uncaught(&error))? {
-        return Ok(std::process::ExitCode::from(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT));
+        return Ok(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT);
     }
-    Ok(std::process::ExitCode::SUCCESS)
+    Ok(0)
 }
 
 /// An uncaught guest exception ends the process with status 1 and the error on stderr, as the
@@ -70,12 +71,19 @@ fn uncaught(error: &quench_runtime::JsError) -> String {
     format!("Uncaught {error}")
 }
 
-fn main() -> std::process::ExitCode {
-    match run() {
+/// The process's start. `#![no_main]` leaves out std's runtime start: the program runs on the
+/// process's main stack, with no std stack-overflow handler and no worker thread. Its buffered
+/// standard output is flushed by `exit_process`, which then ends the process with `_exit`.
+#[unsafe(no_mangle)]
+extern "C" fn main(_: std::ffi::c_int, _: *const *const std::ffi::c_char) -> std::ffi::c_int {
+    quench_runtime::host::begin_process();
+    let status = match run() {
         Ok(code) => code,
         Err(error) => {
+            quench_runtime::host::flush_stdout();
             eprintln!("{error}");
-            std::process::ExitCode::FAILURE
+            1
         }
-    }
+    };
+    quench_runtime::host::exit_process(status)
 }
