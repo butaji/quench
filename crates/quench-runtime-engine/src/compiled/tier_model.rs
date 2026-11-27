@@ -74,12 +74,6 @@ fn entry_work_ns(priors: &Priors, share: u64, observed: &Observed) -> u64 {
     interpreted + crossings
 }
 
-/// What one entry of `observed` saves in ns in code taking `share` per mille of the interpreter's
-/// time per bytecode behind an `entry_ns` crossing: `entry_work_ns`, less its own entry.
-fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observed) -> i64 {
-    entry_work_ns(priors, share, observed) as i64 - entry_ns as i64
-}
-
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the
 /// interpreter's time per bytecode, compiled at `compile_ns_per_ir`: each future entry
 /// (Lindy, `entries / remaining_divisor`) saves the interpreter's work outside native regions
@@ -97,39 +91,18 @@ pub(crate) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compi
     net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, outlay) as i64
 }
 
-/// The net gain in ns of a b-jit body of `observed`: stencil code at `base_body_share` per
-/// bytecode behind the same `body_entry_ns` entry a u-jit body pays, stitched in microseconds on the program's thread,
-/// so neither a plan nor a compile is charged (`Tiers::amortizing_instructions`' `Tier::Base`).
-pub(crate) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
-    let saved = entry_work_ns(priors, priors.base_body_share, observed).saturating_sub(priors.body_entry_ns);
-    net_gain_ns(future_count(priors, u64::from(observed.entries)), saved, 0) as i64
-}
-
-/// The tier the model picks for a function.
+/// The tier the model picks for a function: a lane body's u-jit compile, or none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pick {
-    /// Neither tier pays yet: it counts on.
+    /// The compile does not pay yet: it counts on.
     Interpreter,
-    /// b-jit, for good: each entry of a u-jit body would save no more than a b-jit body's, so
-    /// no number of entries repays a u-jit compile over it.
-    Base,
-    /// u-jit: its net gain is positive, and it saves more per entry than a b-jit body would.
+    /// u-jit: its net gain is positive.
     Ultra,
 }
 
-/// The pick from the u-jit body's net gain `ultra` and, where the mode runs b-jit too, the
-/// b-jit body's net gain and each body's saving per entry (`base`: net, b-jit saving, u-jit
-/// saving). A function whose u-jit body would save no more per entry than its b-jit body takes
-/// b-jit for good, once that pays. Any other weighs u-jit against the interpreter alone: a body,
-/// unlike a loop region (`loop_model::promotes`), is never promoted from b-jit to u-jit, so the
-/// b-jit body it would wait beside is never built, and waiting for u-jit to get ahead of it only
-/// leaves the function interpreted the longer.
-pub(crate) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
-    match base {
-        Some((net, base_saving, ultra_saving)) if base_saving >= ultra_saving => if net > 0 { Pick::Base } else { Pick::Interpreter },
-        _ if ultra > 0 => Pick::Ultra,
-        _ => Pick::Interpreter,
-    }
+/// The pick from the u-jit body's net gain `ultra`.
+pub(crate) fn pick(ultra: i64) -> Pick {
+    if ultra > 0 { Pick::Ultra } else { Pick::Interpreter }
 }
 
 /// What the model picks for `observed`, whose u-jit plan is made already unless `unplanned` (its
@@ -139,19 +112,14 @@ pub(crate) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
     let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
-    // In the default mode b-jit is the tier below u-jit: a function u-jit would not beat per entry takes it.
-    let base = crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]).then(|| (base_net_ns(priors, observed),
-        saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed),
-        saved_per_entry(priors, priors.body_share, ultra_entry_ns(priors, observed), observed)));
-    let picked = if tiers.admits_all { Pick::Ultra } else { pick(net, base) };
-    if diagnostics { shadow_log(priors, observed, net, base.map(|(net, ..)| net), picked); }
+    let picked = if tiers.admits_all { Pick::Ultra } else { pick(net) };
+    if diagnostics { shadow_log(priors, observed, net, picked); }
     picked
 }
 
-/// Whether the u-jit body `decide` admitted for `observed` compiles quick (`CompileLevel::Quick`):
-/// where the entries to come gain more from its cheaper compile than they lose to its slower code
-/// (`Priors::quick_body_share`, `quick_compile_permille`). A body entered many times takes the
-/// optimizing compile; one compiled quick moves to it once its entries repay that (`optimizes`).
+/// Whether the u-jit body `decide` admitted for `observed` is compiled once at the quick level (`CompileLevel::Quick`):
+/// where the entries it predicts gain more from its cheaper compile than they lose to its slower code
+/// (`Priors::quick_body_share`, `quick_compile_permille`). A quick body is never recompiled for its completions.
 pub(crate) fn compiles_quick(tiers: &Tiers, observed: &Observed, unplanned: bool) -> bool {
     !tiers.admits_all && quick_ahead(&tiers.priors, observed, unplanned)
 }
@@ -165,33 +133,6 @@ fn quick_ahead(priors: &Priors, observed: &Observed, unplanned: bool) -> bool {
     quick > optimized
 }
 
-/// Whether a body compiled quick moves to an optimizing compile after `observed.entries` entries
-/// in all: the entries to come (`remaining_divisor`) at the optimized body's extra saving per
-/// entry repay its plan and compile.
-pub(crate) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
-    optimizes_under(&tiers.priors, observed)
-}
-
-fn optimizes_under(priors: &Priors, observed: &Observed) -> bool {
-    repays_over(priors, priors.quick_body_share, observed)
-}
-
-/// Whether the b-jit body the default mode started `observed` on (`LaneBodyHistory::base_first`) moves to
-/// u-jit after `observed.entries` completions: the entries to come at the u-jit body's extra saving per
-/// entry over the b-jit body's repay the u-jit plan and compile.
-pub(crate) fn promotes(tiers: &Tiers, observed: &Observed) -> bool {
-    !tiers.admits_all && repays_over(&tiers.priors, tiers.priors.base_body_share, observed)
-}
-
-/// Whether an optimizing u-jit compile repays over a body that takes `share` per mille of the
-/// interpreter's time: the entries to come (`remaining_divisor`) at the extra saving repay its plan and compile.
-fn repays_over(priors: &Priors, share: u64, observed: &Observed) -> bool {
-    let work = (observed.length + observed.loop_work) * priors.interpreter_ns;
-    let gain = work * share.saturating_sub(priors.body_share) / PER_MILLE;
-    let outlay = outlay_ns(observed.ir, priors.plan_ns_per_ir, priors.compile_ns_per_ir, compile_wall_permille(priors));
-    net_gain_ns(future_count(priors, u64::from(observed.entries)), gain, outlay) > 0
-}
-
 /// Whether the model admits the u-jit compile of `observed` (`decide` picks u-jit).
 #[cfg(test)]
 pub(crate) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
@@ -199,10 +140,10 @@ pub(crate) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
 }
 
 /// The decision under `QUENCH_TRACE=js-jit`.
-fn shadow_log(priors: &Priors, observed: &Observed, net: i64, base: Option<i64>, picked: Pick) {
-    let pick = match picked { Pick::Ultra => "u-jit", Pick::Base => "b-jit", Pick::Interpreter => "interp" };
-    eprintln!("QUENCH_TIER_MODEL entries={} ir={} region_runs={} compile_ns_per_ir={} net_ns={net} base_net_ns={} pick={pick}",
-        observed.entries, observed.ir, observed.region_runs, priors.compile_ns_per_ir, base.map_or(String::from("-"), |base| base.to_string()));
+fn shadow_log(priors: &Priors, observed: &Observed, net: i64, picked: Pick) {
+    let pick = match picked { Pick::Ultra => "u-jit", Pick::Interpreter => "interp" };
+    eprintln!("QUENCH_TIER_MODEL entries={} ir={} region_runs={} compile_ns_per_ir={} net_ns={net} pick={pick}",
+        observed.entries, observed.ir, observed.region_runs, priors.compile_ns_per_ir);
 }
 
 #[cfg(test)]
@@ -210,24 +151,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn u_jit_is_weighed_against_the_interpreter_where_it_saves_more() {
-        // u-jit saves more per entry: no b-jit body is built beside it, so it compiles once it pays.
-        assert_eq!(pick(100, Some((50, 5, 9))), Pick::Ultra);
-        assert_eq!(pick(50, Some((100, 5, 9))), Pick::Ultra);
-        assert_eq!(pick(-1, Some((100, 5, 9))), Pick::Interpreter);
-        // u-jit saves no more per entry: b-jit is the tier for good.
-        assert_eq!(pick(100, Some((60, 9, 9))), Pick::Base);
-        assert_eq!(pick(-1, Some((-5, 9, 3))), Pick::Interpreter);
-        assert_eq!(pick(100, None), Pick::Ultra);
-        assert_eq!(pick(-1, None), Pick::Interpreter);
+    fn u_jit_compiles_where_its_net_gain_is_positive() {
+        assert_eq!(pick(100), Pick::Ultra);
+        assert_eq!(pick(-1), Pick::Interpreter);
     }
 
-    #[test]
-    fn a_b_jit_body_charges_no_compile() {
-        // The same entries pay a b-jit body before a u-jit one: it charges no compile.
-        let observed = observed(40, 0, 2000, 0, 5000);
-        assert!(base_net_ns(&PRIORS, &observed) > net(&observed));
-    }
     use quench_runtime::vm::tier_policy::TEST_PRIORS as PRIORS;
 
 
@@ -240,7 +168,6 @@ mod tests {
         let hot = observed(400, 0, 4_000_000, 0, 4000);
         assert!(quick_ahead(&PRIORS, &rare, false));
         assert!(!quick_ahead(&PRIORS, &hot, false));
-        assert!(!optimizes_under(&PRIORS, &rare) && optimizes_under(&PRIORS, &hot));
     }
 
     #[test]

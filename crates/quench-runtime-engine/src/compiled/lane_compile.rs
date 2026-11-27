@@ -331,8 +331,6 @@ enum Unstarted {
     Installed(Rc<PublishedLaneMethod>),
     /// Not yet worth compiling.
     Unpaid,
-    /// A b-jit body serves it better than a u-jit body ever would.
-    Base,
     /// Too short for its entries to amortize (`amortizes_entry`), and no body calls it.
     Short,
     Declined,
@@ -353,9 +351,6 @@ pub(crate) enum LaneBodyOutcome {
     Deferred,
     /// Its function's entries have not yet paid for the compile (`pays_compile`).
     Unpaid,
-    /// A b-jit body serves its function better than a u-jit body ever would (`tier_model::Pick::Base`):
-    /// the entry stitches one (`Vm::base_body_work`), which needs the entry's parameters.
-    Base,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
     /// compile meets a call to it (`LaneView::demand_body`).
     Short,
@@ -564,21 +559,17 @@ impl Vm {
         let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
         let planned = self.programs.planned_lane_ir(&site);
         let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
-        // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
-        let optimize = entry.is_none() && caller.optimize_due();
         // A function the loaded image gave a body was paid for ahead of time: a plan after that body
         // left (a fact it took weakened) respecializes at once, as the image's install did.
         let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
         // The pure reads phase A decides on: the pick the observed entries price, and the level the pick leaves.
         let mut level = super::jit_backend::CompileLevel::run_default();
         let mut pick = None;
-        // A function the u-jit gave up on takes the tier below's body (`LaneBodyHistory::base_fallback`).
-        if caller.tier().history.get().base_fallback { pick = Some(super::tier_model::Pick::Base); }
         // A function that calls itself back through other functions runs a call tree per entry,
         // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
         let cycle = super::lane_facts::recursion_cycle(program, function, targets);
         let recursive = entry.is_none() && !cycle.is_empty();
-        if let Some(entries) = observed && !optimize && !ahead && pick.is_none() {
+        if let Some(entries) = observed && !ahead {
             let ir = estimated;
             pick = Some(pays_compile(tiers, program, function, (entries, recursive), ir, caller, true, false));
             if level == super::jit_backend::CompileLevel::Optimized {
@@ -592,13 +583,9 @@ impl Vm {
             facts: super::admission::UnitFacts { compiles_left, pick, called_by_regions: caller.called_by_regions(), looped_taken, ..Default::default() } }) {
             super::admission::Decision::Compile(unit) => unit,
             super::admission::Decision::Declined => { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
-            super::admission::Decision::Base => return Err(Unstarted::Base),
             super::admission::Decision::Unpaid => return Err(Unstarted::Unpaid),
             super::admission::Decision::Short => return Err(Unstarted::Short),
         };
-        // The effect the plan leaves: the level its body's compile takes, noted for the body (`LaneView::note_compile_level`).
-        // A looped attempt has an entry, so this never notes for one whose looped check declines.
-        if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
         let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
@@ -724,12 +711,9 @@ impl Vm {
         loop {
             let (generic, budget) = pending;
             // A function with an ahead-of-time body takes it where a first compile would.
-            // One the image's body repaid the optimizing compile for (`LaneView::optimize_due`) compiles instead.
             if let Some(unit) = super::admission::ahead_unit(function)
-                && !caller.is_some_and(|view| view.optimize_due())
                 && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic)
             {
-                if let Some(view) = caller { view.note_compile_level(true, super::ahead_images::ahead_quick_ir(self.programs.tiers(), program, function)); }
                 return LaneBodyOutcome::Published(published);
             }
             let direct = direct(self);
@@ -737,7 +721,6 @@ impl Vm {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
-                Err(Unstarted::Base) => return LaneBodyOutcome::Base,
                 Err(Unstarted::Short) => return LaneBodyOutcome::Short,
                 Err(Unstarted::Declined) => return LaneBodyOutcome::Declined,
             };

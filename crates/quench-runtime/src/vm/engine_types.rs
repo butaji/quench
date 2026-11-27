@@ -1679,25 +1679,10 @@ pub struct LaneBodyHistory {
     pub demanded: bool,
     /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
     pub region_called: bool,
-    /// The planned IR instructions of its body where that body compiled quick
-    /// (`tier_model::compiles_quick`), else 0: its completions weigh an optimizing compile.
-    pub quick_ir: u32,
-    /// Whether its next compile is the optimizing one its quick body's entries repaid
-    /// (`LaneView::optimize_body`): priced already, it compiles at its next entry.
-    pub optimize: bool,
     /// The runs its retired bodies made (`EntryCell::evidence` at each retirement): entries of the
     /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
     /// (Lindy: a function that ran this long runs on), rather than starting again from none.
     pub runs: u32,
-    /// Whether a u-jit body of it gave up (no run completed, or its leaves outweighed its runs) where
-    /// the stencil tier also runs: the tier below serves it from then on (`tier_model::Pick::Base`), so
-    /// the default mode never runs it costlier than `--b-jit` would.
-    pub base_fallback: bool,
-    /// Whether its current body is the b-jit body the default mode starts every function with (the tier
-    /// below u-jit, by construction): its completions weigh the u-jit compile (`tier_model::promotes`).
-    pub base_first: bool,
-    /// Whether its b-jit body's completions repaid the u-jit compile over it: the next compile is u-jit.
-    pub promoted: bool,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
