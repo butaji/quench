@@ -1045,7 +1045,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\njmp {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1054,7 +1056,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\nb {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1066,8 +1070,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 2\n_quench_lane_helper_ahead_Step:\nb {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1077,8 +1083,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 4\n_quench_lane_helper_ahead_Step:\njmp {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1086,9 +1094,18 @@ macro_rules! lane_helper_inventory {
     };
 }
 
-/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`): the ahead entry of
+/// `Step` (`ahead_general_step`, over the payload), else the helper's own.
 pub(crate) fn lane_helper_symbol(index: usize) -> Option<String> {
-    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
+    let name = LaneHelper::NAMES.get(index)?;
+    Some(if index == LaneHelper::Step as usize { format!("quench_lane_helper_ahead_{name}") } else { format!("quench_lane_helper_{name}") })
+}
+
+/// The address an ahead image's helper `index` is in this process, as `lane_helper_symbol` names it: `ahead_general_step` for
+/// `Step`, else the helper's own address.
+pub(crate) fn ahead_helper_address(index: usize) -> Option<usize> {
+    if index == LaneHelper::Step as usize { return Some(crate::dispatch_fast::ahead_general_step as *const () as usize); }
+    LaneHelper::addresses().get(index).map(|address| *address as usize)
 }
 lane_helper_inventory! {
     FunctionCapture => function_capture_read_in_lane,
@@ -4193,7 +4210,7 @@ impl JsStepDispatch {
     /// lazily made empty string and unit strings exist: then one pass of compares replaces the
     /// rereads every allocating, call or step helper ends with.
     #[inline]
-    fn refresh_object_bases(&mut self, vm: &Vm) {
+    pub(crate) fn refresh_object_bases(&mut self, vm: &Vm) {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
