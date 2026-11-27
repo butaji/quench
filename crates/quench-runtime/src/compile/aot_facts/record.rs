@@ -6,7 +6,6 @@ use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, this
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
-use super::lengths::Settled;
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
 use super::value::{Accessor, Key, Origin, Word};
@@ -60,8 +59,6 @@ pub(super) struct Record {
     quiet: Vec<(u32, Quiet)>,
     /// The integer bounds the replay puts on keys, in replay order (`flow::Solver::replay`, `FunctionFlow::bounds`).
     pub(super) bounds: Vec<(Key, i64)>,
-    /// The length relations each pc holds before its instruction (`lengths::Settled`).
-    pub(super) lengths: Settled,
     /// Per pc of an element store (`ElementWrite`), the array it writes and the indices it touches (`ElementStore`).
     element_stores: std::collections::BTreeMap<u32, ElementStore>,
     accessors: Vec<Accessor>,
@@ -93,7 +90,6 @@ impl Record {
             guest_runs: Vec::new(),
             quiet: Vec::new(),
             bounds: Vec::new(),
-            lengths: Settled::default(),
             element_stores: std::collections::BTreeMap::new(),
             accessors: Vec::new(),
             parents: Vec::new(),
@@ -264,7 +260,6 @@ impl Record {
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
         self.quiet.sort_by_key(|(pc, _)| *pc);
-        self.lengths.sort();
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -296,7 +291,7 @@ impl Record {
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,
-            lengths: self.lengths,
+            entries: Vec::new(),
             element_stores: self.element_stores,
             accessors: self.accessors,
             parents: self.parents,

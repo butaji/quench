@@ -522,3 +522,92 @@ fn a_method_read_off_a_subclass_instance_folds_to_the_superclass_method() {
     let (f, m) = (function_named(&program, "f") as u32, function_named(&program, "m") as u32);
     assert!(facts.call_targets.iter().any(|(&(function, _), &target)| function == f && target == m), "the chain holds P's method");
 }
+
+#[test]
+fn an_index_below_a_bound_that_is_within_the_length_is_below_it_through_the_chain() {
+    let program = program("function f(a) { for (var j = 0; j < a.length; j++) { for (var i = 0; i < j; i++) { a[i] = 0; } } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the inner loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i < j` with `j` within the length proves `i` at {pc}");
+    }
+}
+
+#[test]
+fn the_midpoint_of_two_bounded_indices_is_below_the_larger() {
+    let program = program(
+        "function f(a) { var lo = 0, hi = a.length - 1; while (lo < hi) { var mid = (lo + hi) >>> 1; a[mid] = 0; if (a[mid] < 0) lo = mid + 1; else hi = mid; } } f([0, 0, 0]);",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the search reads the array at its midpoint");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the midpoint is below the length at {pc}");
+    }
+}
+
+#[test]
+fn a_decrement_keeps_the_bound_on_the_index_it_lowers() {
+    let program = program("function f(a) { var i = 0; while (i < a.length) { i += 1; i -= 1; a[i] = 0; } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i - 1` after `i + 1` keeps `i` below the length at {pc}");
+    }
+}
+
+#[test]
+fn an_alias_of_the_array_keeps_the_bound_the_test_proved() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { var b = a; b[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the copy `b` holds `a`'s bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_writes_no_element_of_the_array_keeps_its_bound() {
+    let program = program("function g(b) { return b.length; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(1); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "a callee that writes no element keeps the bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_stores_into_the_array_retires_its_bound() {
+    let program = program("function g(b) { b[0] = 1; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(a); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a callee that stores into the array retires the bound at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_retires_the_bound_on_element_accesses() {
+    let program = program(
+        "function f() { var a = [0, 0, 0]; Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } }); \
+         for (var i = 0; i < a.length; i++) { a[i] = i; } } f();",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "an index accessor may run at {pc}");
+    }
+}

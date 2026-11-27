@@ -4,6 +4,8 @@
 use crate::bytecode::{ProgramKind, ResidualProgram};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::{Engine, SourceKind};
+use super::flow::{Call, FunctionFlow, Target};
+use super::value::Origin;
 use crate::typed_ir::FactKey;
 
 /// The global name a dynamic `import()` calls (`compile::ast::expression`), a host hook that loads code.
@@ -74,4 +76,56 @@ pub(super) fn world(program: &ResidualProgram) -> World {
         else if demands.requires_dynamic_source() { World::Locals }
         else { World::Closed }
     }
+}
+
+/// Names whose presence lets an element access run an accessor the flows do not see: a proxy's traps run for every access, and a
+/// descriptor object (`create`, `defineProperties`) may define an index accessor with keys no flow names.
+const INDEX_ACCESSOR_NAMES: [&str; 3] = ["Proxy", "create", "defineProperties"];
+/// The builtin that defines one property from its key and descriptor; its key is known only where an argument names a non-index atom.
+const PROPERTY_DEFINER: &str = "defineProperty";
+
+/// The text of atom `atom`.
+fn atom_text(program: &ResidualProgram, atom: u32) -> &str {
+    let text: &str = program.atoms[atom as usize].as_ref();
+    text
+}
+
+/// Whether atom `atom` is an array index: its text is the canonical form of an integer below `u32::MAX`.
+fn index_name(program: &ResidualProgram, atom: u32) -> bool {
+    let text = atom_text(program, atom);
+    text.parse::<u32>().is_ok_and(|index| index != u32::MAX && index.to_string() == text)
+}
+
+/// Whether `call` is a `defineProperty` that may define an index: its callee is that property, read by name or through an alias
+/// (`aliased`: the program names it, and the callee is no member read), and no argument names a non-index atom as the key.
+fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bool {
+    let name = match call.target {
+        Target::Method(atom) => Some(atom),
+        Target::Register => match call.callee.origin {
+            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => Some(atom),
+            _ => return aliased,
+        },
+        Target::Known(_) => None,
+    };
+    name.is_some_and(|atom| atom_text(program, atom) == PROPERTY_DEFINER)
+        && !call.arguments.iter().any(|argument| argument.atom_key().is_some_and(|atom| !index_name(program, atom)))
+}
+
+/// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
+/// converts to none (`lengths::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
+/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::member_wild`),
+/// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
+pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
+    let names = |name: &str| program.atoms.iter().any(|atom| {
+        let text: &str = atom.as_ref();
+        text == name
+    });
+    let aliased = names(PROPERTY_DEFINER);
+    world == World::Closed
+        && !INDEX_ACCESSOR_NAMES.iter().any(|name| names(name))
+        && flows.iter().all(|flow| {
+            !flow.member_wild
+                && flow.accessors.iter().all(|accessor| !index_name(program, accessor.atom))
+                && flow.calls.iter().all(|call| !may_define_index(program, call, aliased))
+        })
 }

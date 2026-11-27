@@ -3,7 +3,6 @@
 
 use super::blocks::Blocks;
 use super::effects::{Before, Ctx, settled, step};
-use super::lengths::{self, Lengths};
 use super::record::Record;
 use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
@@ -105,8 +104,9 @@ pub(super) struct FunctionFlow {
     /// each constant a relational jump compares a key's value with, and each mask bound a store writes. `Types::of` widens
     /// the key's ranges to them, so a field that counts up to a constant it is compared with settles at that constant.
     pub(super) bounds: Vec<(Key, i64)>,
-    /// The length relations each pc holds before its instruction (`lengths::Settled`), where any holds.
-    pub(super) lengths: lengths::Settled,
+    /// The words each block's settled solve entered it with (`None` for a block no path reaches): the lengths pass replays
+    /// the blocks from them (`length_settle::settle`).
+    pub(super) entries: Vec<Option<Vec<Word>>>,
     /// Per pc of an element store, the array it writes and the indices it touches (`record::ElementStore`).
     pub(super) element_stores: std::collections::BTreeMap<u32, super::record::ElementStore>,
     /// The accessors the function defines, in PC order (`accessors::accessor_definition`); each names its object's class where proven.
@@ -139,8 +139,6 @@ struct Solver<'a> {
 struct Arrival {
     block: usize,
     words: Vec<Word>,
-    /// The length relations the state holds (`lengths`), intersected at a join.
-    lengths: Lengths,
 }
 
 /// The facts of function `id`, whose record is `function`.
@@ -167,6 +165,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
+    let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words.clone())).collect();
     let mut record = Record::new(ctx.registers);
     record.joined(solver.joined.take());
     for (block, input) in inputs.into_iter().enumerate() {
@@ -174,13 +173,15 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
             let cells = state.words.iter().map(|word| settled(&ctx, *word)).collect();
             let sources = state.words.iter().map(|word| Source::of(word.origin)).collect();
             record.registers.push_entry(blocks.ranges[block].start as u32, cells, sources);
-            solver.replay(block, state.words, state.lengths, &mut record);
+            solver.replay(block, state.words, &mut record);
         }
     }
     record.registers.sort();
     let arity = arity_of(function);
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
-    record.finish(arity, returns_out, in_register)
+    let mut flow = record.finish(arity, returns_out, in_register);
+    flow.entries = entries;
+    flow
 }
 
 /// How many parameters `function` binds from its arguments one to one (`FunctionFlow::arity`).
@@ -227,7 +228,7 @@ fn loop_headers(blocks: &Blocks) -> BitSet {
 /// Per PC, whether the `MakeArray` there is a literal whose `DefineArrayElement` records follow it back to back and
 /// define every index in order (`allocation::literal_elements`). Such an array holds no hole: an elision leaves its index
 /// undefined, so it is not whole.
-fn whole_literals(function: &Function) -> Box<[bool]> {
+pub(super) fn whole_literals(function: &Function) -> Box<[bool]> {
     (0..function.code.len()).map(|pc| {
         let make = function.instruction_at(pc);
         make.op() == crate::bytecode::Op::MakeArray && (0..make.array_length()).all(|index| {
@@ -254,13 +255,12 @@ impl Dataflow for Solver<'_> {
     }
 
     fn entry_state(&self, block: usize) -> Option<Arrival> {
-        (block == 0).then(|| Arrival { block, words: self.entry_facts(), lengths: Lengths::default() })
+        (block == 0).then(|| Arrival { block, words: self.entry_facts() })
     }
 
     /// Joins `incoming` into the input of `into.block`. At a loop header, once its input has changed `WIDENING_ROUNDS`
     /// times, a range that grows is widened to the nearest threshold (`typing::widen`), so the header reaches a fixed
     /// bound in finitely many joins; elsewhere the join is exact. `narrow` then tightens what widening over-approximated.
-    /// The length relations join by intersection, which only shrinks them, so they need no widening.
     fn join(&self, into: &mut Arrival, incoming: &Arrival) -> bool {
         let widen = self.headers.contains(into.block) && self.rounds[into.block].get() >= WIDENING_ROUNDS;
         let words = self.join_words(&mut into.words, &incoming.words, widen);
@@ -268,44 +268,28 @@ impl Dataflow for Solver<'_> {
             let rounds = &self.rounds[into.block];
             rounds.set(rounds.get().saturating_add(1));
         }
-        let related = into.lengths.meet(&incoming.lengths);
-        words || related
+        words
     }
 
     fn transfer(&mut self, block: usize, state: &Arrival) -> Arrival {
         let ctx = self.ctx;
         let mut words = state.words.clone();
-        let mut lengths = state.lengths.clone();
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
-            lengths::advance(ctx, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
+            step(ctx, pc, instruction, &mut words);
         }
-        Arrival { block, words, lengths }
+        Arrival { block, words }
     }
 
     /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal edge carries
     /// the fact its block's conditional jump proves on it (`Solver::refine`).
     fn transfer_edge_at(&self, block: usize, index: usize, out: &Arrival) -> Arrival {
         let target = self.blocks.targets[block][index];
-        let (words, lengths) = match self.blocks.kinds[block][index] {
-            ControlEdge::Handler => (vec![Word::UNKNOWN; out.words.len()], Lengths::default()),
-            ControlEdge::Normal => (self.refine(block, target, &out.words), self.refine_lengths(block, target, out)),
+        let words = match self.blocks.kinds[block][index] {
+            ControlEdge::Handler => vec![Word::UNKNOWN; out.words.len()],
+            ControlEdge::Normal => self.refine(block, target, &out.words),
         };
-        Arrival { block: target, words, lengths }
-    }
-
-    /// The length relations the normal edge from `block` to `target` carries: those of `out`, and the ones the block's
-    /// conditional jump proves on that edge (`lengths::refine`), decided as `refine` decides its edge.
-    fn refine_lengths(&self, block: usize, target: usize, out: &Arrival) -> Lengths {
-        let last = self.blocks.ranges[block].end - 1;
-        let instruction = self.function.instruction_at(last);
-        let fallthrough = last + 1;
-        let edge = self.blocks.ranges[target].start;
-        match conditional_target(instruction) {
-            Some(jump) if jump != fallthrough && (edge == jump || edge == fallthrough) =>
-                lengths::refine(self.ctx, instruction, edge == jump, &out.words, &out.lengths),
-            _ => out.lengths.clone(),
-        }
+        Arrival { block: target, words }
     }
 }
 
@@ -398,7 +382,6 @@ impl Solver<'_> {
                 match &mut next[edge.block] {
                     Some(known) => {
                         self.join_words(&mut known.words, &edge.words, false);
-                        known.lengths.meet(&edge.lengths);
                     }
                     slot => *slot = Some(edge),
                 }
@@ -409,7 +392,7 @@ impl Solver<'_> {
 }
 
 /// The jump target of a conditional jump (`JumpIf`, or the fused `CompareJump`); `None` for any other instruction.
-fn conditional_target(instruction: WideInstruction) -> Option<usize> {
+pub(super) fn conditional_target(instruction: WideInstruction) -> Option<usize> {
     matches!(Operation::<u64, ()>::of(instruction), Some(Operation::JumpIf { .. } | Operation::CompareJump { .. }))
         .then(|| instruction.jump_target() as usize)
 }
@@ -534,15 +517,14 @@ impl Solver<'_> {
 
     /// Replays `block` from its input `state`, recording what its instructions do. The mask bounds the block's
     /// registers hold (`mask_bounds`) start empty at each block: they follow from the bytecode alone, not from the facts.
-    fn replay(&self, block: usize, mut state: Vec<Word>, mut lengths: Lengths, record: &mut Record) {
+    fn replay(&self, block: usize, mut state: Vec<Word>, record: &mut Record) {
         let mut masks: Vec<Option<i64>> = vec![None; state.len()];
         let ctx = self.ctx;
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
             record.observe(ctx, instruction, pc, &state);
             compared_bounds(ctx, instruction, &state, record);
-            record.lengths.push(pc as u32, lengths.relations());
-            let events = lengths::advance(ctx, instruction, &mut lengths, &mut state, |words| step(ctx, pc, instruction, words));
+            let events = step(ctx, pc, instruction, &mut state);
             stored_bounds(instruction, &events.writes, &masks, record);
             mask_bounds(self.ctx, instruction, &mut masks);
             record.commit(instruction, &state, events);
