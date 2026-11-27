@@ -4065,14 +4065,22 @@ impl Lowering<'_, '_> {
     /// read from the records rather than known when the body compiles. The last arm's guard is the last test.
     fn closed_set_call(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
         arms: &[ProvenCall], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
-        use quench_runtime::staged::{CallOperation, Operation};
-        let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
-        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
-        // A record is bound by the VM's call, which runs between this body's runs and inside its calls out: read it at each test.
-        let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
         if quench_runtime::trace::Channel::AotLanes.on() {
             eprintln!("aot-lanes: function {} closed-set call at record {record}: arms {:?}", self.function_id, arms.iter().map(|arm| arm.function).collect::<Vec<_>>());
         }
+        // Every arm's receiver layout is proven, and the receiver is a register or `this`: the layouts decide the arm.
+        let keyed: Option<Vec<(ProvenCall, u32)>> = arms.iter().map(|&arm| arm.layout.map(|key| (arm, key))).collect();
+        let by_layout = keyed.filter(|_| match site.receiver {
+            quench_runtime::staged::Receiver::Register(_) => true,
+            quench_runtime::staged::Receiver::This { path: None } => self.entry.is_some(),
+            _ => false,
+        });
+        if let Some(keyed) = by_layout {
+            return self.closed_set_by_layout(state, site, record, &keyed, (completed, missed, raised));
+        }
+        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
+        // A record is bound by the VM's call, which runs between this body's runs and inside its calls out: read it at each test.
+        let record_flags = regions::flags(quench_runtime::staged::Region::EntryCell.mutable());
         let Some((&last, tested)) = arms.split_last() else { return };
         for &arm in tested {
             let at = crate::symbol_words::symbol_address(&mut self.builder, arm.record.0, arm.record.1);
@@ -4081,16 +4089,68 @@ impl Lowering<'_, '_> {
             let (taken, next) = (self.builder.create_block(), self.builder.create_block());
             self.branch_if(matched, (taken, &[]), (next, &[]));
             self.builder.switch_to_block(taken);
-            let miss = cold_block(&mut self.builder);
-            let call = CallSite { callee: Some(DirectSite::Proven(arm)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+            self.closed_set_step(state, site, record, Some(DirectSite::Proven(arm)), (completed, missed, raised));
             self.builder.switch_to_block(next);
         }
         // The last arm's own identity guard is the chain's last test: its miss is the VM's call, which binds the record
         // of whichever function of the set it reaches (`rebind_ahead_call`), as a one-target call's miss does.
+        self.closed_set_step(state, site, record, Some(DirectSite::Proven(last)), (completed, missed, raised));
+    }
+
+    /// `closed_set_call` where every arm's receiver layout is proven: the receiver's layout id is compared with each arm's
+    /// `Symbol::ClassLayout` key, and the first arm it matches takes its direct call. The last arm takes no compare where
+    /// the plan has no miss (`closed`); otherwise a receiver of no arm's layout takes the VM's call alone.
+    fn closed_set_by_layout(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32,
+        keyed: &[(ProvenCall, u32)], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        let Some((&(last, last_key), tested)) = keyed.split_last() else { return };
+        let loaded = self.receiver_layout(state, site.receiver, missed);
+        for &(arm, key) in tested {
+            let layout = crate::symbol_words::symbol_address(&mut self.builder, RelocKind::ClassLayout as u32, key);
+            let matched = self.raw_compare(Relation::Equal, loaded, layout);
+            let (taken, next) = (self.builder.create_block(), self.builder.create_block());
+            self.branch_if(matched, (taken, &[]), (next, &[]));
+            self.builder.switch_to_block(taken);
+            self.closed_set_step(state, site, record, Some(DirectSite::Proven(arm)), (completed, missed, raised));
+            self.builder.switch_to_block(next);
+        }
+        if last.closed {
+            self.closed_set_step(state, site, record, Some(DirectSite::Proven(last)), (completed, missed, raised));
+            return;
+        }
+        let layout = crate::symbol_words::symbol_address(&mut self.builder, RelocKind::ClassLayout as u32, last_key);
+        let matched = self.raw_compare(Relation::Equal, loaded, layout);
+        let (taken, vm) = (self.builder.create_block(), self.builder.create_block());
+        self.branch_if(matched, (taken, &[]), (vm, &[]));
+        self.builder.switch_to_block(taken);
+        self.closed_set_step(state, site, record, Some(DirectSite::Proven(last)), (completed, missed, raised));
+        self.builder.switch_to_block(vm);
+        self.closed_set_step(state, site, record, None, (completed, missed, raised));
+    }
+
+    /// One step of a closed-set call: the direct call of `callee`, or the VM's call alone (`None`), whose miss the step fills.
+    fn closed_set_step(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, callee: Option<DirectSite<'_>>,
+        (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        use quench_runtime::staged::{CallOperation, Operation};
+        let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee: Some(DirectSite::Proven(last)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
+        let call = CallSite { callee, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+    }
+
+    /// The layout id (`I64`) of the object `receiver` names, read from its record's header: a register's, or the fixed
+    /// `this`'s. A receiver that is no object leaves at `missed`.
+    fn receiver_layout(&mut self, state: &mut State, receiver: quench_runtime::staged::Receiver, missed: ir::Block) -> ir::Value {
+        let header = match receiver {
+            quench_runtime::staged::Receiver::Register(register) => {
+                let bits = self.tagged(state, register);
+                let records = emit_js_record_base(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
+                let class_base = headers::class_table_base(&mut self.builder, self.payload);
+                ObjectHeader::prove(&mut self.builder, bits, ObjectTable::Unchecked(records), class_base, None, missed)
+            }
+            _ => self.object_header(state, None, true, missed),
+        };
+        let loaded = header.word.unwrap_or_else(|| super::object_slots::shape_and_inline(&mut self.builder, header.address).1);
+        self.raw_unary(Unary::ZeroExtend(Lane::I64), loaded)
     }
 
     /// The activation completes with `register`, by the staged return (`Frame::ret`) at the

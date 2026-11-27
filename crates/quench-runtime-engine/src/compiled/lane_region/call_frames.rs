@@ -87,6 +87,10 @@ pub(crate) struct ProvenCall {
     pub(crate) registers: u16,
     pub(crate) sloppy: bool,
     pub(crate) record: (u32, u32),
+    /// The `Symbol::ClassLayout` key of the arm's receiver class, where the closed world proves its layout (`None` else).
+    pub(crate) layout: Option<u32>,
+    /// Whether the call's plan has no miss (`Miss::None`): the arms name every receiver the call can have.
+    pub(crate) closed: bool,
 }
 
 impl DirectSite<'_> {
