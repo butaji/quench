@@ -20,6 +20,7 @@
 //! global `prototype_layout_epoch`. A dependency object, or compiled code that took a fact read
 //! through a chain, may hold the same subjects (`Dependencies::hold_layouts`).
 
+use crate::fact_stats::{self, FactKind};
 use crate::value::Value;
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
@@ -69,13 +70,16 @@ impl ChainCell {
         Self { word, id }
     }
 
-    /// Retires the cell, whose word then serves another; a retired cell stays retired.
-    fn retire(self) {
-        if self.holds() {
+    /// Retires the cell, whose word then serves another; a retired cell stays retired. Whether
+    /// it held.
+    fn retire(self) -> bool {
+        let held = self.holds();
+        if held {
             self.word.store(0, Ordering::Relaxed);
             // A slab gone with its thread only loses the word.
             let _ = CELL_SLAB.try_with(|slab| slab.borrow_mut().push(self.word));
         }
+        held
     }
 }
 
@@ -334,6 +338,9 @@ impl Table {
     /// Retires what read `subject`; what held its layout is given back to retire (`Retired`).
     fn retire(&mut self, subject: u32) -> Retired {
         let held = Retired(self.layout_readers.take(subject));
+        if !held.0.is_empty() {
+            fact_stats::retired(FactKind::Layout, u64::from(subject));
+        }
         self.retire_proofs(subject);
         held
     }
@@ -341,7 +348,10 @@ impl Table {
     fn retire_proofs(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
         if let Some(cells) = self.cell_readers.get_mut(subject as usize) {
-            std::mem::take(cells).into_iter().for_each(ChainCell::retire);
+            let held = std::mem::take(cells).into_iter().fold(false, |any, cell| cell.retire() | any);
+            if held {
+                fact_stats::retired(FactKind::Chain, u64::from(subject));
+            }
         }
         if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {
             for entry in std::mem::take(entries) {
@@ -380,8 +390,12 @@ impl Table {
     /// Retires every chain cell and gives every layout holder to retire: an event no subject
     /// names (a collection that may reuse a dead prototype's record, a shape compaction, a restore).
     fn retire_cells(&mut self) -> Retired {
-        self.chain_cells.drain().for_each(|(_, cell)| cell.retire());
-        self.cell_readers.iter_mut().flat_map(std::mem::take).for_each(ChainCell::retire);
+        self.chain_cells.drain().for_each(|(_, cell)| {
+            cell.retire();
+        });
+        self.cell_readers.iter_mut().flat_map(std::mem::take).for_each(|cell| {
+            cell.retire();
+        });
         Retired(self.layout_readers.take_all())
     }
 
@@ -501,6 +515,11 @@ impl Dependencies {
         table.fuses.forget(subject);
         table.free.push(subject);
         held.retire();
+    }
+
+    /// The bytes of the layouts code holds on this heap's subjects (`hold_layouts`).
+    pub(crate) fn layout_hold_bytes(&self) -> usize {
+        self.table().layout_readers.memory_bytes()
     }
 
     /// Retires every proof, for changes no subject names (a restored heap's prototypes).

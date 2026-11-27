@@ -399,7 +399,7 @@ pub(crate) fn loop_arrays_in_lane(vm: &mut Vm, r: Registers, region: &LoopRegion
         Some(index) => entry.field_value(region, index),
     };
     let doubles = !region.arrays.is_empty() && region.arrays.iter().all(|array| {
-        vm.heap_reads().record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
+        vm.heap_reads().record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().packed_double_values().is_some())
     });
     let mut views = None;
     for array in &region.arrays {
@@ -439,7 +439,7 @@ fn push_double_array(vm: &mut Vm, value: Value, written: bool, entry: &mut LoopE
     if written && elements.owner_count() != 1 {
         return None;
     }
-    let words = elements.double_values()?;
+    let words = elements.packed_double_values()?;
     entry.push_array(words.as_ptr().cast_mut(), words.len(), words.len())
 }
 
@@ -566,11 +566,14 @@ pub(crate) fn sample_array(vm: &Vm, value: Value) -> Option<quench_runtime::type
         use quench_runtime::tier_surface::TypedArrayKind as Kind;
         return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
     }
-    let elements = vm.heap_reads().record_array(value)?.elements().as_slice();
-    let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
-    if sample.is_empty() { return None; }
-    if sample.iter().all(|value| value.as_int().is_some()) { Some(Type::INT32) }
-    else { sample.iter().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
+    let elements = vm.heap_reads().record_array(value)?.elements();
+    if elements.len() == 0 { return None; }
+    // A double backing's form is its element kind: Numbers where it holds no hole, read off
+    // its header with no element touched (decoding it whole would cost a copy per entry).
+    if elements.is_double() { return elements.packed_double_values().map(|_| Type::NUMBER); }
+    let sample = || (0..elements.len().min(SAMPLED_ELEMENTS)).map(|index| elements.get(index).unwrap_or(Value::DELETED));
+    if sample().all(|value| value.as_int().is_some()) { Some(Type::INT32) }
+    else { sample().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
 }
 
 /// The registers of the running activation that hold int32s at entry and that the loop writes,

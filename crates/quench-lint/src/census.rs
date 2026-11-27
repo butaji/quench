@@ -67,6 +67,38 @@ const METRICS: &[Metric] = &[
         sources: &[Source::Tree("crates/quench-runtime/src/staged", &[])],
         extract: Extract::Text(extract::staged_rechecks),
     },
+    // TOD-2417 (one handler definition for every tier): each place the u-jit composes Emit-stage words itself, instead
+    // of running a staged row, is a second home of semantics the tiers can disagree on. Target 0.
+    Metric {
+        name: "hand_lowerings",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime-engine/src/compiled/lane_region.rs"),
+            Source::Tree("crates/quench-runtime-engine/src/compiled/lane_region", &[])],
+        extract: Extract::Text(extract::hand_lowerings),
+    },
+    // TOD-2417 step 2: a second row for one fact (`char_code_at_within` beside `char_code_at`) restates a row; the
+    // fact folds the check into the one row instead. Target 0.
+    Metric {
+        name: "variant_rows",
+        direction: Direction::Down,
+        sources: &[Source::Tree("crates/quench-runtime/src/staged", &[])],
+        extract: Extract::Text(extract::variant_rows),
+    },
+    // TOD-2417 step 3: a staged row's call into a helper no tier specializes (`vm_step`, `call_out`, `call_helper`,
+    // `call_native`) is a hole in the projection. Target 0.
+    Metric {
+        name: "opaque_helper_calls",
+        direction: Direction::Down,
+        sources: &[Source::Tree("crates/quench-runtime/src/staged", &[])],
+        extract: Extract::Text(extract::opaque_helper_calls),
+    },
+    // TOD-2417 step 3: raw memory lines written by hand in the stencils (not projected from a staged row). Target 0.
+    Metric {
+        name: "bjit_stencil_lines",
+        direction: Direction::Down,
+        sources: &[Source::Tree("crates/quench-bjit/stencils", &[])],
+        extract: Extract::Text(extract::bjit_stencil_lines),
+    },
     Metric {
         name: "opcodes",
         direction: Direction::Informational,

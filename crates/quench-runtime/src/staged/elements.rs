@@ -277,12 +277,8 @@ fn backing_element<S: Stage>(stage: &mut S, backing: Backing<S::Word>, index: S:
 /// (`ENCODED_LEN`) left in.
 #[inline(always)]
 fn flagged_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
-    let is_array = super::value::is_direct_array(stage, base);
-    stage.guard(is_array, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let record = array_record(stage, record_base, base);
-    Some(record_backing(stage, record))
+    let record = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?;
+    Some(record_backing(stage, record.record()))
 }
 
 /// Proves `base` a direct array (among the array records at `record_base`) of no named property (the
@@ -290,11 +286,7 @@ fn flagged_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word,
 /// `miss`: a member read by name of it is its prototype's (`GlobalRead::NativeMember`'s `array_link`).
 #[inline(always)]
 pub fn plain_array_of<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, link: u32, miss: S::Miss) -> Option<()> {
-    let is_array = super::value::is_direct_array(stage, base);
-    stage.guard(is_array, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let record = array_record(stage, record_base, base);
+    let record = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?.record();
     let object = stage.add_imm(record, crate::heap::NATIVE_ARRAY_LAYOUT.object_offset as u64);
     let shape = super::object::exact_shape(stage, object);
     let unnamed = stage.eq_imm(shape, 0u32);
@@ -371,15 +363,8 @@ pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word) -> S::Word 
 #[inline(always)]
 fn writable_array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let is_array = super::value::is_direct_array(stage, base);
-    stage.guard(is_array, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let record = array_record(stage, record_base, base);
-    // Without extras, the object's payload word is the backing's header (`array_header`).
-    let header = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-    let plain = super::object::plain_payload(stage, header);
-    stage.guard(plain, miss)?;
+    let proved = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?;
+    let (record, header) = (proved.record(), proved.plain_header(stage, miss)?);
     // The length word keeps its flags: `prove_view` reads the backing's form from them.
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
     let owners = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_owners_offset as i32);
@@ -437,16 +422,8 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 #[inline(always)]
 pub fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let is_array = super::value::is_direct_array(stage, base);
-    stage.guard(is_array, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let record = array_record(stage, record_base, base);
-    // The record's payload word is the backing's header when it holds no extras, which is the only
-    // case this read takes: one load gives the plain test and the header, and extras miss at once.
-    let header = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
-    let plain = super::object::plain_payload(stage, header);
-    stage.guard(plain, miss)?;
+    // Only an array without extras takes this read (`ArrayRecord::plain_header`).
+    let header = super::proof::ArrayRecord::guard(stage, record_base, base, miss)?.plain_header(stage, miss)?;
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
     // A narrow or double backing flags its length's top bits: it misses.
     let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));

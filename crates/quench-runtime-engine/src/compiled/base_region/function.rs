@@ -183,7 +183,7 @@ pub(crate) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &
 /// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(crate) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
-    unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
+    unsafe { build(region, spec, (Ending::Region, Views::of(views, region)), callees, helpers) }
 }
 
 /// What a built stitch adds to the trace's totals: a body's rows and exits, or a region's span and
