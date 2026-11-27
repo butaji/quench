@@ -209,8 +209,8 @@ pub struct Wasm {
     /// `promotion_entries` such stretches.
     pub backedges_per_entry: u32,
     /// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry
-    /// rather than starting in the interpreter: compiling it costs about what
-    /// `WasmModuleCompile::after` would have spent interpreting it, so waiting buys nothing.
+    /// rather than starting in the interpreter: compiling it costs about what the work budget
+    /// (`WASM_MODULE_WORK_BUDGET`) would have spent interpreting it, so waiting buys nothing.
     /// Whole compiles take 3-7 us a bytecode (Linux x86_64): quicksort-wasm, 2,412, compiles in
     /// 16 ms and lost 13% of its JetStream Score waiting; source-map's module, 12,971, takes
     /// 67 ms, which its one short parse never repays.
@@ -682,10 +682,10 @@ pub(crate) const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 
 pub(crate) const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-pub(crate) const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
+/// The work (entries and loop backedges, `TIERS.wasm.backedges_per_entry`) a selective Wasm
+/// module observes before its whole-module compile is due: a module that runs this long gets
+/// the code eager compilation would have made at its first entry.
+pub(crate) const WASM_MODULE_WORK_BUDGET: u32 = 4096;
 
 pub(crate) const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 

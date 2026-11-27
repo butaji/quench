@@ -126,8 +126,6 @@ fn write_counters(out: &mut impl Write, counters: &JsJitCounters) -> io::Result<
         ("captured_store_fast_entries", &counters.captured_store_fast_entries),
         ("numeric_find_fast_entries", &counters.numeric_find_fast_entries),
         ("fallback_entries", &counters.fallback_entries),
-        ("interpreter_completions", &counters.interpreter_completions),
-        ("interpreter_inclusive_ns", &counters.interpreter_inclusive_ns),
     ])?;
     write!(out, ",\"guard_census\":")?;
     write_object(out, &[
@@ -213,10 +211,8 @@ fn write_call_site(out: &mut impl Write, site: &JsJitCallSiteCounters) -> io::Re
     }
     write_members(out, &[
         ("direct_target_calls", &site.direct_target_calls), ("alternate_target_calls", &site.alternate_target_calls),
-        ("other_target_calls", &site.other_target_calls), ("sampled_calls", &site.sampled_calls),
+        ("other_target_calls", &site.other_target_calls),
     ])?;
-    write!(out, ",\"sampled_call_ns_by_outcome\":")?;
-    write_outcomes(out, site.sampled_call_ns)?;
     write!(out, ",\"outcomes\":")?;
     write_outcomes(out, site.outcomes)?;
     write!(out, "}}")

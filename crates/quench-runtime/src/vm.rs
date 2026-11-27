@@ -358,9 +358,6 @@ pub struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     pub with_objects: Vec<Value>,
     pub with_base: usize,
-    /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
-    /// Excludes compile work, native execution, suspended and exceptional exits.
-    pub js_jit_interpreter_started: Option<std::time::Instant>,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -447,7 +444,6 @@ impl Frame {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
-            js_jit_interpreter_started: None,
             fixed_this: false,
         }
     }

@@ -285,7 +285,7 @@ impl FrameRecord {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             pc_is_resume: _, source_field: _, binding_site_pc: _,
-            initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
+            initialized_registers: _, capture_cache: _, with_base: _,
             fixed_this, js_jit_skip_entry_once,
         } = *frame;
         let cold = FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: None }.boxed();
@@ -325,7 +325,6 @@ impl FrameRecord {
             registers,
             capture_cache: CaptureCache::default(),
             active_iterators, with_objects, with_base,
-            js_jit_interpreter_started: None,
             fixed_this,
         })
     }
