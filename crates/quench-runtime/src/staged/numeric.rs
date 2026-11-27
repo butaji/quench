@@ -773,15 +773,15 @@ fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
         frame.write(stage, destination, result, fact);
         return Some(result);
     };
-    // One condition takes the int32 path: both operands are int32 (their tests, where not proven) and the
-    // result fits. The result word is pure integer arithmetic on the narrowed operands, so it is computed
-    // once for the condition; no branch is spent on the tags and again on the fit.
-    let packed = int_fast_result(stage, operation, left_int, right_int);
-    let fits = stage.ne_imm(packed, NOT_INT32);
-    let taken = match both_tests(stage, [left_test, right_test]) {
-        Some(tests) => stage.both(tests, fits),
-        None => fits,
+    // A pair whose tags are not both int32 settles on its tags alone: its double operands reach the float
+    // operation with no int32 arithmetic spent on them first.
+    let packed = match both_tests(stage, [left_test, right_test]) {
+        Some(tests) => stage.choose(tests,
+            #[inline(always)] |stage| int_fast_result(stage, operation, left_int, right_int),
+            #[inline(always)] |stage| stage.constant(NOT_INT32)),
+        None => int_fast_result(stage, operation, left_int, right_int),
     };
+    let taken = stage.ne_imm(packed, NOT_INT32);
     let boxed_int = frame.int_result(stage, packed);
     let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), #[inline(always)] |stage| {
         let number = float_operation(stage, frame, (left, right), operation)?;

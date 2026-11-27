@@ -32,6 +32,8 @@ pub(crate) enum Builtin {
     IndexOf,
     /// `Array.isArray` of one value (`plain_array_argument`).
     IsArray,
+    /// `Array.prototype.at` of one int32 over a dense array: its present element (`dense_element`).
+    At,
 }
 
 impl Builtin {
@@ -46,13 +48,14 @@ impl Builtin {
             Native::ArrayIncludes => Self::Includes,
             Native::ArrayIndexOf => Self::IndexOf,
             Native::ArrayIsArray => Self::IsArray,
+            Native::ArrayAt => Self::At,
             _ => return None,
         })
     }
 
     /// The arguments the builtin reads; a call passing another count takes the native.
     pub(crate) const fn arguments(self) -> u16 {
-        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf | Self::IsArray => 1 }
+        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf | Self::IsArray | Self::At => 1 }
     }
 
     /// Whether the builtin changes an array's elements.
@@ -115,6 +118,10 @@ impl Lowering<'_, '_> {
             Builtin::IndexOf => {
                 let position = self.element_search(state, pc, receiver, argument, exit);
                 self.set_int(state, result, position);
+            }
+            Builtin::At => {
+                let element = self.element_at(state, pc, receiver, argument, exit);
+                self.set_tagged(state, result, element);
             }
             Builtin::IsArray => {
                 // An ordinary array answers true; any other value leaves before the call changes anything, and the
@@ -297,6 +304,27 @@ impl Lowering<'_, '_> {
             stage.select(none, fallback, double)
         });
         self.raw_unary(Unary::Narrow(Lane::I32), index)
+    }
+
+    /// `at` of the dense array in `receiver` at the int32 in `argument`: the element at the index, or at
+    /// the index past the length where it is negative. The read changes nothing, so an index outside the
+    /// backing (undefined) and a hole (a prototype's element) leave at `exit` before any result is defined.
+    fn element_at(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
+        let base = self.tagged(state, receiver);
+        let hoisted = self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense);
+        let (values, length) = match hoisted {
+            Some(hoisted) => self.hoisted_view(hoisted),
+            None => {
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                (view.values, view.length)
+            }
+        };
+        let int = self.int(state, argument, exit);
+        let negative = self.raw_compare_imm(Relation::SignedLess, int, 0);
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let from_end = stage.add(int, length);
+        let index = stage.select(negative, from_end, int);
+        continues(elements::dense_element(&mut stage, values, length, index, exit)).1
     }
 
     /// Whether the backing at `values` holds only int32 words, by its count of other values

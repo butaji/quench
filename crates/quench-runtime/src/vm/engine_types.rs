@@ -3788,6 +3788,7 @@ impl ZeroedWords {
 
 impl std::ops::Deref for ZeroedWords {
     type Target = [usize];
+    #[inline(always)]
     fn deref(&self) -> &[usize] {
         // SAFETY: `base` maps `len` words, zero or written, which this table owns.
         unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
@@ -3795,6 +3796,7 @@ impl std::ops::Deref for ZeroedWords {
 }
 
 impl std::ops::DerefMut for ZeroedWords {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut [usize] {
         // SAFETY: as `deref`, borrowed uniquely.
         unsafe { std::slice::from_raw_parts_mut(self.base.as_ptr(), self.len) }
@@ -3903,12 +3905,14 @@ impl CallerView for WindowScope {
 
 impl std::ops::Deref for InstanceRecord {
     type Target = InstanceContext;
+    #[inline(always)]
     fn deref(&self) -> &InstanceContext {
         &self.0
     }
 }
 
 impl std::ops::DerefMut for InstanceRecord {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut InstanceContext {
         &mut self.0
     }
@@ -5664,12 +5668,14 @@ impl Clone for NativeJsProgram {
 
 impl std::ops::Deref for CallContext {
     type Target = CallContextFields;
+    #[inline(always)]
     fn deref(&self) -> &CallContextFields {
         &self.head
     }
 }
 
 impl std::ops::DerefMut for CallContext {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut CallContextFields {
         &mut self.head
     }
@@ -5790,10 +5796,12 @@ impl Drop for CompiledProgram {
 /// Reads and writes of the head's fields go through the head (`JsStepDispatch::head`).
 impl Deref for JsStepDispatch {
     type Target = JsStepHead<Value>;
+    #[inline(always)]
     fn deref(&self) -> &JsStepHead<Value> { &self.head }
 }
 
 impl DerefMut for JsStepDispatch {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut JsStepHead<Value> { &mut self.head }
 }
 

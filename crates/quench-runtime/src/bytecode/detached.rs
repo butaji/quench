@@ -20,6 +20,7 @@ unsafe impl Send for DetachedProgram {}
 
 impl std::ops::Deref for DetachedProgram {
     type Target = ResidualProgram;
+    #[inline(always)]
     fn deref(&self) -> &ResidualProgram {
         &self.0
     }
