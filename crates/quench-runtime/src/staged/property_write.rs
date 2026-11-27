@@ -8,7 +8,7 @@ use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, Proper
 use super::store::{admit_named, own_store, own_store_proved, own_store_raw, slot_holds, uncallable};
 use super::Stage;
 use crate::bytecode::{FieldBase, Register};
-use crate::typed_ir::Type;
+use crate::typed_ir::{Representation, Type};
 
 /// A stored value: its tagged word (`None` where no arm needs it before the VM's completion,
 /// which reads it from the register), its type, and its binary64 word where the frame holds one.
@@ -107,6 +107,21 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             }
             return Some(source.answer());
         }
+        StorePlan::Held { id, slot, held } => {
+            // A stage without the slot owner tables makes no tracked store in place (`Stage::SLOT_TABLES`).
+            if !S::SLOT_TABLES { return None; }
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = source.tagged(stage, frame);
+            use super::slot_store::{HELD_INT32, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
+            match held {
+                HELD_INT32 => held_store::<S, F, HELD_INT32>(stage, frame, at, (id, slot), tagged, miss),
+                HELD_OBJECT => held_store::<S, F, HELD_OBJECT>(stage, frame, at, (id, slot), tagged, miss),
+                HELD_OBJECT_OR_NULL => held_store::<S, F, HELD_OBJECT_OR_NULL>(stage, frame, at, (id, slot), tagged, miss),
+                _ => held_store::<S, F, HELD_TAGGED>(stage, frame, at, (id, slot), tagged, miss),
+            }?;
+            return Some(source.answer());
+        }
         StorePlan::Polymorphic { id, slot } => {
             let base = base.map_or(FieldBase::THIS, FieldBase::register);
             let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
@@ -143,6 +158,22 @@ fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (ow
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     let record_id = stage.and_imm(object, u64::from(u32::MAX));
     own_store(stage, at.record, record_id, id, true, slot, value, miss)
+}
+
+/// The tracked store of `value` into `object`'s arena-form record through the hint `(id, slot)`, by
+/// a row installed for the slot's held type `HELD` (`StorePlan::Held`): the method cache's admission,
+/// the receiver's record, its payload once the layout compare, the slot's type and the barrier's log
+/// admit the store (`held_payload`), then the arena's slot. Nothing takes effect before a guard, so a
+/// refusal leaves to the plain row, which stores and installs the row of the slot's type now.
+#[inline(always)]
+fn held_store<S: Stage, F: PropertyFrame<S>, const HELD: u8>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    frame.store_admitted(stage, miss)?;
+    let at = frame.receiver_record(stage, owner, object, false, miss)?;
+    let record_id = stage.and_imm(object, u64::from(u32::MAX));
+    let payload = super::slot_store::held_payload::<S, HELD>(stage, at.record, record_id, (id, slot), value, miss)?;
+    super::slot_store::store_flat(stage, payload, slot, (value, Representation::Tagged));
+    Some(())
 }
 
 /// The VM's completion of the store of `value`: its own-field hit, through the bound slot

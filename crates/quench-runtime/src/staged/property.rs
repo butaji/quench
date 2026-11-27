@@ -141,7 +141,7 @@ pub struct StoreArm {
     pub(crate) unformed: bool,
     /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
     /// its guard compares the record's own word, which proves the form, so the store tests none.
-    pub(crate) layout: bool,
+    pub layout: bool,
 }
 
 impl StoreArm {
@@ -211,6 +211,11 @@ pub enum StorePlan<'a> {
     /// (`narrow`), which `PropertyFrame::field_store_hinted` makes in place; a refusal leaves to
     /// `join` (the VM's own-field store).
     Hinted { id: u32, slot: u16, narrow: bool, join: StoreJoin },
+    /// A tracked store through the record's own arena-form hint (`id`, `slot`) by a row installed for
+    /// the slot's held type `held` (`slot_store::HELD_*`): the slot still holding that type and the
+    /// value being of it, the store widens and observes nothing and is made in place
+    /// (`slot_store::held_holds`); a refusal leaves at the miss edge.
+    Held { id: u32, slot: u16, held: u8 },
     /// A store the record's own hint, the site's polymorphic entries or the proved add completes
     /// (`PropertyFrame::field_store_polymorphic`); a refusal leaves at the miss edge.
     Polymorphic { id: u32, slot: u16 },
@@ -618,7 +623,7 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *rep, *storage_len), miss);
     }
     if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return slots::image_layout_slot(stage, frame, (owner, direct), &at, *key, (*slot, *rep, *storage_len), miss);
+        return slots::image_layout_slot(stage, frame, (owner, true), &at, *key, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest

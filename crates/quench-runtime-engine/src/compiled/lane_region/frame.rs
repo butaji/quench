@@ -132,7 +132,12 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
-        register_tagged(stage.builder, self.registers, self.state, register)
+        let word = register_tagged(stage.builder, self.registers, self.state, register);
+        // The register's type at this point is a fact of the word for this step (R2): a row's class
+        // test of it the fact decides is a constant (`Stage::fact`).
+        let word = stage.builder.func.dfg.resolve_aliases(word);
+        stage.note_fact(word, self.state.values[usize::from(register)].value.ty);
+        word
     }
 
     #[inline(always)]

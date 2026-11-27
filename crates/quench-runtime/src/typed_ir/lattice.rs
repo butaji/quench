@@ -141,6 +141,25 @@ impl Type {
         Self::languages(self.kinds() | other.kinds())
     }
 
+    /// Whether a value of this type may be of one of `other`'s language types: false where the two
+    /// share none, so a test for `other`'s types is decided false by the fact (`staged::value::decided`).
+    #[inline(always)]
+    pub const fn may_be_languages(self, other: Self) -> bool {
+        self.kinds() & other.kinds() != 0
+    }
+
+    /// Whether every value of this type is an int32 (`Representation::Int32` words, `TypeKind::Int`).
+    #[inline(always)]
+    pub const fn is_int(self) -> bool {
+        matches!(self.0, TypeKind::Int(_))
+    }
+
+    /// Whether every value of this type is of one of `other`'s language types (`within_languages`, public).
+    #[inline(always)]
+    pub const fn only_languages(self, other: Self) -> bool {
+        self.within_languages(other)
+    }
+
     #[inline(always)]
     pub const fn is_direct_object_family(self) -> bool {
         matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape { nullish: 0, .. })

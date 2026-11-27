@@ -124,6 +124,36 @@ pub(crate) fn requicken_store_form<const OP: u16>(script: *mut LaneContext, ip: 
     if let Some(handler) = store_formed_handler::<OP>(own_form_index(Some(layout))) { requicken(ip, handler); }
 }
 
+/// Whether site `site` is a tracked store installed for its slot's held type (`TRACKED_TAGGED_SITE` and its siblings).
+pub(crate) const fn store_held_site(site: u8) -> bool {
+    site == TRACKED_TAGGED_SITE || site == TRACKED_INT_SITE || site == TRACKED_OBJECT_SITE || site == TRACKED_OBJECT_OR_NULL_SITE
+}
+
+/// The held type (`HELD_*`) the tracked store site `site` is installed for; `HELD_NONE` at any other site.
+pub(crate) const fn held_of(site: u8) -> u8 {
+    use quench_runtime::staged::{HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
+    if site == TRACKED_TAGGED_SITE { HELD_TAGGED }
+    else if site == TRACKED_INT_SITE { HELD_INT32 }
+    else if site == TRACKED_OBJECT_SITE { HELD_OBJECT }
+    else if site == TRACKED_OBJECT_OR_NULL_SITE { HELD_OBJECT_OR_NULL }
+    else { HELD_NONE }
+}
+
+/// The tracked store row of opcode `OP` through the hint `(layout, slot)`: the row of the type the slot
+/// holds now (`Heap::tracked_store_held`), which stores a value of it in place with no join; else the
+/// tracked row (`TRACKED_SITE`), which stores through the VM and chooses again from the hint it leaves.
+#[inline(never)]
+pub(crate) fn tracked_store_row<const OP: u16>(script: *mut LaneContext, layout: u32, slot: u16) -> Handler {
+    use quench_runtime::staged::{HELD_INT32, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
+    match unsafe { vm(script) }.heap_reads().tracked_store_held(layout, slot) {
+        HELD_TAGGED => generated_row!(OP, ACC_NONE, TRACKED_TAGGED_SITE),
+        HELD_INT32 => generated_row!(OP, ACC_NONE, TRACKED_INT_SITE),
+        HELD_OBJECT => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_SITE),
+        HELD_OBJECT_OR_NULL => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_OR_NULL_SITE),
+        _ => generated_row!(OP, ACC_NONE, TRACKED_SITE),
+    }
+}
+
 /// The site fact (`generated_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
 /// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
 pub(super) const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }

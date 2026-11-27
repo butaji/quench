@@ -250,6 +250,13 @@ struct LocalProofs {
     /// Direct-object proofs by owner, until an effect that may change the object retires
     /// them: a register's, and in the final entry fixed `this`'s.
     headers: Vec<Option<ObjectHeader>>,
+    /// The record each proved value names (`ObjectRecord`), by the tagged word (resolved), and whether
+    /// the proof was a read's (`readable`, which may name a function's object): a fact of the value, which
+    /// no effect changes (records stay put in a run, and the reservation's base is the run's), so it
+    /// outlives the header's shape proof across calls and holds for every register that holds the word
+    /// (a copy, an inlined frame's `this`). A later header of any of them reads its shape through it, with
+    /// no family test and no record lookup: the untagged view of a proven object (R2, facts on values).
+    records: smallvec::SmallVec<[(ir::Value, ObjectRecord, bool); INLINE_FIELD_BINDINGS]>,
     /// The owners of `headers` whose proof a read made, which may name a function's record
     /// (`ObjectHeader::prove_readable`): a store proves them again as objects.
     readable: BitSet,
@@ -341,7 +348,7 @@ impl State {
 
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
-            headers: vec![None; registers + 1], readable: BitSet::with_capacity(registers + 1),
+            headers: vec![None; registers + 1], records: smallvec::SmallVec::new(), readable: BitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new() } }
@@ -1087,6 +1094,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             *header = first.headers[index].filter(|proof| rest.iter()
                 .all(|other| other.headers[index] == Some(*proof)));
         }
+        state.proofs.records = first.records.iter().copied().filter(|record| rest.iter()
+            .all(|other| other.records.contains(record))).collect();
         state.proofs.readable.clear();
         for arrived in &arrived {
             for owner in arrived.readable.iter() { state.proofs.readable.insert(owner); }
@@ -2601,6 +2610,8 @@ impl Lowering<'_, '_> {
         state.proofs.typed.retain_mut(|view| incoming.proofs.typed.iter().find(|other| TypedProof { kept: view.kept, ..**other } == *view)
             .map(|other| view.kept |= other.kept).is_some());
         state.proofs.meet_homed(&incoming.proofs.homed);
+        // A record both arrivals name as the same value is the join's (`LocalProofs::records`).
+        state.proofs.records.retain(|record| incoming.proofs.records.contains(record));
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
@@ -3463,7 +3474,7 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload) };
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload), facts: Default::default() };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, views: &mut self.stable.views, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
@@ -5013,7 +5024,10 @@ impl Lowering<'_, '_> {
             let (admitted, split) = self.store_atom_admission(state, atom, exit);
             (Some(admitted), split.filter(|_| !arms.is_empty()))
         } else { (None, None) };
-        let leaves = join == StoreJoin::Host && self.store_leaves();
+        // A store whose one arm is an ahead image's layout (`StoreArm::layout`) is of the class the closed world
+        // gives its site: a miss leaves, so the layout's proof holds past the store.
+        let layout = matches!(&arms[..], [arm] if arm.layout);
+        let leaves = join == StoreJoin::Host && (self.store_leaves() || layout);
         state.proofs.write_field(atom);
         self.store_step(state, operation, (plan, HeldRead { admitted, split, leaves, ..HeldRead::default() }), exit)?;
         if leaves { return Some(()); }

@@ -160,7 +160,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(crate) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None, gate: None, payload: None }
+    Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default() }
 }
 
 /// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
@@ -336,7 +336,7 @@ impl NativeFieldLoad {
     /// asks the caches, so a wrong guess costs a compare, never a leave, unless the guess reads its
     /// slot as one class (`closed_typed`), whose miss leaves so the value keeps the class.
     pub(crate) fn probes_misses(loads: &[Self]) -> bool {
-        if loads.iter().any(|load| load.guessed() && !load.closed_typed()) { return true; }
+        if loads.iter().any(|load| load.guessed() && !load.closed_typed() && !load.image_layout()) { return true; }
         match loads {
             [load] => load.holder.is_some() && load.inherited.is_none(),
             loads => loads.iter().any(|load| load.holder.is_some()),
@@ -508,7 +508,7 @@ impl CheckedObject {
     /// shape is held by a dependency (`fact`, `HeldLayouts::hold`), so only the representation is tested.
     pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, (record, fact): (ir::Value, ShapeFact), inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None, facts: Default::default() };
         quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss)
             .map(|layout| Self(layout, fact))
     }

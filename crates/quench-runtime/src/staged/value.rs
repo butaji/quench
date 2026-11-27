@@ -20,6 +20,9 @@ fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
 /// (`Value::as_direct_object`).
 #[inline(always)]
 pub fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    use crate::typed_ir::Type;
+    if let Some(known) = decided(stage, bits, Type::is_direct_object_family,
+        |fact| fact.may_be_languages(Type::language(crate::ValueType::Object))) { return known; }
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
@@ -41,6 +44,21 @@ pub trait TagOps {
     fn add_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
     fn ugt_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+    /// The fact of `bits` (`Stage::fact`); a machine keeps none.
+    #[inline(always)]
+    fn fact_of(&self, bits: Self::Word) -> crate::typed_ir::Type { let _ = bits; crate::typed_ir::Type::ANY }
+    /// The test result that is `value` at every run (`Stage::cond_of`).
+    fn flag_of(&mut self, value: bool) -> Self::Flag;
+}
+
+/// What the fact of `bits` decides of a class test: `Some(true)` where every value of the fact is in
+/// the class (`within`), `Some(false)` where none may be (`possible` false), else `None` and the test
+/// is built. The one place a row's class test asks the operand's type (R2).
+#[inline(always)]
+pub fn decided<T: TagOps>(ops: &mut T, bits: T::Word, within: impl FnOnce(crate::typed_ir::Type) -> bool,
+    possible: impl FnOnce(crate::typed_ir::Type) -> bool) -> Option<T::Flag> {
+    let fact = ops.fact_of(bits);
+    if within(fact) { Some(ops.flag_of(true)) } else if !possible(fact) { Some(ops.flag_of(false)) } else { None }
 }
 
 /// Every stage is a `TagOps` through its own immediate operations: a `u64` operand converts to the
@@ -68,6 +86,10 @@ impl<S: Stage> TagOps for S {
     fn ugt_imm(&mut self, a: S::Word, imm: u64) -> S::Cond {
         Stage::ugt_imm(self, a, imm)
     }
+    #[inline(always)]
+    fn fact_of(&self, bits: S::Word) -> crate::typed_ir::Type { Stage::fact(self, bits) }
+    #[inline(always)]
+    fn flag_of(&mut self, value: bool) -> S::Cond { Stage::cond_of(self, value) }
 }
 
 /// A `MachineScalar` read as a `TagOps`: its words are its words, and a comparison is its flag word.
@@ -97,12 +119,16 @@ impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
     fn ugt_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
         self.0.raw_compare_imm(Relation::UnsignedGreater, a, imm as i64)
     }
+    #[inline(always)]
+    fn flag_of(&mut self, value: bool) -> M::Word { self.0.raw_const(Lane::I64, i64::from(value)) }
 }
 
 /// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
 /// distinct int-tagged words are two distinct values. At a machine it is a flag word.
 #[inline(always)]
 pub fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+    use crate::typed_ir::Type;
+    if let Some(known) = decided(ops, bits, Type::is_int, |fact| fact.may_be_languages(Type::NUMBER)) { return known; }
     let tag = ops.and_imm(bits, ValueLayout::TAG_MASK);
     ops.eq_imm(tag, ValueLayout::INT_TAG)
 }
@@ -176,12 +202,18 @@ pub fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// Whether `bits` is `undefined`.
 #[inline(always)]
 pub fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    use crate::typed_ir::Type;
+    let undefined = Type::language(crate::ValueType::Undefined);
+    if let Some(known) = decided(stage, bits, |fact| fact.only_languages(undefined), |fact| fact.may_be_languages(undefined)) { return known; }
     stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
 }
 
 /// Whether `bits` is `null`.
 #[inline(always)]
 pub fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    use crate::typed_ir::Type;
+    let null = Type::language(crate::ValueType::Null);
+    if let Some(known) = decided(stage, bits, |fact| fact.only_languages(null), |fact| fact.may_be_languages(null)) { return known; }
     stage.eq_imm(bits, crate::Value::NULL.to_bits())
 }
 

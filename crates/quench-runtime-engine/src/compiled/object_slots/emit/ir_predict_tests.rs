@@ -114,7 +114,7 @@ fn compiled(isa: &dyn cranelift_codegen::isa::TargetIsa, operation: Option<Numbe
     builder.switch_to_block(entry);
     let [left, right, result] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
+    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default() };
     let mut frame = EmitNumberFrame { values: [Some((left, kinds[0])), Some((right, kinds[1])), None], miss };
     let word = match operation {
         Some(operation) => defined(&mut stage, &mut frame, operation)?,

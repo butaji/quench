@@ -299,6 +299,22 @@ pub trait Stage: crate::projection::Sealed {
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;
+    /// The fact the stage holds of `word`: the type every value it may take at this point is of
+    /// (R2, facts on values). A stage that keeps none answers `Type::ANY`, so a row's test of a
+    /// value's class (`value::decided`) is built as before; the specializer's stage answers from its
+    /// facts, and a test the fact decides is a constant condition, with no code.
+    #[inline(always)]
+    fn fact(&self, word: Self::Word) -> crate::typed_ir::Type { let _ = word; crate::typed_ir::Type::ANY }
+    /// The condition that is `value` at every run: a test a fact decided (`value::decided`).
+    #[inline(always)]
+    fn cond_of(&mut self, value: bool) -> Self::Cond {
+        let zero = self.constant(0);
+        if value { self.eq_imm(zero, 0u64) } else { self.ne_imm(zero, 0u64) }
+    }
+    /// Whether the stage reads the arena's slot owner tables (`Table::SlotChains`, `Table::ChainOwners`,
+    /// `Table::OwnerTypes`), so a tracked store runs in place; a stage without them stores
+    /// through the frame's VM call, which is the same store.
+    const SLOT_TABLES: bool = true;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
@@ -384,6 +400,13 @@ pub enum Table {
     /// The object layout table (`heap::layouts`): a record's header words at its layout id
     /// times eight. Entries never change once written.
     Layouts,
+    /// The arena's chain start per shape (`ValueArena::shape_chains`), a `u32` each. Changes
+    /// as shapes are made, so a read of it is never hoisted.
+    SlotChains,
+    /// The owner of each chain slot (`ValueArena::chain_owners`), a `u32` each.
+    ChainOwners,
+    /// The representation each owner holds (`ValueArena::owner_types`), one `SlotType` byte each.
+    OwnerTypes,
 }
 
 

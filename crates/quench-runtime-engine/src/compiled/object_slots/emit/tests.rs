@@ -47,7 +47,7 @@ fn compiled_own_read(isa: &dyn cranelift_codegen::isa::TargetIsa, form: Form, sl
     builder.switch_to_block(entry);
     let [record, base] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None, facts: Default::default() };
     let inline = quench_runtime::staged::object::inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, form,
         usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
@@ -110,7 +110,7 @@ fn compiled_char_code_at(isa: &dyn cranelift_codegen::isa::TargetIsa) -> CodeMem
     builder.switch_to_block(entry);
     let [records, string, index] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None , payload: None};
+    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None , payload: None, facts: Default::default() };
     let flat = quench_runtime::staged::strings::flat_string(&mut stage, records, string, miss).unwrap();
     let code = quench_runtime::staged::strings::string_char_code_at(&mut stage, flat, index, miss).unwrap();
     builder.ins().return_(&[code]);
@@ -176,7 +176,7 @@ fn word_summed_in_a_loop(isa: &dyn cranelift_codegen::isa::TargetIsa, at: Access
     let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
     builder.ins().brif(more, body, &[], exit, &[sum.into()]);
     builder.switch_to_block(body);
-    let word = Emit { builder: &mut builder, property_values: None, gate: None , payload: None}.load_u32(at, base, 8);
+    let word = Emit { builder: &mut builder, property_values: None, gate: None , payload: None, facts: Default::default() }.load_u32(at, base, 8);
     let next_sum = builder.ins().iadd(sum, word);
     let next_index = builder.ins().iadd_imm_u(index, 1);
     builder.ins().jump(header, &[next_sum.into(), next_index.into()]);
@@ -235,7 +235,7 @@ fn the_barrier_log_path_of_a_store_gate_is_cold() {
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
-    let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) , payload: None}.store_gate(quench_runtime::staged::StagedRecordSpace::Object, record, value);
+    let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) , payload: None, facts: Default::default() }.store_gate(quench_runtime::staged::StagedRecordSpace::Object, record, value);
     let open = builder.ins().uextend(types::I64, open);
     builder.ins().return_(&[open]);
     builder.seal_all_blocks();
@@ -269,7 +269,7 @@ fn record_base_loads_after_optimizing(isa: &dyn cranelift_codegen::isa::TargetIs
     builder.switch_to_block(body);
     let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
     let record = builder.ins().iadd(base, index);
-    let field = Emit { builder: &mut builder, property_values: None, gate: None , payload: None}.load_u64(Region::ObjectSlots.mutable(), record, 8);
+    let field = Emit { builder: &mut builder, property_values: None, gate: None , payload: None, facts: Default::default() }.load_u64(Region::ObjectSlots.mutable(), record, 8);
     let sum_next = builder.ins().iadd(sum, field);
     if with_call {
         let target = builder.ins().iconst(types::I64, 8);
@@ -327,7 +327,7 @@ fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMe
     builder.switch_to_block(entry);
     let [record, base, dx, mag] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None, facts: Default::default() };
     let inline = quench_runtime::staged::object::inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
     let velocity = read_slot(&mut stage, layout, 0, Representation::Float64);
@@ -405,7 +405,7 @@ fn formed_own_read_clif(isa: &dyn cranelift_codegen::isa::TargetIsa, id: u32, sl
     builder.switch_to_block(entry);
     let [record, base] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None};
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None, facts: Default::default() };
     let ops = [ic::IcOp::GuardLayout(id), ic::IcOp::LoadSlot { slot, form: ic::form_of_layout(id),
         storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
     let value = ic::run(&mut stage, &ops, ic::Reached::bare(record), None, miss).expect("a load ends the read");
