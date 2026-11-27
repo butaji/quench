@@ -232,8 +232,15 @@ impl Types {
             let rounds = grown.entry(*key).or_insert(0);
             *rounds = rounds.saturating_add(1);
             if *rounds < WIDENING_ROUNDS { continue; }
-            let thresholds = self.thresholds.get(key).map_or(&[][..], Vec::as_slice);
-            let widened = typing::widen(thresholds, before.ty, cell.ty);
+            // An element class's stores are read-modify-writes (`+=`, `++`, `|=`) that grow its range each pass, so it also
+            // widens to the power-of-two bounds of its new range (`typing::power_thresholds`) before the word.
+            let mut bounds = self.thresholds.get(key).cloned().unwrap_or_default();
+            if matches!(key, Key::Element(_)) {
+                bounds.extend(typing::power_thresholds(new));
+                bounds.sort_unstable();
+                bounds.dedup();
+            }
+            let widened = typing::widen(&bounds, before.ty, cell.ty);
             cell.ty = match widened.int_range() {
                 Some(range) if range.contains(new) => widened,
                 _ => Type::NOT_NAN_NUMBER,

@@ -286,6 +286,17 @@ pub fn mask_bound(constant: IntRange) -> Option<i64> {
     (constant.min >= 0).then_some(constant.max)
 }
 
+/// The power-of-two bounds an element class's range widens to (`Types::widen`) beside its constant thresholds: the max is the
+/// next power of two above `range`'s max, less one, and the min the negation of the next power of two below its min (0 where
+/// it is not negative). Each is clamped to int32's span, so a bound past it falls to `IntRange::WORD` as before. A read-modify-write
+/// store (`+=`, `|=`) doubles a class's range each pass, so a power-of-two bound keeps a digit sum or carry in int32 with a 2x
+/// margin, where the nearest constant would be the word.
+pub fn power_thresholds(range: IntRange) -> [i64; 2] {
+    let up = i64::try_from((range.max.max(0) as u64 + 1).next_power_of_two() - 1).unwrap_or(i64::MAX).min(IntRange::FULL.max);
+    let down = if range.min >= 0 { 0 } else { (-i64::try_from(range.min.unsigned_abs().next_power_of_two()).unwrap_or(i64::MAX)).max(IntRange::FULL.min) };
+    [down, up]
+}
+
 /// The integer bounds a range widens to (`widen`): int32's two bounds, and each given bound one below and one above it.
 /// A loop header is given the constants its relational jumps compare with; a key is given the constants it is stored,
 /// compared or masked to (`mask_bound`). A strict and a non-strict comparison step a counter one past its constant, and
