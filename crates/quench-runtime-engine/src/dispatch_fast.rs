@@ -205,15 +205,15 @@ macro_rules! arithmetic_all {
 
 use quench_runtime::vm::engine_types::LeafForm;
 const NOT_LEAF: LeafForm = quench_runtime::staged::call_leaf::NOT_LEAF;
-/// Neither its receiver nor its captures (`CallEntry::Leaf`): it runs in its caller's context.
+/// Neither its receiver nor its captures (`CallEntry::frameless(Frameless::Leaf)`): it runs in its caller's context.
 const PLAIN_LEAF: LeafForm = quench_runtime::staged::call_leaf::PLAIN_LEAF;
-/// Its captures and not its receiver (`CallEntry::CaptureLeaf`): the call makes the
+/// Its captures and not its receiver (`CallEntry::frameless(Frameless::CaptureLeaf)`): the call makes the
 /// environment its own and binds no receiver unless the leaf materializes.
 const CAPTURE_LEAF: LeafForm = quench_runtime::staged::call_leaf::CAPTURE_LEAF;
-/// Its receiver, and maybe its captures (`CallEntry::ContextLeaf`): the call makes the
+/// Its receiver, and maybe its captures (`CallEntry::frameless(Frameless::ContextLeaf)`): the call makes the
 /// receiver and the environment its own.
 const CONTEXT_LEAF: LeafForm = quench_runtime::staged::call_leaf::CONTEXT_LEAF;
-/// Its receiver and not its captures (`CallEntry::ThisLeaf`): the call binds the receiver
+/// Its receiver and not its captures (`CallEntry::frameless(Frameless::ThisLeaf)`): the call binds the receiver
 /// and keeps the caller's environment, which only a materialization makes the callee's.
 const THIS_LEAF: LeafForm = quench_runtime::staged::call_leaf::THIS_LEAF;
 
@@ -1229,7 +1229,7 @@ enum ActivationArguments {
 pub(crate) use quench_runtime::vm::engine_types::ScriptCallTarget;
 
 pub(crate) mod call_entry;
-use call_entry::CallEntry;
+use call_entry::{CallEntry, Framed, Frameless};
 
 // Recognized once per target, as it resolves; no operation runs them.
 #[path = "call_body_forms.rs"]
@@ -1240,7 +1240,7 @@ use call_body_forms::{body_entry, leaf_body};
 const TARGET_CONSTRUCTS: u8 = 1;
 /// `ScriptCallTarget::forms`: `new` may run its body as the stores alone.
 const TARGET_INITIALIZES: u8 = 2;
-/// `ScriptCallTarget::forms`: a rest body (`CallEntry::Gathers`) that keeps the values it was
+/// `ScriptCallTarget::forms`: a rest body (`CallEntry::framed(Framed::Gathers)`) that keeps the values it was
 /// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
 /// sloppy function's; any other's rest array holds every value past its parameters.
 const TARGET_GATHERS_KEEPING: u8 = 4;
@@ -1252,7 +1252,7 @@ const TARGET_REST_VIEW: u8 = 8;
 /// (`Function::arrow_reads_implicit_bindings`), whose sibling closures read their own
 /// lexical `this` (`sibling_closure_target`).
 const TARGET_READS_IMPLICIT: u8 = 16;
-/// `ScriptCallTarget::forms`: a settling target (`CallEntry::Settles`) whose body activates
+/// `ScriptCallTarget::forms`: a settling target (`CallEntry::framed(Framed::Settles)`) whose body activates
 /// over an environment window (`activate_environment_in_lane`): an async body whose locals and
 /// closures ride the window (`CallPlan::suspended_environment`).
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
@@ -1297,13 +1297,13 @@ impl ScriptCallTarget {
     /// It keeps the values it was passed for a forwarded `arguments`.
     #[inline(always)]
     fn forwards(&self) -> bool {
-        matches!(self.entry, CallEntry::Keeps | CallEntry::Gathers)
+        self.entry == CallEntry::framed(Framed::Keeps) || self.entry == CallEntry::framed(Framed::Gathers)
     }
 
     /// Its activation's return settles its call's promise (`Completion::SettlesPromise`).
     #[inline(always)]
     fn settles(&self) -> bool {
-        self.entry == CallEntry::Settles
+        self.entry == CallEntry::framed(Framed::Settles)
     }
 
     /// Its settling activation holds an environment window (`TARGET_SETTLES_IN_ENVIRONMENT`).
@@ -4821,7 +4821,7 @@ impl Vm {
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
-    /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
+    /// registers (`CallPlan::registers_only`), else a `CallEntry::framed(Framed::Frame)` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
     pub(crate) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
@@ -4905,7 +4905,7 @@ impl Vm {
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         let settles_in_environment = settles_in_environment && environment;
         // A non-suspending async body of the running program activates for its plain calls,
-        // whose promise its return settles (`CallEntry::Settles`); across programs, or under a
+        // whose promise its return settles (`CallEntry::framed(Framed::Settles)`); across programs, or under a
         // host that observes promise lifecycles, its calls take a frame.
         let settles = (plan.settles_in_loop || settles_in_environment) && may_settle;
         // A non-suspending async body runs in registers only as a settling activation.
@@ -4942,7 +4942,7 @@ impl Vm {
                 admission: self.lane_stack.target_admission(program),
                 function,
                 env,
-                entry: CallEntry::Frame,
+                entry: CallEntry::framed(Framed::Frame),
                 ..EMPTY_SCRIPT_CALL_TARGET
             };
             self.remember_target(target, numeric, cross);
@@ -4956,12 +4956,12 @@ impl Vm {
             // frame; only its constructions activate frameless (`script_construct_miss`).
             let entry = body_entry(body, &code.constants);
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::Activates && !environment));
+            unsafe { &*view }.entry.set_facts(quench_runtime::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::framed(Framed::Activates) && !environment));
             TargetBody {
                 entry,
                 constructs,
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
-                leaf: (entry == CallEntry::Activates)
+                leaf: (entry == CallEntry::framed(Framed::Activates))
                     .then(|| leaf_body(body, code, |atom| self.is_private_name(atom)))
                     .flatten()
                     // The claim is a fact of the body (`js_tier_may_claim`): it holds for the view.
@@ -4979,7 +4979,7 @@ impl Vm {
             // run reads yet: its rows lower (`ArgumentsLength`, `ArgumentGet`), the entry does
             // not (lane-bodies claim for keeping activations).
             && !plan.keeps_arguments
-            && shape.entry == CallEntry::Activates
+            && shape.entry == CallEntry::framed(Framed::Activates)
             && tier_may_claim
             // SAFETY: as below.
             && (!crate::compiled::admission::lane_bodies_enrolled(self) || unsafe { &*view }.tier_unclaimed_in_lane())
@@ -5267,9 +5267,9 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
         let entry = target.map(|target| unsafe { (*target).entry });
         let handler: Handler = match entry {
-            Some(CallEntry::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
-            Some(CallEntry::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
+            Some(entry) if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
             Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler(entry, i),
             Some(_) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
             None => sibling!(script_call_resolve_miss, r, ip, Carried::script_in(cx, view)),
@@ -5303,7 +5303,7 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::Activates {
+        if target.entry != CallEntry::framed(Framed::Activates) {
             sibling!(script_call_requicken_miss, r, ip, Carried::script_in(cx, view))
         }
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -5357,8 +5357,8 @@ const ANY_ARGC: u16 = u16::MAX;
 script_handler! {
     /// The out-of-line form of a call row, so the plain call keeps its registers: a receiver
     /// whose binding reads the heap (`call_this_in_lane`), a forwarding target, which takes
-    /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::Reads`,
-    /// `CallEntry::ReadsElement`), whose hit (`call_read_in_lane`) completes the
+    /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::frameless(Frameless::Reads)`,
+    /// `CallEntry::frameless(Frameless::ReadsElement)`), whose hit (`call_read_in_lane`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee. A site that called such a target calls this form directly, so it
@@ -5378,10 +5378,10 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
-        if target.entry == CallEntry::Frame {
+        if target.entry == CallEntry::framed(Framed::Frame) {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
-        if target.entry == CallEntry::Environment {
+        if target.entry == CallEntry::framed(Framed::Environment) {
             // The site calls its environment target's form directly from now on.
             requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>());
             sibling!(script_call_environment_miss, r, ip, Carried::script_in(cx, view))
@@ -5453,7 +5453,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
-            !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles) && !target.forwards()
+            !target.entry.needs_frame_path() && !target.forwards()
         }) else {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
@@ -5471,7 +5471,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `script_call_full_miss` of an environment target (`CallEntry::Environment`), out of
+    /// `script_call_full_miss` of an environment target (`CallEntry::framed(Framed::Environment)`), out of
     /// line so the other calls keep their registers: its activation holds its environment
     /// and locals (`activate_environment_in_lane`). Any other callee takes the full form.
     #[inline(never)]
@@ -5491,7 +5491,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls });
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::Environment {
+        if target.entry != CallEntry::framed(Framed::Environment) {
             // A site this form serves calls the full form once its callee's target differs.
             requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
@@ -5512,7 +5512,7 @@ script_handler! {
 
 
 script_handler! {
-    /// `script_call_full_miss` of a non-suspending async target (`CallEntry::Settles`), out of
+    /// `script_call_full_miss` of a non-suspending async target (`CallEntry::framed(Framed::Settles)`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
     /// `Vm::try_settling_call` does, then activates the body, whose return settles it
     /// (`Completion::SettlesPromise`). A call passing values past the parameters, a `with`
@@ -5756,7 +5756,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `frame_call_in_lane` pushes one.
-        if !target.entry.activates_across() && target.entry != CallEntry::Environment {
+        if !target.entry.activates_across() && target.entry != CallEntry::framed(Framed::Environment) {
             #[cfg(feature = "profile-lane-exits")]
             quench_runtime::vm::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
@@ -5776,7 +5776,7 @@ script_handler! {
         // (`enter_window_in_lane`'s cross completion); the site calls its fixed form from now on
         // (`script_call_cross_plain_miss`).
         let argc = ImmediateLayout::argument_count(i.imm());
-        if target.entry == CallEntry::Activates
+        if target.entry == CallEntry::framed(Framed::Activates)
             && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
             && argc <= FIXED_ARGUMENT_COPIES
             && admits_window_in_lane(vm, target, argc)
@@ -5790,7 +5790,7 @@ script_handler! {
             let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc, this, false);
             next!(cx, registers, base, Carried::script(cx))
         }
-        let activated = if target.entry == CallEntry::Environment {
+        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
             // SAFETY: the call's window is registers of the running function.
             activate_environment_in_lane(cx, r, ip, target, unsafe { call_window_in_lane(r, i) }, (this, false))
         } else if target.forwards() {
@@ -5807,7 +5807,7 @@ script_handler! {
 
 script_handler! {
     /// `script_call_cross_miss` at a site whose last callee was another program's plain
-    /// activation (`CallEntry::Activates`) of `ARGC` arguments, which no completion of its
+    /// activation (`CallEntry::framed(Framed::Activates)`) of `ARGC` arguments, which no completion of its
     /// caller follows: that activation alone, with the fixed copy of its window. Any other
     /// call takes the general cross form.
     fn script_call_cross_plain_miss<ARGC: u16>(cx, r, ip, i, view) {
@@ -5825,7 +5825,7 @@ script_handler! {
         // SAFETY: `cross_call_holds` found the entry within the cache; nothing below resolves a
         // target or collects.
         let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.cross_targets.entries.get_unchecked(index)) };
-        debug_assert!(target.entry == CallEntry::Activates && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
+        debug_assert!(target.entry == CallEntry::framed(Framed::Activates) && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
         // The stack's room is the one test that stays per call: it is the push's depth check.
         if !activation_room_in_lane(vm, target) {
             sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
@@ -6643,7 +6643,7 @@ script_handler! {
                 return frame_return(vm, ip, this);
             }
         }
-        let activated = if target.entry == CallEntry::Environment {
+        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
             // SAFETY: the construction's arguments are a window of the running function's registers.
             activate_environment_in_lane(cx, r, ip, &target, unsafe { window_in_lane(r, i.c, i) }, (this, true))
         } else {
@@ -7234,7 +7234,7 @@ impl LeafRead {
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let entry = unsafe { &*(*target.view).records() };
-        if target.entry == CallEntry::ReadsElement {
+        if target.entry == CallEntry::frameless(Frameless::ReadsElement) {
             // SAFETY: as the function's contract.
             let element = unsafe { &*(*target.view).records().add(1) };
             return Some(Self::Element { base: entry.b, field: FieldHit::of(entry)?, index: element.c });
@@ -7307,7 +7307,7 @@ impl LeafRead {
     }
 }
 
-/// A `CallEntry::ForwardsRead` body's reads: the field of `this` or a parameter it reads,
+/// A `CallEntry::frameless(Frameless::ForwardsRead)` body's reads: the field of `this` or a parameter it reads,
 /// then the method of that field's value it calls.
 #[derive(Clone, Copy)]
 struct ForwardRead {
@@ -7320,7 +7320,7 @@ impl ForwardRead {
     /// The reads `target`'s records answer with now; `None` for a record state no read hits.
     ///
     /// # Safety
-    /// `target` is a `CallEntry::ForwardsRead` target of the running program, whose view
+    /// `target` is a `CallEntry::frameless(Frameless::ForwardsRead)` target of the running program, whose view
     /// holds its method read after its field read.
     #[inline(always)]
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
@@ -8509,7 +8509,7 @@ impl PreparedShape {
     /// array each call makes (`activate_keeping_in_lane`).
     #[inline(always)]
     fn of(caller: &LaneContext, call: Ip, target: &ScriptCallTarget, argc: usize) -> Option<Self> {
-        if target.entry == CallEntry::Gathers || argc > usize::from(u16::MAX) {
+        if target.entry == CallEntry::framed(Framed::Gathers) || argc > usize::from(u16::MAX) {
             return None;
         }
         let (params, registers) = (usize::from(target.params), usize::from(target.registers));

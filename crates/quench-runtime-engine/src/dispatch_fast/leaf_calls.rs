@@ -31,7 +31,7 @@ script_handler! {
         // activation's in place, another leaf form's through it, any other through the
         // full form.
         if target.entry != CallEntry::leaf(LEAF) {
-            if target.entry == CallEntry::Activates {
+            if target.entry == CallEntry::framed(Framed::Activates) {
                 match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
                     Some(resumed) => resume!(cx, resumed),
                     None => sibling!(script_call_full_miss, r, ip, Carried::script(cx)),
