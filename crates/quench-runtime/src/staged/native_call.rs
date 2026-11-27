@@ -29,7 +29,7 @@ fn native_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, fil
 /// The direct call of `site` to `native` through `plan`: identity, `this`, arguments, link, entry and
 /// completion, each a row. A construction is the VM's.
 #[inline(always)]
-pub(super) fn enter_native<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss,
+pub fn enter_native<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss,
     site: &Invocation, (plan, native): (DirectPlan, NativeId)) -> Option<S::Word> {
     if site.constructs() { return None; }
     let file = frame.call_registers(stage)?;

@@ -120,7 +120,7 @@ pub struct DenseView<W> {
 /// `writable`, of a wide or a double backing (`DenseView::double`): `None` (leaving at `miss`)
 /// for any other value or a narrow backing.
 #[inline(always)]
-pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
+pub fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
     miss: S::Miss) -> Option<DenseView<S::Word>> {
     let backing = if writable { writable_array_backing(stage, records, base, miss)? } else { flagged_backing(stage, records, base, miss, BackingAccess::MUTABLE)? };
     let (length, double) = wide_or_double(stage, backing.length, miss)?;
@@ -146,7 +146,7 @@ fn wide_or_double<S: Stage>(stage: &mut S, length: S::Word, miss: S::Miss) -> Op
 /// packed (a wide backing's proof), at a hole. A double backing's element is its Number's `Value`
 /// (`double_element`).
 #[inline(always)]
-pub(crate) fn read_element<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word,
+pub fn read_element<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let Some(flag) = view.double else { return wide_read(stage, view, index, miss) };
     let double = stage.ne_imm(flag, 0u32);
@@ -174,7 +174,7 @@ fn wide_read<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, 
 /// (`replace_double`); any other value leaves, for the VM's store to convert or make the
 /// backing generic (`ArrayElements::replace_in_place`).
 #[inline(always)]
-pub(crate) fn replace_present<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
+pub fn replace_present<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word>, index: S::Word, value: S::Word,
     miss: S::Miss) -> Option<()> {
     let Some(flag) = view.double else { return replace_wide(stage, view, index, value, miss) };
     let double = stage.ne_imm(flag, 0u32);
@@ -223,8 +223,8 @@ fn replace_double<S: super::NumericStage>(stage: &mut S, view: DenseView<S::Word
 /// backing's header, its first value and its length.
 #[derive(Clone, Copy)]
 pub struct Backing<W> {
-    pub(crate) record: W,
-    pub(crate) header: W,
+    pub record: W,
+    pub header: W,
     pub values: W,
     pub length: W,
 }
@@ -263,7 +263,7 @@ pub fn array_backing_as<S: Stage>(stage: &mut S, record_base: S::Word, base: S::
 /// decoded through the upper-word table at `upper_words` (`object::decode_narrow_through`);
 /// `None` (leaving at `miss`) past the backing's end or at a hole.
 #[inline(always)]
-pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
+pub fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let backing = flagged_backing(stage, record_base, base, miss, BackingAccess::MUTABLE)?;
     backing_element(stage, backing, index, upper_words, miss)
@@ -373,7 +373,7 @@ pub fn record_backing_as<S: Stage>(stage: &mut S, record: S::Word, access: Backi
 /// keeps the header pointer as its payload word; with extras (an array with named properties,
 /// a prototype, sparse or arguments facts), the word points at them and they hold it.
 #[inline(always)]
-pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word, payload: Access) -> S::Word {
+pub fn array_header<S: Stage>(stage: &mut S, record: S::Word, payload: Access) -> S::Word {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let word = stage.load_u64(payload, record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
     let extras = super::object::has_extras(stage, word);
@@ -418,7 +418,7 @@ pub fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss
 /// `writable_backing` of an array that is also extensible, which a change of its length
 /// (`push`, `pop`) needs: `Object::holds_ordinary_elements`' integrity bits are all clear.
 #[inline(always)]
-pub(crate) fn resizable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
+pub fn resizable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, miss: S::Miss) -> Option<()> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     unbarred_backing(stage, backing, ARRAY.integrity_mask, miss)
 }
@@ -584,7 +584,7 @@ fn fill_double_hole<S: super::NumericStage>(stage: &mut S, backing: Backing<S::W
 /// The capacity word changes only where the backing is allocated or grown, so room is a layout
 /// fact the row reads, not a VM reserve.
 #[inline(always)]
-pub(crate) fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>, value: S::Word,
+pub fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>, value: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let word = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_capacity_offset as i32);
@@ -595,7 +595,7 @@ pub(crate) fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>,
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
-pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
+pub fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, removed: S::Word) -> S::Word {
     let removed_first = stage.sub(others, removed);
     let recounted = stage.add(removed_first, added);
     let unknown = stage.eq_imm(others, u64::from(crate::heap::OTHERS_UNKNOWN));
@@ -604,33 +604,12 @@ pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, 
 
 /// One where `value` counts among a backing's others (it is no int32), else zero.
 #[inline(always)]
-pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let int = super::value::is_int(stage, value);
     let (zero, one) = (stage.constant(0), stage.constant(1));
     stage.select(int, zero, one)
 }
 
-#[cfg(test)]
-/// The interpreter's reading of `replace_element` at `index` of the backing whose first value
-/// `values` addresses.
-///
-/// # Safety
-/// The backing is its array's own, alive, and holds `index`.
-#[inline(always)]
-pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: usize, value: crate::Value) {
-    let mut stage = Concrete::pure();
-    // SAFETY: the caller's contract.
-    let address = unsafe { values.add(index) };
-    let old = unsafe { address.read() };
-    // A value of the old one's kind (both int32, or both others) leaves the count as it is,
-    // exact or unknown, so only the element is written: a double over a double (V8-v7
-    // NavierStokes) skips the count's load, recount and store.
-    if other(&mut stage, value.to_bits()) == other(&mut stage, old.to_bits()) {
-        replace_uncounted_element(&mut stage, address as u64, value.to_bits());
-        return;
-    }
-    replace_element(&mut stage, values as u64, address as u64, old.to_bits(), value.to_bits());
-}
 
 /// `concrete_replace_element` of the elements at `first + step * k` by `values`'s items, the
 /// backing's count of others recounted once for all of them.
@@ -680,56 +659,27 @@ pub unsafe fn concrete_replace_run(backing: *mut crate::Value, first: usize, val
     elements.copy_from_slice(values);
 }
 
-/// The interpreter's reading of `append_in_room`: `value` appended to the direct array `array` among
-/// the array records at `record_base` where its backing is writable and has room; false (changing
-/// nothing) leaves the append to the VM, which grows the backing. A reference passes the write
-/// barrier and a hole is no element, so neither is a word the row appends.
-#[inline(always)]
-pub(crate) fn concrete_append_in_room(record_base: *const crate::heap::ArrayObject, array: crate::Value, value: crate::Value) -> bool {
-    if value.heap_index().is_some() || value.is_deleted() {
-        return false;
-    }
-    let mut stage = Concrete::pure();
-    array_backing(&mut stage, record_base as u64, array.to_bits(), ()).is_some_and(|backing| {
-        writable_backing(&mut stage, backing, ()).is_some() && append_in_room(&mut stage, backing, value.to_bits(), ()).is_some()
-    })
-}
 
 /// The interpreter's reading of `other`.
 #[inline(always)]
-pub(crate) fn concrete_other(value: crate::Value) -> u32 {
+pub fn concrete_other(value: crate::Value) -> u32 {
     other(&mut Concrete::pure(), value.to_bits()) as u32
 }
 
 /// The interpreter's reading of `recount`.
 #[inline(always)]
-pub(crate) fn concrete_recount(others: u32, added: u32, removed: u32) -> u32 {
+pub fn concrete_recount(others: u32, added: u32, removed: u32) -> u32 {
     recount(&mut Concrete::pure(), u64::from(others), u64::from(added), u64::from(removed)) as u32
 }
 
-/// The interpreter's reading of `dense_element` over `elements`.
-#[cfg(test)]
-#[inline(always)]
-pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) -> Option<crate::Value> {
-    let mut stage = Concrete::pure();
-    dense_element(&mut stage, elements.as_ptr() as u64, elements.len() as u64, index as u64, ())
-        .map(|(_, value)| crate::Value::from_bits(value))
-}
 
-/// The interpreter's reading of `array_length`: the `length` of the direct array `base` among the
-/// array records at `record_base`, as the int32 it reads as.
-#[inline(always)]
-pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject, base: crate::Value) -> Option<crate::Value> {
-    let mut stage = Concrete::pure();
-    array_length(&mut stage, record_base as u64, base.to_bits(), ()).map(crate::Value::from_bits)
-}
 
 /// Element `index` of the direct array `base` among the array records at `record_base`, of any
 /// backing: a wide one's value, a double backing's Number (`Stage::box_raw_number`) or a
 /// narrow backing's value decoded (`object::decode_narrow`); `None` (leaving at `miss`) for any
 /// other base, past the elements or at a hole.
 #[inline(always)]
-pub(crate) fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word,
+pub fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
     let Backing { values, length, .. } = flagged_backing(stage, record_base, base, miss, BackingAccess::MUTABLE)?;
@@ -755,12 +705,10 @@ pub(crate) fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word,
     }, #[inline(always)] |stage| dense_element(stage, values, length, index, miss).map(|(_, value)| value))
 }
 
-/// `any_backing_element` on `Concrete`: the interpreter's read of element `index` of `base`.
-#[inline(always)]
-pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
-    let mut stage = Concrete::pure();
-    any_backing_element(&mut stage, record_base as u64, base.to_bits(), index as u64, ()).map(crate::Value::from_bits)
-}
 
 #[cfg(test)]
 mod tests;
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

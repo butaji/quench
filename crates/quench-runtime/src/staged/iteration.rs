@@ -15,7 +15,7 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 /// `object_like` answers (the VM's `is_object_like`). Any other value, a primitive, leaves at `miss`
 /// and the general step throws.
 #[inline(always)]
-pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register,
+pub fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register,
     _miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, register);
     let object = value::is_direct_object(stage, word);
@@ -31,7 +31,7 @@ pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, fram
 /// its own property key; any other value leaves at `miss`, where an integer, a symbol or an
 /// object takes the full conversion.
 #[inline(always)]
-pub(crate) fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+pub fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     source: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, source);
     let string = value::is_direct_string(stage, word);
@@ -51,15 +51,15 @@ pub(crate) fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut 
 /// no shape). In that epoch (which no reused handle or compacted shape shares) any object of that
 /// shape that keeps its keys in its shape alone, as a plain object does, has exactly the snapshot's
 /// keys, each an own enumerable property.
-pub(crate) const FOR_IN_OBJECT: usize = 0;
-pub(crate) const FOR_IN_KEYS: usize = 1;
-pub(crate) const FOR_IN_CURSOR: usize = 2;
-pub(crate) const FOR_IN_SHAPE: usize = 3;
-pub(crate) const FOR_IN_EPOCH: usize = 4;
-pub(crate) const FOR_IN_SLOTS: usize = 5;
-pub(crate) const FOR_IN_STATE_LEN: usize = 6;
+pub const FOR_IN_OBJECT: usize = 0;
+pub const FOR_IN_KEYS: usize = 1;
+pub const FOR_IN_CURSOR: usize = 2;
+pub const FOR_IN_SHAPE: usize = 3;
+pub const FOR_IN_EPOCH: usize = 4;
+pub const FOR_IN_SLOTS: usize = 5;
+pub const FOR_IN_STATE_LEN: usize = 6;
 /// The word of a state whose snapshot has no memo: no raw shape or epoch equals it, as it names a heap tag.
-pub(crate) const FOR_IN_NO_MEMO: u64 = crate::value::TAG_UNDEFINED;
+pub const FOR_IN_NO_MEMO: u64 = crate::value::TAG_UNDEFINED;
 
 /// The word of element `index` of a for-in state whose first value `values` addresses.
 #[inline(always)]
@@ -125,7 +125,7 @@ fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): 
 /// before any write) otherwise, where the full step decides: any other object, a deleted or
 /// non-enumerable key, and an exhausted snapshot, which jumps.
 #[inline(always)]
-pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+pub fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let backing = current_state::<S, true>(stage, (arrays, objects), state, epoch, miss)?;
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
@@ -152,7 +152,7 @@ pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, 
 /// `miss`, where the general element read decides.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, base: S::Word,
+pub fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, base: S::Word,
     key: S::Word, epoch: S::Word, miss: S::Miss) -> Option<S::Word> {
     let backing = current_state::<S, false>(stage, (arrays, objects), state, epoch, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
@@ -183,83 +183,10 @@ pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::W
     Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
 }
 
-/// The interpreter's reading of `for_in_next`: the key the step over `state` yields, among the array
-/// and object records of `heap`, in collection epoch `epoch`; `None` leaves the step to the VM's full
-/// one, which also advances nothing the row did not.
-#[inline(always)]
-pub(crate) fn concrete_for_in_next(heap: &crate::heap::Heap, state: crate::Value, epoch: u64) -> Option<crate::Value> {
-    let (arrays, objects) = (heap.array_record_base()?, heap.object_record_base()?);
-    let mut stage = Concrete::over(heap);
-    for_in_next(&mut stage, (arrays as u64, objects as u64), state.to_bits(), epoch, ()).map(crate::Value::from_bits)
-}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::heap::{ArrayElements, ArrayObject, Heap, Object};
-    use crate::Value;
-
-    /// A heap with a plain object of two properties (shapes 1 and 2) and the snapshot array of its two
-    /// keys; the object's exact shape is the first answer.
-    fn listed() -> (Heap, Value, Value, u32) {
-        let mut heap = Heap::new();
-        for shape in 1..=2 {
-            heap.register_property_shape(shape, shape as usize, None);
-        }
-        let object = heap.alloc_object(Object::new(Value::NULL));
-        heap.property_add(object, Value::integer(1), 1);
-        heap.property_add(object, Value::integer(2), 2);
-        let shape = heap.object(object).expect("an object").exact_shape();
-        let snapshot = ArrayElements::from_slice(&[Value::integer(10), Value::integer(20)]);
-        let keys = heap.alloc_array(ArrayObject::fresh(Value::NULL, snapshot));
-        (heap, object, keys, shape)
-    }
-
-    fn state(heap: &mut Heap, (object, keys): (Value, Value), memo: [u64; 2]) -> Value {
-        let elements = [object, keys, Value::integer(0), Value::from_bits(memo[0]), Value::from_bits(memo[1]), Value::UNDEFINED];
-        heap.alloc_array(ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)))
-    }
-
-    fn step(heap: &Heap, state: Value, epoch: u64) -> Option<Value> {
-        concrete_for_in_next(heap, state, epoch)
-    }
-
-    fn cursor(heap: &Heap, state: Value) -> Value {
-        heap.array(state).expect("a state").elements()[FOR_IN_CURSOR]
-    }
-
-    /// A state whose memo is the object's shape and the current epoch yields its keys in order and moves
-    /// its cursor; at the end of the snapshot the row leaves for the full step, which jumps.
-    #[test]
-    fn a_state_whose_memo_holds_steps_through_its_keys() {
-        let (mut heap, object, keys, shape) = listed();
-        let epoch = 7;
-        let state = state(&mut heap, (object, keys), [u64::from(shape), epoch]);
-        assert_eq!(step(&heap, state, epoch), Some(Value::integer(10)));
-        assert_eq!(cursor(&heap, state), Value::integer(1));
-        assert_eq!(step(&heap, state, epoch), Some(Value::integer(20)));
-        assert_eq!(step(&heap, state, epoch), None, "the snapshot is exhausted");
-        assert_eq!(cursor(&heap, state), Value::integer(2), "a leave moves nothing");
-    }
-
-    /// A state whose memo is another epoch or shape, or none, or whose object has changed shape, leaves
-    /// before its cursor moves.
-    #[test]
-    fn a_state_whose_memo_does_not_hold_leaves_before_writing() {
-        let (mut heap, object, keys, shape) = listed();
-        let epoch = 7;
-        let held = (object, keys);
-        let stale = state(&mut heap, held, [u64::from(shape), epoch]);
-        assert_eq!(step(&heap, stale, epoch + 1), None, "a collection passed");
-        let unmemoed = state(&mut heap, held, [FOR_IN_NO_MEMO; 2]);
-        assert_eq!(step(&heap, unmemoed, epoch), None, "the keys came from the general walk");
-        let other_shape = state(&mut heap, held, [u64::from(shape) + 1, epoch]);
-        assert_eq!(step(&heap, other_shape, epoch), None, "the object is not of the listed shape");
-        heap.object_record_mut(object).expect("an object").mark_as_prototype();
-        let prototype = state(&mut heap, held, [u64::from(shape), epoch]);
-        assert_eq!(step(&heap, prototype, epoch), None, "an object with extras keeps keys outside its shape");
-        for state in [stale, unmemoed, other_shape, prototype] {
-            assert_eq!(cursor(&heap, state), Value::integer(0));
-        }
-    }
-}
+mod tests;
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

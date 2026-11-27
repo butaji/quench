@@ -38,12 +38,12 @@ pub struct ViewAccess {
 
 #[cfg(not(stencil_build))]
 impl ViewAccess {
-    pub(crate) const READ: Self = Self { kind: None, writable: false };
+    pub const READ: Self = Self { kind: None, writable: false };
 }
 
 /// The record of the typed array `base`: `None` (leaving at `miss`) for any other value.
 #[inline(always)]
-pub(crate) fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     let legacy = value::is_legacy_slot(stage, base);
     stage.guard(legacy, miss)?;
     let slot = stage.and_imm(base, u64::from(u32::MAX));
@@ -91,7 +91,7 @@ pub fn prove_viewed<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, bas
 /// `TypedArrayKind`'s discriminant, or `NO_KIND` for a DataView: `data_view::prove_data_view`),
 /// current, attached and (to store) unshared: every view's one guard.
 #[inline(always)]
-pub(super) fn kind_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, kind: u8,
+pub fn kind_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, kind: u8,
     writable: bool, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let record = view_record(stage, records, base, miss)?;
     let kind_word = stage.load_u8(Region::Records.mutable(), record, VIEW.kind_offset as i32);
@@ -123,32 +123,13 @@ fn attached_view<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, record
     Some((values, length))
 }
 
-/// The interpreter's view of the typed array `base` among the record pages of `directory`: the proof
-/// without a frame; `None` for any other value, a record the VM has not published (or has
-/// withdrawn) or one whose published address is stale.
-#[cfg(not(stencil_build))]
-#[inline(always)]
-pub(crate) fn concrete_typed_view(directory: (*const usize, usize), base: crate::Value) -> Option<TypedView<u64>> {
-    concrete_typed_access(directory, base, ViewAccess::READ)
-}
 
-/// The interpreter's view of the typed array `base` proved for `access` (a kind the site observed,
-/// and whether it stores), among the record pages of `directory`: the element row's proof without
-/// a frame, a store's `unshared` test included.
-#[cfg(not(stencil_build))]
-#[inline(always)]
-pub fn concrete_typed_access((directory, pages): (*const usize, usize), base: crate::Value, access: ViewAccess)
-    -> Option<TypedView<u64>> {
-    let relocations = crate::heap::buffer_relocations_address();
-    let records = TypedRecords { directory: directory.addr() as u64, pages: pages as u64, relocations: relocations.addr() as u64 };
-    prove_typed_view(&mut Concrete::pure(), records, base.to_bits(), access, ())
-}
 
 /// The interpreter's Number (an `f64`'s bits) at element `index` of `view`: the element row
 /// without a frame; `None` for a kind without a native element or an index past the elements.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<u64> {
+pub fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<u64> {
     typed_read(&mut Concrete::pure(), view, index as u64, ())
 }
 
@@ -157,7 +138,7 @@ pub(crate) fn concrete_typed_read(view: TypedView<u64>, index: usize) -> Option<
 /// path and the native DataView get are this one body. `None` past the bytes.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, little_endian: bool) -> Option<f64> {
+pub fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, little_endian: bool) -> Option<f64> {
     let field = bytes.get(index..index.checked_add(kind.width())?)?;
     Some(element_number(kind, field, little_endian))
 }
@@ -166,7 +147,7 @@ pub(crate) fn data_view_get(bytes: &[u8], index: usize, kind: TypedArrayKind, li
 /// `bytes` (`store_element_number`). `None` past the bytes, writing nothing.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind, number: f64,
+pub fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind, number: f64,
     little_endian: bool) -> Option<()> {
     let field = bytes.get_mut(index..index.checked_add(kind.width())?)?;
     store_element_number(kind, number, field, little_endian);
@@ -177,7 +158,7 @@ pub(crate) fn data_view_set(bytes: &mut [u8], index: usize, kind: TypedArrayKind
 /// BigInt element's bits (`field_bits`). `None` past the bytes.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_endian: bool) -> Option<u64> {
+pub fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_endian: bool) -> Option<u64> {
     let field = bytes.get(index..index.checked_add(width)?)?;
     Some(field_bits(field, little_endian))
 }
@@ -186,9 +167,13 @@ pub(crate) fn data_view_bits(bytes: &[u8], index: usize, width: usize, little_en
 /// (`store_field_bits`). `None` past the bytes, writing nothing.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn data_view_store_bits(bytes: &mut [u8], index: usize, width: usize, bits: u64,
+pub fn data_view_store_bits(bytes: &mut [u8], index: usize, width: usize, bits: u64,
     little_endian: bool) -> Option<()> {
     let field = bytes.get_mut(index..index.checked_add(width)?)?;
     store_field_bits(field, bits, little_endian);
     Some(())
 }
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

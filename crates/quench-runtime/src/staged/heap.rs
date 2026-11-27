@@ -6,7 +6,7 @@ use super::*;
 /// The heap operations: literal allocation, the host helpers and element access. A frame with
 /// no heap for the operation leaves it `Unresolved` for its host path.
 #[inline(always)]
-pub(super) fn heap_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn heap_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         allocate @ Operation::Allocate { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::ALLOCATE]) } { allocation_step_of::<KIND, _, _>(stage, frame, allocate) } else { unreachable!() },
@@ -21,7 +21,7 @@ pub(super) fn heap_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>
 
 /// `heap_step_of` for any operation.
 #[inline(always)]
-pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     heap_step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }

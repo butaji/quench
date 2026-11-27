@@ -12,7 +12,7 @@ use crate::typed_ir::Representation;
 /// (`slot`, its byte offset in a stencil's hole), with no compare (the flat arm of `ic::own_field` alone).
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
-pub(crate) fn own_field_flat<S: Stage>(stage: &mut S, shaped: super::Shaped<S::Word>, slot: u16) -> S::Word {
+pub fn own_field_flat<S: Stage>(stage: &mut S, shaped: super::Shaped<S::Word>, slot: u16) -> S::Word {
     let record = shaped.record();
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let run = arena_run(stage, payload);

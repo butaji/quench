@@ -251,7 +251,7 @@ fn bounded<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word, mi
 /// The Number at element `index` of `view`: past the elements or of a kind without a native
 /// element leaves at `miss`. A kind the proof fixed is one direct arm (no closure to outline).
 #[inline(always)]
-pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     bounded(stage, view, index, miss)?;
     match view.kind {
@@ -265,7 +265,7 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
 /// value register (`ElementFrame::typed_values`): every register holds `Value::number`'s encoding,
 /// so an Int32Array element reads as the int32 an array's element would.
 #[inline(always)]
-pub(crate) fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_read_value<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     bounded(stage, view, index, miss)?;
     match view.kind {
@@ -291,7 +291,7 @@ pub fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, ind
 /// Stores the Number `number` at element `index` of `view`: past the elements, of a kind
 /// without a native element, or a ToInt32 the stage cannot make leaves at `miss`.
 #[inline(always)]
-pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     number: S::Word, miss: S::Miss) -> Option<()> {
     bounded(stage, view, index, miss)?;
     let access = (view.values, index, number);
@@ -307,7 +307,7 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
 /// wraps an int32 (`NativeKind::wraps_int32`): its low bytes are the element, with no Number made
 /// of it. Past the elements leaves at `miss`; another view is `typed_write`'s (nothing emitted).
 #[inline(always)]
-pub(crate) fn typed_write_int<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+pub fn typed_write_int<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     int: S::Word, miss: S::Miss) -> Option<()> {
     let ViewKind::Static(NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
     bounded(stage, view, index, miss)?;
@@ -389,7 +389,7 @@ pub fn element_number(kind: TypedArrayKind, field: &[u8], little_endian: bool) -
 /// element is an int32 (the integer kinds of at most 32 bits but Uint32); `None` otherwise. The
 /// integer load (`load_integer`), with no Number made of it.
 #[inline(always)]
-pub(crate) fn element_integer(kind: TypedArrayKind, field: &[u8]) -> Option<i32> {
+pub fn element_integer(kind: TypedArrayKind, field: &[u8]) -> Option<i32> {
     match element_of(kind)? {
         Element::Integer(Integer::Unsigned32) | Element::Float32 | Element::Float64 => None,
         Element::Integer(integer) => {
@@ -404,7 +404,7 @@ pub(crate) fn element_integer(kind: TypedArrayKind, field: &[u8]) -> Option<i32>
 /// the binary32 or binary16 rounding), in native order in the first `kind.width()` bytes: the
 /// element's store (`store_number`) into a word. Panics for the BigInt kinds, which take BigInts.
 #[inline(always)]
-pub(crate) fn element_word(kind: TypedArrayKind, number: f64) -> [u8; 8] {
+pub fn element_word(kind: TypedArrayKind, number: f64) -> [u8; 8] {
     let mut word = [0; 8];
     match kind {
         TypedArrayKind::Float16 => word[..2].copy_from_slice(&f64_to_half(number).to_ne_bytes()),
@@ -421,7 +421,7 @@ pub(crate) fn element_word(kind: TypedArrayKind, number: f64) -> [u8; 8] {
 /// Writes `number` as an element of `kind` into `field` (`kind.width()` bytes) in `little_endian`
 /// order: `element_word`, byte-swapped where the order differs from the host's.
 #[inline(always)]
-pub(crate) fn store_element_number(kind: TypedArrayKind, number: f64, field: &mut [u8], little_endian: bool) {
+pub fn store_element_number(kind: TypedArrayKind, number: f64, field: &mut [u8], little_endian: bool) {
     let word = element_word(kind, number);
     let width = field.len();
     if little_endian == NATIVE_LITTLE_ENDIAN {
@@ -436,7 +436,7 @@ pub(crate) fn store_element_number(kind: TypedArrayKind, number: f64, field: &mu
 /// The unsigned integer `field` holds in `little_endian` order (at most eight bytes): a DataView
 /// element's bits, the byte-swapped load the Stage rows do not have.
 #[inline(always)]
-pub(crate) fn field_bits(field: &[u8], little_endian: bool) -> u64 {
+pub fn field_bits(field: &[u8], little_endian: bool) -> u64 {
     let width = field.len();
     let mut word = [0; 8];
     if little_endian {
@@ -451,7 +451,7 @@ pub(crate) fn field_bits(field: &[u8], little_endian: bool) -> u64 {
 /// Stores the low `field.len()` bytes of `bits` into `field` in `little_endian` order: the
 /// inverse of `field_bits`.
 #[inline(always)]
-pub(crate) fn store_field_bits(field: &mut [u8], bits: u64, little_endian: bool) {
+pub fn store_field_bits(field: &mut [u8], bits: u64, little_endian: bool) {
     let width = field.len();
     if little_endian {
         field.copy_from_slice(&bits.to_le_bytes()[..width]);
@@ -465,7 +465,7 @@ pub(crate) fn store_field_bits(field: &mut [u8], bits: u64, little_endian: bool)
 /// `[0, length)` or the answer is `None` (`undefined`). `index` is already a ToIntegerOrInfinity
 /// result (an integer, or an infinity that lies outside any length).
 #[inline(always)]
-pub(crate) fn element_at(index: f64, length: usize) -> Option<usize> {
+pub fn element_at(index: f64, length: usize) -> Option<usize> {
     let position = if index < 0.0 { length as f64 + index } else { index };
     (position >= 0.0 && position < length as f64).then(|| position as usize)
 }
@@ -478,7 +478,7 @@ pub(crate) fn element_at(index: f64, length: usize) -> Option<usize> {
 /// hold exactly matches nothing. The scan is one loop per kind over fixed-width fields read with
 /// `from_ne_bytes`, with no per-element conversion and no copy of the bytes.
 #[inline(always)]
-pub(crate) fn find_number_element(elements: &[u8], kind: TypedArrayKind, from: usize, search: f64, nan_matches: bool)
+pub fn find_number_element(elements: &[u8], kind: TypedArrayKind, from: usize, search: f64, nan_matches: bool)
     -> Option<usize> {
     let rest = elements.get(from.checked_mul(kind.width())?..)?;
     let found = match kind {

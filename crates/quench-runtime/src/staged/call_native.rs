@@ -20,7 +20,7 @@ use crate::Value;
 /// dependency of the lane's generation: a collection, which may free the function and reuse its
 /// id, or another realm starts a new generation, which forgets it.
 #[inline(always)]
-pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
+pub fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
     let difference = stage.sub(callee, expected);
     let same = stage.eq_imm(difference, 0u32);
     stage.guard(same, miss)
@@ -91,7 +91,7 @@ pub enum MathCall {
 impl MathCall {
     /// The value `Math.max` (`maximum`) or `Math.min` folds its arguments from, and returns for
     /// none: the identity of the extreme, which a NaN argument still overrides.
-    pub(crate) const fn extreme_start(maximum: bool) -> f64 {
+    pub const fn extreme_start(maximum: bool) -> f64 {
         if maximum { f64::NEG_INFINITY } else { f64::INFINITY }
     }
 
@@ -102,7 +102,7 @@ impl MathCall {
     }
 
     /// Whether the function takes one Number (`Math.sqrt`, `Math.clz32`, `Math.sin`, ...).
-    pub(crate) const fn reads_one_number(self) -> bool {
+    pub const fn reads_one_number(self) -> bool {
         matches!(self, Self::Unary(_) | Self::LeadingZeros | Self::Libm(_))
     }
 
@@ -145,7 +145,7 @@ fn int_value<S: NumericStage>(stage: &mut S, payload: S::Word) -> S::Word {
 /// double in int32 range other than -0 as that int32), so the int32 fast paths of `Math.abs`,
 /// `Math.max`, `Math.min` and `Math.imul` change no result: they skip the conversions.
 #[inline(always)]
-pub(crate) fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[S::Word], miss: S::Miss) -> Option<S::Word> {
+pub fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[S::Word], miss: S::Miss) -> Option<S::Word> {
     match (call, args) {
         (_, &[only]) => math_call_of_one(stage, call, only, miss),
         (MathCall::Extreme(maximum), &[left, right]) => extreme_pair(stage, maximum, (left, right), miss),

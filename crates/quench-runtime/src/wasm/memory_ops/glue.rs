@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::wasm::simd::{SimdOperator, SimdOperatorSimdExt};
+use crate::staged::wasm_memory_bytes::MemoryLoadWasmMemoryBytesExt;
 use crate::wasm::{WasmTrap, WasmValue};
 
 /// The `MemoryLoad` methods that name interpreter state: the SIMD lane rules (`wasm/simd.rs`) and

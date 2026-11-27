@@ -420,14 +420,14 @@ pub trait Frame<S: Stage> {
 /// The Wasm scalar word of `register` in `rep`: a raw word through `Frame::raw_read` where `rep` is
 /// `RawBits64`, anything else through `Frame::wasm_read`.
 #[inline(always)]
-pub(crate) fn wasm_operand<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, rep: WasmRep) -> Option<S::Word> {
+pub fn wasm_operand<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, rep: WasmRep) -> Option<S::Word> {
     if rep == WasmRep::RawBits64 { frame.raw_read(stage, register) } else { frame.wasm_read(stage, register, rep) }
 }
 
 /// Define `register` with the Wasm scalar `word` in `rep`: a raw word through `Frame::raw_write` where
 /// `rep` is `RawBits64`, anything else through `Frame::wasm_write`. Returns the tagged word.
 #[inline(always)]
-pub(crate) fn wasm_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, word: S::Word, rep: WasmRep) -> Option<S::Word> {
+pub fn wasm_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, word: S::Word, rep: WasmRep) -> Option<S::Word> {
     if rep == WasmRep::RawBits64 { frame.raw_write(stage, register, word) } else { frame.wasm_write(stage, register, word, rep) }
 }
 
@@ -452,7 +452,7 @@ pub fn logical_not<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destinat
 
 /// The activation's `this` word where it holds one; an unbound `this` leaves at `miss`.
 #[inline(always)]
-pub(crate) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss) -> Option<S::Word> {
+pub fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss) -> Option<S::Word> {
     let this = frame.this(stage);
     let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
     stage.guard(bound, miss)?;
@@ -536,4 +536,4 @@ pub enum Step<W, C> {
 }
 
 /// The bytes of a Wasm `v128` (`wasm::V128_BYTES`; the stencil build has no `wasm` module).
-pub(crate) const VECTOR_BYTES: usize = 16;
+pub const VECTOR_BYTES: usize = 16;

@@ -15,7 +15,7 @@ use crate::staged::wasm_exception::Exception;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_float::{convert, float_binary};
 use crate::staged::wasm_instance::{Instance, InstanceWasmInstanceExt};
-use crate::staged::wasm_memory_bytes::write_memory;
+use crate::staged::wasm_memory_bytes::{MemoryLoadWasmMemoryBytesExt, write_memory};
 use crate::staged::wasm_machine::ConcreteMemory;
 use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
 use crate::staged::wasm_operation::{FormWasmOperationExt, Operand, WasmOperation, WasmOperationWasmOperationExt, wasm_operation_is_raw};

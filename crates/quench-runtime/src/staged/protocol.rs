@@ -35,10 +35,10 @@ const _: () = assert!(std::mem::size_of::<Value>() == std::mem::size_of::<u64>()
 /// The callee's window of a plain call: `registers` words, of which the first `argc` are the
 /// arguments at register `first` of the caller's window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct WindowFill {
-    pub(crate) first: Register,
-    pub(crate) argc: u16,
-    pub(crate) registers: u16,
+pub struct WindowFill {
+    pub first: Register,
+    pub argc: u16,
+    pub registers: u16,
 }
 
 /// A call-protocol step `step` runs, with the words a tier loaded. Each yields the word it
@@ -66,7 +66,7 @@ pub enum CallOperation<W> {
 
 /// Run the call-protocol `operation`; its word, or `Unresolved` where it has no row of its own.
 #[inline(always)]
-pub(crate) fn step<S: Stage, C>(stage: &mut S, miss: S::Miss, operation: CallOperation<S::Word>) -> Step<S::Word, C> {
+pub fn step<S: Stage, C>(stage: &mut S, miss: S::Miss, operation: CallOperation<S::Word>) -> Step<S::Word, C> {
     let word = match operation {
         CallOperation::Site(_) => None,
         CallOperation::Callee { held, expected } => guard_callee(stage, held, expected, miss).map(|()| held),
@@ -85,7 +85,7 @@ pub(crate) fn step<S: Stage, C>(stage: &mut S, miss: S::Miss, operation: CallOpe
 
 /// Continues where the callee register holds the identity the site was bound to.
 #[inline(always)]
-pub(crate) fn guard_callee<S: Stage>(stage: &mut S, held: S::Word, expected: u64, miss: S::Miss) -> Option<()> {
+pub fn guard_callee<S: Stage>(stage: &mut S, held: S::Word, expected: u64, miss: S::Miss) -> Option<()> {
     let same = stage.eq_imm(held, expected);
     stage.guard(same, miss)
 }
@@ -102,7 +102,7 @@ pub fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S::Miss)
 /// ordinary object, array, function, promise, iterator or collection. `object` is the test of the
 /// first, which the caller made.
 #[inline(always)]
-fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
+pub fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
     let array = is_direct_array(stage, bits);
     let function = is_direct_function(stage, bits);
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
@@ -120,7 +120,7 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> 
 /// callee binds an object receiver itself and `undefined` or `null` to `global`; any other
 /// receiver (a primitive to box) leaves at `miss`, the host's to bind.
 #[inline(always)]
-pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Option<u64>, miss: S::Miss)
+pub fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Option<u64>, miss: S::Miss)
     -> Option<S::Word> {
     bind_this_with(stage, receiver, sloppy.map(|global| move |stage: &mut S| stage.constant(global)), miss)
 }
@@ -128,7 +128,7 @@ pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Opti
 /// `bind_this` with the global a sloppy callee binds made by `global` where the binding needs it: a
 /// constant, or a word the frame reads (`CallFrame::call_global`).
 #[inline(always)]
-pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, global: Option<G>, miss: S::Miss)
+pub fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, global: Option<G>, miss: S::Miss)
     -> Option<S::Word> {
     let Some(global) = global else { return Some(receiver) };
     let ordinary = is_direct_object(stage, receiver);
@@ -146,7 +146,7 @@ pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut
 
 /// `bind_this_with` where the callee's sloppiness is a condition of the stage (`sloppy`, true where the callee is sloppy):
 /// a strict callee's receiver is its own, a sloppy one's binds as `bind_this_with` binds it.
-pub(crate) fn bind_this_dynamic<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, sloppy: S::Cond,
+pub fn bind_this_dynamic<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut S, receiver: S::Word, sloppy: S::Cond,
     global: G, miss: S::Miss) -> Option<S::Word> {
     let ordinary = is_direct_object(stage, receiver);
     let object = is_object_family(stage, receiver, ordinary);
@@ -172,7 +172,7 @@ pub fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
 /// The callee's window at `top`: parameter `k` lives in register `k` of a plain activation, so
 /// the `argc` arguments at `source` fill its first registers and the rest start undefined.
 #[inline(always)]
-pub(crate) fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word, fill: WindowFill) {
+pub fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word, fill: WindowFill) {
     let arguments = stage.add_imm(source, word_bytes(fill.first));
     fill_call(stage, top, &[], Passed::Window { arguments, count: fill.argc }, fill.registers);
 }
@@ -191,7 +191,7 @@ pub fn fill_call<S: Stage>(stage: &mut S, top: S::Word, prefix: &[u64], passed: 
 /// returned), else the callee's `value`. Any status but `returned` leaves at `miss`, where the
 /// tier tells a callee that never entered from one that left.
 #[inline(always)]
-pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::Word, receiver: Option<S::Word>,
+pub fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::Word, receiver: Option<S::Word>,
     returned: u32, miss: S::Miss) -> Option<S::Word> {
     let status = stage.uextend32(status);
     let done = stage.eq_imm(status, u64::from(returned));
@@ -205,12 +205,12 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
 pub struct PlainHeader<W> {
     /// The caller's call record.
     pub call: W,
-    pub(crate) caller_registers: W,
+    pub caller_registers: W,
     /// The caller's records (the lane context's `base`).
     pub caller_base: W,
     /// `plain_packed`'s word.
-    pub(crate) packed: W,
-    pub(crate) callee: W,
+    pub packed: W,
+    pub callee: W,
 }
 
 impl PlainHeader<u64> {
@@ -238,7 +238,7 @@ pub struct PlainCaller<W> {
 /// The header's packed word: `function`, the plain flag and `flags` (`frame::BODY_FLAG`,
 /// `frame::NATIVE_FLAG`), and `argc`.
 #[inline(always)]
-pub(crate) const fn plain_packed(function: u32, argc: u16, flags: u64) -> u64 {
+pub const fn plain_packed(function: u32, argc: u16, flags: u64) -> u64 {
     function as u64 | frame::PLAIN_FLAG | flags | ((argc as u64) << frame::ARGC_SHIFT)
 }
 
@@ -346,115 +346,12 @@ pub fn push_body_header<S: Stage>(stage: &mut S, window: S::Word, header: BodyHe
 /// (`JS_STEP_RETURNED_PC`) for the lane to read.
 #[allow(dead_code)] // the b-jit stencils' call rows
 #[inline(always)]
-pub(crate) fn record_raised_pc<S: Stage>(stage: &mut S, payload: S::Word, pc: S::Word) {
+pub fn record_raised_pc<S: Stage>(stage: &mut S, payload: S::Word, pc: S::Word) {
     stage.store_u64(Region::Dispatch.mutable(), payload, JS_STEP_RETURNED_PC as i32, pc);
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::staged::{Arguments, CallFacts, Callee, Receiver};
-    use crate::staged::call::concrete_fits;
-    use crate::staged::test_words::FACTS;
-    use crate::staged::Concrete;
-
-    const RETURNED: u32 = 7;
-
-    fn run(operation: CallOperation<u64>) -> Option<u64> {
-        match step::<Concrete, ()>(&mut Concrete::pure(), (), operation) {
-            Step::Value(word) => Some(word),
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn a_site_runs_no_row_alone_and_a_callee_must_be_the_bound_one() {
-        let site = Invocation { callee: Callee::Register(1), receiver: Receiver::Register(2), arguments: Arguments::Window { first: 3, count: 1 },
-            result: 0, returns: false, forwards: false };
-        assert_eq!(run(CallOperation::Site(site)), None);
-        assert_eq!(run(CallOperation::Callee { held: 9, expected: 9 }), Some(9));
-        assert_eq!(run(CallOperation::Callee { held: 8, expected: 9 }), None);
-        assert_eq!(run(CallOperation::Receiver { receiver: 3 }), Some(3));
-        assert_eq!(run(CallOperation::Receiver { receiver: Value::DELETED.to_bits() }), None, "a declined plan leaves");
-    }
-
-    #[test]
-    fn admission_is_one_unsigned_compare_where_equal_fits() {
-        assert!(concrete_fits(4, 4) && concrete_fits(5, 4) && !concrete_fits(3, 4));
-        assert_eq!(run(CallOperation::Room { limit: 10, needed: 10 }), Some(10));
-        assert_eq!(run(CallOperation::Room { limit: 9, needed: 10 }), None);
-        assert!(!concrete_fits(0, u64::MAX), "an unsigned compare, not a signed one");
-    }
-
-    #[test]
-    fn a_strict_callee_takes_any_receiver_and_a_sloppy_one_binds_by_the_value() {
-        let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
-        let text = heap.alloc_string("x".into());
-        let global = Value::integer(99).to_bits();
-        let bind = |receiver: Value, sloppy: Option<u64>| run(CallOperation::BindThis { receiver: receiver.to_bits(), sloppy });
-        assert_eq!(bind(Value::integer(5), None), Some(Value::integer(5).to_bits()));
-        assert_eq!(bind(object, Some(global)), Some(object.to_bits()));
-        assert_eq!(bind(Value::UNDEFINED, Some(global)), Some(global));
-        assert_eq!(bind(Value::NULL, Some(global)), Some(global));
-        assert_eq!(bind(Value::integer(5), Some(global)), None, "a primitive is boxed by the host");
-        assert_eq!(bind(text, Some(global)), None, "a string is boxed by the host");
-    }
-
-    /// The row's family test is the value's own (`Value::is_direct_object_family`).
-    #[test]
-    fn the_object_family_is_the_values_own() {
-        let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
-        let text = heap.alloc_string("x".into());
-        let mut stage = Concrete::pure();
-        for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {
-            let ordinary = is_direct_object(&mut stage, value.to_bits());
-            assert_eq!(is_object_family(&mut stage, value.to_bits(), ordinary), value.is_direct_object_family(), "{value:?}");
-        }
-    }
-
-    #[test]
-    fn a_window_takes_the_arguments_then_undefined() {
-        let source = [10_u64, 20, 30];
-        let mut window = [0_u64; 4];
-        let fill = WindowFill { first: 1, argc: 2, registers: 4 };
-        let result = run(CallOperation::Window { top: window.as_mut_ptr() as u64, source: source.as_ptr() as u64, fill });
-        assert_eq!(result, Some(window.as_ptr() as u64));
-        assert_eq!(window, [20, 30, Value::UNDEFINED.to_bits(), Value::UNDEFINED.to_bits()]);
-    }
-
-    #[test]
-    fn a_completion_yields_the_value_or_the_receiver_only_once_returned() {
-        let complete = |status, receiver| run(CallOperation::Complete { status, value: 1, receiver, returned: RETURNED });
-        assert_eq!(complete(u64::from(RETURNED), None), Some(1));
-        assert_eq!(complete(u64::from(RETURNED), Some(2)), Some(2), "a construction yields its receiver");
-        assert_eq!(complete(u64::from(RETURNED) + 1, None), None);
-        assert_eq!(complete(u64::from(RETURNED) + 1, Some(2)), None);
-    }
-
-    /// A row's words are the tier's: the protocol has no per-site hole but the callee identity,
-    /// a per-site operand the stage keeps as a constant.
-    #[test]
-    fn the_rows_have_no_per_site_hole() {
-        let mut trace = crate::staged::trace::Trace::default();
-        let words = [trace.constant(0), trace.constant(1), trace.constant(2)];
-        guard_callee(&mut trace, words[0], 5, ());
-        bind_this(&mut trace, words[0], Some(6), ());
-        fill_window(&mut trace, words[0], words[1], WindowFill { first: 0, argc: 1, registers: 2 });
-        complete_call(&mut trace, words[0], words[1], Some(words[2]), RETURNED, ());
-        assert!(trace.holes.is_empty());
-    }
-
-    #[test]
-    fn a_return_is_admitted_by_its_register_and_the_tier_completing() {
-        let row = crate::staged::Operation::<u64, ()>::Return { source: 9 };
-        assert_eq!(row.admitted(FACTS), Some(true));
-        assert_eq!(crate::staged::Operation::<u64, ()>::Return { source: 10 }.admitted(FACTS), Some(false));
-        assert_eq!(row.admitted(CallFacts { activates: false, ..FACTS }), Some(false));
-        assert_eq!(crate::staged::Operation::<u64, ()>::Jump.admitted(FACTS), None);
-    }
-}
+mod tests;
 
 #[cfg(not(stencil_build))]
 /// Where a call site goes on a status its call helper returns (`LaneHelper::Call`,
