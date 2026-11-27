@@ -10249,45 +10249,27 @@ script_handler! {
         // the forwarding is one step, so its activation needs no walk of `forwarded_call`.
         // SAFETY: a call record's operand is `call`.
         let link = unsafe { (*ip).operand.call.memo } as usize;
-        if vm.script_call_holds(link, r.get(i.c))
-            && matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
-        {
+        if vm.script_call_holds(link, r.get(i.c)) && matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. })) {
             if unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), r.get(i.c)); }
             let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
             resume!(cx, function_call_activation_in_lane(cx, r, ip, i, r.get(i.c), receiver, args))
         }
-        // A bound function without bound arguments the lane last forwarded through, whose
-        // target the site linked: its target and receiver, read once (`LaneStack::bound_call`).
-        if let Some((bound, target, this, list)) = vm.lane_stack.bound_call
-            && bound == r.get(i.b)
-            && list.is_undefined()
-            && vm.script_call_holds(link, target)
-            && !unsafe { (*cx).tiers_run }
-        {
-            resume!(cx, function_call_activation_in_lane(cx, r, ip, i, target, this, window))
-        }
-        // The bound function with bound arguments the lane last called: its words are read
-        // once (`LaneStack::bound_call`), so the call walks no `forwarded_call`.
-        if let Some((bound, _, _, list)) = vm.lane_stack.bound_call
-            && bound == r.get(i.b)
-            && !list.is_undefined()
-        {
-            resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i));
+        // The bound function the lane last called (`LaneStack::bound_call`), its words read once: with bound
+        // arguments, their call; without, and with tiers off, its target's activation where the site linked it.
+        if let Some((bound, target, this, list)) = vm.lane_stack.bound_call && bound == r.get(i.b) {
+            if !list.is_undefined() { resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i)); }
+            if vm.script_call_holds(link, target) && !unsafe { (*cx).tiers_run } { resume!(cx, function_call_activation_in_lane(cx, r, ip, i, target, this, window)) }
         }
         let Some(quench_runtime::vm::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i));
         };
         if through_call && unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), callee); }
         if let Some(FunctionKind::Native(native)) = kind {
-            if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
-                return exit(ip);
-            }
+            if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) { return exit(ip); }
             let value = native_value_in_lane(cx, ip, i, native, callee, receiver, args);
             resume!(cx, native_complete_in_lane(cx, ip, i, value));
         }
-        if matches!(kind, Some(FunctionKind::User(..))) {
-            remember_bound_call_in_lane(vm, r.get(i.b));
-        }
+        if matches!(kind, Some(FunctionKind::User(..))) { remember_bound_call_in_lane(vm, r.get(i.b)); }
         resume!(cx, function_call_activation_in_lane(cx, r, ip, i, callee, receiver, args))
     }
 }
@@ -10305,9 +10287,7 @@ fn note_forwarded_in_lane(vm: &mut Vm, i: &LaneInstruction, through: Value, call
 /// arguments kept as `undefined`, so the window alone is what such a call passes.
 #[inline(never)]
 fn remember_bound_call_in_lane(vm: &mut Vm, callee: Value) {
-    let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.function_record(callee) else {
-        return;
-    };
+    let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.function_record(callee) else { return };
     let Some((target, this, list)) = vm.bound_function_words(*env) else { return };
     let list = if vm.heap_reads().array_elements(list).is_some_and(|elements| elements.len() != 0) { list } else { Value::UNDEFINED };
     if matches!(vm.function_record(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
@@ -12594,13 +12574,10 @@ const fn body_entry_row() -> Handler {
 }
 
 script_handler! {
-    /// The tier prologue a frameless activation of a function the JavaScript tier may claim
-    /// starts at (`LaneView::claim_for_tier`): the tier runs the body natively where it can
-    /// (`Vm::js_tier_activation_entry`), and the activation continues at the record the
-    /// native result completes, with the result in its register; else at its first record.
-    /// The tier enters the activation as it would a frame, so claiming a function never
-    /// changes how it is called. Once the tier declines the function, its activations start
-    /// at the first record again.
+    /// The tier prologue a frameless activation of a function the tier may claim starts at
+    /// (`LaneView::claim_for_tier`): the activation continues where the tier's native run
+    /// completes it (`Vm::js_tier_activation_entry`), else at its first record; claiming never
+    /// changes how a function is called.
     #[inline(never)]
     fn tier_prologue_in_lane<>(cx, r, ip, i, view) {
         // The staged row answers the same continuation (`EntryHost::tier`); this is its miss body.
@@ -12610,12 +12587,9 @@ script_handler! {
 }
 
 script_handler! {
-    /// The prologue record of a function whose lane body specialized
-    /// (`LaneView::specialize_lane_body`): it runs the body on the activation's registers and
-    /// continues where the body left. What the specialization proved it does not test again:
-    /// each inlined call's guards run in the body, and a leave inside one resolves its target
-    /// (`body_inlined_activation_in_lane`); the entry tests only what varies per run, the room
-    /// for the activation such a leave makes.
+    /// The prologue record of a function whose lane body specialized (`LaneView::specialize_lane_body`):
+    /// it runs the body on the activation's registers and continues where the body left, testing
+    /// nothing the specialization proved (`body_inlined_activation_in_lane`).
     #[inline(never)]
     fn body_entry_in_lane<>(cx, r, ip, i, view) {
         // The staged row answers the same continuation (`EntryHost::body`); this is its miss body.
@@ -12632,11 +12606,8 @@ fn activation_reentered(vm: &Vm, records: Ip, nearer: usize) -> bool {
     vm.lane_stack.activations().iter().rev().take(RECURSION_DEPTH - nearer).any(|activation| activation.caller_base() == records)
 }
 
-/// The receiver word a body is entered with: the running activation's `this` where the
-/// prologue says the body reads it (`LaneView::binds_this`), `DELETED` otherwise. A frame
-/// activation keeps its `this` in the frame (`this_in_lane`); an uninitialized one stays `DELETED`,
-/// at which the body's `LoadThis` leaves for the general path. The activation's `this` is
-/// bound already, by the call's `direct_call_this_in_lane` (sloppy coercion included).
+/// The receiver word a body is entered with: the activation's `this` (bound by `direct_call_this_in_lane`)
+/// where the body reads it (`LaneView::binds_this`), else `DELETED`, at which its `LoadThis` leaves.
 #[inline(always)]
 fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this: bool) -> Value {
     // SAFETY: the context is the running activation's, or the leaf's callee.
@@ -12649,15 +12620,7 @@ fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this: bool) -> Value {
 /// where it names (`body_left_in_lane`); `started` is the audit's clock for this entry, read once
 /// the run's leave is resolved.
 #[inline(always)]
-fn body_concluded_in_lane(
-    cx: *mut LaneContext,
-    r: Registers,
-    ip: Ip,
-    own: &LaneView,
-    method: &crate::compiled::LaneMethod,
-    left: crate::compiled::LaneExit,
-    function: u32,
-) -> Resumed {
+fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit, function: u32) -> Resumed {
     let base = unsafe { (*cx).base };
     if let crate::compiled::LaneExit::Returned { pc, value } = left {
         record_end_in_lane(cx, own, method, left);
@@ -12670,11 +12633,7 @@ fn body_concluded_in_lane(
     let counts = leave_counts_in_lane(cx, left);
     let (resumed, feedback) = body_left_in_lane(cx, r, own, method, left);
     // Counted once the leave is resolved: a retirement or reoptimization moves the body.
-    if counts {
-        note_body_end_in_lane(cx, own, feedback, |left| note_leave_in_lane(cx, function, left));
-    } else {
-        note_warming_leave_in_lane(cx, own);
-    }
+    if counts { note_body_end_in_lane(cx, own, feedback, |left| note_leave_in_lane(cx, function, left)) } else { note_warming_leave_in_lane(cx, own) }
     body_resumed_in_lane(cx, ip, resumed)
 }
 
@@ -12697,66 +12656,37 @@ fn returned_in_lane(cx: *mut LaneContext, record: Ip, value: Value) -> Resumed {
 }
 
 /// The tier prologue's run of the compiled body `own` keeps for a body that reads only its
-/// parameters (`LaneView::tier_direct`): the `Return` to continue at, its register and the
-/// result.
+/// parameters (`LaneView::tier_direct`): the `Return` to continue at, its register and the result.
 #[inline(always)]
-fn tier_direct_in_lane(
-    vm: &mut Vm,
-    own: &LaneView,
-    parameters: &[Value],
-) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
+fn tier_direct_in_lane(vm: &mut Vm, own: &LaneView, parameters: &[Value]) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
     let direct = own.tier_direct.take()?;
     let entered = vm.run_direct_tier_entry(&direct, parameters);
-    if !direct.retired() {
-        own.tier_direct.set(Some(direct));
-    }
+    if !direct.retired() { own.tier_direct.set(Some(direct)); }
     entered
 }
 
-/// The tier prologue's entry where no direct run completes the activation
-/// (`Vm::js_tier_activation_entry`). A completed entry keeps the direct run the
-/// compiled body admits; once the tier declines the function, its activations start at
-/// the first record again (`LaneView::release_from_tier`).
+/// The tier prologue's entry where no direct run completes the activation (`Vm::js_tier_activation_entry`).
+/// A completed entry keeps the direct run the compiled body admits; once the tier declines the
+/// function, its activations start at the first record again (`LaneView::release_from_tier`).
+/// A lane body runs on the activation itself, so it takes the function from the frame-entering
+/// tier; a program with a loaded AOT image entered its body already (`tier_prologue_resumed`).
 #[cold]
 #[inline(never)]
-fn tier_enter_in_lane(
-    cx: *mut LaneContext,
-    function: u32,
-    own: Option<&LaneView>,
-    parameters: &[Value],
-) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
+fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, own: Option<&LaneView>, parameters: &[Value]) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    // A lane body runs on the activation itself, so it takes the function from the
-    // frame-entering tier: the activation warms toward it in the lane, and a function whose
-    // body declines runs in the lane, as it does without lane bodies.
-    if vm.programs.js_jit_lane_methods_enabled()
-        && let Some(own) = own
-    {
-        // A program with a loaded AOT image entered its body already (`tier_prologue_resumed`).
-        if !specialize_in_lane(cx, own, function, false, parameters, None) {
-            own.release_from_tier();
-        }
+    if vm.programs.js_jit_lane_methods_enabled() && let Some(own) = own {
+        if !specialize_in_lane(cx, own, function, false, parameters, None) { own.release_from_tier(); }
         return None;
     }
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
     let may_claim = vm.js_tier_may_claim(code, program, function);
-    if may_claim
-        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters)
-    {
-        if let Some(own) = own
-            && let Some(direct) = vm.direct_tier_entry(code, program, function)
-        {
-            own.tier_direct.set(Some(direct));
-        }
+    if may_claim && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters) {
+        if let Some(own) = own && let Some(direct) = vm.direct_tier_entry(code, program, function) { own.tier_direct.set(Some(direct)); }
         return Some(entered);
     }
-    if let Some(own) = own
-        && !may_claim
-    {
-        own.release_from_tier();
-    }
+    if let Some(own) = own && !may_claim { own.release_from_tier(); }
     None
 }
 
