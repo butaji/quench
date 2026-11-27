@@ -237,8 +237,8 @@ pub(super) fn inlining_region_in_lane(
     r: Registers,
     site: &LoopSite,
 ) -> Option<crate::compiled::LoopRegion> {
-    // `--b-jit` runs no inlining regions, so it does not analyze them.
-    if !crate::compiled::admission::analyzes_inlining_regions() { return None; }
+    // Only Cranelift compiles inlining regions, so a mode with no Cranelift tier does not analyze them.
+    if !crate::compiled::admission::inlining_regions_route_to_cranelift() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };

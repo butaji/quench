@@ -3772,8 +3772,6 @@ impl Vm {
         view: Option<&crate::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
-        // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
-        let view = view.filter(|_| admission::view_names_field_forms());
         let sites = unit.instructions
             .iter()
             .enumerate()
@@ -8362,7 +8360,7 @@ impl Vm {
             })
             .flatten();
         // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = admission::wasm_module_stitched();
+        let base_only = admission::wasm_module_routes_to_stencils();
         let isa = if base_only {
             None
         } else {

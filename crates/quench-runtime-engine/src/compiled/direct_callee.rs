@@ -153,11 +153,11 @@ fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
 /// `argc` arguments, where the lane would activate it in place.
 pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
-    // Only BaseJIT's direct row binds an arrow's `this`; an arrow that never reads it calls as strict.
+    // No tier's direct row binds an arrow's lexical `this` (Cranelift cannot), so an arrow calls direct only where it
+    // never reads `this`, and as strict.
     let (sloppy, lexical) = match target.this_binding {
         ThisBinding::Sloppy => (Some(vm.realm.globals), false),
         ThisBinding::Strict => (None, false),
-        ThisBinding::Lexical if crate::compiled::admission::direct_row_binds_this() => (None, true),
         ThisBinding::Lexical => vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize))).map(|_| (None, false))?,
         _ => return None,
     };

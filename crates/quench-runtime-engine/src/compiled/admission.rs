@@ -438,48 +438,32 @@ pub(crate) fn region_unit(vm: &Vm) -> Option<CompiledUnit> { region_unit_under(v
 #[inline]
 pub(crate) fn loop_regions_compile(vm: &Vm) -> bool { region_unit(vm).is_some() }
 
-/// Whether a loop's kernel keeps a recurrence pass: under `--b-jit` a recurrence the pass interprets per
-/// iteration is left to the loop's stencils, which run it faster (crc), while folds and chains stay.
+/// Whether a Cranelift tier runs (QuickJIT or UltraJIT): the tiers that compile what BaseJIT does not build.
 #[inline]
-pub(crate) fn kernel_keeps_recurrence(interprets: bool) -> bool { !(stencil_only() && interprets) }
+fn cranelift_runs() -> bool { tier_runs(Tier::CRANELIFT) }
 
-/// Whether loops' inlining regions are analyzed: `--b-jit` runs none.
+/// Whether a loop's kernel takes a recurrence pass: a recurrence the pass interprets per iteration is routed to the
+/// loop's stencils where the stencil tier is the only tier, which run it faster (crc); folds and chains stay with the kernel.
 #[inline]
-pub(crate) fn analyzes_inlining_regions() -> bool { !stencil_only() }
+pub(crate) fn kernel_takes_recurrence(interprets: bool) -> bool { !(stencil_only() && interprets) }
 
-/// Whether a loop whose role analysis fails is still a span region: BaseJIT lowers each instruction, and
-/// Cranelift never compiles the loop under `--b-jit`.
+/// Whether inlining regions are routed to Cranelift, the only tier that compiles them (BaseJIT declines every
+/// inlining region), so they are analyzed only where a Cranelift tier runs.
 #[inline]
-pub(crate) fn span_regions_admitted() -> bool { stencil_only() }
+pub(crate) fn inlining_regions_route_to_cranelift() -> bool { cranelift_runs() }
 
-/// Whether a region BaseJIT does not build is declined rather than left to Cranelift: under `--b-jit`
-/// Cranelift compiles nothing.
+/// Whether a region BaseJIT does not build is declined rather than left to Cranelift: where no Cranelift tier runs,
+/// nothing compiles it.
 #[inline]
-pub(crate) fn unbuilt_region_declined() -> bool { stencil_only() }
+pub(crate) fn unbuilt_region_declined() -> bool { !cranelift_runs() }
 
-/// Whether a loop region runs on the stencil tier alone: its iterations leave natively (`leaves`) and the
-/// mode is not stencil-only (there every region is the stencil tier's already).
+/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
 #[inline]
-pub(crate) fn region_stencil_only(leaves: bool) -> bool { leaves && !stencil_only() }
-
-/// Whether a Wasm module's rows are stitched from stencils as its entries (`--b-jit`), where no
-/// Cranelift code is generated.
-#[inline]
-pub(crate) fn wasm_module_stitched() -> bool { stencil_only() }
+pub(crate) fn wasm_module_routes_to_stencils() -> bool { stencil_only() }
 
 /// Whether a stitched Wasm entry is built: its indirect call row calls the non-diagnostic reference callout.
 #[inline]
-pub(crate) fn stitched_rows_admitted(vm: &Vm) -> bool { wasm_module_stitched() && !diagnosing(vm) }
-
-/// Whether a region's field forms are read from the live cache: base regions take none from it, since
-/// its entries name no form.
-#[inline]
-pub(crate) fn view_names_field_forms() -> bool { !stencil_regions() }
-
-/// Whether a lexical `this` is bound by the stencil tier's direct row, which an arrow that never reads
-/// it does not need checked (`direct_callee_in_lane`).
-#[inline]
-pub(crate) fn direct_row_binds_this() -> bool { stencil_only() }
+pub(crate) fn stitched_rows_admitted(vm: &Vm) -> bool { wasm_module_routes_to_stencils() && !diagnosing(vm) }
 
 /// Whether a lane body's start takes the tier below u-jit first: the default mode's rule, which an
 /// `admits_all` run and a body that does not start on the stencil tier do not take.

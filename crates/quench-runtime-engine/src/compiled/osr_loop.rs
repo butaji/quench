@@ -1508,7 +1508,9 @@ pub(crate) fn region(
     // The BaseJIT tier proves each operand where its row reads it and needs no roles: its plan
     // lowers every instruction, so a loop the role analysis rejects is still its span.
     match admitted {
-        Err(_) if crate::compiled::admission::span_regions_admitted() => LoopRegion::span(decoded[start..=end].to_vec(), constants, live, header).ok_or(RegionAnalysisFailure { reason: RegionRejection::RegionTooLarge, pc: backedge }),
+        Err(_) => LoopRegion::span(decoded[start..=end].to_vec(), constants, live, header)
+            .map(|region| LoopRegion { stencil_only: true, ..region })
+            .ok_or(RegionAnalysisFailure { reason: RegionRejection::RegionTooLarge, pc: backedge }),
         admitted => admitted,
     }
 }
@@ -1536,7 +1538,7 @@ fn admit_region(
     if let Some(offset) = leaves && !crate::compiled::admission::tier_runs(&[crate::compiled::admission::Tier::Base]) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
-    let stencil_only = crate::compiled::admission::region_stencil_only(leaves.is_some());
+    let stencil_only = leaves.is_some();
     match admit_register_roles(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
     ) {
