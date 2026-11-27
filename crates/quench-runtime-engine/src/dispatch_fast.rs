@@ -4520,6 +4520,43 @@ const fn field_store_row_at<const FLAG: u8>(store: FieldStore) -> Handler {
     }
 }
 
+/// Whether store opcode `op` takes `this` as its receiver (`THIS_FIELD_STORE`, `THIS_FIELD_STORE_STRICT`).
+const fn this_store_op(op: u16) -> bool { op == THIS_FIELD_STORE || op == THIS_FIELD_STORE_STRICT }
+
+/// The storage forms a store's own-field instance fixes, as `own_site` form indexes that `own_site_form`
+/// decodes: the flat run (`0`) and packed inline values (`INLINE_FORM`). Their sites (41 to 44) are below
+/// the returning sites and clash with no `FLAG_*` value, and no other site fact uses these indexes.
+const STORE_FLAT: usize = OWN_FORMS.len() + 11;
+const STORE_INLINE: usize = OWN_FORMS.len() + 12;
+
+/// Whether site `site` is a store's own-field instance (`store_formed_handler`), of either form and receiver.
+pub(crate) const fn store_formed_site(site: u8) -> bool {
+    site == own_site(false, STORE_FLAT) || site == own_site(true, STORE_FLAT)
+        || site == own_site(false, STORE_INLINE) || site == own_site(true, STORE_INLINE)
+}
+
+/// The store row of opcode `OP` at the instance of the storage form `form` (`own_form_index`): the flat run's
+/// (`1` untagged, `6` tagged, one instance since a store writes the same word either way) or packed inline
+/// values'. Extras and narrow runs have none: their stores stay plain.
+fn store_formed_handler<const OP: u16>(form: usize) -> Option<Handler> {
+    match form {
+        1 | 6 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_FLAT)) }
+            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_FLAT)) }),
+        3 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_INLINE)) }
+            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_INLINE)) }),
+        _ => None,
+    }
+}
+
+/// Requickens the plain own-field store of `script`'s record at `ip` to the instance of its hint's storage
+/// form (`store_formed_handler`), the hint `layout` the store just matched or a VM store set. The arena that
+/// keeps slot representations (`tracks_slot_representations`) leaves a store plain: its tracked site owns it.
+#[inline(never)]
+pub(crate) fn requicken_store_form<const OP: u16>(script: *mut LaneContext, ip: Ip, layout: u32) {
+    if unsafe { vm(script) }.heap_reads().tracks_slot_representations() { return; }
+    if let Some(handler) = store_formed_handler::<OP>(own_form_index(Some(layout))) { requicken(ip, handler); }
+}
+
 /// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
 /// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
 /// `HINTED_FORM` reads the hint layout's own bits.
@@ -4836,6 +4873,8 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     else if index == OWN_FORMS.len() + 31 { 0 }
     else if index == OWN_FORMS.len() + 32 { quench_runtime::value_vec::EXTRAS_FORM }
     else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM | quench_runtime::staged::TAGGED_SLOTS }
+    else if index == STORE_FLAT { 0 }
+    else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
     else { HINTED_FORM }
 }
 
@@ -4868,17 +4907,14 @@ macro_rules! own_sites {
     };
 }
 
-/// The generated own-field read (`generated_row` at an `own_site`) for the base `THIS` names and the
-/// storage form the layout id `hint`'s form bits name: an arena run, extras or packed inline values,
-/// whose layout it then reads untested; `None` for the form of no particular hint.
-fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler {
+/// The `OWN_FORMS` index of the storage form layout id `hint` names (`0`, the hinted form, for none).
+/// A narrow run's hint names neither inline values nor extras, so those tests fold away; packed and
+/// narrow slots never hold a raw double, and the other forms skip the decode where float slots are off.
+fn own_form_index(hint: Option<u32>) -> usize {
     use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    // A narrow run's hint names neither inline values nor extras: those tests fold away and
-    // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
-    // other forms skip the decode where float slots are off for the process.
     let tagged = !quench_runtime::vm::switches::float_slots();
     // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
-    let form = match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
+    match hint.map(quench_runtime::tier_surface::layouts::auxiliary) {
         None => 0,
         Some(hint) if hint & NARROW_FORM != 0 => 5,
         Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
@@ -4890,9 +4926,15 @@ fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler {
             (_, true) => 8,
             (_, false) => 4,
         },
-    };
+    }
+}
+
+/// The generated own-field read (`generated_row` at an `own_site`) for the base `THIS` names and the
+/// storage form the layout id `hint`'s form bits name (`own_form_index`): an arena run, extras or packed
+/// inline values, whose layout it then reads untested; `None` for the form of no particular hint.
+fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler {
     macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as Handler } }
-    own_sites!(row)[form * 2 + usize::from(!THIS)]
+    own_sites!(row)[own_form_index(hint) * 2 + usize::from(!THIS)]
 }
 
 /// Makes the own field entry `entry` the hint of the field read/store record at `ip`
