@@ -717,7 +717,7 @@ impl Vm {
     }
     pub fn set_named(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         object: Value,
         name: &str,
         value: Value,
@@ -751,7 +751,7 @@ impl Vm {
 
     pub fn set_builtin_named(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

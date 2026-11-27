@@ -488,7 +488,7 @@ impl Vm {
 
     pub(super) fn set_realm_builtin_named(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

@@ -940,7 +940,7 @@ impl Vm {
 
     pub(super) fn error_stack_setter(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -1227,7 +1227,7 @@ impl Vm {
 
     pub(super) fn box_bigint_object(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         value: Value,
     ) -> Result<Value, JsError> {
         let realm = self.active_native_env().unwrap_or(self.realm.globals);
