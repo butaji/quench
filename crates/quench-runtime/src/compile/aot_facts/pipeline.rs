@@ -15,6 +15,7 @@ use super::phase;
 use super::flow::{self, FunctionFlow};
 use super::frozen;
 use super::gate::{self, World};
+use super::identity;
 use super::length_settle;
 use super::readers::Readers;
 use super::scope::Scope;
@@ -271,6 +272,11 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
         // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
         facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
+        // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
+        facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
+        facts.closures_once = identity::closures_once(program, world);
+        let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
+        facts.this_undefined = this_undefined;
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));

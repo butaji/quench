@@ -118,7 +118,7 @@ pub(super) fn verify(program: &ResidualProgram, openers: &[u32], flows: &[Functi
 
 /// The functions the solve's call graph reaches: every seed (`seeds`) and every target a reached function's calls may name.
 /// A function nothing names is not reached, so its code runs in no run of a closed program.
-fn reached(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &Escapes) -> Vec<bool> {
+pub(super) fn reached(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &Escapes) -> Vec<bool> {
     let mut reached = vec![false; flows.len()];
     let mut pending = seeds(program, flows, census, escaped);
     while let Some(function) = pending.pop() {

@@ -3,6 +3,7 @@
 //! A call resizes an array only where the settled effects say its class may be written (`FunctionFacts::may_write_elements_of`).
 
 use super::blocks::Blocks;
+use super::gate::World;
 use super::class_ids::ClassIds;
 use super::effects::{Ctx, step};
 use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
@@ -199,7 +200,13 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
     }
     settled.sort();
     settled.finish();
-    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks), &parameter_registers(function));
+    // A parameter is a `Base::Parameter` only where nothing can write it but this function's own instructions: not through a
+    // closure's environment slot (a closure captures one of this function's slots), not through code added at run time (an open
+    // world, or a function with direct eval or a `with` scope), which reaches its parameters by name.
+    let captured = facts.facts.captures.values().any(|slots| slots.iter().any(|&(owner, _)| owner == ctx.id));
+    let open = facts.facts.world == World::Open || function.has_dynamic_scope_access();
+    let parameters = if captured || open { Vec::new() } else { parameter_registers(function) };
+    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks), &parameters);
     settled
 }
 
