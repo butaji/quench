@@ -395,7 +395,7 @@ impl Readers {
 }
 
 /// The atom of the name `call` is read by: its method's, or the name of its callee read off a named property or a global.
-fn callee_atom(call: &Call) -> Option<u32> {
+pub(super) fn callee_atom(call: &Call) -> Option<u32> {
     match (call.target, call.callee.origin) {
         (Target::Method(atom), _) => Some(atom),
         (_, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. } | Origin::Binding(Key::Global(atom)))) => Some(atom),

@@ -17,6 +17,7 @@ use super::gate::{self, World};
 use super::length_settle;
 use super::readers::Readers;
 use super::scope::Scope;
+use super::shapes;
 use super::super::signatures::{self, Argument, CallSite};
 use super::types;
 use super::value;
@@ -262,6 +263,11 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
+        // The departure fact needs the union layout, which holds only in a closed world: no class of an open world keeps one.
+        let never_departs = facts.constructed_classes().into_iter()
+            .filter(|&class| facts.unions.contains_key(&class) && shapes::never_departs(&settled_flows, &census, &scope, class))
+            .collect::<std::collections::BTreeSet<u32>>();
+        facts.never_departs = never_departs;
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.

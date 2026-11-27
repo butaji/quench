@@ -266,6 +266,25 @@ pub struct UnionLayout {
     /// The fields in slot order: the constructor's own fields first (`AotFacts::class_layout`), then every other field a store
     /// puts on an instance, in first-store program order.
     pub fields: Box<[(u32, UnionField)]>,
+    /// The storage form every instance takes, decided by the field count (`Storage::of_fields`).
+    pub storage: Storage,
+}
+
+/// Where an instance of a class keeps its fields: the record holds the first `value_vec::INLINE_PROPERTY_COUNT`, and a longer
+/// layout takes a flat run for all of them. A class's union layout fixes its count, so its form is fixed for every instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Storage {
+    /// Every field of the layout is held in the instance's record.
+    Inline,
+    /// The layout has more fields than the record holds: the instance keeps its fields in a flat run.
+    Flat,
+}
+
+impl Storage {
+    /// The storage form of a layout of `fields` fields.
+    pub fn of_fields(fields: usize) -> Self {
+        if fields <= crate::value_vec::INLINE_PROPERTY_COUNT { Self::Inline } else { Self::Flat }
+    }
 }
 
 /// One field of a union layout.
@@ -331,7 +350,8 @@ fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, 
         let cell = facts.cell(FactKey::Field { class, instance: true, atom }).unwrap_or(Cell::ANY);
         entries.push((atom, UnionField { cell, default }));
     }
-    Some(UnionLayout { fields: entries.into_boxed_slice() })
+    let storage = Storage::of_fields(entries.len());
+    Some(UnionLayout { fields: entries.into_boxed_slice(), storage })
 }
 
 /// Adds to `fields` the names the stores of `flows` put on instances of `class`, in first-store order, and returns the names

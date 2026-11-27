@@ -989,3 +989,27 @@ fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_e
     let program = program("var a = new Array(3); a[0] = 1; a[1];");
     assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
 }
+
+#[test]
+fn a_method_only_called_on_its_class_instances_takes_that_class_as_this() {
+    let program = program("function Scheduler() { this.count = 0; } \
+        Scheduler.prototype.run = function run() { return this.count; }; \
+        new Scheduler().run();");
+    let facts = analyze(&program);
+    let (scheduler, run) = (function_named(&program, "Scheduler") as u32, function_named(&program, "run") as u32);
+    assert_eq!(facts.function_facts(run).this_classes().single().map(|(class, _)| class), Some(scheduler));
+}
+
+#[test]
+fn an_instance_of_a_class_only_stored_by_name_never_departs_its_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
+    let facts = analyze(&program);
+    assert!(facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn a_delete_on_an_instance_departs_its_class_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); delete s.count;");
+    let facts = analyze(&program);
+    assert!(!facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
