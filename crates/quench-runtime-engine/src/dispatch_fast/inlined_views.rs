@@ -117,6 +117,24 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     };
     let unit = crate::compiled::lane_unit::unit(code, function, body, &targets, &|callee| code.function_get(callee as usize))?;
     if unit.frames.is_empty() || unit.registers > u16::from(u8::MAX) { return None; }
+    // An inlined callee's stores to `this` store to its receiver register, which is the frame's
+    // `this` the unit's other records read (`lane_unit` renames field bases, not these).
+    let mut unit = unit;
+    for (pc, origin) in unit.origins.iter().enumerate() {
+        let Origin::Inlined { frame, .. } = *origin else { continue };
+        let instruction = unit.instructions[pc];
+        if instruction.stores_to_this() {
+            let op = if instruction.op().field_store().is_some_and(|store| store.strict) {
+                quench_runtime::bytecode::Op::SetFieldStrict
+            } else {
+                quench_runtime::bytecode::Op::SetField
+            };
+            unit.instructions[pc] = quench_runtime::bytecode::WideInstruction::new(op, instruction.a(), unit.frames[frame].receiver, instruction.c(), instruction.imm());
+        } else if instruction.op() == quench_runtime::bytecode::Op::GetField && instruction.b() == quench_runtime::bytecode::FieldBase::NESTED {
+            // A site's base is the callee's: no inlined view reads through one.
+            return None;
+        }
+    }
     let masks = unit.register_masks(code, function).map(|masks| std::rc::Rc::new(masks.into_owned()));
     let synthetic = body.with_unit_code(&unit.instructions, unit.registers)?;
     let proper_tail_calls = vm.host.proper_tail_calls();
@@ -184,9 +202,48 @@ pub(crate) fn leave(cx: *mut super::LaneContext, r: super::Registers, ip: Ip) ->
     match origin {
         // SAFETY: the original view holds a record for each of the function's PCs.
         Origin::Caller(pc) => (r, unsafe { records.add(pc as usize) }, super::carried_at_in_lane(cx, original, r, pc)),
-        Origin::Inlined { frame, pc } => super::body_inlined_activation_in_lane(cx, r, records,
-            super::InlinedRun { frames: &frames, framed: true, caller_registers }, frame, pc),
+        Origin::Inlined { frame, pc } => {
+            let _ = caller_registers;
+            materialize(cx, r, records, original, &frames, frame, pc)
+        }
     }
+}
+
+/// The activations the calls of inlined `frame` and the frames around it make, outermost first
+/// (`push_passed_in_lane`), each holding its registers as the unit's window `r` holds them; the
+/// innermost's record at `pc`. Each marker proved its callee the frame's.
+fn materialize(cx: *mut super::LaneContext, r: super::Registers, records: Ip, original: *const LaneView, frames: &[InlinedCall], frame: usize, pc: u32)
+    -> (super::Registers, Ip, super::Carried) {
+    let mut chain = vec![frame];
+    while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
+        chain.push(parent);
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let (mut registers, mut records, mut view) = (r, records, original);
+    for &index in chain.iter().rev() {
+        let call = frames[index];
+        let vm = unsafe { super::vm(cx) };
+        let callee = call.target.identity().expect("an inlined callee has its identity");
+        // SAFETY: copy the cache row before anything changes the cache.
+        let target = vm.script_call_entry(callee).map(|target| unsafe { *target })
+            .or_else(|| vm.resolve_script_call_target(code, callee))
+            .expect("an inlined callee resolves");
+        // SAFETY: the record is the call's in its parent's records.
+        let record = unsafe { records.add(call.call as usize) };
+        let parent = call.parent_base(frames);
+        let this = super::call_this_in_lane(vm, &target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
+        // SAFETY: the call's window of `registers` holds its values.
+        let passed = unsafe { registers.0.add(usize::from(call.window - parent)).cast_const() };
+        let (callee_registers, _) = super::push_passed_in_lane::<false, false>(cx, registers, record, &target, passed, call.arguments, this, false);
+        for register in 0..call.registers {
+            callee_registers.set(register, r.get(call.base + register));
+        }
+        // SAFETY: the running lane's context, whose base the push made the callee's records.
+        (registers, records, view) = (callee_registers, unsafe { (*cx).base }, target.view);
+    }
+    // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
+    (registers, unsafe { records.add(pc as usize) }, super::carried_at_in_lane(cx, view, registers, pc))
 }
 
 /// The record the general path runs for a lane exit at `ip`, a record of an inlined view: the
