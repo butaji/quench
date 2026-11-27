@@ -173,131 +173,12 @@ impl Vm {
             .alloc_string(format_date_string(milliseconds).into()))
     }
 
-    pub(super) fn date_static_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::DateParse => {
-                let text = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let millis = parse_date_string(&text);
-                Ok(Value::number(millis))
-            }
-            Native::DateUTC => Ok(Value::number(date_utc_constructor_value(self, p, args)?)),
-            _ => Err(JsError("invalid static Date native".into())),
-        }
-    }
-
-    pub(super) fn date_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if matches!(
-            native,
-            Native::DateToLocaleString
-                | Native::DateToLocaleDateString
-                | Native::DateToLocaleTimeString
-        ) {
-            return layer_hooks::date_to_locale_string(self, p, native, this, args);
-        }
-        if native == Native::DateToJSON {
-            return self.date_to_json(p, this);
-        }
-        if native == Native::DateToPrimitive {
-            return self.date_to_primitive(p, this, args);
-        }
-        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(this) else {
+    /// The time value of a Date receiver; any other receiver is a TypeError.
+    fn date_time_value(&mut self, p: &ResidualProgram, receiver: Value) -> Result<f64, JsError> {
+        let Some(Cell::Date { milliseconds, .. }) = self.heap.get(receiver) else {
             return Err(self.type_error(p, "Date method called on incompatible receiver".into()));
         };
-        let milliseconds = *milliseconds;
-        if let Some(value) = self.date_setter(p, native, this, args)? {
-            return Ok(Value::number(value));
-        }
-        if let Some(value) = date_getter(native, milliseconds) {
-            return Ok(Value::number(value));
-        }
-        match native {
-            Native::DateToString if !milliseconds.is_finite() => {
-                Ok(self.heap.alloc_string("Invalid Date".into()))
-            }
-            Native::DateToDateString => Ok(self
-                .heap
-                .alloc_string(format_date_date_string(milliseconds).into())),
-            Native::DateToTimeString => Ok(self
-                .heap
-                .alloc_string(format_date_time_string(milliseconds).into())),
-            Native::DateToLocaleDateString | Native::DateToLocaleTimeString => {
-                if !milliseconds.is_finite() {
-                    return Ok(self.heap.alloc_string("Invalid Date".into()));
-                }
-                let Some(date) = date_local(milliseconds) else {
-                    return Ok(self.heap.alloc_string("Invalid Date".into()));
-                };
-                let text = if native == Native::DateToLocaleDateString {
-                    format!("{} {}, {}", date.month(), date.day(), date.year())
-                } else {
-                    format!(
-                        "{:02}:{:02}:{:02}",
-                        date.hour(),
-                        date.minute(),
-                        date.second()
-                    )
-                };
-                Ok(self.heap.alloc_string(text.into()))
-            }
-            Native::DateToUTCString if !milliseconds.is_finite() => {
-                Ok(self.heap.alloc_string("Invalid Date".into()))
-            }
-            Native::DateToUTCString => {
-                let Some(date) = date_utc(milliseconds) else {
-                    return Err(JsError("Invalid time value".into()));
-                };
-                let text = date.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-                Ok(self.heap.alloc_string(text.into()))
-            }
-            Native::DateToLocaleString => {
-                let Some(date) = date_local(milliseconds) else {
-                    return Ok(self.heap.alloc_string("Invalid Date".into()));
-                };
-                let text = format!(
-                    "{} {}, {} {:02}:{:02}:{:02}",
-                    date.month(),
-                    date.day(),
-                    date.year(),
-                    date.hour(),
-                    date.minute(),
-                    date.second(),
-                );
-                Ok(self.heap.alloc_string(text.into()))
-            }
-            Native::DateToString => Ok(self
-                .heap
-                .alloc_string(format_date_string(milliseconds).into())),
-            Native::DateToISOString | Native::DateToJSON => {
-                if !milliseconds.is_finite() {
-                    return Err(self.range_error(p, "Invalid time value".into()));
-                }
-                let text = format_date_iso(milliseconds)
-                    .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
-                Ok(self.heap.alloc_string(text.into()))
-            }
-            Native::DateToTemporalInstant => {
-                if !milliseconds.is_finite() {
-                    return Err(self.range_error(p, "Invalid time value".into()));
-                }
-                let nanoseconds = (milliseconds.trunc() as i128)
-                    .checked_mul(INSTANT_NANOSECONDS_PER_MILLISECOND)
-                    .ok_or_else(|| self.range_error(p, "Invalid time value".into()))?;
-                let constructor = layer_hooks::temporal_instant_constructor(self, p)?;
-                layer_hooks::make_temporal_instant(self, p, nanoseconds, constructor)
-            }
-            _ => Err(JsError("invalid Date native".into())),
-        }
+        Ok(*milliseconds)
     }
 
     fn date_to_json(&mut self, p: &ResidualProgram, receiver: Value) -> Result<Value, JsError> {
@@ -474,6 +355,128 @@ impl Vm {
             object: Box::new(Self::empty_object(prototype)),
         }))
     }
+}
+
+/// The entry of each Date native, or `None` for a native of another family.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::Date => Some(call_date_native),
+        Native::DateNow => Some(date_now_native),
+        Native::DateParse => Some(date_parse_native),
+        Native::DateUTC => Some(date_utc_native),
+        Native::DateToLocaleString
+        | Native::DateToLocaleDateString
+        | Native::DateToLocaleTimeString => Some(date_to_locale_native),
+        Native::DateToJSON => Some(date_to_json_native),
+        Native::DateToPrimitive => Some(date_to_primitive_native),
+        Native::DateToString => Some(date_to_string_native),
+        Native::DateToDateString => Some(date_to_date_string_native),
+        Native::DateToTimeString => Some(date_to_time_string_native),
+        Native::DateToUTCString => Some(date_to_utc_string_native),
+        Native::DateToISOString => Some(date_to_iso_string_native),
+        Native::DateToTemporalInstant => Some(date_to_temporal_instant_native),
+        Native::DateSetTime => Some(date_setter_native),
+        _ if date_reads(native) => Some(date_getter_native),
+        _ if DateSetter::from_native(native).is_some() => Some(date_setter_native),
+        _ => None,
+    }
+}
+
+fn call_date_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.date_call()
+}
+
+fn date_now_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Ok(vm.date_now())
+}
+
+fn date_parse_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let text = vm.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    Ok(Value::number(parse_date_string(&text)))
+}
+
+fn date_utc_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    Ok(Value::number(date_utc_constructor_value(vm, p, args)?))
+}
+
+fn date_to_locale_native(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    layer_hooks::date_to_locale_string(vm, p, native, this, args)
+}
+
+fn date_to_json_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.date_to_json(p, this)
+}
+
+fn date_to_primitive_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.date_to_primitive(p, this, args)
+}
+
+fn date_getter_native(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    match date_getter(native, milliseconds) {
+        Some(value) => Ok(Value::number(value)),
+        None => Err(JsError("invalid Date native".into())),
+    }
+}
+
+fn date_setter_native(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.date_time_value(p, this)?;
+    match vm.date_setter(p, native, this, args)? {
+        Some(value) => Ok(Value::number(value)),
+        None => Err(JsError("invalid Date native".into())),
+    }
+}
+
+fn date_to_string_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    if !milliseconds.is_finite() {
+        return Ok(vm.heap.alloc_string("Invalid Date".into()));
+    }
+    Ok(vm.heap.alloc_string(format_date_string(milliseconds).into()))
+}
+
+fn date_to_date_string_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    Ok(vm.heap.alloc_string(format_date_date_string(milliseconds).into()))
+}
+
+fn date_to_time_string_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    Ok(vm.heap.alloc_string(format_date_time_string(milliseconds).into()))
+}
+
+fn date_to_utc_string_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    if !milliseconds.is_finite() {
+        return Ok(vm.heap.alloc_string("Invalid Date".into()));
+    }
+    let Some(date) = date_utc(milliseconds) else {
+        return Err(JsError("Invalid time value".into()));
+    };
+    let text = date.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+    Ok(vm.heap.alloc_string(text.into()))
+}
+
+fn date_to_iso_string_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    if !milliseconds.is_finite() {
+        return Err(vm.range_error(p, "Invalid time value".into()));
+    }
+    let text = format_date_iso(milliseconds)
+        .ok_or_else(|| vm.range_error(p, "Invalid time value".into()))?;
+    Ok(vm.heap.alloc_string(text.into()))
+}
+
+fn date_to_temporal_instant_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let milliseconds = vm.date_time_value(p, this)?;
+    if !milliseconds.is_finite() {
+        return Err(vm.range_error(p, "Invalid time value".into()));
+    }
+    let nanoseconds = (milliseconds.trunc() as i128)
+        .checked_mul(INSTANT_NANOSECONDS_PER_MILLISECOND)
+        .ok_or_else(|| vm.range_error(p, "Invalid time value".into()))?;
+    let constructor = layer_hooks::temporal_instant_constructor(vm, p)?;
+    layer_hooks::make_temporal_instant(vm, p, nanoseconds, constructor)
 }
 
 fn date_utc_constructor_value(

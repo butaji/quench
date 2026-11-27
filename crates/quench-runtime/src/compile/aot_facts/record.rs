@@ -2,11 +2,12 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events};
+use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code};
+use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
-use super::value::{Key, Origin, PrototypeBase, Word, UNNAMED_ARRAYS};
+use super::value::{Key, Origin, Word, UNNAMED_ARRAYS};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::typed_ir::{Cell, Classes, Elements, Length, Representation, Type};
 
@@ -16,8 +17,11 @@ pub(super) struct Record {
     writes: Vec<(Key, Word)>,
     wild_owner: bool,
     wild_global: bool,
+    computed_global: bool,
+    global_source: bool,
+    plain_calls: Vec<Option<u32>>,
+    reads_this: bool,
     wild_member: bool,
-    prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Word>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -29,6 +33,8 @@ pub(super) struct Record {
     shapes: Vec<Shape>,
     handed: Vec<Word>,
     closures: Vec<u32>,
+    guest_runs: Vec<u32>,
+    quiet: Vec<(u32, Quiet)>,
 }
 
 impl Record {
@@ -38,8 +44,11 @@ impl Record {
             writes: Vec::new(),
             wild_owner: false,
             wild_global: false,
+            computed_global: false,
+            global_source: false,
+            plain_calls: Vec::new(),
+            reads_this: false,
             wild_member: false,
-            prototype_writes: Vec::new(),
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
@@ -49,6 +58,8 @@ impl Record {
             shapes: Vec::new(),
             handed: Vec::new(),
             closures: Vec::new(),
+            guest_runs: Vec::new(),
+            quiet: Vec::new(),
         }
     }
 
@@ -71,6 +82,13 @@ impl Record {
         if instruction.op() == crate::bytecode::Op::GetIndex {
             self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
         }
+        if runs_guest_code(ctx, instruction, state) {
+            self.guest_runs.push(pc as u32);
+        }
+        if matches!(decoded(instruction), Some(crate::staged::Operation::LoadThis { .. } | crate::staged::Operation::SetField { base: None, .. })) {
+            self.reads_this = true;
+        }
+        self.note_quiet(ctx, instruction, pc as u32);
         if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
             let joined = self.field_owners.entry(pc as u32).or_insert(crate::typed_ir::Classes::Never);
             *joined = joined.join(owner.cell.classes);
@@ -117,7 +135,23 @@ impl Record {
             self.links.extend(receiver.link(UNNAMED_ARRAYS));
             self.links.extend(arguments.iter().filter_map(|argument| argument.link(UNNAMED_ARRAYS)));
             let call = Call { pc: pc as u32, callee, target, construct, receiver, arguments };
+            if matches!(invocation.receiver, crate::staged::Receiver::This { .. }) {
+                self.reads_this = true;
+            }
+            if !matches!(invocation.receiver, crate::staged::Receiver::Register(_) | crate::staged::Receiver::This { .. } | crate::staged::Receiver::Allocated) {
+                self.plain_calls.push(match call.target {
+                    Target::Known(function) => Some(function),
+                    Target::Register => call.callee.cell.ty.body_index(),
+                    Target::Method(_) => None,
+                });
+            }
+            if method.is_some_and(|atom| ctx.scope.passes_this(atom)) {
+                self.global_source = true;
+            }
             self.shapes.extend(shape::of_call(ctx, pc as u32, &call));
+            if let Some(proof) = quiet::of_call(ctx.scope, &call) {
+                self.quiet.push((pc as u32, proof));
+            }
             self.calls.push(call);
         }
     }
@@ -126,11 +160,12 @@ impl Record {
     pub(super) fn commit(&mut self, instruction: WideInstruction, state: &[Word], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
+        self.computed_global |= events.computed_store;
+        self.global_source |= events.global_source;
         self.wild_member |= events.wild_member;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes);
         self.shapes.extend(events.shape);
-        self.prototype_writes.extend(events.prototype_write);
         for register in instruction.written_registers() {
             let index = usize::from(register);
             self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
@@ -151,7 +186,30 @@ impl Record {
         }
     }
 
-    pub(super) fn finish(self, arity: Option<u16>, returns_out: bool) -> FunctionFlow {
+    /// Notes the proofs `instruction` at `pc` may hold that it runs no guest code: a global name read (`Declared`, and
+    /// `Intrinsic` for a builtin the table names) unless it is an invocation, and a read of field off `this` (`OwnField`).
+    fn note_quiet(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: u32) {
+        if is_global_load(instruction) && crate::staged::Invocation::of(instruction, ctx.decode).is_none() {
+            let atom = instruction.atom_index();
+            self.quiet.push((pc, Quiet::Declared(atom)));
+            if ctx.scope.builtin(None, atom).is_some() {
+                self.quiet.push((pc, Quiet::Intrinsic { object: None, name: atom }));
+            }
+        }
+        if matches!(instruction.op().class(), crate::bytecode::Class::GetField)
+            && let Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+            && base == crate::bytecode::FieldBase::THIS
+        {
+            self.quiet.push((pc, Quiet::OwnField(atom)));
+            self.reads_this = true;
+        }
+    }
+
+    pub(super) fn finish(mut self, arity: Option<u16>, returns_out: bool) -> FunctionFlow {
+        // Blocks are replayed in index order, so the PCs are sorted here: `class_layout` searches them.
+        self.shapes.sort_by_key(|shape| shape.pc);
+        self.guest_runs.sort_unstable();
+        self.quiet.sort_by_key(|(pc, _)| *pc);
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -163,14 +221,19 @@ impl Record {
             writes: self.writes,
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
+            computed_global: self.computed_global,
+            global_source: self.global_source,
+            plain_calls: self.plain_calls,
+            reads_this: self.reads_this,
             member_wild: self.wild_member,
             numbers,
-            prototype_writes: self.prototype_writes,
             field_owners: self.field_owners,
             registers: self.registers,
             reads: self.reads,
             links: self.links,
             shapes: self.shapes,
+            guest_runs: self.guest_runs,
+            quiet: self.quiet,
             arity,
             returns_out,
             handed: self.handed,

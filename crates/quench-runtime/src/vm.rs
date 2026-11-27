@@ -7,6 +7,8 @@ pub mod engine_types; pub mod fact_edge;
 pub mod lazy_table;
 pub mod builtin_table;
 use builtin_table::{BuiltinFamilies, BuiltinTable};
+pub mod execution_table;
+use execution_table::ExecutionTable;
 pub mod engine_calls;
 pub(crate) use engine_calls::EngineVm;
 pub mod engine_calls2;
@@ -215,6 +217,7 @@ pub mod method_cache;
 pub mod plain_equality;
 pub mod module;
 pub mod number;
+mod number_natives;
 pub mod number_parse;
 pub mod object_template;
 pub mod object;
@@ -258,7 +261,7 @@ pub use property_key::PropertyKey;
 use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
-mod native_table;
+pub mod native_table;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;
@@ -2078,6 +2081,9 @@ pub struct Vm {
     /// The intrinsic families this realm installs (`builtin_table`): `ALL` unless an image
     /// proved a family unreachable from its program.
     pub(crate) builtins: &'static BuiltinTable,
+    /// The engine entries this runtime links (`execution_table`): `ALL` unless an image proved
+    /// some of them unreachable from its program.
+    pub(crate) execution: &'static ExecutionTable,
     pub specialized: bool,
     pub(crate) heap: Heap,
     pub realm: Realm,

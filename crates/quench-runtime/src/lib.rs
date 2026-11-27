@@ -139,6 +139,7 @@ pub mod value_vec;
 #[doc(hidden)]
 pub mod vm;
 pub use vm::builtin_table::{BuiltinFamilies, BuiltinTable};
+pub use vm::execution_table::ExecutionTable;
 #[doc(hidden)]
 pub mod wasm;
 pub use wasm::{

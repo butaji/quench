@@ -136,7 +136,7 @@ fn settle(measured: &Ceilings, ceilings: &Ceilings, write: bool) -> Settled {
 }
 
 /// The total instructions of a callgrind output file: its last `totals:` line, else `summary:`.
-fn parse_totals(text: &str) -> Option<u64> {
+pub(crate) fn parse_totals(text: &str) -> Option<u64> {
     let total = |prefix: &str| text.lines().rev().find_map(|line| line.strip_prefix(prefix)).and_then(|rest| rest.split_whitespace().next()?.parse().ok());
     total("totals: ").or_else(|| total("summary: "))
 }
@@ -187,7 +187,7 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// Writes the scripts into `scratch`: the case name to its entry script.
-fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, String> {
+pub(crate) fn write_scripts(scratch: &Path) -> Result<BTreeMap<&'static str, PathBuf>, String> {
     let dir = scratch.join("scripts");
     let module = dir.join("module");
     fs::create_dir_all(&module).map_err(|error| format!("{}: {error}", module.display()))?;
@@ -210,7 +210,7 @@ fn v8_fixtures(run: &str) -> Vec<&str> {
 }
 
 /// The V8-v7 fixtures as runnable scripts in `scratch`, by case name (`v8-<fixture>`).
-fn write_v8_scripts(root: &Path, scratch: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+pub(crate) fn write_v8_scripts(root: &Path, scratch: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let suite = root.join(V8_SUITE);
     let read = |name: &str| fs::read_to_string(suite.join(name))
         .map_err(|error| format!("{}: {error} (git submodule update --init {V8_SUITE})", suite.join(name).display()));
@@ -331,7 +331,7 @@ unsafe extern "C" {
 
 /// The first argument of a re-run of this gate binary that measures one child (`measure_child`): then the file to
 /// write its peak to and the command.
-const MEASURE_RSS: &str = "--measure-rss";
+pub(crate) const MEASURE_RSS: &str = "--measure-rss";
 
 /// The peak resident set of one run of `host mode script`, in kilobytes. A child's `ru_maxrss`
 /// starts at the high-water mark of the process that spawned it (Linux carries it through `exec`),

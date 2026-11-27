@@ -1500,12 +1500,12 @@ impl Vm {
                         self.heap.release_root(key);
                         let value = value?;
                         let collection = self.heap.root_value(root).unwrap();
-                        self.call_collection_native(program, Native::MapSet, collection, &[key_value, value])?;
+                        self.call_native_dispatch(program, Native::MapSet, collection, &[key_value, value])?;
                         length += 2;
                     } else {
                         let value = self.wire_read(program, deserializer, hooks)?;
                         let collection = self.heap.root_value(root).unwrap();
-                        self.call_collection_native(program, Native::SetAdd, collection, &[value])?;
+                        self.call_native_dispatch(program, Native::SetAdd, collection, &[value])?;
                         length += 1;
                     }
                 }

@@ -8,9 +8,10 @@ use super::registers::{RegisterCells, Source};
 use crate::staged::typing;
 use super::scope::Scope;
 use super::shape::Shape;
-use super::value::{Key, PrototypeBase, Word};
+use super::value::{Key, Word};
 use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
+use super::quiet::Quiet;
 use crate::staged::{Comparison, Operation};
 use crate::typed_ir::{Cell, Classes, Elements, Representation, Type, WIDENING_ROUNDS, language_bit};
 use crate::ValueType;
@@ -47,12 +48,19 @@ pub(super) struct FunctionFlow {
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
     pub(super) global_wild: bool,
+    /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
+    pub(super) computed_global: bool,
+    /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
+    /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
+    pub(super) global_source: bool,
+    /// The callee of each call the function makes with no receiver: its function id, if it names one, else None.
+    pub(super) plain_calls: Vec<Option<u32>>,
+    /// Whether the function reads its `this` (a load, a store or a field read of it, or a method of it).
+    pub(super) reads_this: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
-    /// The named properties stored into a function's `prototype`, in code order.
-    pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
     pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
     /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
@@ -65,6 +73,10 @@ pub(super) struct FunctionFlow {
     pub(super) links: Vec<(u32, u32)>,
     /// The changes its instructions and calls make to named properties, in PC order (`shape`).
     pub(super) shapes: Vec<Shape>,
+    /// The PCs, in order, of the instructions that may run guest code with the objects they touch (`effects::runs_guest_code`).
+    pub(super) guest_runs: Vec<u32>,
+    /// The proofs a guest-run point may hold (`quiet::Quiet`), by PC, in order.
+    pub(super) quiet: Vec<(u32, Quiet)>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,

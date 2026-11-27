@@ -7,7 +7,7 @@ use crate::bytecode::{Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing::{self, Abstract};
-use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
+use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {
@@ -39,11 +39,14 @@ pub(super) struct Ctx<'a> {
 pub(super) struct Events {
     pub(super) writes: Vec<(Key, Word)>,
     pub(super) wild_global: bool,
+    /// Whether the instruction may make the global object reachable as a value: a read of a global object's name, or
+    /// the root's `this`. Sloppy plain calls and `call`/`apply`/`bind` are sources too (`flow::Record::observe`).
+    pub(super) global_source: bool,
+    /// Whether a store through a non-Number key may write a name of the global object (`writes_global_name`).
+    pub(super) computed_store: bool,
     pub(super) wild_owner: bool,
     /// Whether a store through a key the analysis cannot name may write a named property.
     pub(super) wild_member: bool,
-    /// The named property a store writes into a function's `prototype` (`Origin::Prototype`).
-    pub(super) prototype_write: Option<(PrototypeBase, u32)>,
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
     pub(super) links: Vec<(u32, u32)>,
@@ -61,6 +64,53 @@ pub(super) fn settled(ctx: &Ctx<'_>, word: Word) -> Cell {
             Cell { elements: word.cell.elements.join(types.stored_elements(word.elements_key())), ..word.cell },
         _ => word.cell,
     }
+}
+
+/// Whether the instruction at a point may run guest code with the objects it touches: a call or construction, a getter,
+/// setter or proxy trap, a conversion that runs `valueOf`. It is the operation's effect row (`Effects::may_call_js`),
+/// met with what the facts before it (`state`) prove: a Number or binary operation over Numbers runs none, and a
+/// captured or environment binding's read runs none. A store through `this` is not counted: it is the constructor's
+/// own store, whose setter `class_layout` does not model. Whatever does not decode runs guest code.
+pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> bool {
+    if crate::staged::Invocation::of(instruction, ctx.decode).is_some() {
+        return true;
+    }
+    let operation = Operation::<(), ()>::decode_completed(instruction, ctx.decode).map(|(operation, _)| operation).or_else(|| decoded(instruction));
+    match operation {
+        None => true,
+        Some(Operation::SetField { base: None, .. }) => false,
+        Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
+        Some(Operation::Number(number)) => !numbers_over_numbers(ctx, state, number),
+        Some(Operation::Binary { left, right, .. }) => !(is_number(ctx, state, left) && is_number(ctx, state, right)),
+        // Strict equality runs nothing; loose equality runs nothing when an operand is null or undefined (no ToPrimitive).
+        Some(Operation::Equality { strict, left, right, .. }) => !strict && !(is_nullish(ctx, state, left) || is_nullish(ctx, state, right)),
+        Some(Operation::CompareJump { comparison: Comparison::Equality { strict, .. }, left, right, .. }) =>
+            !strict && !(is_nullish(ctx, state, left) || is_nullish(ctx, state, right)),
+        Some(Operation::CompareJump { comparison, .. }) => comparison.runs_guest_code(),
+        Some(operation) => operation.effects().may_call_js,
+    }
+}
+
+/// Whether the operands of a Number operation are Numbers on the facts before it, so its miss runs no guest code.
+fn numbers_over_numbers(ctx: &Ctx<'_>, state: &[Word], number: NumberOperation) -> bool {
+    match number {
+        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
+        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => is_number(ctx, state, left) && is_number(ctx, state, right),
+        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => is_number(ctx, state, source),
+        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => state[usize::from(source)].is_number(),
+        _ => false,
+    }
+}
+
+/// Whether operand `operand` is exactly null or undefined on the facts before it.
+fn is_nullish(ctx: &Ctx<'_>, state: &[Word], operand: Operand) -> bool {
+    let ty = typing::operand_cell(&Before { ctx, state }, operand).ty;
+    ty == Type::language(crate::ValueType::Null) || ty == Type::language(crate::ValueType::Undefined)
+}
+
+/// Whether operand `operand` is a Number on the facts before it.
+fn is_number(ctx: &Ctx<'_>, state: &[Word], operand: Operand) -> bool {
+    Word::of_cell(typing::operand_cell(&Before { ctx, state }, operand)).is_number()
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -112,7 +162,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
 }
 
 /// Whether `instruction` reads a global name plainly (`LoadName`, `LoadNameCall`).
-fn is_global_load(instruction: WideInstruction) -> bool {
+pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
     let traits = instruction.op().traits();
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
@@ -176,6 +226,7 @@ fn value_of(
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
         events.wild_global |= ctx.scope.is_global_object(atom);
+        events.global_source |= ctx.scope.is_global_object(atom);
         return resolved(ctx, Key::Global(atom));
     }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
@@ -328,6 +379,7 @@ fn writes(
 /// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
 /// key that is no Number may name any property (`Events::wild_member`).
 fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {
+    events.computed_store |= writes_global_name(operation.as_ref(), state);
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { value, .. }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
@@ -368,9 +420,6 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             if ctx.scope.length == Some(atom) {
                 events.writes.push(length_change(owner.elements_key()));
             }
-            if let Some(Origin::Prototype(prototype)) = owner.origin {
-                events.prototype_write = Some((prototype, atom));
-            }
             // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
@@ -410,15 +459,30 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         events.wild_owner = true;
     }
     match operation {
-        Some(
-            Operation::ElementWrite { .. }
-            | Operation::IndexWrite { .. }
-            | Operation::IndexSetHelper { .. }
-            | Operation::Delete { .. },
-        ) => events.wild_global = true,
-        Some(Operation::LoadThis { .. }) if ctx.is_root => events.wild_global = true,
+        Some(Operation::LoadThis { .. }) if ctx.is_root => {
+            events.wild_global = true;
+            events.global_source = true;
+        }
         _ => {}
     }
+}
+
+/// Whether a store through a computed key (`operation`) may write a name of the global object: a key that is no Number
+/// (a Number names no identifier a name read reads), into a receiver that may be the global object (`may_be_global`).
+/// A store through an operation with no receiver the analysis names may be any of them.
+fn writes_global_name(operation: Option<&Operation<(), ()>>, state: &[Word]) -> bool {
+    match operation {
+        Some(Operation::ElementWrite { base, key, .. } | Operation::Delete { base, key, .. }) =>
+            !state[usize::from(*key)].is_number() && may_be_global(state[usize::from(*base)]),
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. }) => true,
+        _ => false,
+    }
+}
+
+/// Whether a value of cell `word` may be the global object: an object of no one known class (`Classes::Many`), as the
+/// global object is no instance of a constructed class.
+fn may_be_global(word: Word) -> bool {
+    word.cell.classes == Classes::Many && word.cell.ty.direct_object_part().is_some()
 }
 
 /// Records the binding stores `operation` makes, with the facts they store.

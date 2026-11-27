@@ -23,102 +23,6 @@ struct Decoded {
 }
 
 impl Vm {
-    pub(super) fn typed_array_base64_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::Uint8ArrayFromBase64 | Native::Uint8ArrayFromHex => {
-                let input =
-                    self.base64_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let decoded = if native == Native::Uint8ArrayFromBase64 {
-                    let options = self.base64_decode_options(p, args.get(1).copied())?;
-                    decode_base64(&input, options, usize::MAX)
-                } else {
-                    decode_hex(&input, usize::MAX)
-                };
-                if decoded.failed {
-                    return self.syntax_error_result(p, "invalid base64/hex input");
-                }
-                let native_uint8_array = self.native_value(Native::Uint8Array);
-                let target = self.construct_value(
-                    p,
-                    native_uint8_array,
-                    &[Value::number(decoded.bytes.len() as f64)],
-                )?;
-                self.validate_typed_array_result(p, target, decoded.bytes.len(), true)?;
-                for (index, byte) in decoded.bytes.into_iter().enumerate() {
-                    self.typed_array_set(p, target, index, Value::number(byte as f64))?;
-                }
-                Ok(target)
-            }
-            Native::Uint8ArraySetFromBase64 | Native::Uint8ArraySetFromHex => {
-                let (buffer, length) = self.uint8_base64_receiver(p, this)?;
-                let input =
-                    self.base64_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if matches!(
-                    self.heap.get(buffer),
-                    Some(Cell::ArrayBuffer {
-                        immutable: true,
-                        ..
-                    })
-                ) {
-                    return Err(self.type_error(p, "Uint8Array buffer is immutable".into()));
-                }
-                let decoded = if native == Native::Uint8ArraySetFromBase64 {
-                    let options = self.base64_decode_options(p, args.get(1).copied())?;
-                    self.ensure_array_buffer_attached(p, buffer)?;
-                    decode_base64(&input, options, length)
-                } else {
-                    self.ensure_array_buffer_attached(p, buffer)?;
-                    decode_hex(&input, length)
-                };
-                for (index, byte) in decoded.bytes.iter().copied().enumerate() {
-                    self.typed_array_set(p, this, index, Value::number(byte as f64))?;
-                }
-                if decoded.failed {
-                    return self.syntax_error_result(p, "invalid base64/hex input");
-                }
-                let result = self.object();
-                self.set_named(p, result, "read", Value::number(decoded.read as f64))?;
-                self.set_named(
-                    p,
-                    result,
-                    "written",
-                    Value::number(decoded.bytes.len() as f64),
-                )?;
-                Ok(result)
-            }
-            Native::Uint8ArrayToBase64 | Native::Uint8ArrayToHex => {
-                let (buffer, length) = self.uint8_base64_receiver(p, this)?;
-                if native == Native::Uint8ArrayToHex {
-                    self.ensure_array_buffer_attached(p, buffer)?;
-                    let bytes = self.uint8_base64_bytes(this, length);
-                    return Ok(self.heap.alloc_string(
-                        bytes
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect::<String>()
-                            .into(),
-                    ));
-                }
-                let options = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let (alphabet, omit_padding) = self.base64_encode_options(p, options)?;
-                self.ensure_array_buffer_attached(p, buffer)?;
-                let bytes = self.uint8_base64_bytes(this, length);
-                let mut encoded = encode_base64(&bytes, alphabet);
-                if omit_padding {
-                    encoded.truncate(encoded.trim_end_matches('=').len());
-                }
-                Ok(self.heap.alloc_string(encoded.into()))
-            }
-            _ => unreachable!("base64 native dispatch is exhaustive"),
-        }
-    }
-
     fn uint8_base64_bytes(&mut self, view: Value, length: usize) -> Vec<u8> {
         (0..length)
             .filter_map(|index| {
@@ -241,6 +145,103 @@ impl Vm {
             None => Err(self.type_error(p, "Uint8Array option must be a string".into())),
         }
     }
+}
+
+/// The entry of each base64 and hex method of `Uint8Array`, by its native.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::Uint8ArrayFromBase64 | Native::Uint8ArrayFromHex => Some(uint8_array_from_base64_or_hex),
+        Native::Uint8ArraySetFromBase64 | Native::Uint8ArraySetFromHex => Some(uint8_array_set_from_base64_or_hex),
+        Native::Uint8ArrayToBase64 | Native::Uint8ArrayToHex => Some(uint8_array_to_base64_or_hex),
+        _ => None,
+    }
+}
+
+fn uint8_array_from_base64_or_hex(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let input =
+        vm.base64_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    let decoded = if native == Native::Uint8ArrayFromBase64 {
+        let options = vm.base64_decode_options(p, args.get(1).copied())?;
+        decode_base64(&input, options, usize::MAX)
+    } else {
+        decode_hex(&input, usize::MAX)
+    };
+    if decoded.failed {
+        return vm.syntax_error_result(p, "invalid base64/hex input");
+    }
+    let native_uint8_array = vm.native_value(Native::Uint8Array);
+    let target = vm.construct_value(
+        p,
+        native_uint8_array,
+        &[Value::number(decoded.bytes.len() as f64)],
+    )?;
+    vm.validate_typed_array_result(p, target, decoded.bytes.len(), true)?;
+    for (index, byte) in decoded.bytes.into_iter().enumerate() {
+        vm.typed_array_set(p, target, index, Value::number(byte as f64))?;
+    }
+    Ok(target)
+}
+
+fn uint8_array_set_from_base64_or_hex(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, length) = vm.uint8_base64_receiver(p, this)?;
+    let input =
+        vm.base64_input(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    if matches!(
+        vm.heap.get(buffer),
+        Some(Cell::ArrayBuffer {
+            immutable: true,
+            ..
+        })
+    ) {
+        return Err(vm.type_error(p, "Uint8Array buffer is immutable".into()));
+    }
+    let decoded = if native == Native::Uint8ArraySetFromBase64 {
+        let options = vm.base64_decode_options(p, args.get(1).copied())?;
+        vm.ensure_array_buffer_attached(p, buffer)?;
+        decode_base64(&input, options, length)
+    } else {
+        vm.ensure_array_buffer_attached(p, buffer)?;
+        decode_hex(&input, length)
+    };
+    for (index, byte) in decoded.bytes.iter().copied().enumerate() {
+        vm.typed_array_set(p, this, index, Value::number(byte as f64))?;
+    }
+    if decoded.failed {
+        return vm.syntax_error_result(p, "invalid base64/hex input");
+    }
+    let result = vm.object();
+    vm.set_named(p, result, "read", Value::number(decoded.read as f64))?;
+    vm.set_named(
+        p,
+        result,
+        "written",
+        Value::number(decoded.bytes.len() as f64),
+    )?;
+    Ok(result)
+}
+
+fn uint8_array_to_base64_or_hex(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, length) = vm.uint8_base64_receiver(p, this)?;
+    if native == Native::Uint8ArrayToHex {
+        vm.ensure_array_buffer_attached(p, buffer)?;
+        let bytes = vm.uint8_base64_bytes(this, length);
+        return Ok(vm.heap.alloc_string(
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                .into(),
+        ));
+    }
+    let options = args.first().copied().unwrap_or(Value::UNDEFINED);
+    let (alphabet, omit_padding) = vm.base64_encode_options(p, options)?;
+    vm.ensure_array_buffer_attached(p, buffer)?;
+    let bytes = vm.uint8_base64_bytes(this, length);
+    let mut encoded = encode_base64(&bytes, alphabet);
+    if omit_padding {
+        encoded.truncate(encoded.trim_end_matches('=').len());
+    }
+    Ok(vm.heap.alloc_string(encoded.into()))
 }
 
 fn alphabet_value(alphabet: &[u8; 64], byte: u8) -> Option<u32> {
