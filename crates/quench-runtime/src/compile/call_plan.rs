@@ -121,7 +121,13 @@ fn method_plan(facts: &AotFacts, signatures: &Signatures, caller: u32, pc: u32, 
         return None;
     }
     let ids = classes.ids();
-    let arms = class_arms(ids, |class| facts.cell(FactKey::Field { class, instance: true, atom })?.ty.body_index())?;
+    // A class's instances take one header only where its layout is proven (`class_layout`): the header its first
+    // construction records (`Vm::record_class_header`) then names the class of every receiver, so a class whose
+    // instances can reshape keeps the site's own path.
+    let arms = class_arms(ids, |class| {
+        facts.class_layout(class)?;
+        facts.cell(FactKey::Field { class, instance: true, atom })?.ty.body_index()
+    })?;
     let keys: Vec<FactKey> = ids.iter().map(|&class| FactKey::Field { class, instance: true, atom }).collect();
     let miss = miss_of(&keys, |key| facts.live(key));
     let form = form_of(&arms, &inlinable, |function| signatures.of(function));

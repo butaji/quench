@@ -333,6 +333,33 @@ pub struct LaneView {
     pub name_records: Box<[u32]>,
     /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
     pub proven_counters: Box<[(u32, u16)]>,
+    /// The method call sites whose receiver's class union is closed (`PlannedSite`), by pc. A record names its site by
+    /// `LaneInstruction::mode`, which points into this table, so the table never moves once the view holds it.
+    pub planned_calls: Box<[PlannedSite]>,
+}
+
+/// A call site dispatched on its receiver's class header (`planned_call_row`): one arm per class of the closed
+/// receiver union its plan names, in the plan's order.
+pub struct PlannedSite {
+    pub pc: u32,
+    pub arms: Box<[PlannedArm]>,
+}
+
+/// One class of a planned site: the function its method is (`function`), the class's header cell
+/// (`ProgramStore::class_header`, 0 until its first construction records it) and the target the
+/// arm's first call resolved (`PlannedTarget`).
+pub struct PlannedArm {
+    pub function: u32,
+    pub header: *const std::cell::Cell<u32>,
+    pub target: std::cell::Cell<PlannedTarget>,
+}
+
+/// The script call target an arm's calls enter, with the `ScriptTargets::epoch` it was resolved at. Valid while
+/// that epoch holds; a null target is no resolution yet.
+#[derive(Clone, Copy)]
+pub struct PlannedTarget {
+    pub epoch: u32,
+    pub target: *const ScriptCallTarget,
 }
 
 /// The state every compiled function receives. Field offsets are the ABI
@@ -1185,13 +1212,17 @@ pub type ScriptGeneration = u32;
 /// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
 /// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
 /// Entry pointers (`Vm::script_call_entry`) are not held across a resolution, which is
-/// where it grows.
+/// where it grows. A planned call arm holds one across calls (`PlannedTarget`), so every event that
+/// moves, replaces or un-proves an entry advances `epoch`, which retires the arm's pointer.
 pub struct ScriptTargets {
     pub entries: Box<[ScriptCallTarget]>,
     /// Live targets displaced from their set since it last grew.
     pub displaced: usize,
     /// The hash shift of its sets (`shape_memo::direct_mapped_shift`), derived with its size.
     pub set_shift: u32,
+    /// Advanced by every event that changes what an entry holds or where it lives: a resolution
+    /// that writes one, a growth, a clear, a proof withdrawn. Kept across growth.
+    pub epoch: u32,
 }
 
 /// What a function's body fixes about a frameless call target of it
@@ -3934,6 +3965,7 @@ impl ScriptTargets {
             entries: vec![EMPTY_SCRIPT_CALL_TARGET; len].into_boxed_slice(),
             displaced: 0,
             set_shift: crate::vm::shape_memo::direct_mapped_shift(len / SCRIPT_TARGET_WAYS),
+            epoch: 0,
         }
     }
 }
@@ -5094,6 +5126,7 @@ impl ScriptTargets {
     pub fn clear(&mut self) {
         self.entries.fill(EMPTY_SCRIPT_CALL_TARGET);
         self.displaced = 0;
+        self.epoch = self.epoch.wrapping_add(1);
     }
 }
 

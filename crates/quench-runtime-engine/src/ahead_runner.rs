@@ -24,9 +24,10 @@ use quench_runtime::vm::ProgramId;
 pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
     let facts = vm.programs.aot_facts(program);
+    let planned = vm.programs.planned_call_sites(program, function);
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
         crate::compiled::admission::record_plan(crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY)),
-        vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref());
+        vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
     view
@@ -76,6 +77,8 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
         osr_rejections: None,
         field_records: Box::new([]),
         name_records: Box::new([]),
+        proven_counters: Box::new([]),
+        planned_calls: Box::new([]),
     }
 }
 

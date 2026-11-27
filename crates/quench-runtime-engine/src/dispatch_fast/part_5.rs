@@ -159,9 +159,12 @@ pub(crate) fn derive_lane_view<'live>(
     diagnostics: bool,
     tiers: &'static Tiers,
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
+    planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
     // The receiver fact picks the trusted forms of the rows that read `this` (`receiver_trusted`, `trust_this_rows`).
     let this_trusted = receiver_trusted(facts, function_id);
+    // Boxed before the records name it: a planned record's `mode` points at its site, which the view keeps in place.
+    let planned = planned.into_boxed_slice();
     let loop_tier = plan.loop_sites;
     // A returning call is admitted by its function's strictness alone (`returning_call_admitted`), fixed here.
     let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(function.strict);
@@ -432,7 +435,7 @@ pub(crate) fn derive_lane_view<'live>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_constant_returns(&mut records);
-        specialize_script_calls(&mut records, function.undefined_register, admits_returns);
+        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned);
         specialize_proved_arrays(&decoded, &mut records);
     }
     // Adjacent generated rows the staged pair list names run as one generated record.
@@ -572,6 +575,7 @@ pub(crate) fn derive_lane_view<'live>(
         field_records,
         name_records,
         proven_counters: proven_counters.into_boxed_slice(),
+        planned_calls: planned,
     }
 }
 
