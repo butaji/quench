@@ -5,9 +5,10 @@
 //! program: each call site weighs `LOOP_WEIGHT` per loop it sits in, a recursive call cycle weighs as a
 //! loop, and the weights propagate from callers to callees. Owner: AOT facts.
 
-use crate::bytecode::{loop_depth, Function, ResidualProgram};
+use crate::bytecode::{loop_depth, Function, Op, RegExpLiteralSite, ResidualProgram};
 use crate::staged::meaning::{means, Meaning};
 use super::aot_facts::AotFacts;
+use rustc_hash::FxHashMap;
 
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
@@ -36,6 +37,9 @@ pub struct CallGraph {
     /// Per function, the instructions of every function its calls reach (itself included), each counted once per
     /// path; `UNBOUNDED` where a call cycle or a call with no named callee is reached, so depth below it is unbounded.
     stack_subtree: Box<[u64]>,
+    /// Per regexp literal site (`ResidualProgram::regexp_literal_sites`), the static frequency of its pattern
+    /// (`regexp_site_frequencies`).
+    regexp_sites: Box<[u64]>,
 }
 
 /// What one scan of the program's bodies reads of its call sites.
@@ -64,6 +68,7 @@ impl CallGraph {
         let (cycle, cycles) = cycle_table(&callees, &components);
         let frequency = frequencies(&callees, &components, &scan.callers);
         let stack_subtree = stack_subtrees(&callees, &cycle, &scan.unnamed, &scan.size);
+        let regexp_sites = regexp_site_frequencies(program, &frequency);
         Self {
             cycle,
             cycles,
@@ -72,7 +77,14 @@ impl CallGraph {
             sites: scan.named.into_boxed_slice(),
             closed: facts.closed(),
             stack_subtree,
+            regexp_sites,
         }
+    }
+
+    /// The static frequency of the pattern regexp literal site `site` creates: the sum of `frequency` over the
+    /// functions whose bodies create a literal of that pattern and flags (`regexp_site_frequencies`); 0 where none does.
+    pub fn regexp_site_frequency(&self, site: usize) -> u64 {
+        self.regexp_sites.get(site).copied().unwrap_or(0)
     }
 
     /// The instructions of the functions `function`'s calls reach, when they are a finite acyclic set of named
@@ -153,6 +165,31 @@ fn scan_body(scan: &mut Scan, function: usize, body: &Function, facts: &AotFacts
 
 /// The call cycles of the components: each component that is one (`is_cycle`), as its members, and the index of
 /// its cycle per function.
+/// Per regexp literal site of `program`, the static frequency of its pattern: each function whose body creates a
+/// literal of the pattern (`Op::CreateRegExpLiteral` at a site with the same pattern and flags constants) adds its
+/// `frequency` once, saturating. The creating functions stand for the pattern's exec sites: a regexp that a function
+/// receives from elsewhere is counted where it was created.
+fn regexp_site_frequencies(program: &ResidualProgram, frequency: &[u64]) -> Box<[u64]> {
+    let pattern = |site: &RegExpLiteralSite| (site.pattern_constant, site.flags_constant);
+    let mut by_pattern: FxHashMap<(u32, u32), u64> = FxHashMap::default();
+    for function in 0..program.function_count() {
+        let Some(body) = program.function_get(function) else { continue };
+        let mut created: Vec<(u32, u32)> = Vec::new();
+        for instruction in body.instructions().filter(|instruction| instruction.op() == Op::CreateRegExpLiteral) {
+            if let Some(site) = program.regexp_literal_sites.get(instruction.regexp_literal_site_index()) {
+                if !created.contains(&pattern(site)) {
+                    created.push(pattern(site));
+                }
+            }
+        }
+        for key in created {
+            let total = by_pattern.entry(key).or_insert(0);
+            *total = total.saturating_add(frequency[function]);
+        }
+    }
+    program.regexp_literal_sites.iter().map(|site| by_pattern.get(&pattern(site)).copied().unwrap_or(0)).collect()
+}
+
 fn cycle_table(callees: &[Box<[usize]>], components: &[Vec<usize>]) -> (Box<[u32]>, Box<[Box<[u32]>]>) {
     let mut cycle = vec![NO_CYCLE; callees.len()];
     let mut cycles: Vec<Box<[u32]>> = Vec::new();

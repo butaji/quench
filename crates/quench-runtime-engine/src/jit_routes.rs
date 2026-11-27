@@ -21,8 +21,8 @@ pub(crate) struct JitRoutes {
     pub(crate) numeric: crate::js_compiled::NumericStart,
     /// A Wasm program's code (`compile_program_with_diagnostics_and_root_mode`).
     pub(crate) wasm: crate::compiled::WasmCompile,
-    /// The compiler of hot regexp programs (`regexp_native::enable`).
-    pub(crate) regexp: fn(bool, (u32, u32)),
+    /// The compiler of regexp programs (`regexp_native::enable`).
+    pub(crate) regexp: fn(bool),
     /// The lane's fusion passes, which name every fused and chain row.
     pub(crate) fuse: LaneFusion,
 }

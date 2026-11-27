@@ -1910,6 +1910,10 @@ pub(crate) struct RegExpMeta {
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
     pub(crate) matcher: RegExpMatcher,
+    /// The static frequency of the literal site that made this record (`CallGraph::regexp_site_frequency`); 0 for a
+    /// pattern built at run time, which no static site makes. Added to the shared matcher when it is attached
+    /// (`Vm::regexp_matcher`).
+    pub(crate) static_frequency: u64,
 }
 
 /// A RegExp's compiled matcher, or none yet: a RegExp restored from a snapshot compiles its

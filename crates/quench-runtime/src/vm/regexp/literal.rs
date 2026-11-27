@@ -78,11 +78,13 @@ impl Vm {
         // matcher compiles on the first match (`Vm::regexp_matcher`), as a snapshot's
         // patterns do: a module evaluates every literal it holds, and most never run
         // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
+        let static_frequency = self.programs.call_graph(program).map_or(0, |graph| graph.regexp_site_frequency(site_index));
         let meta = Rc::new(crate::heap::RegExpMeta {
             source,
             flags: RegExpFlags::validated(flags),
             legacy_constructor: owner,
             matcher: crate::heap::RegExpMatcher::default(),
+            static_frequency,
         });
         if !self.programs.cache_regexp_literal_meta(program, site_index, Rc::clone(&meta)) {
             return Err(JsError::validation("RegExp literal cache site is invalid".into()));
