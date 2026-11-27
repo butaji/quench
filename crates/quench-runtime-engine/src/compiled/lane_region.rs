@@ -3009,8 +3009,29 @@ impl Lowering<'_, '_> {
     }
 
     /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or
-    /// writes, where `instruction` is one.
+    /// writes, where `instruction` is one and the solver names the closed set of classes that object
+    /// is of (`solved_classes`): an access the solver names no set for owns no hoisted record.
     fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
+        self.solved_classes(pc)?;
+        self.accessed_register(pc, instruction)
+    }
+
+    /// The closed set of classes the solver names for the object the access at unit PC `pc` reads or
+    /// stores (`FunctionFacts::access_classes`, of the function the unit's origin of `pc` is from). The
+    /// one source of which class an access reads: the AOT loads (`ahead_images::fields`) read it too.
+    fn solved_classes(&self, pc: usize) -> Option<quench_runtime::typed_ir::Classes> {
+        let facts = self.vm.closed?;
+        let (function, pc) = match *self.unit.origins.get(pc)? {
+            super::lane_unit::Origin::Caller(pc) => (self.function_id, pc),
+            super::lane_unit::Origin::Inlined { frame, pc } => (self.unit.frames.get(frame)?.target.function, pc),
+        };
+        let classes = facts.function_facts(function).access_classes(pc);
+        matches!(classes, quench_runtime::typed_ir::Classes::Set { .. }).then_some(classes)
+    }
+
+    /// The register (or `unit.registers` for `this`) the field access at `pc` reads or writes, where
+    /// `instruction` is one, by its operands alone (`field_owner` decides whether the solver names its class).
+    fn accessed_register(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
         let count = usize::from(self.unit.registers);
         match () {
             // A native method's read folds to its holder's function whatever its receiver (`fold_native_member`):
