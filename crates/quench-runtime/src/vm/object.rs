@@ -2264,10 +2264,8 @@ impl Vm {
     /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
     /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
     /// where the store gate is closed (slot representations are tracked, or the barrier would log
-    /// the value), the plain append that observes the write, then the append into a learned
-    /// receiver's reserved run past its length's class (`Heap::record_property_append_reserved`,
-    /// `preshaped_receiver`), else the add that moves storage or allocates
-    /// (`Heap::record_property_add_moving`).
+    /// the value), the plain append that observes the write, else the add that moves storage or
+    /// allocates (`Heap::record_property_add_moving`).
     #[inline(always)]
     fn add_by_transition(&mut self, object: Value, transition: Transition, value: Value) {
         // A live class cell adds in place where the field fits its capacity (R4-C4: the class edge
@@ -2298,9 +2296,6 @@ impl Vm {
         if self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
             && self.heap.record_property_append_plain(record_id, slot, value, shape)
         {
-            return;
-        }
-        if self.heap.record_property_append_reserved(record_id, slot, value, shape) {
             return;
         }
         // The add moves the run: reserve the size the shape tree predicts for it, so the
