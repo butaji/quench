@@ -129,7 +129,10 @@ impl Heap {
         if slot >= region_capacity(granule) as usize {
             return false;
         }
-        // The field's word under the after-shape, the shape the add's slot belongs to.
+        // The add observes its value under the after-shape, the shape the add's slot belongs to, before the
+        // field's word is taken: a widening rewrites the words already held, then this one is converted.
+        self.properties.note_shape_value(after, slot, value);
+        self.rewrite_widened_numbers();
         let word = self.properties.stored_word(after, slot, value);
         self.class_cell_store(granule, slot, word);
         let class = header_class(self.class_space.header(granule));
