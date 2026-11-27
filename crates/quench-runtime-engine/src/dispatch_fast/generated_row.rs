@@ -254,7 +254,7 @@ lane_handler! {
                     let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
                     if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                     let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
-                    frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
+                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
                         machine.heap_reads().live_object_records() as u64));
                 } else {
                 let code = unsafe { &*(*script).code };

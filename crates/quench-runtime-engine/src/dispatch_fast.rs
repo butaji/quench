@@ -4710,7 +4710,7 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
 /// hint's form through `own_form_index`, which folds `FLOAT_SLOTS` at this requicken.
 fn nested_hop_class(layout: u32) -> Option<usize> {
     match own_form_index(Some(layout)) {
-        1 | 6 => Some(0),
+        6 => Some(0),
         3 => Some(1),
         _ => None,
     }
@@ -4926,6 +4926,8 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(crate) const fn own_site_decodes(site: u8) -> bool {
+    // A formed nested read's hops are flat runs of tagged words or packed values (`nested_hop_class`).
+    if nested_site(site) && site != NESTED_SITE { return false; }
     if held_site(site) || site == STRING_SITE || site == NUMBER_SITE || inherited_site(site) || own_constant_site(site) || length_site(site)
         || host_read_site(site) || private_field_site(site) || cached_field_site(site) { return false; }
     let form = own_site_form(site);
@@ -5746,18 +5748,22 @@ unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneI
         || entry.receiver != record.exact_shape() {
         return;
     }
-    let second = machine.form_hint(entry, first);
-    let (Some(first_class), Some(second_class)) = (nested_hop_class(hint.receiver), nested_hop_class(second.receiver)) else { return };
+    // Each hop's class is its object's layout's (a flat run of tagged words or packed inline values,
+    // `nested_hop_class`), whose words the row then reads with no decode (`own_site_decodes`).
+    let Some(base) = (unsafe { field_base_in_lane(cx, r, site.base) }) else { return };
+    let Some(base_record) = machine.heap_reads().record_object_value(base) else { return };
+    let second_layout = record.layout_id();
+    let (Some(first_class), Some(second_class)) = (nested_hop_class(base_record.layout_id()), nested_hop_class(second_layout)) else { return };
     // A loop header keeps its site in the record, and a header's `mode` is the loop's: it keeps the generic row.
     if holds_loop_site(ip) { return; }
     // The formed row reads its second hop and base from the record (`nested_mode`), not from the site
     // and the cache: the hops' guards are the check, so a stale word only misses.
     // SAFETY: as `requicken`; an unfused field record's `mode` is zero and no fusion names it.
-    unsafe { (*ip.cast_mut()).mode = nested_mode(entry.receiver, entry.slot, site.base) };
+    unsafe { (*ip.cast_mut()).mode = nested_mode(second_layout, entry.slot, site.base) };
     requicken(ip, nested_formed_handler(first_class, second_class));
 }
 
-/// The `mode` word of a formed nested record: the second hop's layout id (bits 0..32) and slot
+/// The `mode` word of a formed nested record: the intermediate object's layout id (bits 0..32) and its slot
 /// (32..48), and the site's base (48..64), which the formed row reads with no site or cache lookup.
 const fn nested_mode(layout: u32, slot: u16, base: quench_runtime::bytecode::FieldBase) -> u64 {
     layout as u64 | (slot as u64) << 32 | (base.0 as u64) << 48

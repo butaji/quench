@@ -661,7 +661,7 @@ pub(crate) struct RecordPlan {
     /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout, slot and the storage
     /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
     /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
-    nested: Option<([(u32, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
+    nested: Option<([(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
     /// A read the frame's host answers (`FieldPlan::Geometry`, `FieldPlan::Length`), which addresses
     /// no record: the receiver's word is its operand. `None` for every other plan.
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
@@ -838,9 +838,24 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn nested(first: (u32, u16, Form), second: (u32, u16, Form), base: quench_runtime::bytecode::FieldBase,
         records: u64) -> Self {
-        let none = quench_runtime::staged::ic::IcOp::GuardLayout(first.0);
+        use quench_runtime::staged::ic::IcOp;
+        let none = IcOp::GuardLayout(first.0);
+        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardShape(second.0), second.1, second.2)];
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some(([first, second], base)), host: None, entry: None, own: None }
+            nested: Some((hops, base)), host: None, entry: None, own: None }
+    }
+
+    /// `nested` whose second hop is the intermediate object's layout id `layout` in the fixed `form`
+    /// (`IcOp::GuardFormed`): one compare of the record's own word proves its shape and form, so the hop
+    /// reads its slot untested (`requicken_nested` stamped the id).
+    #[inline(always)]
+    pub(crate) fn nested_formed(first: (u32, u16, Form), (layout, slot, form): (u32, u16, Form),
+        base: quench_runtime::bytecode::FieldBase, records: u64) -> Self {
+        use quench_runtime::staged::ic::IcOp;
+        let mut plan = Self::nested(first, (layout, slot, form), base, records);
+        let bits = if matches!(form, Form::Packed) { quench_runtime::value_vec::INLINE_FORM } else { 0 };
+        if let Some((hops, _)) = plan.nested.as_mut() { hops[1].0 = IcOp::GuardFormed { id: layout, form: bits }; }
+        plan
     }
 
     /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
@@ -857,7 +872,7 @@ impl RecordPlan {
 pub(crate) struct LanePlans {
     read: Option<([quench_runtime::staged::ic::IcOp<'static>; 2], usize)>,
     store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    nested: Option<[(u32, u16, Form); 2]>,
+    nested: Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]>,
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
     entry: Option<quench_runtime::staged::property::EntryKind>,
     own: Option<(u32, u16)>,
@@ -877,7 +892,7 @@ impl quench_runtime::staged::property::PlanSource for LanePlans {
     }
     /// A nested read's two own hops, as the record holds them.
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16, Form); 2]> { self.nested }
+    fn nested_hops(&self) -> Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]> { self.nested }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<quench_runtime::staged::property::StorePlan<'_>> {
         // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
