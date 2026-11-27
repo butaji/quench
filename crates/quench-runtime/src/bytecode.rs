@@ -3450,15 +3450,11 @@ impl Function {
     /// runs only before any pass reads the object a materialized frame made on entry, from
     /// the same kept values (one-frame-one-call.md F6 (d)).
     fn arguments_passed_last(&self, instructions: &[WideInstruction], slot: u16, passes: &[usize]) -> bool {
-        let successors = (!self.handlers.is_empty()).then(|| Successors::of(self, instructions));
-        let successors_of = |pc: usize, work: &mut Vec<usize>| match &successors {
-            Some(successors) => work.extend(successors.at(pc).map(|(next, _)| next)),
-            None => crate::bytecode::for_each_instruction_successor(pc, instructions[pc], |next| work.push(next)),
-        };
+        let successors = Successors::of_code(self);
         let mut reached = crate::bitset::BitSet::new(instructions.len());
         let mut work = Vec::new();
         for &pass in passes {
-            successors_of(pass, &mut work);
+            work.extend(successors.at(pass).map(|(next, _)| next));
         }
         while let Some(pc) = work.pop() {
             let Some(instruction) = instructions.get(pc) else {
@@ -3470,7 +3466,7 @@ impl Function {
             if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
                 return false;
             }
-            successors_of(pc, &mut work);
+            work.extend(successors.at(pc).map(|(next, _)| next));
         }
         true
     }
