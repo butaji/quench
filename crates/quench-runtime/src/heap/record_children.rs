@@ -99,8 +99,8 @@ impl Heap {
         let properties = &self.properties;
         // SAFETY: the caller names live records; each arm reads a live record of its family.
         unsafe {
-            if let Some(id) = value.direct_object_index() {
-                self.object_records.get_live(id).extend_children(properties, out);
+            if let Some(object) = value.direct_object_index() {
+                self.object_records.get_live(self.record_id(object)).extend_children(properties, out);
             } else if let Some(id) = value.direct_array_index() {
                 self.array_records.get_live(id).extend_children(properties, out);
             } else if let Some(id) = value.direct_function_index() {

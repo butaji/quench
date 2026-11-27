@@ -1353,7 +1353,8 @@ impl Heap {
         // A flag, not an edge: no write barrier for record prototypes.
         match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            Some(record_id) => {
+            Some(object_ref) => {
+                let record_id = self.record_id(object_ref);
                 let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
                 // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
                 access::widen_narrow_run(object, &mut self.properties);
@@ -1759,9 +1760,10 @@ impl Heap {
     /// store into the payload word without the general path's tests.
     #[inline(always)]
     pub(crate) fn fill_new_object_slot(&mut self, object: Value, slot: usize, value: Value) {
-        let Some(record_id) = object.direct_object_index() else {
+        let Some(object_ref) = object.direct_object_index() else {
             return self.property_set(object, slot, value);
         };
+        let record_id = self.record_id(object_ref);
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
@@ -2386,7 +2388,7 @@ impl Heap {
             ..
         } = self;
         for (_, owner) in owners {
-            let object = if let Some(record_id) = owner.direct_object_index() {
+            let object = if let Some(record_id) = owner.direct_object_index().map(|object| object.raw()) { // R4-B2b: needs heap (`self` is destructured above)
                 // SAFETY: direct owners were collected from live marked records.
                 Some(unsafe { object_records.get_live_mut_unbarriered(record_id) })
             } else if let Some(record_id) = owner.direct_array_index() {
@@ -2686,7 +2688,10 @@ impl Heap {
                 // Value, so no proof can name another object by it, as a class
                 // declared in a hot function leaves one dead prototype per call.
                 match prototype.direct_object_index() {
-                    Some(id) => withheld = self.object_records.withhold(id),
+                    Some(object_ref) => {
+                        let record_id = self.record_id(object_ref);
+                        withheld = self.object_records.withhold(record_id);
+                    }
                     None => died_unrecorded = true,
                 }
             }
@@ -3943,7 +3948,8 @@ impl Heap {
     where
         R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     {
-        if let Some(record_id) = value.direct_object_index() {
+        if let Some(object_ref) = value.direct_object_index() {
+            let record_id = self.record_id(object_ref);
             if !self.object_records.mark(record_id) {
                 return;
             }
@@ -4889,7 +4895,8 @@ impl Heap {
     /// is disjoint from the owner.
     #[inline(always)]
     pub fn property_add(&mut self, object: Value, value: Value, shape: u32) {
-        let _slot = if let Some(record_id) = object.direct_object_index() {
+        let _slot = if let Some(object_ref) = object.direct_object_index() {
+            let record_id = self.record_id(object_ref);
             let Self {
                 object_records,
                 properties,
@@ -4924,9 +4931,10 @@ impl Heap {
     /// (`ValueArena::grow`); zero takes the next class.
     #[inline(always)]
     fn record_property_add_wanting(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
-        let Some(record_id) = object.direct_object_index() else {
+        let Some(object_ref) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
+        let record_id = self.record_id(object_ref);
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
@@ -4979,6 +4987,7 @@ impl Heap {
 
     #[cfg(feature = "profile-memory")]
     fn profile_allocation(&mut self, identity: Value) {
+        let object_id = identity.direct_object_index().map(|object| self.record_id(object));
         let Self {
             object_records,
             array_records,
@@ -4993,7 +5002,7 @@ impl Heap {
             memory_profile,
             ..
         } = self;
-        if let Some(record_id) = identity.direct_object_index() {
+        if let Some(record_id) = object_id {
             // SAFETY: called immediately after insertion into the direct space.
             let object = unsafe { object_records.get_live(record_id) };
             memory_profile.allocated_object(identity, object, properties.len(object.properties()));

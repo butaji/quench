@@ -15,11 +15,11 @@ use super::*;
 /// The record space of a counted value and its id there (`RecordSpaceId`, the family numbering
 /// `Heap::record_families` shares).
 #[inline(always)]
-fn locate(value: Value) -> Option<(RecordSpaceId, RecordId)> {
+fn locate(heap: &Heap, value: Value) -> Option<(RecordSpaceId, RecordId)> {
     if !value.is_heap() {
         None
-    } else if let Some(id) = value.direct_object_index() {
-        Some((RecordSpaceId::Object, id))
+    } else if let Some(object) = value.direct_object_index() {
+        Some((RecordSpaceId::Object, heap.record_id(object)))
     } else if let Some(id) = value.direct_array_index() {
         Some((RecordSpaceId::Array, id))
     } else if let Some(id) = value.direct_function_index() {
@@ -143,7 +143,7 @@ impl Heap {
         }
         for_each_space_mut!(self, |space, _handle| space.rc_ensure());
         for &value in values {
-            if let Some((family, id)) = locate(value) {
+            if let Some((family, id)) = locate(self, value) {
                 with_space!(self, family, |space| space.rc_pin(id));
             }
         }
@@ -176,14 +176,14 @@ impl Heap {
     /// Increments the count of `value` if it is a record.
     #[inline(always)]
     pub(super) fn rc_increment(&self, value: Value) {
-        if let Some((family, id)) = locate(value) {
+        if let Some((family, id)) = locate(self, value) {
             with_space!(self, family, |space| space.rc_increment(id));
         }
     }
 
     /// Decrements the count of `value` if it is a record; whether it reached 0.
     fn rc_decrement(&self, value: Value) -> bool {
-        match locate(value) {
+        match locate(self, value) {
             Some((family, id)) => with_space!(self, family, |space| space.rc_decrement(id)),
             None => false,
         }
@@ -191,12 +191,12 @@ impl Heap {
 
     /// The count of record `value`, if it is one.
     fn rc_count_of(&self, value: Value) -> Option<u8> {
-        locate(value).map(|(family, id)| with_space!(self, family, |space| space.rc_count(id)))
+        locate(self, value).map(|(family, id)| with_space!(self, family, |space| space.rc_count(id)))
     }
 
     /// Whether record `value` is old: marked between collections.
     fn rc_is_old(&self, value: Value) -> bool {
-        locate(value).is_some_and(|(family, id)| with_space!(self, family, |space| space.is_marked(id)))
+        locate(self, value).is_some_and(|(family, id)| with_space!(self, family, |space| space.is_marked(id)))
     }
 
     /// Increments the counts of the record children of each of `owners`.
@@ -247,7 +247,7 @@ impl Heap {
                 break;
             }
             for &value in &batch {
-                if let Some((family, id)) = locate(value) {
+                if let Some((family, id)) = locate(self, value) {
                     with_space!(self, family, |space| space.prefetch(id));
                 }
             }
@@ -258,7 +258,7 @@ impl Heap {
                     carried.append(&mut zero);
                     break 'cascade;
                 }
-                let Some((family, id)) = locate(value) else { continue };
+                let Some((family, id)) = locate(self, value) else { continue };
                 if !with_space!(self, family, |space| space.is_live(id) && space.rc_count(id) == 0) {
                     continue;
                 }
@@ -301,7 +301,7 @@ impl Heap {
     /// young cell or one the barrier logged, which the mark traces anyway. So each record
     /// child left unmarked is pushed, with no set of the candidates to test.
     fn rc_pin_cell_references(&self, work: &mut Vec<Value>) {
-        let unmarked = |value: &Value| locate(*value).is_some() && !self.rc_is_old(*value);
+        let unmarked = |value: &Value| locate(self, *value).is_some() && !self.rc_is_old(*value);
         let mut held = Vec::new();
         let mut last_proto = PushedProtos::default();
         for (index, slot) in self.slots.iter().enumerate() {
@@ -525,7 +525,7 @@ impl Heap {
             family.for_each_live_id(&mut |id| {
                 self.rc_children(handle(id), &mut children);
                 for child in children.drain(..) {
-                    if locate(child).is_some() {
+                    if locate(self, child).is_some() {
                         *references.entry(child).or_default() += 1;
                     }
                 }
@@ -535,7 +535,7 @@ impl Heap {
         for (family, handle) in self.record_families() {
             family.for_each_live_id(&mut |id| {
                 let value = handle(id);
-                let (family, id) = locate(value).expect("a record");
+                let (family, id) = locate(self, value).expect("a record");
                 let count = with_space!(self, family, |space| space.rc_exact_count(id));
                 let held = references.get(&value).copied().unwrap_or(0);
                 if count != u32::MAX && count as usize != held {

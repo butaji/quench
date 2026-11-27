@@ -434,7 +434,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     let value = heap.alloc_object(plain_object());
 
     assert_eq!(map.legacy_heap_index(), Some(0));
-    assert_eq!(key.direct_object_index(), Some(0));
+    assert_eq!(key.direct_object_index().map(|object| heap.record_id(object)), Some(0));
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
@@ -601,7 +601,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     drop(shared);
 
     assert!(first.direct_array_index().is_some());
-    assert_eq!(object.direct_object_index(), Some(0));
+    assert_eq!(object.direct_object_index().map(|object| heap.record_id(object)), Some(0));
     assert_eq!(first.direct_array_index(), Some(0));
     assert_ne!(object, first);
     assert!(heap.array(object).is_none());

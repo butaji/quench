@@ -83,7 +83,8 @@ impl Object {
     #[inline(always)]
     pub(super) fn encode_proto(proto: Value) -> u32 {
         match proto.direct_object_index() {
-            Some(id) if (id as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + id,
+            // R4-B2b: needs heap (static encoder; no heap reachable from its callers).
+            Some(object) if (object.raw() as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + object.raw(),
             _ => Self::encode_other_proto(proto),
         }
     }

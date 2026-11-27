@@ -98,9 +98,10 @@ impl Heap {
     /// receiver of another layout, or a nursery without the room.
     pub(crate) fn reserve_receiver_run(&mut self, object: Value, template: u32, header: InlineObjectHeader, slots: usize) -> bool {
         // As `alloc_planned_object`, an aggregate profile takes no young run for a new object.
-        let Some(record_id) = object.direct_object_index().filter(|_| !cfg!(feature = "profile-aggregate")) else {
+        let Some(object_ref) = object.direct_object_index().filter(|_| !cfg!(feature = "profile-aggregate")) else {
             return false;
         };
+        let record_id = self.record_id(object_ref);
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; nothing is stored, so the barrier
         // logs nothing.
