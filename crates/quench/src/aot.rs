@@ -126,7 +126,7 @@ pub fn execute_native_process_entry_restored(
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_restored(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
     let execution = runtime.execute_native_from_snapshot(std::rc::Rc::new(bootstrap), program, |host, reader| host.read_snapshot(reader));
     finish_native(runtime, program, execution)
 }
@@ -203,7 +203,7 @@ pub fn resume_native_process_entry(
         let (runtime, entry) = &mut *rest;
         drop(program);
         runtime.host_mut().adopt_process(host);
-        runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+        runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
         crate::host::resident_pages::phase_peak("saved wait mapped");
         let execution = runtime.resume_restored();
         crate::host::resident_pages::phase_peak("saved wait resumed");
@@ -211,7 +211,7 @@ pub fn resume_native_process_entry(
     }
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
     crate::host::resident_pages::phase_peak("saved wait runtime made");
     let restored = runtime.restore_native_at_rest(std::rc::Rc::new(wait.rest), &program, |host, reader| host.read_snapshot(reader));
     if restored.is_ok() && image_dump::requested_wait().is_some() {
@@ -229,7 +229,7 @@ fn execute_native_with_teardown(
     let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
     let execution = match bootstrap {
         Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
         None => runtime.execute_native_deferred_jobs(program),
