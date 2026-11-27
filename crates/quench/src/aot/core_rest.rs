@@ -1,20 +1,16 @@
-//! The core image's rest (C5 D1): the realm the image starts from, saved at build time, and the
-//! build-time probe that decides what the build saves (C5 D1b).
+//! The core image's rest: the build-time probe that decides what a core build keeps (C5 D1b), and
+//! the dump of the state a non-folding build keeps (C5 D2).
 //!
-//! The worker runs the entry's residual program on the closed world the image links: the builtin
-//! table and the engine entries of the same `ReachableRealm` and `ExecutionTableSpec` the catalog
-//! text is generated from (`compiler::write_builtin_table`, `compiler::write_execution_table`), so
-//! the realm it installs holds exactly the natives and families the image's `BUILTINS` names.
-//!
-//! What a core build keeps is one of two things, decided by `probe` before anything is saved:
+//! What a core build keeps is one of two things, decided by `probe` before anything is linked:
 //!
 //! * **Fold**: the entry reaches its end with no dynamic input (`prefix`, the same gate the Node
 //!   host runs its entries under). Nothing about the program is observable at run time, so the
 //!   image is the strict replay image (`strict::fold_image`): no realm, no program, no top level.
-//! * **Realm and program** (`build_rest`): the state after the realm is installed and the program
-//!   is loaded, before any of its top-level code runs. The image restores it (`image_driver_core`)
-//!   and runs the top level from there. Every program with an input lands here, as does one that
-//!   fails with no input.
+//! * **Realm and program** (`dump`): the state after the realm is installed and the program is
+//!   loaded, before any of its top-level code runs. The linked image runs once more with the dump
+//!   variable set, builds that state on its own closed world, and writes it as the dump it adopts
+//!   at each start (`image_driver_core::start_state`). Every program with an input lands here, as
+//!   does one that fails with no input.
 //!
 //! # Where a save point can be (the input handler and what it can capture)
 //!
@@ -45,9 +41,12 @@
 
 use super::prefix::{self, Residual};
 use quench_layers::engine::ExecutionTableSpec;
+use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED};
 use quench_runtime::tier_surface::Native;
 use quench_runtime::{BuiltinFamilies, BuiltinTable, ExecutionTable, ReachableRealm, ResidualProgram, Runtime, SystemHost};
-use std::{fs, path::Path};
+use serde_json::{json, Value};
+use std::path::Path;
+use std::process::Command;
 
 /// What the build-time probe of a core entry found (`probe`).
 pub(super) enum Reach {
@@ -86,14 +85,20 @@ pub(super) fn probe(program: &Path, realm: &ReachableRealm, execution: &Executio
     })
 }
 
-/// Saves the startup snapshot of `program` (the native entry's residual program) on the closed
-/// world of `realm` and `execution`, to `output`.
-pub(super) fn build_rest(program: &Path, output: &Path, realm: &ReachableRealm, execution: &ExecutionTableSpec) -> Result<(), String> {
-    let program = ResidualProgram::read_binary(program)?;
-    let (builtins, engine) = closed_tables(realm, execution);
-    let mut runtime = Runtime::new_static_with_builtins(SystemHost, builtins, engine);
-    let rest = runtime.build_snapshot(&program, |_, _| Ok(()))?;
-    fs::write(output, rest).map_err(|error| format!("{}: {error}", output.display()))
+/// Dumps the start state of the linked core `image` into `work`, which `report` names; none
+/// where it cannot be dumped.
+pub(super) fn dump(image: &Path, work: &Path, report: &mut Value) -> Vec<Dump> {
+    match image_dump::dump_image(image, work, &[Vec::new()], UNDUMPED, &|_: &mut Command| {}) {
+        Ok(dumps) => {
+            report["bootstrap"] = json!({"status": "dumped", "kind": "closed_world_state", "runs_entry_at_start": true,
+                "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes()})).collect::<Vec<_>>()});
+            dumps.into_iter().map(|(dump, _)| dump).collect()
+        }
+        Err(error) => {
+            report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});
+            Vec::new()
+        }
+    }
 }
 
 /// The closed world's tables, leaked for the run: the compile process runs its workers once and
