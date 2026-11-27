@@ -5,6 +5,7 @@
 //! host's handle table. The table owns the OpenSSL contexts; a weak root per entry lets the
 //! idle sweep release the state of objects the collector reclaimed.
 
+pub(crate) mod binding;
 pub(crate) mod cipher;
 pub(crate) mod clone;
 pub(crate) mod dh;
@@ -67,6 +68,8 @@ pub(crate) struct Intrinsics {
     webcrypto: RootId,
 }
 
+crate::host::startup_snapshot::host_snap_struct!(Intrinsics { handle, key_type, classes, module, webcrypto });
+
 /// The native state behind one guest object.
 pub(crate) enum Native {
     Cipher(Box<cipher::CipherState>),
@@ -115,12 +118,15 @@ impl State {
         entries.filter_map(|(index, handle)| handle.as_ref().filter(|handle| !is_live(handle.owner)).map(|_| index)).collect()
     }
 
-    pub(crate) fn write_snapshot(&self, _: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
-        let quiescent = self.live() == 0 && self.intrinsics.is_none();
-        crate::host::startup_snapshot::require_quiescent(quiescent, "crypto state")
+    /// A snapshot holds the module a preload built (its intrinsics), never a native handle:
+    /// the handle table must be empty, and a restored process starts its own.
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        crate::host::startup_snapshot::require_quiescent(self.live() == 0, "crypto state")?;
+        crate::host::startup_snapshot::HostSnap::write(&self.intrinsics, writer)
     }
 
-    pub(crate) fn read_snapshot(&mut self, _: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        self.intrinsics = crate::host::startup_snapshot::HostSnap::read(reader)?;
         Ok(())
     }
 }
@@ -134,6 +140,12 @@ pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError>
         exports::module(c)?;
     }
     state(c).borrow().crypto.intrinsics.ok_or_else(|| RootedError::host("crypto module is not initialized"))
+}
+
+/// Class `class`, once the module is built: every key and key class is the built module's,
+/// so a value is no key of a module not yet built.
+pub(crate) fn built_class(c: &mut Context<'_>, class: Class) -> Option<RootId> {
+    state(c).borrow().crypto.intrinsics.map(|intrinsics| intrinsics.classes[class as usize])
 }
 
 pub(crate) fn class(c: &mut Context<'_>, class: Class) -> Outcome {
@@ -206,25 +218,28 @@ pub(crate) fn with_native<R>(
     Ok(table.crypto.handles.get_mut(index).and_then(Option::as_mut).map(|handle| f(&mut handle.native)))
 }
 
-/// Releases the state of objects the collector reclaimed (the idle hook).
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
-    for index in dead {
-        let owner = shared.borrow_mut().crypto.release(index);
-        if let Some(owner) = owner {
-            runtime.release_host_weak_root(owner);
-        }
-    }
-}
 
 /// Releases every handle at shutdown.
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
-    shared.borrow_mut().crypto.vacant.clear();
-    for handle in handles.into_iter().flatten() {
-        runtime.release_host_weak_root(handle.owner);
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let handles = std::mem::take(&mut shared.borrow_mut().crypto.handles);
+        shared.borrow_mut().crypto.vacant.clear();
+        for handle in handles.into_iter().flatten() {
+            runtime.release_host_weak_root(handle.owner);
+        }
+    }
+
+    /// Releases the state of objects the collector reclaimed (the idle hook).
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared.borrow().crypto.dead(|owner| runtime.host_weak_root_is_live(owner));
+        for index in dead {
+            let owner = shared.borrow_mut().crypto.release(index);
+            if let Some(owner) = owner {
+                runtime.release_host_weak_root(owner);
+            }
+        }
     }
 }
 
@@ -486,11 +501,11 @@ pub(crate) enum Members {
 pub(crate) fn define_methods(
     c: &mut Context<'_>,
     target: RootId,
-    methods: &[(&str, &str)],
+    methods: &[(&str, crate::host::shared_vm::MarkedOperation)],
     members: Members,
 ) -> Result<(), RootedError> {
     for &(name, operation) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(target, key, function, true, members == Members::Assigned, true)?;
     }
@@ -500,11 +515,11 @@ pub(crate) fn define_methods(
 pub(crate) fn define_getters(
     c: &mut Context<'_>,
     target: RootId,
-    getters: &[(&str, &str)],
+    getters: &[(&str, crate::host::shared_vm::MarkedOperation)],
     members: Members,
 ) -> Result<(), RootedError> {
     for &(name, operation) in getters {
-        let getter = c.host_function_named(crate::host::shared_vm::operation(operation), &format!("get {name}"))?;
+        let getter = c.host_function_named(operation.id(), &format!("get {name}"))?;
         let key = c.string_rooted(name);
         let fields = DescriptorFields {
             get: Some(getter),
@@ -519,8 +534,8 @@ pub(crate) fn define_getters(
 }
 
 /// A constructor whose prototype inherits from `parent`'s (and the constructor from it).
-pub(crate) fn subclass(c: &mut Context<'_>, operation: &str, name: &str, parent: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+pub(crate) fn subclass(c: &mut Context<'_>, operation: crate::host::shared_vm::MarkedOperation, name: &str, parent: RootId) -> Outcome {
+    let constructor = c.host_constructor_named(operation.id(), name)?;
     inherit(c, constructor, parent)?;
     Ok(constructor)
 }

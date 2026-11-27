@@ -8,11 +8,11 @@ use super::*;
 /// Per block leader, its forward edges (`forward_edges`), and the leaders lowering may seal
 /// on arrival: those only forward edges enter, but a loop body its rotated header test
 /// enters from the latch (`rotated_bodies`).
-pub(crate) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize)
-    -> (Vec<Option<usize>>, CompoundBitSet) {
+pub(crate) fn leader_edges(instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet, start: usize)
+    -> (Vec<Option<usize>>, quench_runtime::dataflow::BitSet) {
     let forward = forward_edges(instructions, leaders, start);
     let rotated = rotated_bodies(instructions);
-    let mut sealable = CompoundBitSet::with_capacity(instructions.len());
+    let mut sealable = quench_runtime::dataflow::BitSet::with_capacity(instructions.len());
     for pc in (0..instructions.len()).filter(|pc| forward[*pc].is_some() && !rotated.contains(*pc)) {
         sealable.insert(pc);
     }
@@ -21,7 +21,7 @@ pub(crate) fn leader_edges(instructions: &[WideInstruction], leaders: &CompoundB
 
 /// Per block leader, the edges into it, all from before it; `None` for one the entry
 /// (`start`) or a later PC enters, whose proofs no earlier edge can give.
-fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, start: usize) -> Vec<Option<usize>> {
+fn forward_edges(instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet, start: usize) -> Vec<Option<usize>> {
     let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
     if let Some(slot) = edges.get_mut(start) { *slot = None; }
     for (pc, instruction) in instructions.iter().enumerate() {
@@ -45,8 +45,8 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
 /// The first body PC of each loop whose header test a backedge repeats (`Lowering::
 /// instruction` rotates it): the repeated test enters it from the latch, an edge
 /// `forward_edges` does not see.
-fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
-    let mut bodies = CompoundBitSet::with_capacity(instructions.len() + 1);
+fn rotated_bodies(instructions: &[WideInstruction]) -> quench_runtime::dataflow::BitSet {
+    let mut bodies = quench_runtime::dataflow::BitSet::with_capacity(instructions.len() + 1);
     for (_, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         if instructions.get(header).is_some_and(|test| quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump)) {
             bodies.insert(header + 1);

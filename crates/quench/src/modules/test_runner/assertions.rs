@@ -38,7 +38,7 @@ pub(super) fn assert(c: &mut Context<'_>, id: NodeId) -> Result<RootId, RootedEr
             continue;
         }
         let data = c.array_rooted(&[method, node])?;
-        let wrapper = function(c, "nodeTestAssert", name, data)?;
+        let wrapper = function(c, crate::host::shared_vm::operation!("nodeTestAssert"), name, data)?;
         put(c, object, name, wrapper)?;
     }
     let object = c.retain(object)?;

@@ -124,15 +124,66 @@ impl Stage for Emit<'_, '_> {
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
     fn shr(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftRightUnsigned, a, b) }
+    /// The immediate forms (`iadd_imm_s`, `imul_imm_s`, ...): a constant an operand of the
+    /// instruction, not a register holding it. An element's address is then an index scaled in
+    /// the load itself (`[values, index, lsl #3]`) where a `mov` of 8 and a `mul` left two
+    /// instructions the C a programmer writes for the same access never executes.
+    fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().iadd_imm_s(a, bits as i64),
+            imm => {
+                let v = self.word(imm);
+                self.raw_binary(Binary::Add, a, v)
+            }
+        }
+    }
     fn imm_word(&mut self, imm: EmitImm) -> ir::Value { self.word(imm) }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.raw_binary(Binary::Mul, a, v)
+        match (imm.into(), self.raw_lane(a)) {
+            // A power of two is a shift, which the backend folds into the addressing mode of
+            // the access that follows (`[values, index, lsl #3]`): an element's index costs no
+            // instruction of its own, where `mul` by a register holding 8 costs two.
+            (EmitImm::Const(0), _) => self.constant(0),
+            (EmitImm::Const(bits), Lane::I64) if bits.is_power_of_two() => {
+                self.builder.ins().ishl_imm_s(a, bits.trailing_zeros() as i64)
+            }
+            (EmitImm::Const(bits), Lane::I64) => self.builder.ins().imul_imm_s(a, bits as i64),
+            (imm, _) => {
+                let v = self.word(imm);
+                self.raw_binary(Binary::Mul, a, v)
+            }
+        }
+    }
+    fn and_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().band_imm_s(a, bits as i64),
+            imm => {
+                let v = self.word(imm);
+                self.raw_binary(Binary::And, a, v)
+            }
+        }
+    }
+    fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
+        match imm.into() {
+            EmitImm::Const(bits) => self.builder.ins().bor_imm_s(a, bits as i64),
+            imm => {
+                let v = self.word(imm);
+                self.raw_binary(Binary::Or, a, v)
+            }
+        }
+    }
+    fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
+        match shift.into() {
+            EmitImm::Const(bits) => self.builder.ins().ushr_imm_s(a, bits as i64),
+            shift => {
+                let v = self.word(shift);
+                self.raw_binary(Binary::ShiftRightUnsigned, a, v)
+            }
+        }
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
         let low = self.narrow(a);
-        let by = self.raw_const(Lane::I32, i64::from(shift));
-        let shifted = self.raw_binary(Binary::ShiftRightSigned, low, by);
+        let shifted = self.builder.ins().sshr_imm_s(low, i64::from(shift));
         self.widen(shifted)
     }
     /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
@@ -169,20 +220,7 @@ impl Stage for Emit<'_, '_> {
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
     fn store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
-        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
-        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(logged);
-        let open = self.builder.append_block_param(join, types::I8);
-        let watch = std::mem::offset_of!(super::super::JsStepDispatch, head.store_watch);
-        quench_runtime::staged::barrier::store_unlogged(self, payload, watch, super::super::store_mark_list(space), record_id, value, logged)
-            .expect("an Emit guard always continues");
-        let yes = self.raw_const(Lane::I8, 1);
-        self.goto(join, &[yes]);
-        self.builder.switch_to_block(logged);
-        let no = self.raw_const(Lane::I8, 0);
-        self.goto(join, &[no]);
-        self.builder.switch_to_block(join);
-        open
+        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
     }
     /// Whether a store of a value the slot's type holds needs no barrier log
     /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
@@ -505,5 +543,7 @@ impl NumericStage for Emit<'_, '_> {
 #[cfg(all(test, feature = "jit"))]
 pub(crate) mod tests;
 mod effects;
+mod gate;
 #[cfg(all(test, feature = "jit"))] mod tier_homomorphism_tests;
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))] mod ir_predict_tests;
+

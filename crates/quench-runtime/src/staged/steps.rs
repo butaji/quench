@@ -252,7 +252,7 @@ fn local_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &m
         Operation::StoreLocalPlain { source, slot, result } => if const { super::op_kind::admits(KIND, &[super::op_kind::STORE_LOCAL_PLAIN]) } { {
             let Some(value) = write_local(stage, frame, source, slot, frame.local_miss()) else { return Step::Unresolved };
             if let Some(result) = result {
-                let fact = frame.fact(source);
+                let fact = frame.tagged_fact(source);
                 frame.write(stage, result, value, fact);
             }
             Step::Value(value)
@@ -279,7 +279,7 @@ fn local_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &m
             };
             let Some(value) = stored else { return Step::Unresolved };
             if let Some(result) = result {
-                let fact = frame.fact(source);
+                let fact = frame.tagged_fact(source);
                 frame.write(stage, result, value, fact);
             }
             Step::Value(value)

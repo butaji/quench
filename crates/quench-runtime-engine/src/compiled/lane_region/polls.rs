@@ -32,7 +32,7 @@ pub(crate) fn interrupt_owner_call(builder: &mut FunctionBuilder<'_>, helpers: L
 pub(crate) fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
     if reentries.is_empty() { return; }
     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-    let mut possible: CompoundBitSet = CompoundBitSet::with_capacity(function.dfg.num_blocks());
+    let mut possible: quench_runtime::dataflow::BitSet = quench_runtime::dataflow::BitSet::with_capacity(function.dfg.num_blocks());
     let mut pending = smallvec::SmallVec::<[ir::Block; INLINE_EFFECT_EDGES]>::new();
     for &block in reentries {
         if possible.insert(block.index()) { pending.push(block); }

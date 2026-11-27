@@ -9,11 +9,10 @@
 //! stencil tests check them against what LLVM assigned (`ROW_ABI_A64`).
 //!
 //! Leave routines end with the word in x0 and the status in x1, as the x86-64 ones end with
-//! (rax, rdx); `entry_body` and `entry_resume` swap them into the lane body ABI's (w0 status,
-//! x1 word), `entry_thunk` (a region) reads the word only, its status always `NATIVE_JS_STOPPED`.
+//! (rax, rdx); `entry_thunk`, `entry_body` and `entry_resume` swap them into the lane body ABI's
+//! (w0 status, x1 word).
 //!
-//! Region entry ABI (`entry_thunk`): (x0 = context, x3 = the frame record, x4 = result pointer),
-//! status in w0. Body entry ABI (`entry_body`, `entry_resume`, `lane_body_abi.rs`): (x0 = context,
+//! Entry ABI (`entry_thunk`, `entry_body`, `entry_resume`, `lane_body_abi.rs`): (x0 = context,
 //! x1 = receiver, x2 = captures, x3 = the register file) -> (w0 = status, x1 = word). The receiver
 //! and captures words are the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by
 //! whoever enters the body, so the entries save none of the dispatch payload.
@@ -21,7 +20,7 @@
 //! Holes in assembly: ELF patches four `movz`/`movk` groups (`R_AARCH64_MOVW_UABS_G*`), Mach-O a
 //! literal word the code loads and branches over (`words.rs` `hole_word!`, the same two forms).
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CONTEXT_BODY, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::HOLE_V0;
@@ -97,16 +96,13 @@ macro_rules! body_thunk {
     };
 }
 
-/// Loads the frame's window of registers, runs the row chain, stores the word it returned.
+/// A region's entry (the lane body ABI): sets the row map's context and window and calls the
+/// first row, as `entry_body` does; its leave routines return (word, status), which the thunk
+/// swaps into the body ABI's (status, word).
+#[unsafe(naked)]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn entry_thunk(ctx: usize, _unused0: usize, _unused1: usize, frame: usize, result: *mut usize) -> u32 {
-    // SAFETY: the stitched code places the first row at `HOLE_NEXT`; `frame` is a frame record.
-    unsafe {
-        let first: Row = core::mem::transmute(&raw const HOLE_NEXT);
-        let window = ((frame + frame::WINDOW) as *const usize).read();
-        result.write(first(window, ctx, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
-    }
-    NATIVE_JS_STOPPED
+pub unsafe extern "C" fn entry_thunk() {
+    body_thunk!([], "bl {first}", [], first = sym HOLE_NEXT)
 }
 
 /// Calls the address in x2 (the body ABI's `captures` argument, which a stencil region does not read):
@@ -118,13 +114,13 @@ pub unsafe extern "C" fn entry_resume() {
     body_thunk!(["mov x16, x2"], "blr x16", [])
 }
 
-/// The body entry (the lane body ABI): calls the first row. The receiver and captures words it is
-/// entered with are in the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by the
-/// caller, so nothing is saved or restored here.
+/// The body entry (the lane body ABI): calls the first row. The receiver is in the window's header
+/// already (`CONTEXT_THIS`); the captures word it is passed (x2) is written to the header (`CONTEXT_BODY`)
+/// here, as `entry.rs` does.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    body_thunk!([], concat!(hole_into!("x16", "first"), "\nblr x16"), [], first = sym HOLE_NEXT)
+    body_thunk!(["stur x2, [x3, #-{body}]"], "bl {first}", [], first = sym HOLE_NEXT, body = const CONTEXT_BODY * 8)
 }
 
 /// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window x20,
@@ -137,8 +133,7 @@ pub unsafe extern "C" fn entry_rows() {
     core::arch::naked_asm!(
         "stp x29, x30, [sp, #-16]!",
         "mov x29, sp",
-        hole_into!("x16", "first"),
-        "blr x16",
+        "bl {first}",
         "ldp x29, x30, [sp], #16",
         "ret",
         first = sym HOLE_NEXT,

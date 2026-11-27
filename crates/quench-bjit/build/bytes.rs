@@ -14,8 +14,16 @@ pub fn u64_at(data: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(data[at..at + U64_BYTES].try_into().unwrap())
 }
 pub fn c_string(data: &[u8], at: usize) -> String {
-    let end = data[at..].iter().position(|b| *b == 0).expect("terminated string");
-    String::from_utf8_lossy(&data[at..at + end]).into_owned()
+    let rest = data.get(at..).unwrap_or_else(|| panic!("string offset {at} past the object's {} bytes", data.len()));
+    let end = rest.iter().position(|b| *b == 0).unwrap_or_else(|| panic!("unterminated string at {at}"));
+    String::from_utf8_lossy(&rest[..end]).into_owned()
+}
+
+/// A fixed-size name field (`sectname` and `segname` are 16 bytes): its text up to the NUL, or all
+/// of it where the name fills the field (`__compact_unwind` does), which the format allows.
+pub fn fixed_name(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
 /// A relocation of a row: the field's offset in the row's code, the symbol it names, its hole

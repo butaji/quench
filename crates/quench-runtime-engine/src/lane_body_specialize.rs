@@ -18,6 +18,37 @@ impl LaneView {
         declined
     }
 
+    /// Counts an entry of a warming body between its attempts in place (not its first, which weighs the mode's decline):
+    /// whether it did. The full path cost a warming or unpaid recursive callee ~50 Ir a call (the mode's decline, the
+    /// image lookup, the body's move out and back; k02_fib under --u-jit).
+    /// The count to weigh at is found once per stretch between attempts (`weigh_at`), not per entry.
+    pub(crate) fn counted_between_attempts(&self, looped: bool) -> bool {
+        // SAFETY: as `lane_body`.
+        let LaneBody::Unspecialized { entries, .. } = (unsafe { &mut *self.tier().tier_lane.get() }) else { return false };
+        if *entries == 0 || looped { return false; }
+        let next = entries.saturating_add(1);
+        let epoch = self.body_epoch();
+        let (found_epoch, from, at) = self.tier().weigh_at.get();
+        if found_epoch == epoch && from <= *entries && next < at {
+            *entries = next;
+            return true;
+        }
+        if self.attempts_at(next) || self.recurrent(next) { return false; }
+        *entries = next;
+        self.tier().weigh_at.set((epoch, next, self.next_weighed(next)));
+        true
+    }
+
+    /// The first entry count past `entries` at which a warming body weighs its compile: its next attempt
+    /// (`attempts_at`), or, where it may still recur, the next `RECURRENT_ENTRIES` multiple (`recurrent`).
+    fn next_weighed(&self, entries: u32) -> u32 {
+        let mut attempt = self.warmup_entries();
+        while attempt <= entries { attempt = attempt.saturating_add(attempt); if attempt == u32::MAX { break; } }
+        let history = self.tier().history.get();
+        let recurs = history.lifetimes == 0 && !history.unpaid;
+        if recurs { attempt.min((entries - entries % RECURRENT_ENTRIES).saturating_add(RECURRENT_ENTRIES)) } else { attempt }
+    }
+
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
     pub(crate) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
 
@@ -26,6 +57,7 @@ impl LaneView {
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(crate) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
+        if self.counted_between_attempts(looped) { return true; }
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
@@ -40,9 +72,10 @@ impl LaneView {
                 }
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
                 if !self.attempts_at(entries.saturating_add(1)) { crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyRecurrent); }
-                // A predecessor's few leaves are the specialization's feedback (`stuck`).
+                // A predecessor's few leaves are the specialization's feedback (`stuck`). Every attempt is priced on its entries
+                // and loop work, a recurrent or looping one too: unpriced, setup functions compiled 8k-30k IR for nothing (TOD-2194).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: Some(entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
@@ -51,7 +84,7 @@ impl LaneView {
                 return true;
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(crate::compiled::pending_lane(pending), self)), 0, recompiles, stuck, looks.saturating_add(1)),
+                (work(crate::compiled::LaneBodyWork::Poll(pending, self)), 0, recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
         *body = self.body_after(outcome, entry, entries, recompiles, stuck, looks);
@@ -67,14 +100,18 @@ impl LaneView {
     /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
     /// gate, since an image has no profiling phase. It is the ladder's first body: its leaves
     /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
-    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
+    /// It is priced as a quick body of `quick_ir` IR instructions: once its runs repay the optimizing compile, the
+    /// JIT respecializes it on what the run observed, its call targets above all (`LaneView::optimize_due`).
+    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, quick_ir: usize, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
+                let published = matches!(outcome, crate::compiled::LaneBodyOutcome::Published(_));
                 *body = self.body_after(outcome, entry, 0, recompiles, stuck, 0);
+                if published { self.note_compile_level(true, quick_ir); }
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -95,7 +132,7 @@ impl LaneView {
         }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
-                self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
+                self.tier().history.set(LaneBodyHistory { shrinks: crate::compiled::pending_lane_ref(&*pending).shrinks(), ..self.tier().history.get() });
                 let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }

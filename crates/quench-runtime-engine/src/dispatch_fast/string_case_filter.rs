@@ -8,7 +8,7 @@ use std::hash::Hasher;
 // Construction runs once, as the lane view is derived; only `select` runs per operation.
 #[path = "../string_case_derivation.rs"]
 pub(crate) mod derivation;
-pub(crate) use derivation::specialize;
+#[cfg(feature = "jit")] pub(crate) use derivation::specialize;
 
 /// The low word contains two edge units; the high word contains the UTF-16 length.
 const CASE_LENGTH_SHIFT: u32 = 2 * u16::BITS;

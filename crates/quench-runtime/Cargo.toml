@@ -16,12 +16,19 @@ name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit", "native-execution", "source"]
+default = ["jit", "native-execution", "source", "intl", "tzdb", "wasm"]
 # The front end: parsing and compiling JS/TS source (`Engine::specialize*`). A static image's support
 # build leaves it out, so no parser or compiler is linked; source compilation then refuses.
 source = []
 jit = []
 native-execution = []
+# Intl and Temporal: the runtime core's `Collation` and locale case mapping, and the
+# `quench-runtime-intl` layer the facade links. Implies `tzdb` (Intl formats zoned dates).
+intl = ["tzdb", "dep:quench-intl"]
+# The IANA time zone database (`chrono-tz`), read for the local zone and `timeZone` options.
+tzdb = ["dep:chrono-tz"]
+# The WebAssembly frontend in the interpreter and the staged rows (`wasmparser`).
+wasm = []
 # What quench-runtime-engine's own tests reach of the core: `test_support` and the test-only
 # counters (the core's `cfg(test)` items, which a dependent crate's tests do not see).
 test-support = []
@@ -56,7 +63,7 @@ serde_json = "1"
 quench-macros = { path = "../quench-macros" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-chrono-tz = "0.10"
+chrono-tz = { version = "0.10", optional = true }
 oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_ast_visit = { workspace = true }
@@ -75,12 +82,12 @@ itoa = "1"
 # Default features and `raw-entry` match what quench enables (feature pins below).
 hashbrown = { version = "0.16", features = ["raw-entry"] }
 rayon = "1.12.0"
-smallvec = "1.15.2"
+smallvec = { version = "1.15.2", features = ["const_generics"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 quench-regexp = { path = "../quench-regexp" }
 quench-bjit = { path = "../quench-bjit" }
-quench-intl = { path = "../quench-intl" }
+quench-intl = { path = "../quench-intl", optional = true }
 quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
 # The compiled execution mode: Cranelift is the code generator the generating

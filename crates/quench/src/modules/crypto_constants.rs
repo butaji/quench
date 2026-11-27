@@ -72,6 +72,15 @@ enum Constant {
     Number(f64),
     Text(&'static str),
 }
+/// Node's `OPENSSL_VERSION_NUMBER` for the loaded (or fallback) release: major << 28,
+/// minor << 20, patch << 12.
+fn openssl_version_number() -> u64 {
+    let release = crate::modules::process_state::openssl_version();
+    let mut parts = release.split('.').map(|part| part.parse::<u64>().unwrap_or(0));
+    let (major, minor, patch) = (parts.next().unwrap_or(3), parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    (major << 28) | (minor << 20) | (patch << 12)
+}
+
 pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> {
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     if let Some(root) = shared.borrow().builtin_cache.get(CACHE).copied() {
@@ -79,8 +88,9 @@ pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> 
     }
     let object = c.null_object_rooted()?;
     let number = |value: f64| Constant::Number(value);
-    // SAFETY: OpenSSL_version_num reads a constant of the linked library.
-    let openssl_version = unsafe { openssl_sys::OpenSSL_version_num() };
+    // Read from the loaded library's version text (`process_state::openssl_version`), so a
+    // static image that links no OpenSSL still answers `constants.crypto`.
+    let openssl_version = openssl_version_number();
     // node_constants.cc's DefineCryptoConstants order.
     let constants = [
         ("OPENSSL_VERSION_NUMBER", number(openssl_version as f64)),
@@ -173,3 +183,4 @@ pub(crate) fn binding(c: &mut NativeContext<'_>) -> Result<RootId, RootedError> 
     shared.borrow_mut().builtin_cache.insert(CACHE.into(), root);
     Ok(object)
 }
+

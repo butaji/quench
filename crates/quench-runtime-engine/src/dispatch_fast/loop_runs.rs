@@ -24,12 +24,12 @@ impl super::LoopSite {
         u64::from(self.backedge - self.header + 1)
     }
 
-    /// Weighs a native run that took `backedges` backward jumps against the entry it paid.
-    pub(crate) fn note_run(&self, backedges: u64) {
+    /// Weighs a native run that took `backedges` backward jumps against the entry it paid; `left` where it left inside
+    /// the loop (`LoopTier::weigh_run`).
+    pub(crate) fn note_run(&self, backedges: u64, left: bool, timed_ns: Option<u64>) {
         self.declines_in_row.set(0);
         let mut tier = self.tier.borrow_mut();
-        tier.weigh_run(backedges);
-        tier.promote(self.tiers);
+        tier.weigh_run(self.tiers, self.span(), backedges, left, timed_ns);
         self.settle(&mut tier);
     }
 
@@ -64,6 +64,14 @@ impl super::LoopSite {
     fn settle(&self, tier: &mut super::loop_tier::LoopTier) {
         let entries = tier.entries();
         if entries <= tier.settle_at { return; }
+        // Past the prior's weight in entries, a site whose mean run does not repay its entry
+        // (`loop_model::trip_repays_entry`) leaves the loop to the interpreter.
+        if entries >= self.tiers.loops.prior_runs
+            && tier.mean_trip().is_some_and(|trip| !loop_model::trip_repays_entry(self.tiers, self.span(), trip))
+        {
+            self.entering.set(false);
+            return;
+        }
         match loop_model::repaid_entries(self.tiers, self.span(), entries, tier.iterations()) {
             Some(spare) => tier.settle_at = entries.saturating_add(spare),
             None => self.entering.set(false),

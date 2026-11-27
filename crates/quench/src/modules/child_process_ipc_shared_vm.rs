@@ -1,4 +1,5 @@
 //! Node IPC serialization (`json` and `advanced`) and duplex channel lifecycle.
+use crate::host::shared_vm::marked_operation;
 use crate::host::{NodeHost, SharedNodeState};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::VecDeque;
@@ -515,8 +516,8 @@ pub(crate) fn install(context: &mut NativeContext<'_>, owner: u64, target: RootI
     }
     let owner = context.number(owner as f64);
     let data = context.array_rooted(&[owner, target])?;
-    for (name, operation) in [("send", "ipcSend"), ("disconnect", "ipcDisconnect")] {
-        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    for (name, operation) in [("send", marked_operation!("ipcSend")), ("disconnect", marked_operation!("ipcDisconnect"))] {
+        let function = context.host_function_named_with_data(operation.id(), name, data)?;
         set(context, target, name, function)?;
     }
     let emitter_api = state
@@ -526,14 +527,14 @@ pub(crate) fn install(context: &mut NativeContext<'_>, owner: u64, target: RootI
     let emitter = super::event_constructor_shared_vm::get(context, emitter_api, "emitterCtor")?;
     let control = context.construct_rooted(emitter, emitter, &[])?;
     for (name, operation, refed) in [
-        ("ref", "ipcReference", true),
-        ("unref", "ipcReference", false),
-        ("refCounted", "ipcReferenceCounted", true),
-        ("unrefCounted", "ipcReferenceCounted", false),
+        ("ref", marked_operation!("ipcReference"), true),
+        ("unref", marked_operation!("ipcReference"), false),
+        ("refCounted", marked_operation!("ipcReferenceCounted"), true),
+        ("unrefCounted", marked_operation!("ipcReferenceCounted"), false),
     ] {
         let refed = context.boolean(refed);
         let data = context.array_rooted(&[owner, target, refed])?;
-        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        let function = context.host_function_named_with_data(operation.id(), name, data)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(control, key, function, true, false, true)?;
     }

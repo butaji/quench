@@ -11,13 +11,13 @@ pub(crate) struct State {
     field: IntRange,
     ranges: Vec<Option<IntRange>>,
     /// Registers equal to the current field, invalidated by every field write.
-    current: CompoundBitSet,
+    current: quench_runtime::dataflow::BitSet,
 }
 
 impl State {
     pub(crate) fn new(ranges: Vec<Option<IntRange>>) -> Self {
         let registers = ranges.len();
-        Self { field: IntRange::packed(), current: CompoundBitSet::with_capacity(registers), ranges }
+        Self { field: IntRange::packed(), current: quench_runtime::dataflow::BitSet::with_capacity(registers), ranges }
     }
 
     fn set(&mut self, register: Register, range: Option<IntRange>, current: bool) {

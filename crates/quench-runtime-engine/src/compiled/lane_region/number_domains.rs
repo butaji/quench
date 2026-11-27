@@ -55,8 +55,21 @@ impl Lowering<'_, '_> {
     /// the int32 remainder, as C does; its NaN and `-0` leave at `exit`. The guards the facts prove
     /// redundant are dropped: a dividend no negative makes no `-0`, a sum that only its ToInt32 reads
     /// ignores the sign of one (`truncated_sum_operand`), and a divisor no zero needs no zero test.
+    /// The Number remainder: whether the body still falls through. A linking lowering with no helper
+    /// symbol for the leaf leaves the record instead (an AOT image must not embed the compiling
+    /// process's remainder address), so the caller stops lowering the block it just terminated.
     pub(crate) fn remainder(&mut self, state: &mut State, pc: usize, destination: Register,
-        [left, right]: [Operand; 2], exit: ir::Block) {
+        [left, right]: [Operand; 2], exit: ir::Block) -> bool {
+        // A binary64 remainder is a leaf call (`number_machine::float_remainder`). Linking code (an
+        // AOT image) must not embed the compiling process's address for it. A lowering that names
+        // its helpers by symbol (`LaneHelpers::names_symbols`: the numeric JIT's image and an ahead
+        // one) calls it through the `NumberRemainder` helper symbol (`slow_path_symbol`), which the
+        // loader resolves; any other linking lowering has no symbol for it, so the record leaves and
+        // the lane computes it (the image's `wrapUp` otherwise branched into that process's binary).
+        if self.helpers.links() && !self.helpers.names_symbols() {
+            self.exit(state, pc as u32);
+            return false;
+        }
         let int = self.proved_int(state, [left, right]) && !self.left_here;
         let domain = if int {
             quench_runtime::staged::Domain::Int32
@@ -73,6 +86,7 @@ impl Lowering<'_, '_> {
         let operation = quench_runtime::staged::Operation::Number(quench_runtime::staged::NumberOperation::Remainder {
             destination, left, right, domain, zero, divisor_nonzero });
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        true
     }
 }
 

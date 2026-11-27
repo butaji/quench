@@ -3,7 +3,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::dispatch_fast::LaneStackWords;
+use super::dispatch_fast::{LaneStackEntry, LaneStackStorage, LaneStackWords};
 use super::entry_protocol::{self, EntryDescriptor, EntryKind};
 use super::*;
 use quench_runtime::vm::tier_events::Event;
@@ -35,12 +35,19 @@ pub(crate) struct BodyRun<'a> {
     pub(crate) bases_stand: bool,
 }
 
-impl LaneStackWords {
-    /// Binds the stack words of a lane run's direct calls into `dispatch` (`Vm::stack_words_in_lane`).
+impl LaneStackEntry {
+    /// Binds the per-entry stack words of a lane run's direct calls into `dispatch` (`bind_body_entry`).
     pub(crate) fn bind(&self, dispatch: &mut JsStepDispatch) {
         dispatch.head.lane_frames_end = self.frames_end;
-        dispatch.head.lane_values_top = self.values_top;
         dispatch.head.lane_values_end = self.values_end;
+    }
+}
+
+impl LaneStackStorage {
+    /// Binds the storage addresses of a lane run's direct calls into `dispatch`, once per run
+    /// (`BodyRunContext::bind_run`).
+    pub(crate) fn bind(&self, dispatch: &mut JsStepDispatch) {
+        dispatch.head.lane_values_top = self.values_top;
         dispatch.head.lane_activations_top = self.activations_top;
         dispatch.head.plain_depth = self.plain_depth;
         dispatch.head.plain_depth_limit = self.plain_depth_limit;
@@ -48,6 +55,15 @@ impl LaneStackWords {
         dispatch.head.body_table = self.body_table;
         dispatch.head.body_top = self.body_top;
         dispatch.head.native_table = self.native_table;
+    }
+}
+
+impl LaneStackWords {
+    /// Binds all the stack words of a lane run's direct calls into `dispatch`, as a region's payload
+    /// needs them (`region_lend::bind_stacks`).
+    pub(crate) fn bind(&self, dispatch: &mut JsStepDispatch) {
+        self.entry.bind(dispatch);
+        self.storage.bind(dispatch);
     }
 }
 
@@ -66,13 +82,9 @@ impl Vm {
         let outer_locals = unsafe { let dispatch = &(*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) };
         let context = unsafe { self.bind_body_entry(frame, run) };
         let captures = entry_cell::capture_word(capture_values, capture_len, stores);
-        // A stencil body (`entry_body`) reads its captures word from its window's header, which whoever
-        // enters it writes; a Cranelift body takes it as the entry's word. The activation's receiver is in
-        // the header already (an arrow's lexical one included), which the entry's receiver word is not.
-        if run.method.framed() {
-            // SAFETY: a framed body runs in a lane window, whose context words precede register 0.
-            unsafe { crate::dispatch_fast::set_frame_word(run.registers, quench_runtime::staged::frame::CONTEXT_BODY, captures) };
-        }
+        // Every body takes the captures word as the entry's word; a stencil body's entry writes it to its
+        // window's header (`entry_body`). The activation's receiver is in the header already (an arrow's
+        // lexical one included), which the entry's receiver word is not.
         let descriptor = EntryDescriptor { kind: EntryKind::Body, receiver: run.receiver.to_bits(), captures, registers: run.registers.cast_const().cast(), entry: run.method.entry };
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
@@ -104,11 +116,11 @@ impl Vm {
                 lane_context: run.lane_context.addr(),
                 residual: std::ptr::from_ref(run.residual).addr(),
                 stores_specialized: usize::from(self.specialized && run.residual.specialized),
+                stack: self.lane_stack.values.top_word().addr(),
             };
-            // A run's field cache entries are rebound when the table moves
-            // (`Vm::rebind_lane_field_entries`), not per entry: `bind_run` binds them once per
-            // run, and the frame's word follows the table from then on.
-            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0)) {
+            // A run's field cache entries and lane stack storage are bound once per run (`bind_run`), not per entry;
+            // the frame's word follows a moved field table from then on (`Vm::rebind_lane_field_entries`).
+            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0), || self.stack_storage_in_lane()) {
                 self.programs.tier_events().record(Event::RunBound);
             }
             debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
@@ -126,11 +138,11 @@ impl Vm {
             // helper row, which spills first), so it binds no shadow frames: the plain frames stay
             // where they are, and its entry pays no spill of them (~800 Ir a richards body entry).
             let frames = run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS && (!run.method.direct.is_empty() || run.method.proven_calls);
-            let words = self.stack_words_in_lane(if frames { SHADOW_FRAMES } else { 0 });
+            let entry = self.stack_entry_in_lane(if frames { SHADOW_FRAMES } else { 0 });
             // A b-jit body's direct call rows push whether or not the run names direct calls (`run.direct_calls` sizes
             // only the shadow frames), so in a leaf's window they refuse to the helper row.
             crate::dispatch_fast::refuse_direct_calls_in_leaf(run.lane_context, run.registers);
-            words.bind(&mut *dispatch);
+            entry.bind(&mut *dispatch);
             &raw mut (*frame).context
         }
     }

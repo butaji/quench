@@ -3,6 +3,7 @@
 use super::buffer_codec as codec;
 use super::buffer_shared_vm::view_bytes;
 use super::string_decoder_codec::ENCODINGS;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a>;
 
@@ -37,43 +38,43 @@ enum Registration {
 }
 
 /// The natives, by binding key, private operation and registration.
-const NATIVES: &[(&str, &str, Registration)] = &[
-    ("atob", "bufferBindingAtob", Registration::Method),
-    ("btoa", "bufferBindingBtoa", Registration::Method),
-    ("byteLengthUtf8", "bufferBindingByteLengthUtf8", Registration::Fast),
-    ("copy", "bufferBindingCopy", Registration::Fast),
-    ("compare", "bufferBindingCompare", Registration::Fast),
-    ("compareOffset", "bufferBindingCompareOffset", Registration::Method),
-    ("fill", "bufferBindingFill", Registration::Method),
-    ("indexOfBuffer", "bufferBindingIndexOfBuffer", Registration::Method),
-    ("indexOfNumber", "bufferBindingIndexOfNumber", Registration::Fast),
-    ("indexOfString", "bufferBindingIndexOfString", Registration::Method),
-    ("copyArrayBuffer", "bufferBindingCopyArrayBuffer", Registration::Fast),
-    ("createUnsafeArrayBuffer", "bufferBindingCreateUnsafeArrayBuffer", Registration::Method),
-    ("arrayBufferAlignedOffset", "bufferBindingArrayBufferAlignedOffset", Registration::Method),
-    ("swap16", "bufferBindingSwap16", Registration::Fast),
-    ("swap32", "bufferBindingSwap32", Registration::Fast),
-    ("swap64", "bufferBindingSwap64", Registration::Fast),
-    ("isUtf8", "bufferBindingIsUtf8", Registration::Method),
-    ("isAscii", "bufferBindingIsAscii", Registration::Method),
-    ("isLatin1", "bufferBindingIsLatin1", Registration::Method),
-    ("mask", "bufferBindingMask", Registration::Fast),
-    ("stringLengthUtf8", "bufferBindingStringLengthUtf8", Registration::Fast),
-    ("asciiSlice", "bufferBindingAsciiSlice", Registration::Method),
-    ("base64Slice", "bufferBindingBase64Slice", Registration::Method),
-    ("base64urlSlice", "bufferBindingBase64urlSlice", Registration::Method),
-    ("latin1Slice", "bufferBindingLatin1Slice", Registration::Method),
-    ("hexSlice", "bufferBindingHexSlice", Registration::Method),
-    ("ucs2Slice", "bufferBindingUcs2Slice", Registration::Method),
-    ("utf8Slice", "bufferBindingUtf8Slice", Registration::Method),
-    ("base64Write", "bufferBindingBase64Write", Registration::Method),
-    ("base64urlWrite", "bufferBindingBase64urlWrite", Registration::Method),
-    ("hexWrite", "bufferBindingHexWrite", Registration::Method),
-    ("ucs2Write", "bufferBindingUcs2Write", Registration::Method),
-    ("asciiWriteStatic", "bufferBindingAsciiWrite", Registration::Fast),
-    ("latin1WriteStatic", "bufferBindingLatin1Write", Registration::Fast),
-    ("utf8WriteStatic", "bufferBindingUtf8Write", Registration::Fast),
-    ("setDetachKey", "bufferBindingSetDetachKey", Registration::Method),
+const NATIVES: &[(&str, MarkedOperation, Registration)] = &[
+    ("atob", marked_operation!("bufferBindingAtob"), Registration::Method),
+    ("btoa", marked_operation!("bufferBindingBtoa"), Registration::Method),
+    ("byteLengthUtf8", marked_operation!("bufferBindingByteLengthUtf8"), Registration::Fast),
+    ("copy", marked_operation!("bufferBindingCopy"), Registration::Fast),
+    ("compare", marked_operation!("bufferBindingCompare"), Registration::Fast),
+    ("compareOffset", marked_operation!("bufferBindingCompareOffset"), Registration::Method),
+    ("fill", marked_operation!("bufferBindingFill"), Registration::Method),
+    ("indexOfBuffer", marked_operation!("bufferBindingIndexOfBuffer"), Registration::Method),
+    ("indexOfNumber", marked_operation!("bufferBindingIndexOfNumber"), Registration::Fast),
+    ("indexOfString", marked_operation!("bufferBindingIndexOfString"), Registration::Method),
+    ("copyArrayBuffer", marked_operation!("bufferBindingCopyArrayBuffer"), Registration::Fast),
+    ("createUnsafeArrayBuffer", marked_operation!("bufferBindingCreateUnsafeArrayBuffer"), Registration::Method),
+    ("arrayBufferAlignedOffset", marked_operation!("bufferBindingArrayBufferAlignedOffset"), Registration::Method),
+    ("swap16", marked_operation!("bufferBindingSwap16"), Registration::Fast),
+    ("swap32", marked_operation!("bufferBindingSwap32"), Registration::Fast),
+    ("swap64", marked_operation!("bufferBindingSwap64"), Registration::Fast),
+    ("isUtf8", marked_operation!("bufferBindingIsUtf8"), Registration::Method),
+    ("isAscii", marked_operation!("bufferBindingIsAscii"), Registration::Method),
+    ("isLatin1", marked_operation!("bufferBindingIsLatin1"), Registration::Method),
+    ("mask", marked_operation!("bufferBindingMask"), Registration::Fast),
+    ("stringLengthUtf8", marked_operation!("bufferBindingStringLengthUtf8"), Registration::Fast),
+    ("asciiSlice", marked_operation!("bufferBindingAsciiSlice"), Registration::Method),
+    ("base64Slice", marked_operation!("bufferBindingBase64Slice"), Registration::Method),
+    ("base64urlSlice", marked_operation!("bufferBindingBase64urlSlice"), Registration::Method),
+    ("latin1Slice", marked_operation!("bufferBindingLatin1Slice"), Registration::Method),
+    ("hexSlice", marked_operation!("bufferBindingHexSlice"), Registration::Method),
+    ("ucs2Slice", marked_operation!("bufferBindingUcs2Slice"), Registration::Method),
+    ("utf8Slice", marked_operation!("bufferBindingUtf8Slice"), Registration::Method),
+    ("base64Write", marked_operation!("bufferBindingBase64Write"), Registration::Method),
+    ("base64urlWrite", marked_operation!("bufferBindingBase64urlWrite"), Registration::Method),
+    ("hexWrite", marked_operation!("bufferBindingHexWrite"), Registration::Method),
+    ("ucs2Write", marked_operation!("bufferBindingUcs2Write"), Registration::Method),
+    ("asciiWriteStatic", marked_operation!("bufferBindingAsciiWrite"), Registration::Fast),
+    ("latin1WriteStatic", marked_operation!("bufferBindingLatin1Write"), Registration::Fast),
+    ("utf8WriteStatic", marked_operation!("bufferBindingUtf8Write"), Registration::Fast),
+    ("setDetachKey", marked_operation!("bufferBindingSetDetachKey"), Registration::Method),
 ];
 
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -83,12 +84,11 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let global = c.global_root()?;
             let array_buffer = c.get_named_property_rooted(global, "ArrayBuffer")?;
             for &(name, operation, registration) in NATIVES {
-                let operation = crate::host::shared_vm::operation(operation);
                 let display = match registration {
                     Registration::Method => name,
                     Registration::Fast => "",
                 };
-                let function = c.host_function_named_with_data(operation, display, array_buffer)?;
+                let function = c.host_function_named_with_data(operation.id(), display, array_buffer)?;
                 put(c, binding, name, function)?;
             }
             let max_length = c.number(MAX_LENGTH as f64);

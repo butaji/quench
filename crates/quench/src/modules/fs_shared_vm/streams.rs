@@ -11,7 +11,7 @@ use crate::modules::stream_shared_vm::{
     arg, attempt, call_method, captures, closure, emit, eos, get, is_nullish, is_undefined, next_tick, number, once,
     put, put_bool, put_number, truthy_member, Context, Outcome,
 };
-use quench_runtime::{RootId, RootedError, ValueType};
+use quench_runtime::{HostFunctionId, RootId, RootedError, ValueType};
 
 /// The default `highWaterMark` of a read stream: 64 KiB.
 const READ_HIGH_WATER_MARK: f64 = 64.0 * 1024.0;
@@ -232,7 +232,7 @@ fn initialize_position(c: &mut Context<'_>, stream: RootId, options: RootId) -> 
 pub(crate) fn complete(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Result<(), RootedError> {
     let mut values = vec![callback];
     values.extend_from_slice(args);
-    let invoke = closure(c, "fsStreamComplete", "", &values)?;
+    let invoke = closure(c, crate::host::shared_vm::operation!("fsStreamComplete"), "", &values)?;
     let shared = c.host_as::<crate::host::NodeHost>().shared_state();
     let id = shared
         .borrow_mut()
@@ -320,7 +320,7 @@ fn close_stream(c: &mut Context<'_>, stream: RootId, error: RootId, callback: Ro
         return Ok(());
     }
     if truthy_member(c, stream, "flush")? {
-        let after = closure(c, "fsStreamFlushed", "", &[stream, error, callback])?;
+        let after = closure(c, crate::host::shared_vm::operation!("fsStreamFlushed"), "", &[stream, error, callback])?;
         return sync_descriptor(c, stream, fd, after);
     }
     finish_close(c, stream, error, callback)
@@ -329,7 +329,7 @@ fn close_stream(c: &mut Context<'_>, stream: RootId, error: RootId, callback: Ro
 /// `_close(stream, err, cb)`.
 fn finish_close(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId) -> Result<(), RootedError> {
     let fd = get(c, stream, "fd")?;
-    let after = closure(c, "fsStreamClosed", "", &[error, callback])?;
+    let after = closure(c, crate::host::shared_vm::operation!("fsStreamClosed"), "", &[error, callback])?;
     close_descriptor(c, stream, fd, after)?;
     let null = c.null();
     put(c, stream, "fd", null)
@@ -357,7 +357,7 @@ pub(crate) fn destroy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Out
     let (error, callback) = (arg(c, args, 0), arg(c, args, 1));
     let busy = get_slot(c, this, Slot::IsPerformingIo)?;
     if c.truthy_rooted(busy)? {
-        let after = closure(c, "fsStreamIoDone", "", &[this, error, callback])?;
+        let after = closure(c, crate::host::shared_vm::operation!("fsStreamIoDone"), "", &[this, error, callback])?;
         let event = slot(c, Slot::IoDone)?;
         call_method(c, this, "once", &[event, after])?;
     } else {
@@ -391,14 +391,14 @@ fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId], writing: bool) 
     let open_method = get(c, this, "open")?;
     let prototype_open = default_open(c, writing)?;
     if !c.strict_equal_rooted(open_method, prototype_open)? {
-        let opened = closure(c, "fsStreamCustomOpened", "", &[callback])?;
-        let failed = closure(c, "fsStreamCustomFailed", "", &[callback])?;
+        let opened = closure(c, crate::host::shared_vm::operation!("fsStreamCustomOpened"), "", &[callback])?;
+        let failed = closure(c, crate::host::shared_vm::operation!("fsStreamCustomFailed"), "", &[callback])?;
         once(c, this, "open", opened)?;
         once(c, this, "error", failed)?;
         call_method(c, this, "open", &[])?;
         return Ok(c.undefined());
     }
-    let opened = closure(c, "fsStreamOpened", "", &[this, callback])?;
+    let opened = closure(c, crate::host::shared_vm::operation!("fsStreamOpened"), "", &[this, callback])?;
     open(c, this, opened)?;
     Ok(c.undefined())
 }
@@ -538,7 +538,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
         return Ok(c.undefined());
     }
     performing_io(c, this, true)?;
-    let done = closure(c, "fsStreamsReadChunk", "", &[this])?;
+    let done = closure(c, crate::host::shared_vm::operation!("fsStreamsReadChunk"), "", &[this])?;
     let fd = get(c, this, "fd")?;
     let size = c.number(size);
     if let Some(read) = custom_operation(c, this, "read")? {
@@ -716,7 +716,7 @@ pub(crate) fn write_stream(c: &mut Context<'_>, this: RootId, args: &[RootId]) -
 /// `writeAll(data, size, pos, cb)`: write until `size` bytes are out.
 fn write_all(c: &mut Context<'_>, stream: RootId, data: RootId, position: RootId, callback: RootId, retries: f64) -> Result<(), RootedError> {
     let retries = c.number(retries);
-    let done = closure(c, "fsStreamsWriteWritten", "", &[stream, data, position, callback, retries])?;
+    let done = closure(c, crate::host::shared_vm::operation!("fsStreamsWriteWritten"), "", &[stream, data, position, callback, retries])?;
     let fd = get(c, stream, "fd")?;
     if let Some(write) = custom_operation(c, stream, "write")? {
         let operations = get_slot(c, stream, Slot::Fs)?;
@@ -773,7 +773,7 @@ pub(crate) fn written(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcom
 
 /// The callback a stream write finishes with: report, or close a destroyed stream.
 fn write_finished(c: &mut Context<'_>, stream: RootId, callback: RootId) -> Outcome {
-    closure(c, "fsStreamsWriteDone", "", &[stream, callback])
+    closure(c, crate::host::shared_vm::operation!("fsStreamsWriteDone"), "", &[stream, callback])
 }
 
 pub(crate) fn write_done(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
@@ -849,8 +849,8 @@ pub(crate) fn write_close(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
 // The classes
 // ---------------------------------------------------------------------------------------
 
-fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, enumerable: bool) -> Result<RootId, RootedError> {
-    let function = c.host_function_named(crate::host::shared_vm::operation(operation), "")?;
+fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: HostFunctionId, enumerable: bool) -> Result<RootId, RootedError> {
+    let function = c.host_function_named(operation, "")?;
     let key = c.string_rooted(name);
     c.define_data_property_rooted(target, key, function, true, enumerable, true)?;
     Ok(function)
@@ -858,10 +858,10 @@ fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, enum
 
 /// An accessor as `ObjectDefineProperty` installs it: `autoClose` without `configurable`,
 /// `pending` with it.
-fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: &str, setter: Option<&str>, configurable: bool) -> Result<(), RootedError> {
-    let getter = c.host_function_named(crate::host::shared_vm::operation(getter), "get")?;
+fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: HostFunctionId, setter: Option<HostFunctionId>, configurable: bool) -> Result<(), RootedError> {
+    let getter = c.host_function_named(getter, "get")?;
     let setter = match setter {
-        Some(operation) => c.host_function_named(crate::host::shared_vm::operation(operation), "set")?,
+        Some(operation) => c.host_function_named(operation, "set")?,
         None => c.undefined(),
     };
     let key = c.string_rooted(name);
@@ -876,10 +876,10 @@ fn accessor(c: &mut Context<'_>, target: RootId, name: &str, getter: &str, sette
     Ok(())
 }
 
-fn class(c: &mut Context<'_>, name: &str, operation: &str, parent: &str) -> Outcome {
+fn class(c: &mut Context<'_>, name: &str, operation: HostFunctionId, parent: &str) -> Outcome {
     let parent = stream_class(c, parent)?;
     let data = c.array_rooted(&[])?;
-    let constructor = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    let constructor = c.host_constructor_named_with_data(operation, name, data)?;
     put(c, data, "0", constructor)?;
     inherit(c, constructor, parent)?;
     Ok(constructor)
@@ -893,35 +893,35 @@ fn remember(c: &mut Context<'_>, key: &str, value: RootId) -> Result<(), RootedE
 
 /// `fs.ReadStream`.
 pub(crate) fn read_stream_class(c: &mut Context<'_>) -> Outcome {
-    let constructor = class(c, "ReadStream", "fsStreamsRead", "Readable")?;
+    let constructor = class(c, "ReadStream", crate::host::shared_vm::operation!("fsStreamsRead"), "Readable")?;
     let prototype = get(c, constructor, "prototype")?;
-    accessor(c, prototype, "autoClose", "fsStreamsReadAutoClose", Some("fsStreamsReadSetAutoClose"), false)?;
-    let open = method(c, prototype, "open", "fsStreamDeprecatedOpen", true)?;
+    accessor(c, prototype, "autoClose", crate::host::shared_vm::operation!("fsStreamsReadAutoClose"), Some(crate::host::shared_vm::operation!("fsStreamsReadSetAutoClose")), false)?;
+    let open = method(c, prototype, "open", crate::host::shared_vm::operation!("fsStreamDeprecatedOpen"), true)?;
     remember(c, "\0fs:openReadFs", open)?;
-    method(c, prototype, "_construct", "fsStreamsReadConstruct", true)?;
-    method(c, prototype, "_read", "fsStreamsReadRead", true)?;
-    method(c, prototype, "_destroy", "fsStreamsDestroy", true)?;
-    method(c, prototype, "close", "fsStreamsReadClose", true)?;
-    accessor(c, prototype, "pending", "fsStreamPending", None, true)?;
+    method(c, prototype, "_construct", crate::host::shared_vm::operation!("fsStreamsReadConstruct"), true)?;
+    method(c, prototype, "_read", crate::host::shared_vm::operation!("fsStreamsReadRead"), true)?;
+    method(c, prototype, "_destroy", crate::host::shared_vm::operation!("fsStreamsDestroy"), true)?;
+    method(c, prototype, "close", crate::host::shared_vm::operation!("fsStreamsReadClose"), true)?;
+    accessor(c, prototype, "pending", crate::host::shared_vm::operation!("fsStreamPending"), None, true)?;
     Ok(constructor)
 }
 
 /// `fs.WriteStream`.
 pub(crate) fn write_stream_class(c: &mut Context<'_>) -> Outcome {
-    let constructor = class(c, "WriteStream", "fsStreamsWrite", "Writable")?;
+    let constructor = class(c, "WriteStream", crate::host::shared_vm::operation!("fsStreamsWrite"), "Writable")?;
     let prototype = get(c, constructor, "prototype")?;
-    accessor(c, prototype, "autoClose", "fsStreamsWriteAutoClose", Some("fsStreamsWriteSetAutoClose"), false)?;
-    let open = method(c, prototype, "open", "fsStreamDeprecatedOpen", true)?;
+    accessor(c, prototype, "autoClose", crate::host::shared_vm::operation!("fsStreamsWriteAutoClose"), Some(crate::host::shared_vm::operation!("fsStreamsWriteSetAutoClose")), false)?;
+    let open = method(c, prototype, "open", crate::host::shared_vm::operation!("fsStreamDeprecatedOpen"), true)?;
     remember(c, "\0fs:openWriteFs", open)?;
-    method(c, prototype, "_construct", "fsStreamsWriteConstruct", true)?;
-    method(c, prototype, "_write", "fsStreamsWriteWrite", true)?;
-    method(c, prototype, "_writev", "fsStreamsWriteWritev", true)?;
-    method(c, prototype, "_destroy", "fsStreamsDestroy", true)?;
-    method(c, prototype, "close", "fsStreamsWriteClose", true)?;
+    method(c, prototype, "_construct", crate::host::shared_vm::operation!("fsStreamsWriteConstruct"), true)?;
+    method(c, prototype, "_write", crate::host::shared_vm::operation!("fsStreamsWriteWrite"), true)?;
+    method(c, prototype, "_writev", crate::host::shared_vm::operation!("fsStreamsWriteWritev"), true)?;
+    method(c, prototype, "_destroy", crate::host::shared_vm::operation!("fsStreamsDestroy"), true)?;
+    method(c, prototype, "close", crate::host::shared_vm::operation!("fsStreamsWriteClose"), true)?;
     let end = get(c, prototype, "end")?;
     let key = c.string_rooted("destroySoon");
     c.define_data_property_rooted(prototype, key, end, true, true, true)?;
-    accessor(c, prototype, "pending", "fsStreamPending", None, true)?;
+    accessor(c, prototype, "pending", crate::host::shared_vm::operation!("fsStreamPending"), None, true)?;
     Ok(constructor)
 }
 

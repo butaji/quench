@@ -205,6 +205,14 @@ fn spawn_child_with_stdio(
                 }
                 return Err(RootedError::host(error.to_string()));
             }
+            {
+                let shared = context.host_as::<crate::host::NodeHost>().shared_state();
+                let mut shared = shared.borrow_mut();
+                shared.poll_on(crate::host::node_host::PollSlot::ChildIpc, |runtime, program, _| {
+                    crate::modules::child_process_ipc_shared_vm::poll(runtime, program)
+                });
+                shared.poll_on(crate::host::node_host::PollSlot::Child, poll);
+            }
             context
                 .host_as::<crate::host::NodeHost>()
                 .shared_state()

@@ -54,7 +54,7 @@ impl<T> Storage<T> {
         }
         // SAFETY: a fresh private anonymous mapping, owned by the storage until `Drop`.
         let raw = unsafe {
-            libc::mmap(std::ptr::null_mut(), bytes, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE, -1, 0)
+            quench_alloc::map_anonymous(bytes, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_NORESERVE)
         };
         if raw == libc::MAP_FAILED {
             return Err(entries);

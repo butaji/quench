@@ -4,7 +4,7 @@
 
 use super::transform::{controller_enqueue, create_transform, side};
 use super::{
-    arg, attach, class_with, custom_inspect, get, install, is_undefined, key, literal, put, record, slots,
+    arg, attach, class_with, custom_inspect, get, install, is_undefined, literal, put, record, slots,
     this_state, throw, Brand, ClassMember, Context, Done, Outcome, WebError,
 };
 use crate::modules::host_members::{captured, current, function, members};
@@ -176,7 +176,7 @@ fn compression(c: &mut Context<'_>, this: RootId, args: &[RootId], brand: Brand)
     let format_value = arg(c, args, 0);
     let index = format(c, format_value, brand.name())?;
     let (_, compress, decompress, strict) = FORMATS[index];
-    let zlib = crate::host::shared_vm::commonjs::zlib_module(c)?;
+    let zlib = crate::host::shared_vm::commonjs::zlib_module_named(c)?;
     let decompressing = brand == Brand::DecompressionStream;
     let factory = get(c, zlib, if decompressing { decompress } else { compress })?;
     let options = if decompressing && strict {
@@ -256,7 +256,13 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         }
         Member::DecoderConstruct => {
             super::require_new(c, Brand::TextDecoderStream.name())?;
-            let decoder = super::intrinsic(c, key::TEXT_DECODER)?;
+            // The startup `TextDecoder`, a lazy global read by name: its initializer is linked
+            // with this read, which only a constructed `TextDecoderStream` makes.
+            let decoder = c.with_startup_intrinsics(|c| {
+                let _ = crate::host::shared_vm::operation!("textDecoderInitialize");
+                let global = c.global_root()?;
+                get(c, global, "TextDecoder")
+            })?;
             let encoding = arg(c, args, 0);
             let encoding = if is_undefined(c, encoding) { c.string_rooted(UTF8) } else { encoding };
             let options = arg(c, args, 1);

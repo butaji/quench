@@ -491,19 +491,18 @@ pub(crate) struct LaneFrame<const ACC: u8> {
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
-/// frame names no `H`: `field_entry_read` makes the one `kind` names. Runs no guest code.
+/// frame names no `H`: `field_entry` makes the one `kind` names. Runs no guest code.
 #[derive(Clone, Copy)]
 struct EntryReads {
     context: *mut (),
     site: Ip,
-    read: fn(*mut (), Ip, Value, quench_runtime::staged::property::EntryKind) -> Option<Value>,
 }
 
 impl EntryReads {
     /// The entry lookups of the running lane's `cx` at the row's site `ip`.
     #[inline(always)]
     fn of(cx: *mut LaneContext, ip: Ip) -> Self {
-        Self { context: cx.cast(), site: ip, read: super::field_entry_read }
+        Self { context: cx.cast(), site: ip }
     }
 }
 
@@ -1960,9 +1959,20 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     #[inline(always)]
     fn field_entry(&mut self, _stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64,
         kind: quench_runtime::staged::property::EntryKind, _miss: ()) -> Option<u64> {
+        use quench_runtime::staged::property::EntryKind;
         let entries = self.entries?;
-        // SAFETY: the reader was made for the lane context this frame runs in.
-        (entries.read)(entries.context, entries.site, Value::from_bits(object), kind).map(Value::to_bits)
+        // The row names the lookup its own `kind` reads, so each runs as a direct call the
+        // compiler can inline into the row: an erased call per field read costs more than the hit.
+        // SAFETY: the context is the lane context this frame runs in, and `site` its live record.
+        let cx = entries.context.cast::<LaneContext>();
+        let object = Value::from_bits(object);
+        let value = match kind {
+            EntryKind::Polymorphic => super::polymorphic_entry(cx, entries.site, object),
+            EntryKind::Hashed => super::hashed_entry(cx, entries.site, object),
+            EntryKind::Holder => super::holder_entry(cx, entries.site, object),
+            EntryKind::Inherited => super::inherited_entry(cx, entries.site, object),
+        };
+        value.map(Value::to_bits)
     }
 
     /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the
@@ -3352,7 +3362,7 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     None
 }
 
-sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
+sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
@@ -3361,6 +3371,7 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
     /// target run: its target's `PREFIX` row (or none), then the `COPY` row (or none), then the test `TEST`,
     /// run in this record (`target_run`). Any other `TEST` takes the jump as it always does.
     pub(crate) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, COPY: u16, TEST: u16>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
         // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
         // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
@@ -3503,13 +3514,14 @@ sharded_handler! { lane_handler, row_jump_shards, row_jump_handler, [OP];
     }
 }
 
-lane_handler! {
+view_handler! {
     /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the own
     /// read past its record's hint, which reads through the site's cache and rebinds the hint; a held
     /// read, the site's holder entry. Out of the row's body, so each row instance holds one jump here
     /// rather than this chain at each of its misses.
     #[inline(never)]
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         let script: *mut LaneContext = view.memory.bytes.cast();
         // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
         if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
@@ -3751,7 +3763,7 @@ pub(crate) const fn protocol_handler<const OP: u16, const ACC: u8, const MISS: u
     }
 }
 
-sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP];
+sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP];
     /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
     /// generator step, a frame or tier protocol record), generated from its staged row as
     /// `generated_row` is but with no site plan: the record decodes by its opcode's decoder, the row
@@ -3761,6 +3773,7 @@ sharded_handler! { lane_handler, protocol_row_shards, protocol_row_handler, [OP]
     /// handler. An opcode with no staged decoder decodes to nothing and takes that arm directly
     /// until its row lands.
     pub(crate) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
+        let cx: *mut LaneContext = row_context::<OP>(cx);
         // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
         // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
         // proved call (`call_frame`, `CallFrame::call_hand_over`).
@@ -4524,7 +4537,8 @@ pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, ba
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
 #[path = "lane_frame/fused.rs"]
 pub(crate) mod fused;
-pub(crate) use fused::{chain_row, fused_row, fuse_chains, fuse_rows, is_window_row};
+pub(crate) use fused::{chain_row, fused_row, is_window_row};
+#[cfg(feature = "jit")] pub(crate) use fused::{fuse_chains, fuse_rows};
 
 /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
 /// filter, null where the record has none.

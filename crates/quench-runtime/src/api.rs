@@ -78,6 +78,9 @@ impl Engine {
 ///
 /// The VM names no host type (`Vm::host` is erased), so the runtime is compiled once; this
 /// wrapper only keeps the host's type for the embedder's `host_mut` and snapshot hooks.
+/// The process status of an entry whose top-level await never settled.
+pub const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
+
 pub struct Runtime<H: Host> {
     vm: Vm,
     host: std::marker::PhantomData<fn() -> H>,
@@ -85,6 +88,21 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
+    /// A runtime that runs only code its image archived: it installs no JIT or source routes.
+    pub fn new_static(host: H) -> Self { Self { vm: Vm::new_static(host), host: std::marker::PhantomData } }
+    /// A static runtime that installs only the intrinsic families `builtins` names: an image
+    /// whose program reaches none of a family's intrinsics keeps its realm objects, install
+    /// time and (through the table's `None` entries) its installer code out.
+    pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
+        Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
+    }
+    /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
+    /// `snapshot_at_rest`): it never installs its host.
+    pub fn new_at_rest(host: H) -> Self { Self { vm: Vm::new_at_rest(host), host: std::marker::PhantomData } }
+    /// A runtime only ever restored from its startup snapshot (`execute_native_from_snapshot`):
+    /// it never installs its host, compiles source or runs the JIT, so a binary that makes
+    /// only such runtimes links none of them.
+    pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
@@ -138,9 +156,14 @@ impl<H: Host> Runtime<H> {
     /// Ends this runtime for a process that exits next. The host is dropped, so its effects
     /// (flushed output, terminated workers, closed handles) happen as on any drop; the heap
     /// and compiled programs, which hold only this process's memory, are left to the
-    /// operating system instead of being freed one allocation at a time.
-    pub fn end_for_process_exit(self) {
-        self.vm.end_for_process_exit();
+    /// operating system instead of being freed one allocation at a time. Ended in place, so
+    /// the runtime is not copied out first.
+    ///
+    /// # Safety
+    /// `runtime` is never used, taken or dropped again.
+    pub unsafe fn end_for_process_exit(runtime: &mut std::mem::ManuallyDrop<Self>) {
+        // SAFETY: the caller never uses the runtime again.
+        unsafe { runtime.vm.end_for_process_exit() };
     }
 
     pub fn host_mut(&mut self) -> &mut H {
@@ -294,8 +317,32 @@ impl<H: Host> Runtime<H> {
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> Result<Vec<u8>, String> {
         self.vm.forget_spare_await_state();
+        self.vm.materialize_named_lazy_globals(program).map_err(|error| error.to_string())?;
         self.vm.collect_now(program);
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
+    }
+
+    /// The host operations the heap's host functions run, ascending, and apart, per set of
+    /// globals no loaded code names, those only the global object holds for them
+    /// (`Vm::held_host_operations`).
+    pub fn held_host_operations(&self) -> (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>) {
+        self.vm.held_host_operations()
+    }
+
+    /// How much code the programs this runtime holds carry: programs, functions and
+    /// instructions, which an image that runs them natively lowers.
+    pub fn held_code_size(&self) -> (usize, usize, usize) {
+        self.vm.programs.residuals().fold((0, 0, 0), |(programs, functions, instructions), program| {
+            let count = program.function_count();
+            let code: usize = (0..count).map(|index| program.function(index).code.len()).sum();
+            (programs + 1, functions + count, instructions + code)
+        })
+    }
+
+    /// The opcodes the programs this runtime holds run, lowered: a saved runtime's image
+    /// links lane handlers for these alone (`LaneTables::kept`).
+    pub fn held_opcodes(&self) -> Vec<u16> {
+        self.vm.programs.lowered_ops()
     }
 
     /// Makes this new runtime the one a `build_snapshot` wrote into `snapshot`, with `entry`
@@ -315,6 +362,25 @@ impl<H: Host> Runtime<H> {
         // this runtime was put in is the process's, so it is adopted again here.
         self.set_execution_mode(mode);
         Ok(restored)
+    }
+
+    /// Continues a runtime `restore_snapshot` restored from a run saved at rest
+    /// (`snapshot_at_rest`): the host binds its process inputs again, and nothing runs until
+    /// its sources deliver.
+    pub fn resume_restored(&mut self) -> Result<(), JsError> {
+        self.vm.resume_restored()
+    }
+
+    /// `restore_snapshot` of a run saved at rest that `program`'s native image continues; the
+    /// run goes on from `resume_restored`.
+    #[cfg(feature = "native-execution")]
+    pub fn restore_native_at_rest(
+        &mut self,
+        snapshot: crate::KeptBytes,
+        program: &crate::NativeJsProgram,
+        read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
+    ) -> Result<(), JsError> {
+        self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).

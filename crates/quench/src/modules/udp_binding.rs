@@ -4,6 +4,7 @@ use super::{
     udp_transport::{Endpoint, Pending, SendMode, Submission},
 };
 use crate::host::{NodeHost, SharedNodeState};
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value};
 use std::{
     cell::{Cell, RefCell},
@@ -104,32 +105,32 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let handle = super::tcp_binding::handle_prototype(c)?;
         c.set_prototype_rooted(prototype, handle)?;
         for (name, op) in [
-            ("open", "udpOpen"),
-            ("bind", "udpBind"),
-            ("bind6", "udpBind6"),
-            ("connect", "udpConnect"),
-            ("connect6", "udpConnect6"),
-            ("recvStart", "udpRecvStart"),
-            ("recvStop", "udpRecvStop"),
-            ("send", "udpSend"),
-            ("send6", "udpSend6"),
-            ("getsockname", "udpSockName"),
-            ("getpeername", "udpPeerName"),
-            ("getSendQueueSize", "udpQueueSize"),
-            ("getSendQueueCount", "udpQueueCount"),
-            ("setBroadcast", "udpBroadcast"),
-            ("setTTL", "udpTtl"),
-            ("setMulticastTTL", "udpMulticastTtl"),
-            ("setMulticastLoopback", "udpMulticastLoop"),
-            ("bufferSize", "udpBufferSize"),
-            ("disconnect", "udpDisconnect"),
-            ("setMulticastInterface", "udpMulticastInterface"),
-            ("addMembership", "udpJoinMembership"),
-            ("dropMembership", "udpLeaveMembership"),
-            ("addSourceSpecificMembership", "udpJoinSourceMembership"),
-            ("dropSourceSpecificMembership", "udpLeaveSourceMembership"),
+            ("open", marked_operation!("udpOpen")),
+            ("bind", marked_operation!("udpBind")),
+            ("bind6", marked_operation!("udpBind6")),
+            ("connect", marked_operation!("udpConnect")),
+            ("connect6", marked_operation!("udpConnect6")),
+            ("recvStart", marked_operation!("udpRecvStart")),
+            ("recvStop", marked_operation!("udpRecvStop")),
+            ("send", marked_operation!("udpSend")),
+            ("send6", marked_operation!("udpSend6")),
+            ("getsockname", marked_operation!("udpSockName")),
+            ("getpeername", marked_operation!("udpPeerName")),
+            ("getSendQueueSize", marked_operation!("udpQueueSize")),
+            ("getSendQueueCount", marked_operation!("udpQueueCount")),
+            ("setBroadcast", marked_operation!("udpBroadcast")),
+            ("setTTL", marked_operation!("udpTtl")),
+            ("setMulticastTTL", marked_operation!("udpMulticastTtl")),
+            ("setMulticastLoopback", marked_operation!("udpMulticastLoop")),
+            ("bufferSize", marked_operation!("udpBufferSize")),
+            ("disconnect", marked_operation!("udpDisconnect")),
+            ("setMulticastInterface", marked_operation!("udpMulticastInterface")),
+            ("addMembership", marked_operation!("udpJoinMembership")),
+            ("dropMembership", marked_operation!("udpLeaveMembership")),
+            ("addSourceSpecificMembership", marked_operation!("udpJoinSourceMembership")),
+            ("dropSourceSpecificMembership", marked_operation!("udpLeaveSourceMembership")),
         ] {
-            let f = c.host_function_named(crate::host::shared_vm::operation(op), name)?;
+            let f = c.host_function_named(op.id(), name)?;
             put(c, prototype, name, f)?;
         }
         let getter = c.host_function(crate::host::shared_vm::operation!("udpFd"))?;
@@ -172,6 +173,7 @@ pub(crate) fn construct(
     {
         let mut state = shared.borrow_mut();
         state.udp.identities.push((weak, id));
+        state.poll_on(crate::host::node_host::PollSlot::Udp, |runtime, _, shared| poll(runtime, shared));
         state.udp.endpoints.insert(
             id,
             Socket {

@@ -346,7 +346,7 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let proven_args = if layout.inlined(pc) { 0 } else { layout.proven_args.get(shape.call_pc as usize).copied().unwrap_or(0) };
+    let proven_args = if layout.inlined(pc) || layout.callees(shape.call_pc).is_empty() { 0 } else { layout.proven_args.at(shape.call_pc as usize) };
     let read = shape.method.map(|method| super::plan::method_read(shape.this, method.cache, method.scratch)).transpose()?;
     let chain = shape.method.map_or_else(Vec::new, |method| super::plan::chain_reads(layout, shape.this, method.cache, method.scratch));
     // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.

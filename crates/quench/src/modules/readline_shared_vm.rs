@@ -20,28 +20,28 @@ mod slot;
 use slot::Slot;
 
 /// The internal methods: their slot, operation and arity, in Node's class order.
-const METHODS: [(Slot, &str); 17] = [
-    (Slot::SetRawMode, "readlineSetRawMode"),
-    (Slot::Question, "readlineQuestionInternal"),
-    (Slot::OnLine, "readlineOnLine"),
-    (Slot::QuestionCancel, "readlineQuestionCancel"),
-    (Slot::WriteToOutput, "readlineWriteToOutput"),
-    (Slot::AddHistory, "readlineAddHistory"),
-    (Slot::RefreshLine, "readlineRefreshLine"),
-    (Slot::NormalWrite, "readlineNormalWrite"),
-    (Slot::InsertString, "readlineInsertString"),
-    (Slot::DeleteLeft, "readlineDeleteLeft"),
-    (Slot::DeleteRight, "readlineDeleteRight"),
-    (Slot::DeleteLineLeft, "readlineDeleteLineLeft"),
-    (Slot::DeleteLineRight, "readlineDeleteLineRight"),
-    (Slot::Line, "readlineLine"),
-    (Slot::HistoryNext, "readlineHistoryNext"),
-    (Slot::HistoryPrev, "readlineHistoryPrev"),
-    (Slot::GetDisplayPos, "readlineGetDisplayPos"),
+const METHODS: [(Slot, MarkedOperation); 17] = [
+    (Slot::SetRawMode, marked_operation!("readlineSetRawMode")),
+    (Slot::Question, marked_operation!("readlineQuestionInternal")),
+    (Slot::OnLine, marked_operation!("readlineOnLine")),
+    (Slot::QuestionCancel, marked_operation!("readlineQuestionCancel")),
+    (Slot::WriteToOutput, marked_operation!("readlineWriteToOutput")),
+    (Slot::AddHistory, marked_operation!("readlineAddHistory")),
+    (Slot::RefreshLine, marked_operation!("readlineRefreshLine")),
+    (Slot::NormalWrite, marked_operation!("readlineNormalWrite")),
+    (Slot::InsertString, marked_operation!("readlineInsertString")),
+    (Slot::DeleteLeft, marked_operation!("readlineDeleteLeft")),
+    (Slot::DeleteRight, marked_operation!("readlineDeleteRight")),
+    (Slot::DeleteLineLeft, marked_operation!("readlineDeleteLineLeft")),
+    (Slot::DeleteLineRight, marked_operation!("readlineDeleteLineRight")),
+    (Slot::Line, marked_operation!("readlineLine")),
+    (Slot::HistoryNext, marked_operation!("readlineHistoryNext")),
+    (Slot::HistoryPrev, marked_operation!("readlineHistoryPrev")),
+    (Slot::GetDisplayPos, marked_operation!("readlineGetDisplayPos")),
 ];
 
 /// The internal methods after `getCursorPos`, in Node's class order.
-const LATE_METHODS: [(Slot, &str); 2] = [(Slot::MoveCursor, "readlineMoveCursor"), (Slot::TtyWrite, "readlineTtyWrite")];
+const LATE_METHODS: [(Slot, MarkedOperation); 2] = [(Slot::MoveCursor, marked_operation!("readlineMoveCursor")), (Slot::TtyWrite, marked_operation!("readlineTtyWrite"))];
 
 /// The private fields the legacy interface exposes as `_`-prefixed accessors.
 const LEGACY_FIELDS: [Slot; 8] = [
@@ -69,6 +69,7 @@ const ITERATOR_HIGH_WATER_MARK: f64 = 1024.0;
 /// `historyIndex` when no history entry is shown.
 const NO_HISTORY_ENTRY: f64 = -1.0;
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::units::{CARRIAGE_RETURN, LINE_FEED};
 const TAB: u16 = b'\t' as u16;
 /// The first code point outside the Basic Multilingual Plane: two UTF-16 units.
@@ -864,13 +865,13 @@ fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), 
     call_method(c, this, "setPrompt", &[prompt])?;
     let terminal = c.truthy_rooted(terminal)?;
     put_bool(c, this, "terminal", terminal)?;
-    let on_error = closure(c, "readlineInputError", "onerror", &[this])?;
+    let on_error = closure(c, crate::host::shared_vm::operation!("readlineInputError"), "onerror", &[this])?;
     put_slot(c, this, Slot::LineObjectStream, undefined)?;
     on(c, input, "error", on_error)?;
     if terminal {
-        let on_keypress = closure(c, "readlineInputKeypress", "onkeypress", &[this])?;
-        let on_end = closure(c, "readlineInputTermEnd", "ontermend", &[this])?;
-        let on_resize = closure(c, "readlineOutputResize", "onresize", &[this])?;
+        let on_keypress = closure(c, crate::host::shared_vm::operation!("readlineInputKeypress"), "onkeypress", &[this])?;
+        let on_end = closure(c, crate::host::shared_vm::operation!("readlineInputTermEnd"), "ontermend", &[this])?;
+        let on_resize = closure(c, crate::host::shared_vm::operation!("readlineOutputResize"), "onresize", &[this])?;
         install_keypress_decoder(c, input, this)?;
         on(c, input, "keypress", on_keypress)?;
         on(c, input, "end", on_end)?;
@@ -884,23 +885,23 @@ fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), 
         }
         let detach = closure(
             c,
-            "readlineDetach",
+            crate::host::shared_vm::operation!("readlineDetach"),
             "onSelfCloseWithTerminal",
             &[input, output, on_keypress, on_error, on_end, on_resize],
         )?;
         once(c, this, "close", detach)?;
     } else {
-        let on_data = closure(c, "readlineInputData", "ondata", &[this])?;
-        let on_end = closure(c, "readlineInputEnd", "onend", &[this])?;
+        let on_data = closure(c, crate::host::shared_vm::operation!("readlineInputData"), "ondata", &[this])?;
+        let on_end = closure(c, crate::host::shared_vm::operation!("readlineInputEnd"), "onend", &[this])?;
         on(c, input, "data", on_data)?;
         on(c, input, "end", on_end)?;
-        let detach = closure(c, "readlineDetach", "onSelfCloseWithoutTerminal", &[input, undefined, on_data, on_error, on_end])?;
+        let detach = closure(c, crate::host::shared_vm::operation!("readlineDetach"), "onSelfCloseWithoutTerminal", &[input, undefined, on_data, on_error, on_end])?;
         once(c, this, "close", detach)?;
         let decoder = utf8_decoder(c)?;
         put_slot(c, this, Slot::Decoder, decoder)?;
     }
     if c.truthy_rooted(signal)? {
-        let aborted = closure(c, "readlineAborted", "onAborted", &[this])?;
+        let aborted = closure(c, crate::host::shared_vm::operation!("readlineAborted"), "onAborted", &[this])?;
         if truthy_member(c, signal, "aborted")? {
             next_tick(c, aborted, &[])?;
         } else {
@@ -908,7 +909,7 @@ fn initialize(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), 
             put_bool(c, options, "once", true)?;
             let abort = text(c, "abort");
             call_method(c, signal, "addEventListener", &[abort, aborted, options])?;
-            let unlisten = closure(c, "readlineUnlistenAbort", "", &[signal, aborted])?;
+            let unlisten = closure(c, crate::host::shared_vm::operation!("readlineUnlistenAbort"), "", &[signal, aborted])?;
             once(c, this, "close", unlisten)?;
         }
     }
@@ -1024,13 +1025,13 @@ pub(crate) fn legacy_constructor(c: &mut Context<'_>, this: RootId, args: &[Root
     };
     match options_completer {
         Some(completer) if is_function(c, completer) && number(c, completer, "length")? != 2.0 => {
-            let adapted = closure(c, "readlineCompleterAdapter", "", &[completer])?;
+            let adapted = closure(c, crate::host::shared_vm::operation!("readlineCompleterAdapter"), "", &[completer])?;
             put(c, options, "completer", adapted)?;
         }
         Some(_) => {}
         None => {
             if is_function(c, args[2]) && number(c, args[2], "length")? != 2.0 {
-                args[2] = closure(c, "readlineCompleterAdapter", "", &[args[2]])?;
+                args[2] = closure(c, crate::host::shared_vm::operation!("readlineCompleterAdapter"), "", &[args[2]])?;
             }
         }
     }
@@ -1816,16 +1817,16 @@ pub(crate) fn async_iterator(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
     set_field(c, state, IteratorField::Waiting, waiting)?;
     let no = c.boolean(false);
     set_field(c, state, IteratorField::Finished, no)?;
-    let on_line = closure(c, "readlineIteratorLine", "eventHandler", &[state])?;
-    let on_error = closure(c, "readlineIteratorError", "errorHandler", &[state])?;
-    let on_close = closure(c, "readlineIteratorClose", "closeHandler", &[state])?;
+    let on_line = closure(c, crate::host::shared_vm::operation!("readlineIteratorLine"), "eventHandler", &[state])?;
+    let on_error = closure(c, crate::host::shared_vm::operation!("readlineIteratorError"), "errorHandler", &[state])?;
+    let on_close = closure(c, crate::host::shared_vm::operation!("readlineIteratorClose"), "closeHandler", &[state])?;
     let listeners = c.array_rooted(&[on_line, on_error, on_close])?;
     set_field(c, state, IteratorField::Listeners, listeners)?;
     on(c, this, "line", on_line)?;
     on(c, this, "error", on_error)?;
     on(c, this, "close", on_close)?;
     let iterator = c.object_rooted()?;
-    for (name, operation) in [("next", "readlineIteratorNext"), ("return", "readlineIteratorReturn"), ("throw", "readlineIteratorThrow")] {
+    for (name, operation) in [("next", crate::host::shared_vm::operation!("readlineIteratorNext")), ("return", crate::host::shared_vm::operation!("readlineIteratorReturn")), ("throw", crate::host::shared_vm::operation!("readlineIteratorThrow"))] {
         let method = closure(c, operation, name, &[state])?;
         put(c, iterator, name, method)?;
     }
@@ -1984,12 +1985,12 @@ pub(crate) fn question(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
             if truthy_member(c, signal, "aborted")? {
                 return Ok(c.undefined());
             }
-            let cancel = closure(c, "readlineQuestionAbort", "onAbort", &[this])?;
+            let cancel = closure(c, crate::host::shared_vm::operation!("readlineQuestionAbort"), "onAbort", &[this])?;
             let listen = c.object_rooted()?;
             put_bool(c, listen, "once", true)?;
             let abort = text(c, "abort");
             call_method(c, signal, "addEventListener", &[abort, cancel, listen])?;
-            callback = closure(c, "readlineQuestionAnswered", "", &[signal, cancel, callback])?;
+            callback = closure(c, crate::host::shared_vm::operation!("readlineQuestionAnswered"), "", &[signal, cancel, callback])?;
         }
     }
     if is_function(c, callback) {
@@ -2030,16 +2031,16 @@ pub(crate) fn question_promise(c: &mut Context<'_>, this: RootId, args: &[RootId
             return Ok(promise);
         }
     }
-    let resolve = closure(c, "readlineQuestionResolve", "", &[promise])?;
-    let reject = closure(c, "readlineQuestionReject", "", &[promise])?;
+    let resolve = closure(c, crate::host::shared_vm::operation!("readlineQuestionResolve"), "", &[promise])?;
+    let reject = closure(c, crate::host::shared_vm::operation!("readlineQuestionReject"), "", &[promise])?;
     put_slot(c, this, Slot::QuestionReject, reject)?;
     let answer = if c.truthy_rooted(signal)? {
-        let cancel = closure(c, "readlineQuestionAbortReject", "onAbort", &[this, promise, signal])?;
+        let cancel = closure(c, crate::host::shared_vm::operation!("readlineQuestionAbortReject"), "onAbort", &[this, promise, signal])?;
         let listen = c.object_rooted()?;
         put_bool(c, listen, "once", true)?;
         let abort = text(c, "abort");
         call_method(c, signal, "addEventListener", &[abort, cancel, listen])?;
-        closure(c, "readlineQuestionAnswered", "", &[signal, cancel, resolve])?
+        closure(c, crate::host::shared_vm::operation!("readlineQuestionAnswered"), "", &[signal, cancel, resolve])?
     } else {
         resolve
     };
@@ -2229,7 +2230,7 @@ pub(crate) fn readline_commit(c: &mut Context<'_>, this: RootId, _: &[RootId]) -
     put_slot_named(c, this, "#todo", empty)?;
     let promise = c.pending_promise_rooted()?;
     let data = c.string_units_rooted(&joined);
-    let resolve = closure(c, "readlineQuestionResolve", "", &[promise])?;
+    let resolve = closure(c, crate::host::shared_vm::operation!("readlineQuestionResolve"), "", &[promise])?;
     call_method(c, stream, "write", &[data, resolve])?;
     Ok(promise)
 }
@@ -2245,18 +2246,18 @@ pub(crate) fn readline_rollback(c: &mut Context<'_>, this: RootId, _: &[RootId])
 // The modules
 // ---------------------------------------------------------------------------------------
 
-fn method(c: &mut Context<'_>, target: RootId, key: RootId, operation: &str, name: &str, enumerable: bool) -> Result<(), RootedError> {
-    let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+fn method(c: &mut Context<'_>, target: RootId, key: RootId, operation: quench_runtime::HostFunctionId, name: &str, enumerable: bool) -> Result<(), RootedError> {
+    let function = c.host_function_named(operation, name)?;
     c.define_data_property_rooted(target, key, function, true, enumerable, true)?;
     Ok(())
 }
 
-fn named_method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, enumerable: bool) -> Result<(), RootedError> {
+fn named_method(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, enumerable: bool) -> Result<(), RootedError> {
     let key = text(c, name);
     method(c, target, key, operation, name, enumerable)
 }
 
-fn slot_method(c: &mut Context<'_>, target: RootId, which: Slot, operation: &str) -> Result<(), RootedError> {
+fn slot_method(c: &mut Context<'_>, target: RootId, which: Slot, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     let key = slot(c, which)?;
     let name = format!("[{}]", which.description());
     method(c, target, key, operation, &name, false)
@@ -2291,25 +2292,25 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
     let getter = c.host_function_named(crate::host::shared_vm::operation!("readlineColumns"), "get columns")?;
     let key = text(c, "columns");
     accessor(c, prototype, key, getter, None)?;
-    named_method(c, prototype, "setPrompt", "readlineSetPrompt", false)?;
-    named_method(c, prototype, "getPrompt", "readlineGetPrompt", false)?;
-    named_method(c, prototype, "prompt", "readlinePrompt", false)?;
+    named_method(c, prototype, "setPrompt", crate::host::shared_vm::operation!("readlineSetPrompt"), false)?;
+    named_method(c, prototype, "getPrompt", crate::host::shared_vm::operation!("readlineGetPrompt"), false)?;
+    named_method(c, prototype, "prompt", crate::host::shared_vm::operation!("readlinePrompt"), false)?;
     for (which, operation) in METHODS {
-        slot_method(c, prototype, which, operation)?;
+        slot_method(c, prototype, which, operation.id())?;
     }
-    named_method(c, prototype, "close", "readlineClose", false)?;
-    named_method(c, prototype, "pause", "readlinePause", false)?;
-    named_method(c, prototype, "resume", "readlineResume", false)?;
-    named_method(c, prototype, "write", "readlineWrite", false)?;
-    named_method(c, prototype, "clearLine", "readlineClearCurrentLine", false)?;
-    named_method(c, prototype, "getCursorPos", "readlineGetCursorPos", false)?;
+    named_method(c, prototype, "close", crate::host::shared_vm::operation!("readlineClose"), false)?;
+    named_method(c, prototype, "pause", crate::host::shared_vm::operation!("readlinePause"), false)?;
+    named_method(c, prototype, "resume", crate::host::shared_vm::operation!("readlineResume"), false)?;
+    named_method(c, prototype, "write", crate::host::shared_vm::operation!("readlineWrite"), false)?;
+    named_method(c, prototype, "clearLine", crate::host::shared_vm::operation!("readlineClearCurrentLine"), false)?;
+    named_method(c, prototype, "getCursorPos", crate::host::shared_vm::operation!("readlineGetCursorPos"), false)?;
     for (which, operation) in LATE_METHODS {
-        slot_method(c, prototype, which, operation)?;
+        slot_method(c, prototype, which, operation.id())?;
     }
     let iterator = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::AsyncIterator))?;
-    method(c, prototype, iterator, "readlineAsyncIterator", "[Symbol.asyncIterator]", false)?;
+    method(c, prototype, iterator, crate::host::shared_vm::operation!("readlineAsyncIterator"), "[Symbol.asyncIterator]", false)?;
     let dispose = super::stream_shared_vm::intrinsic(c, |i| i.slot(super::stream_shared_vm::Slot::Dispose))?;
-    method(c, prototype, dispose, "readlineDispose", "[Symbol.dispose]", true)?;
+    method(c, prototype, dispose, crate::host::shared_vm::operation!("readlineDispose"), "[Symbol.dispose]", true)?;
     let retained = c.retain(class)?;
     shared.borrow_mut().builtin_cache.insert(cache.to_owned(), retained);
     Ok(class)
@@ -2369,10 +2370,10 @@ fn promisify_custom(c: &mut Context<'_>) -> Outcome {
     call_method(c, symbol, "for", &[description])
 }
 
-fn define_function(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, data: Option<RootId>) -> Result<(), RootedError> {
+fn define_function(c: &mut Context<'_>, target: RootId, name: &str, operation: quench_runtime::HostFunctionId, data: Option<RootId>) -> Result<(), RootedError> {
     let function = match data {
-        Some(data) => c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?,
-        None => c.host_function_named(crate::host::shared_vm::operation(operation), name)?,
+        Some(data) => c.host_function_named_with_data(operation, name, data)?,
+        None => c.host_function_named(operation, name)?,
     };
     let key = text(c, name);
     c.define_data_property_rooted(target, key, function, true, true, true)?;
@@ -2390,12 +2391,12 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let module = c.object_rooted()?;
     let key = text(c, "Interface");
     c.define_data_property_rooted(module, key, interface, true, true, true)?;
-    define_function(c, module, "clearLine", "readlineClearLine", None)?;
-    define_function(c, module, "clearScreenDown", "readlineClearScreenDown", None)?;
-    define_function(c, module, "createInterface", "readlineCreateInterface", Some(interface))?;
-    define_function(c, module, "cursorTo", "readlineCursorTo", None)?;
-    define_function(c, module, "emitKeypressEvents", "readlineEmitKeypressEvents", None)?;
-    define_function(c, module, "moveCursor", "readlineMoveCursorCommand", None)?;
+    define_function(c, module, "clearLine", crate::host::shared_vm::operation!("readlineClearLine"), None)?;
+    define_function(c, module, "clearScreenDown", crate::host::shared_vm::operation!("readlineClearScreenDown"), None)?;
+    define_function(c, module, "createInterface", crate::host::shared_vm::operation!("readlineCreateInterface"), Some(interface))?;
+    define_function(c, module, "cursorTo", crate::host::shared_vm::operation!("readlineCursorTo"), None)?;
+    define_function(c, module, "emitKeypressEvents", crate::host::shared_vm::operation!("readlineEmitKeypressEvents"), None)?;
+    define_function(c, module, "moveCursor", crate::host::shared_vm::operation!("readlineMoveCursorCommand"), None)?;
     let promises = promises_module(c)?;
     let key = text(c, "promises");
     c.define_data_property_rooted(module, key, promises, true, true, true)?;
@@ -2413,16 +2414,16 @@ pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
     let base = base_interface(c)?;
     let interface = c.host_constructor_named(crate::host::shared_vm::operation!("readlinePromisesConstructor"), "Interface")?;
     let prototype = inherit(c, interface, base)?;
-    named_method(c, prototype, "question", "readlineQuestionPromise", false)?;
+    named_method(c, prototype, "question", crate::host::shared_vm::operation!("readlineQuestionPromise"), false)?;
     let readline = c.host_constructor_named(crate::host::shared_vm::operation!("readlineReadline"), "Readline")?;
     let readline_prototype = get(c, readline, "prototype")?;
     for (name, operation) in [
-        ("cursorTo", "readlineReadlineCursorTo"),
-        ("moveCursor", "readlineReadlineMoveCursor"),
-        ("clearLine", "readlineReadlineClearLine"),
-        ("clearScreenDown", "readlineReadlineClearScreenDown"),
-        ("commit", "readlineReadlineCommit"),
-        ("rollback", "readlineReadlineRollback"),
+        ("cursorTo", crate::host::shared_vm::operation!("readlineReadlineCursorTo")),
+        ("moveCursor", crate::host::shared_vm::operation!("readlineReadlineMoveCursor")),
+        ("clearLine", crate::host::shared_vm::operation!("readlineReadlineClearLine")),
+        ("clearScreenDown", crate::host::shared_vm::operation!("readlineReadlineClearScreenDown")),
+        ("commit", crate::host::shared_vm::operation!("readlineReadlineCommit")),
+        ("rollback", crate::host::shared_vm::operation!("readlineReadlineRollback")),
     ] {
         named_method(c, readline_prototype, name, operation, false)?;
     }
@@ -2431,7 +2432,7 @@ pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
     c.define_data_property_rooted(module, key, interface, true, true, true)?;
     let key = text(c, "Readline");
     c.define_data_property_rooted(module, key, readline, true, true, true)?;
-    define_function(c, module, "createInterface", "readlineCreateInterface", Some(interface))?;
+    define_function(c, module, "createInterface", crate::host::shared_vm::operation!("readlineCreateInterface"), Some(interface))?;
     let retained = c.retain(module)?;
     shared.borrow_mut().builtin_cache.insert(PROMISES_CACHE.to_owned(), retained);
     Ok(module)

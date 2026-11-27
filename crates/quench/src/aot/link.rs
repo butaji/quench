@@ -31,4 +31,7 @@ impl NativeSupport {
     pub fn link_audited(&self, inputs: &NativeImageInputs, driver: &Path, executable: &Path) -> Result<NativeLinkAudit, String> {
         self.0.link_audited(inputs, driver, executable)
     }
+    pub fn link_audited_core(&self, inputs: &NativeImageInputs, driver: &Path, executable: &Path) -> Result<NativeLinkAudit, String> {
+        self.0.link_audited_core(inputs, driver, executable)
+    }
 }

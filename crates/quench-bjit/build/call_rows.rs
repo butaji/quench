@@ -4,8 +4,8 @@
 
 use crate::library::{DOUBLE_PINS, INT_PINS, PIN, PINF};
 
-/// The most arguments a direct call row takes: the argument registers `p0..p3` of the row ABI (`rows.rs`).
-const DIRECT_ARGC_MAX: usize = 3;
+/// The most arguments a direct call row takes: its frame's window slots past the pinned leading ones (`DirectFrame::argument_words`).
+const DIRECT_ARGC_MAX: usize = 6;
 
 /// The modes a direct call row is built in: its name's suffix and its receiver binding (`call_rows.rs`'s
 /// `STRICT`, `SLOPPY`, `LEXICAL`).

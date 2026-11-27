@@ -201,27 +201,27 @@ impl Tick {
     ];
 
     /// The host operation, and the name of the Node function it is.
-    fn operation(self) -> (&'static str, &'static str) {
+    fn operation(self) -> (crate::host::shared_vm::MarkedOperation, &'static str) {
         match self {
-            Self::EmitReadable => ("streamTickEmitReadable", "emitReadable_"),
-            Self::MaybeReadMore => ("streamTickMaybeReadMore", "maybeReadMore_"),
-            Self::ReadZero => ("streamTickReadZero", "nReadingNextTick"),
-            Self::UpdateReadableListening => ("streamTickUpdateReadableListening", "updateReadableListening"),
-            Self::Resume => ("streamTickResume", "resume_"),
-            Self::EndReadable => ("streamTickEndReadable", "endReadableNT"),
-            Self::EndWritable => ("streamTickEndWritable", "endWritableNT"),
-            Self::OnWriteError => ("streamTickOnWriteError", "onwriteError"),
-            Self::AfterWrite => ("streamTickAfterWrite", "afterWrite"),
-            Self::AfterWriteBatch => ("streamTickAfterWriteTick", "afterWriteTick"),
-            Self::FinishIfNeeded => ("streamTickFinishIfNeeded", ""),
-            Self::Finish => ("streamTickFinish", "finish"),
-            Self::ErrorBuffer => ("streamTickErrorBuffer", "errorBuffer"),
-            Self::EmitErrorClose => ("streamTickEmitErrorClose", "emitErrorCloseNT"),
-            Self::EmitClose => ("streamTickEmitClose", "emitCloseNT"),
-            Self::EmitError => ("streamTickEmitError", "emitErrorNT"),
-            Self::Construct => ("streamTickConstruct", "constructNT"),
-            Self::EmitCloseLegacy => ("streamTickEmitCloseLegacy", "emitCloseLegacy"),
-            Self::EmitErrorCloseLegacy => ("streamTickEmitErrorCloseLegacy", "emitErrorCloseLegacy"),
+            Self::EmitReadable => (crate::host::shared_vm::marked_operation!("streamTickEmitReadable"), "emitReadable_"),
+            Self::MaybeReadMore => (crate::host::shared_vm::marked_operation!("streamTickMaybeReadMore"), "maybeReadMore_"),
+            Self::ReadZero => (crate::host::shared_vm::marked_operation!("streamTickReadZero"), "nReadingNextTick"),
+            Self::UpdateReadableListening => (crate::host::shared_vm::marked_operation!("streamTickUpdateReadableListening"), "updateReadableListening"),
+            Self::Resume => (crate::host::shared_vm::marked_operation!("streamTickResume"), "resume_"),
+            Self::EndReadable => (crate::host::shared_vm::marked_operation!("streamTickEndReadable"), "endReadableNT"),
+            Self::EndWritable => (crate::host::shared_vm::marked_operation!("streamTickEndWritable"), "endWritableNT"),
+            Self::OnWriteError => (crate::host::shared_vm::marked_operation!("streamTickOnWriteError"), "onwriteError"),
+            Self::AfterWrite => (crate::host::shared_vm::marked_operation!("streamTickAfterWrite"), "afterWrite"),
+            Self::AfterWriteBatch => (crate::host::shared_vm::marked_operation!("streamTickAfterWriteTick"), "afterWriteTick"),
+            Self::FinishIfNeeded => (crate::host::shared_vm::marked_operation!("streamTickFinishIfNeeded"), ""),
+            Self::Finish => (crate::host::shared_vm::marked_operation!("streamTickFinish"), "finish"),
+            Self::ErrorBuffer => (crate::host::shared_vm::marked_operation!("streamTickErrorBuffer"), "errorBuffer"),
+            Self::EmitErrorClose => (crate::host::shared_vm::marked_operation!("streamTickEmitErrorClose"), "emitErrorCloseNT"),
+            Self::EmitClose => (crate::host::shared_vm::marked_operation!("streamTickEmitClose"), "emitCloseNT"),
+            Self::EmitError => (crate::host::shared_vm::marked_operation!("streamTickEmitError"), "emitErrorNT"),
+            Self::Construct => (crate::host::shared_vm::marked_operation!("streamTickConstruct"), "constructNT"),
+            Self::EmitCloseLegacy => (crate::host::shared_vm::marked_operation!("streamTickEmitCloseLegacy"), "emitCloseLegacy"),
+            Self::EmitErrorCloseLegacy => (crate::host::shared_vm::marked_operation!("streamTickEmitErrorCloseLegacy"), "emitErrorCloseLegacy"),
         }
     }
 }
@@ -394,9 +394,9 @@ pub(crate) fn remove_listener(c: &mut Context<'_>, emitter: RootId, event: &str,
 
 /// A host closure: `operation` called with `captures` as its environment, an array the
 /// closure may also update (`set_capture`).
-pub(crate) fn closure(c: &mut Context<'_>, operation: &str, name: &str, captures: &[RootId]) -> Outcome {
+pub(crate) fn closure(c: &mut Context<'_>, operation: quench_runtime::HostFunctionId, name: &str, captures: &[RootId]) -> Outcome {
     let environment = c.array_rooted(captures)?;
-    c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, environment)
+    c.host_function_named_with_data(operation, name, environment)
 }
 
 pub(crate) fn captures<const N: usize>(c: &mut Context<'_>) -> Result<[RootId; N], RootedError> {
@@ -480,9 +480,9 @@ fn key_root(c: &mut Context<'_>, key: Key) -> Outcome {
 
 /// Methods as Node assigns them: enumerable, writable and configurable.
 /// Each is `(key, operation, function name)`.
-pub(crate) fn define_methods(c: &mut Context<'_>, target: RootId, methods: &[(Key, &str, &str)]) -> Result<(), RootedError> {
+pub(crate) fn define_methods(c: &mut Context<'_>, target: RootId, methods: &[(Key, crate::host::shared_vm::MarkedOperation, &str)]) -> Result<(), RootedError> {
     for &(key, operation, name) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         let key = key_root(c, key)?;
         c.define_data_property_rooted(target, key, function, true, true, true)?;
     }
@@ -554,7 +554,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let mut ticks = [undefined; Tick::ALL.len()];
     for (index, tick) in Tick::ALL.iter().enumerate() {
         let (operation, name) = tick.operation();
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         ticks[index] = c.retain(function)?;
     }
     let nop = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "nop")?;
@@ -625,13 +625,13 @@ fn exports(
         c,
         stream,
         &[
-            (Key::Name("duplexPair"), "streamDuplexPair", "duplexPair"),
-            (Key::Name("pipeline"), "streamPipeline", "pipeline"),
-            (Key::Name("addAbortSignal"), "streamAddAbortSignal", "addAbortSignal"),
-            (Key::Name("finished"), "streamFinished", "eos"),
-            (Key::Name("destroy"), "streamDestroyer", "destroyer"),
-            (Key::Name("setDefaultHighWaterMark"), "streamSetDefaultHighWaterMark", "setDefaultHighWaterMark"),
-            (Key::Name("getDefaultHighWaterMark"), "streamGetDefaultHighWaterMark", "getDefaultHighWaterMark"),
+            (Key::Name("duplexPair"), crate::host::shared_vm::marked_operation!("streamDuplexPair"), "duplexPair"),
+            (Key::Name("pipeline"), crate::host::shared_vm::marked_operation!("streamPipeline"), "pipeline"),
+            (Key::Name("addAbortSignal"), crate::host::shared_vm::marked_operation!("streamAddAbortSignal"), "addAbortSignal"),
+            (Key::Name("finished"), crate::host::shared_vm::marked_operation!("streamFinished"), "eos"),
+            (Key::Name("destroy"), crate::host::shared_vm::marked_operation!("streamDestroyer"), "destroyer"),
+            (Key::Name("setDefaultHighWaterMark"), crate::host::shared_vm::marked_operation!("streamSetDefaultHighWaterMark"), "setDefaultHighWaterMark"),
+            (Key::Name("getDefaultHighWaterMark"), crate::host::shared_vm::marked_operation!("streamGetDefaultHighWaterMark"), "getDefaultHighWaterMark"),
         ],
     )?;
     let promises = promises_module(c)?;
@@ -657,9 +657,9 @@ fn exports(
         c,
         stream,
         &[
-            (Key::Name("_isArrayBufferView"), "streamIsArrayBufferView", "isView"),
-            (Key::Name("_isUint8Array"), "streamIsUint8Array", "isUint8Array"),
-            (Key::Name("_uint8ArrayToBuffer"), "streamUint8ArrayToBuffer", "_uint8ArrayToBuffer"),
+            (Key::Name("_isArrayBufferView"), crate::host::shared_vm::marked_operation!("streamIsArrayBufferView"), "isView"),
+            (Key::Name("_isUint8Array"), crate::host::shared_vm::marked_operation!("streamIsUint8Array"), "isUint8Array"),
+            (Key::Name("_uint8ArrayToBuffer"), crate::host::shared_vm::marked_operation!("streamUint8ArrayToBuffer"), "_uint8ArrayToBuffer"),
         ],
     )?;
     Ok(())
@@ -691,8 +691,8 @@ fn promises_module(c: &mut Context<'_>) -> Outcome {
         c,
         module,
         &[
-            (Key::Name("finished"), "streamPromisesFinished", "finished"),
-            (Key::Name("pipeline"), "streamPromisesPipeline", "pipeline"),
+            (Key::Name("finished"), crate::host::shared_vm::marked_operation!("streamPromisesFinished"), "finished"),
+            (Key::Name("pipeline"), crate::host::shared_vm::marked_operation!("streamPromisesPipeline"), "pipeline"),
         ],
     )?;
     Ok(module)
@@ -737,32 +737,32 @@ fn internal_module(c: &mut Context<'_>, relative: &str) -> Outcome {
     }
     let stream = module(c)?;
     let module = c.object_rooted()?;
-    let members: &[(&str, &str, &str)] = match relative {
-        "internal/streams/legacy" => &[("prependListener", "streamPrependListener", "prependListener")],
+    let members: &[(&str, crate::host::shared_vm::MarkedOperation, &str)] = match relative {
+        "internal/streams/legacy" => &[("prependListener", crate::host::shared_vm::marked_operation!("streamPrependListener"), "prependListener")],
         "internal/streams/state" => &[
-            ("getHighWaterMark", "streamGetHighWaterMark", "getHighWaterMark"),
-            ("getDefaultHighWaterMark", "streamGetDefaultHighWaterMark", "getDefaultHighWaterMark"),
-            ("setDefaultHighWaterMark", "streamSetDefaultHighWaterMark", "setDefaultHighWaterMark"),
+            ("getHighWaterMark", crate::host::shared_vm::marked_operation!("streamGetHighWaterMark"), "getHighWaterMark"),
+            ("getDefaultHighWaterMark", crate::host::shared_vm::marked_operation!("streamGetDefaultHighWaterMark"), "getDefaultHighWaterMark"),
+            ("setDefaultHighWaterMark", crate::host::shared_vm::marked_operation!("streamSetDefaultHighWaterMark"), "setDefaultHighWaterMark"),
         ],
         "internal/streams/destroy" => &[
-            ("construct", "streamConstructImpl", "construct"),
-            ("destroyer", "streamDestroyer", "destroyer"),
-            ("destroy", "streamDestroy", "destroy"),
-            ("undestroy", "streamUndestroy", "undestroy"),
-            ("errorOrDestroy", "streamErrorOrDestroy", "errorOrDestroy"),
+            ("construct", crate::host::shared_vm::marked_operation!("streamConstructImpl"), "construct"),
+            ("destroyer", crate::host::shared_vm::marked_operation!("streamDestroyer"), "destroyer"),
+            ("destroy", crate::host::shared_vm::marked_operation!("streamDestroy"), "destroy"),
+            ("undestroy", crate::host::shared_vm::marked_operation!("streamUndestroy"), "undestroy"),
+            ("errorOrDestroy", crate::host::shared_vm::marked_operation!("streamErrorOrDestroy"), "errorOrDestroy"),
         ],
         "internal/streams/pipeline" => &[
-            ("pipelineImpl", "streamPipelineImpl", "pipelineImpl"),
-            ("pipeline", "streamPipeline", "pipeline"),
+            ("pipelineImpl", crate::host::shared_vm::marked_operation!("streamPipelineImpl"), "pipelineImpl"),
+            ("pipeline", crate::host::shared_vm::marked_operation!("streamPipeline"), "pipeline"),
         ],
         "internal/streams/add-abort-signal" => &[
-            ("addAbortSignal", "streamAddAbortSignal", "addAbortSignal"),
-            ("addAbortSignalNoValidate", "streamAddAbortSignalNoValidate", ""),
+            ("addAbortSignal", crate::host::shared_vm::marked_operation!("streamAddAbortSignal"), "addAbortSignal"),
+            ("addAbortSignalNoValidate", crate::host::shared_vm::marked_operation!("streamAddAbortSignalNoValidate"), ""),
         ],
         _ => &[],
     };
     for &(name, operation, function_name) in members {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), function_name)?;
+        let function = c.host_function_named(operation.id(), function_name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(module, key, function, true, true, true)?;
     }

@@ -15,9 +15,12 @@ path = "src/bin/quench-runtime.rs"
 
 [features]
 # The core's features, enabled on the core and the engine together (the engine's code is compiled for them).
-default = ["jit", "native-execution"]
-jit = ["quench-runtime/jit", "quench-runtime-engine/jit"]
+default = ["jit", "native-execution", "intl", "tzdb", "wasm"]
+jit = ["quench-runtime/jit", "quench-runtime-engine/jit", "dep:quench-stencils"]
 native-execution = ["quench-runtime/native-execution", "quench-runtime-engine/native-execution"]
+intl = ["dep:quench-runtime-intl", "quench-runtime/intl", "quench-runtime-engine/intl", "tzdb"]
+tzdb = ["quench-runtime/tzdb", "quench-runtime-engine/tzdb"]
+wasm = ["quench-runtime/wasm", "quench-runtime-engine/wasm"]
 profile-field-primitives = ["quench-runtime/profile-field-primitives", "quench-runtime-engine/profile-field-primitives"]
 profile-lane-exits = ["quench-runtime/profile-lane-exits", "quench-runtime-engine/profile-lane-exits"]
 profile-native-ops = ["quench-runtime/profile-native-ops", "quench-runtime-engine/profile-native-ops"]
@@ -35,10 +38,10 @@ tier-stress = ["quench-runtime/tier-stress", "quench-runtime-engine/tier-stress"
 
 [dependencies]
 quench-runtime = { path = "../quench-runtime", default-features = false }
-quench-runtime-intl = { path = "../quench-runtime-intl" }
+quench-runtime-intl = { path = "../quench-runtime-intl", optional = true }
 quench-runtime-engine = { path = "../quench-runtime-engine", default-features = false }
 # The BaseJIT stencil tables the engine reads (`quench_bjit::rustc`), built apart from the runtime crates.
-quench-stencils = { path = "../quench-stencils" }
+quench-stencils = { path = "../quench-stencils", optional = true }
 
 [lints]
 workspace = true

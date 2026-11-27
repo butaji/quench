@@ -5,6 +5,19 @@ use crate::vm::Vm;
 use crate::{Host, JsError, ResidualProgram, Value};
 
 /// A VM for `host`.
+/// The stack an image compile needs: the lane lowering's Cranelift pipeline uses more than a test
+/// thread's default 2 MiB (an offline compile runs on a compiler's main thread).
+pub const COMPILE_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Runs `body` on a thread with `COMPILE_STACK_BYTES`, so a test compiles an image as the compiler
+/// does without asking the harness for `RUST_MIN_STACK`.
+pub fn on_compile_stack<T: Send>(body: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new().stack_size(COMPILE_STACK_BYTES)
+            .spawn_scoped(scope, body).expect("a compile thread").join().expect("the test body")
+    })
+}
+
 pub fn vm<T: Host>(host: T) -> Vm {
     Vm::new(host)
 }

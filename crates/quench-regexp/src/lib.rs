@@ -22,7 +22,7 @@ pub fn is_stack_exhaustion_message(message: &str) -> bool {
     message == quench_stack::STACK_EXHAUSTED_MESSAGE
 }
 
-pub fn is_ecma_whitespace(character: char) -> bool {
+pub const fn is_ecma_whitespace(character: char) -> bool {
     matches!(
         character,
         '\u{0009}'
@@ -1902,21 +1902,22 @@ fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool
     }
 }
 
-fn escape_matches(
+const fn escape_matches(
     escape: ast::CharacterClassEscapeKind,
     value: u32,
     ignore_case: bool,
     unicode: bool,
 ) -> bool {
+    let whitespace = match char::from_u32(value) {
+        Some(character) => is_ecma_whitespace(character),
+        None => false,
+    };
+    let digit = value <= 0x7f && (value as u8).is_ascii_digit();
     match escape {
-        ast::CharacterClassEscapeKind::D => value <= 0x7f && (value as u8).is_ascii_digit(),
-        ast::CharacterClassEscapeKind::NegativeD => {
-            !(value <= 0x7f && (value as u8).is_ascii_digit())
-        }
-        ast::CharacterClassEscapeKind::S => char::from_u32(value).is_some_and(is_ecma_whitespace),
-        ast::CharacterClassEscapeKind::NegativeS => {
-            !char::from_u32(value).is_some_and(is_ecma_whitespace)
-        }
+        ast::CharacterClassEscapeKind::D => digit,
+        ast::CharacterClassEscapeKind::NegativeD => !digit,
+        ast::CharacterClassEscapeKind::S => whitespace,
+        ast::CharacterClassEscapeKind::NegativeS => !whitespace,
         ast::CharacterClassEscapeKind::W => is_word_mode(value, ignore_case && unicode),
         ast::CharacterClassEscapeKind::NegativeW => !is_word_mode(value, ignore_case && unicode),
     }
@@ -2184,13 +2185,20 @@ fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> 
 
 /// The units `\w` matches, as inclusive ranges.
 /// The units `\w` also matches under unicode case folding: long s and the Kelvin sign.
-fn in_units(value: u32, ranges: &[(u32, u32)]) -> bool {
-    ranges.iter().any(|&(first, last)| first <= value && value <= last)
+const fn in_units(value: u32, ranges: &[(u32, u32)]) -> bool {
+    let mut index = 0;
+    while index < ranges.len() {
+        if ranges[index].0 <= value && value <= ranges[index].1 {
+            return true;
+        }
+        index += 1;
+    }
+    false
 }
-fn is_word(value: u32) -> bool {
+const fn is_word(value: u32) -> bool {
     in_units(value, &WORD_UNITS)
 }
-fn is_word_mode(value: u32, ignore_case: bool) -> bool {
+const fn is_word_mode(value: u32, ignore_case: bool) -> bool {
     is_word(value) || (ignore_case && in_units(value, &FOLDED_WORD_UNITS))
 }
 fn is_line_terminator(value: u32) -> bool {

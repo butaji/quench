@@ -7,7 +7,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{AotImage, HeapValueRecipe, Symbol, symbols::SymbolTable};
+use super::{AotImage, Symbol, symbols::{HeapValueRecipe, SymbolTable}};
 use quench_runtime::bytecode::{ResidualProgram, Traits};
 use std::collections::BTreeSet;
 

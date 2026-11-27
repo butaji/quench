@@ -28,6 +28,8 @@ mod memory;
 mod objects;
 mod values;
 mod work;
+/// The event loop's addon source (`host::pollers::napi`).
+pub(crate) use work::poll;
 
 pub(crate) use abi::*;
 pub(crate) use work::WakeSignal;
@@ -154,6 +156,8 @@ impl Env {
         });
         let env = Box::into_raw(env);
         ENVS.with(|envs| envs.borrow_mut().push(env));
+        c.host_as::<crate::host::NodeHost>().shared_state().borrow_mut()
+            .poll_on(crate::host::node_host::PollSlot::Napi, |runtime, program, _| work::poll(runtime, program));
         Ok(env)
     }
 
@@ -416,7 +420,7 @@ static EXPORTS: &[&[ExportedSymbol]] = &[
 
 pub(crate) use functions::invoke;
 pub(crate) use cleanup::run_cleanup_hooks;
-pub(crate) use work::{drain, has_work, poll, promise_executor};
+pub(crate) use work::{drain, has_work, promise_executor};
 
 /// The linker interface derives from the same declarations as the C functions.
 /// Names are compiler-only; execution support retains just the address table.

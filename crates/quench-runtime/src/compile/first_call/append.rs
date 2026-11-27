@@ -21,7 +21,15 @@ const OBJECT_HOME: &str = "\0quench:object-home:chunk";
 impl Engine {
     /// The chunk of stub `function` of `program`, compiled to follow `program`'s tables, or
     /// `None` when it compiles as a program of its own.
-    pub(crate) fn append_first_call_chunk<'a>(
+    pub(crate) fn append_first_call_chunk(
+        program: &ResidualProgram,
+        function: u32,
+        atom_prefix: &dyn AtomPrefix,
+    ) -> Option<ChunkDelta> {
+        super::super::source_routes::routes().and_then(|routes| (routes.append_first_call_chunk)(program, function, atom_prefix))
+    }
+
+    pub(crate) fn append_first_call_chunk_source<'a>(
         program: &'a ResidualProgram,
         function: u32,
         atom_prefix: &'a dyn AtomPrefix,

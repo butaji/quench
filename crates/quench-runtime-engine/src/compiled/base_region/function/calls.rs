@@ -29,6 +29,25 @@ pub(crate) fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction:
     first.into_iter().chain(completion).collect()
 }
 
+/// A method call (`o.m(x)`) whose callee inlines: the site read of the method into the shape's scratch register
+/// (`decode::site_read_row`, which leaves at the call where its entry does not answer, writing nothing), then the
+/// callee's rows behind the identity guard on that register, with the receiver as the callee's `this`; and where
+/// it returns its result, the completion with it. The scratch register stays below the callee's window, so a leave
+/// inside the callee finds the method there. `None` where it is no method call or its callee does not inline.
+pub(crate) fn method_call_inlined(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction) -> Option<Vec<What>> {
+    let (plain, returning) = instruction.split_return();
+    let scratch = Register::try_from(sites.scratch).ok()?;
+    let shape = super::super::call_plan::method_shape(sites.known.program, plain, pc, scratch, returning)?;
+    let method = shape.method?;
+    let mut context = sites.context.clone();
+    context.above(method.scratch);
+    let site = sites.callees.inlined_call(sites.targets, region, &mut context, &shape)?;
+    sites.context = context;
+    let read = What::Row(site_read_row(shape.this, method.cache, method.scratch));
+    let completion = shape.returning.then(|| What::Row(returned(shape.result)));
+    Some([read, What::Site(site)].into_iter().chain(completion).collect())
+}
+
 /// A call of a native Math function a row computes (`Math.sqrt(x)`): its callee
 /// register was defined by a field read of a Stable global's member that was that native when the
 /// code was built (`GlobalRead::NativeMember`), and the call passes one argument. The rows: the

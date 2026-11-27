@@ -59,7 +59,13 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_view_any
 fn quench_engine_vm_runs_in_lane(view: *const LaneView, pc: usize) -> bool { <Vm as DispatchFastVm6>::runs_in_lane(view, pc) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_runs_in_lane = quench_engine_vm_runs_in_lane;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_run_fast_lane(this: &mut Vm, code: &ResidualProgram, program: ProgramId, view: *const LaneView, frame: &mut usize, pc: usize, pending: &mut Vec<PendingGeneralCall>, executing: &mut quench_runtime::vm::dispatch_frame::ExecutingProgram, inline_calls: bool) -> usize { <Vm as DispatchFastVm6>::run_fast_lane(this, code, program, view, frame, pc, pending, executing, inline_calls) }
+fn quench_engine_vm_run_fast_lane(this: &mut Vm, code: &ResidualProgram, program: ProgramId, view: *const LaneView, frame: &mut usize, pc: usize, pending: &mut Vec<PendingGeneralCall>, executing: &mut quench_runtime::vm::dispatch_frame::ExecutingProgram, inline_calls: bool) -> usize {
+    #[cfg(feature = "jit")]
+    { <Vm as DispatchFastVm6>::run_fast_lane(this, code, program, view, frame, pc, pending, executing, inline_calls) }
+    // An execution-only build runs the image's body at the entry, not the records (`run_ahead_frame`).
+    #[cfg(not(feature = "jit"))]
+    { <Vm as crate::ahead_runner::AheadRunnerVm>::run_ahead_frame(this, code, program, view, frame, pc, pending, executing, inline_calls) }
+}
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_fast_lane = quench_engine_vm_run_fast_lane;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_js_tier_frame_entry(this: &mut Vm, program: &ResidualProgram, frame: usize) -> Option<usize> { <Vm as CompiledVm4>::js_tier_frame_entry(this, program, frame) }
@@ -115,8 +121,13 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_kept_nat
 #[unsafe(no_mangle)]
 fn quench_engine_vm_run_chained_lane_job(this: &mut Vm, code: &ResidualProgram, arg1: (JobRoot, *const FrameRecord), resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> Result<JobEnd, JobResume> { <Vm as DispatchFastLaneRootsVm>::run_chained_lane_job(this, code, arg1, resume, pending) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_chained_lane_job = quench_engine_vm_run_chained_lane_job;
+#[cfg(feature = "jit")]
 #[unsafe(no_mangle)]
 fn quench_engine_vm_report_lane_plan(this: &mut Vm) -> () { <Vm as DispatchFastVm3>::report_lane_plan(this) }
+// An execution-only build derives no lane view: there is no plan to report.
+#[cfg(not(feature = "jit"))]
+#[unsafe(no_mangle)]
+fn quench_engine_vm_report_lane_plan(_this: &mut Vm) -> () {}
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_report_lane_plan = quench_engine_vm_report_lane_plan;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_rebind_lane_field_entries(this: &Vm) -> () { <Vm as CompiledVm3>::rebind_lane_field_entries(this) }

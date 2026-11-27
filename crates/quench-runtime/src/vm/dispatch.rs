@@ -939,11 +939,17 @@ impl Vm {
                             RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
                         }
                     }
+                    #[cfg(feature = "wasm")]
                     Some(_) => self.step_wasm(p, f, i, pc),
+                    #[cfg(not(feature = "wasm"))]
+                    Some(_) => Err(JsError::validation("WebAssembly is unavailable in this build".into())),
                     None => Err(JsError::validation("constant index is outside program".into())),
                 }
             }
+            #[cfg(feature = "wasm")]
             Runner::Wasm => self.step_wasm(p, f, i, pc),
+            #[cfg(not(feature = "wasm"))]
+            Runner::Wasm => Err(JsError::validation("WebAssembly is unavailable in this build".into())),
         }
     }
 
@@ -956,7 +962,14 @@ impl Vm {
             | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. }))
             = crate::staged::Operation::<u64, ()>::of(i)
         else {
-            return self.step_wasm(p, f, i, pc);
+            #[cfg(feature = "wasm")]
+            {
+                return self.step_wasm(p, f, i, pc);
+            }
+            #[cfg(not(feature = "wasm"))]
+            {
+                return Err(JsError::validation("WebAssembly is unavailable in this build".into()));
+            }
         };
         match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
             RowRun::Done(_) => return Ok(StepResult::Continue),

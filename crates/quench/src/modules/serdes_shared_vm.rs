@@ -5,6 +5,7 @@
 //! object keeps its handle id in a private slot; a collected object's handle is released
 //! after the collection.
 
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use crate::host::NodeHost;
 use quench_runtime::{
     BuiltinBrand, DeserializerDelegate, HostObjectRead, HostWeakRoot, NativeContext, RootId, RootedError, SerializerDelegate,
@@ -264,38 +265,38 @@ pub(crate) fn read_view(c: &mut Context<'_>, input: &SharedWireInput, buffer: Ro
 
 /// The prototype methods of `Serializer` and `Deserializer`, in Node's order: `(name,
 /// operation)`.
-const SERIALIZER_METHODS: [(&str, &str); 9] = [
-    ("writeHeader", "serdesWriteHeader"),
-    ("writeValue", "serdesWriteValue"),
-    ("releaseBuffer", "serdesReleaseBuffer"),
-    ("transferArrayBuffer", "serdesTransferArrayBuffer"),
-    ("writeUint32", "serdesWriteUint32"),
-    ("writeUint64", "serdesWriteUint64"),
-    ("writeDouble", "serdesWriteDouble"),
-    ("writeRawBytes", "serdesWriteRawBytes"),
-    ("_setTreatArrayBufferViewsAsHostObjects", "serdesTreatViewsAsHostObjects"),
+const SERIALIZER_METHODS: [(&str, MarkedOperation); 9] = [
+    ("writeHeader", marked_operation!("serdesWriteHeader")),
+    ("writeValue", marked_operation!("serdesWriteValue")),
+    ("releaseBuffer", marked_operation!("serdesReleaseBuffer")),
+    ("transferArrayBuffer", marked_operation!("serdesTransferArrayBuffer")),
+    ("writeUint32", marked_operation!("serdesWriteUint32")),
+    ("writeUint64", marked_operation!("serdesWriteUint64")),
+    ("writeDouble", marked_operation!("serdesWriteDouble")),
+    ("writeRawBytes", marked_operation!("serdesWriteRawBytes")),
+    ("_setTreatArrayBufferViewsAsHostObjects", marked_operation!("serdesTreatViewsAsHostObjects")),
 ];
-const DESERIALIZER_METHODS: [(&str, &str); 8] = [
-    ("readHeader", "serdesReadHeader"),
-    ("readValue", "serdesReadValue"),
-    ("getWireFormatVersion", "serdesWireFormatVersion"),
-    ("transferArrayBuffer", "serdesReceiveArrayBuffer"),
-    ("readUint32", "serdesReadUint32"),
-    ("readUint64", "serdesReadUint64"),
-    ("readDouble", "serdesReadDouble"),
-    ("_readRawBytes", "serdesReadRawBytes"),
+const DESERIALIZER_METHODS: [(&str, MarkedOperation); 8] = [
+    ("readHeader", marked_operation!("serdesReadHeader")),
+    ("readValue", marked_operation!("serdesReadValue")),
+    ("getWireFormatVersion", marked_operation!("serdesWireFormatVersion")),
+    ("transferArrayBuffer", marked_operation!("serdesReceiveArrayBuffer")),
+    ("readUint32", marked_operation!("serdesReadUint32")),
+    ("readUint64", marked_operation!("serdesReadUint64")),
+    ("readDouble", marked_operation!("serdesReadDouble")),
+    ("_readRawBytes", marked_operation!("serdesReadRawBytes")),
 ];
 
 /// A class whose prototype holds `methods` and then, as V8's templates order it,
 /// `constructor`.
-fn class(c: &mut Context<'_>, name: &str, constructor: &str, methods: &[(&str, &str)]) -> Result<RootId, RootedError> {
-    let class = c.host_constructor_named(crate::host::shared_vm::operation(constructor), name)?;
+fn class(c: &mut Context<'_>, name: &str, constructor: quench_runtime::HostFunctionId, methods: &[(&str, MarkedOperation)]) -> Result<RootId, RootedError> {
+    let class = c.host_constructor_named(constructor, name)?;
     let key = c.string_rooted("prototype");
     let prototype = c.get_property_rooted(class, key)?;
     let key = c.string_rooted("constructor");
     c.delete_property_rooted(prototype, key)?;
     for (method, operation) in methods {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), method)?;
+        let function = c.host_function_named(operation.id(), method)?;
         let key = c.string_rooted(method);
         c.define_data_property_rooted(prototype, key, function, true, true, true)?;
     }
@@ -308,9 +309,9 @@ fn class(c: &mut Context<'_>, name: &str, constructor: &str, methods: &[(&str, &
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:serdes", |c| {
         let binding = c.object_rooted()?;
-        let serializer = class(c, "Serializer", "serdesSerializer", &SERIALIZER_METHODS)?;
+        let serializer = class(c, "Serializer", crate::host::shared_vm::operation!("serdesSerializer"), &SERIALIZER_METHODS)?;
         c.assign_named_property_rooted(binding, "Serializer", serializer)?;
-        let deserializer = class(c, "Deserializer", "serdesDeserializer", &DESERIALIZER_METHODS)?;
+        let deserializer = class(c, "Deserializer", crate::host::shared_vm::operation!("serdesDeserializer"), &DESERIALIZER_METHODS)?;
         c.assign_named_property_rooted(binding, "Deserializer", deserializer)?;
         Ok(binding)
     })

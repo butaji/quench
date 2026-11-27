@@ -790,7 +790,15 @@ pub(crate) struct Recompiled {
 }
 
 /// Compiles function `id` of `program` again from its source, as the load compiled it.
+/// Without the source routes (`source_routes`) a function never compiles again.
 pub(crate) fn recompile(
+    program: &crate::bytecode::ResidualProgram,
+    id: u32,
+) -> Result<Recompiled, String> {
+    super::source_routes::routes().map_or_else(|| Err("source compilation is unavailable".to_owned()), |routes| (routes.recompile)(program, id))
+}
+
+pub(crate) fn recompile_source(
     program: &crate::bytecode::ResidualProgram,
     id: u32,
 ) -> Result<Recompiled, String> {

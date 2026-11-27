@@ -150,6 +150,7 @@ impl Vm {
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
+        let tiers_run = self.tiers_run_in_lanes();
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
@@ -167,7 +168,7 @@ impl Vm {
             inline_calls: inline_calls && code.kind == quench_runtime::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
-            tiers_run: self.tier_may_run(crate::compiled::admission::Tier::ANY),
+            tiers_run,
             // `script_calls` starts on only where `inline_calls` is.
             returns_script_frame: false,
             instance: Value::DELETED,
@@ -222,7 +223,7 @@ impl Vm {
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
         let _proofs = quench_runtime::tier_surface::LaneProofScope::enter();
         let (first, left) = exited(start(cx));
-        let ip = if left { first } else { dispatch_in_lane(cx, first) };
+        let ip = if left || !cfg!(feature = "jit") { first } else { dispatch_in_lane(cx, first) };
         #[cfg(feature = "profile-lane-exits")]
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);

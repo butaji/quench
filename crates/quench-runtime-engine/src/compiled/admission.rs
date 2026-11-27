@@ -315,10 +315,12 @@ impl CompiledUnit {
 /// The code-size policy of a unit of `kind`: a JavaScript function's numeric entry, a regexp
 /// program's search, or a lane body or region (every other kind).
 fn code_ceiling(kind: UnitKind) -> usize {
-    use quench_runtime::vm::tier_policy::{JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
+    use quench_runtime::vm::tier_policy::{AHEAD_BODY_MAX_CODE_BYTES, JS_COMPILED_MAX_CODE_BYTES, LANE_BODY_MAX_CODE_BYTES, REGEXP_NATIVE_MAX_CODE_BYTES};
     match kind {
         UnitKind::Entry => JS_COMPILED_MAX_CODE_BYTES,
         UnitKind::Regexp => REGEXP_NATIVE_MAX_CODE_BYTES,
+        // An image body compiles once, offline: the JIT lane body's warm-up bound is not its cost.
+        UnitKind::Ahead(_) => AHEAD_BODY_MAX_CODE_BYTES,
         _ => LANE_BODY_MAX_CODE_BYTES,
     }
 }
@@ -392,6 +394,11 @@ pub(crate) use quench_runtime::jit_mode::Tier;
 #[inline]
 pub(crate) fn tier_runs(tiers: &[Tier]) -> bool { quench_runtime::jit_mode::tiers_allowed(tiers) }
 
+/// Whether the stencil tier runs beneath the u-jit (the default mode): a body the u-jit gives up on
+/// falls back to it (`LaneBodyHistory::base_fallback`).
+#[inline]
+pub(crate) fn stencil_below() -> bool { tier_runs(&[Tier::Base]) && tier_runs(&[Tier::Ultra]) }
+
 /// Whether the stencil tier is the only tier (`--b-jit`).
 #[inline]
 pub(crate) fn stencil_only() -> bool { quench_runtime::jit_mode::base_only() }
@@ -417,14 +424,13 @@ pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run, speculates: crate::dispatch_fast::int_kinds::speculation_allowed() }
 }
 
-/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code ran an activation
-/// the lane goes on in (`exit` names a record of it or a callee it made, or `frames_left` native frames
-/// it left): a native tier steps a register as a double without the interpreter's retirement (a widened
-/// stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
-/// A run that completed its activation and left no native frame hands back nothing.
+/// Retires the speculative int32 kinds (`RecordPlan::speculates`) after native code handed the lane what it may have
+/// stepped as doubles (`handed`: frames it left, or an activation it ran on with a speculative register no longer an
+/// int32, `int_steps::native_handed_doubles`): a native tier steps a register as a double without the interpreter's
+/// retirement (a widened stencil row, a Cranelift float increment), so the records reading it take their checked forms first.
 #[inline(always)]
-pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, exit: crate::compiled::LaneExit, frames_left: impl FnOnce() -> bool) {
-    if crate::dispatch_fast::int_kinds::speculation_allowed() && (!matches!(exit, crate::compiled::LaneExit::Returned { .. }) || frames_left()) {
+pub(crate) fn retire_after_native(vm: &quench_runtime::vm::Vm, handed: impl FnOnce() -> bool) {
+    if crate::dispatch_fast::int_kinds::speculation_allowed() && handed() {
         vm.retire_int_speculation();
     }
 }
@@ -493,7 +499,7 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
 /// lose to its slower code (`tier_model::compiles_quick`), else `Optimized`.
 pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &LaneView) -> CompileLevel {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    let observed = Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir };
+    let observed = Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive: false };
     if super::tier_model::compiles_quick(tiers, &observed, true) { CompileLevel::Quick } else { CompileLevel::Optimized }
 }
 

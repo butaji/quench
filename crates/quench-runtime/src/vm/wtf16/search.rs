@@ -53,6 +53,13 @@ impl<'a> Units<'a> {
         if self.ascii_cannot_contain(search) {
             return None;
         }
+        // ASCII in ASCII: a one-byte needle by `memrchr`, a longer one by `memmem`'s reverse search.
+        if let (Self::Ascii(text), Units::Ascii(needle)) = (self, search) {
+            return match needle {
+                [byte] => memchr::memrchr(*byte, &text[..=from]),
+                _ => memchr::memmem::rfind(&text[..from + needle.len()], needle),
+            };
+        }
         let first = search.at(0);
         (0..=from).rev().find(|&at| self.at(at) == first && self.slice(at..at + search.len()) == search)
     }

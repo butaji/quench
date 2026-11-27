@@ -27,6 +27,7 @@ const STATIC_OPERATIONS: &[&str] = &[
     "builtinExportValues",
     "consoleGlobalInitialize",
     "consoleWrite",
+    "consoleWritePlain",
     "moduleParentSet",
     "moduleRunMain",
     "processEmitExitEvent",
@@ -54,7 +55,7 @@ const STATIC_OPERATIONS: &[&str] = &[
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Whether the entry's own code runs (`arm`): the host's start-up before it is the realm's.
 static ARMED: AtomicBool = AtomicBool::new(false);
-static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None });
+static STATE: Mutex<State> = Mutex::new(State { effects: Vec::new(), refusal: None, answers: Vec::new(), choice: None, rest: None, held: (Vec::new(), Vec::new(), Vec::new()) });
 
 struct State {
     effects: Vec<(i32, Vec<u8>)>,
@@ -65,6 +66,8 @@ struct State {
     choice: Option<Question>,
     /// The runtime as the run left it at its first wait for input (`reach_wait`).
     rest: Option<Vec<u8>>,
+    /// The host operations the saved runtime holds (`reach_wait`).
+    held: HeldOperations,
 }
 
 /// A yes-or-no dynamic input: a run per answer specializes it, and the image asks it as it
@@ -78,6 +81,15 @@ pub(crate) enum Question {
 }
 
 impl Question {
+    /// The question's answer in this process, as an image asks it as it starts.
+    pub(crate) fn holds(&self) -> bool {
+        match self {
+            // SAFETY: `isatty` reads only the descriptor number.
+            Self::Terminal(fd) => unsafe { libc::isatty(*fd) == 1 },
+            Self::Environment(name, value) => std::env::var_os(name).is_some_and(|set| set == value.as_str()),
+        }
+    }
+
     /// The question as its key: `tty:FD` or `env:NAME=VALUE`.
     pub(crate) fn key(&self) -> String {
         match self {
@@ -99,12 +111,19 @@ impl Question {
     }
 }
 
+/// The host operations a saved runtime's host functions run, and apart, per set of globals no
+/// loaded code names, those only the global object holds for them
+/// (`quench_runtime::Runtime::held_host_operations`); then the opcodes its programs run
+/// (`quench_runtime::Runtime::held_opcodes`).
+pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u16>);
+
 /// What a build-time run left: its effects in order; a question it asked with no answer
 /// assumed, which a run per answer specializes; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
-    /// The run's effects up to its first wait for input, and the runtime there as a snapshot.
-    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>),
+    /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
+    /// the host operations its host functions run.
+    Waiting(Vec<(i32, Vec<u8>)>, Vec<u8>, HeldOperations),
     Question(Question),
     Dynamic(String),
 }
@@ -211,6 +230,20 @@ pub(crate) fn refused(context: &mut NativeContext<'_>, _: RootId, _: &[RootId]) 
 }
 
 /// Records a write of `bytes` to the process's descriptor `fd`, in place of making it.
+/// Makes again a write a build-time run recorded (`record`), as a strict image's replay makes it:
+/// a closed or failing descriptor ends it, as Node's stdio writes ignore such a failure.
+pub(crate) fn replay(fd: i32, bytes: &[u8]) {
+    let mut written = 0;
+    while written < bytes.len() {
+        // SAFETY: the range lies inside `bytes`.
+        let count = unsafe { libc::write(fd, bytes[written..].as_ptr().cast(), bytes.len() - written) };
+        if count <= 0 {
+            return;
+        }
+        written += count as usize;
+    }
+}
+
 pub(crate) fn record(fd: i32, bytes: Vec<u8>) {
     STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).effects.push((fd, bytes));
 }
@@ -229,7 +262,7 @@ pub(crate) fn finish() -> Residual {
     }
     let effects = std::mem::take(&mut state.effects);
     match state.rest.take() {
-        Some(rest) => Residual::Waiting(effects, rest),
+        Some(rest) => Residual::Waiting(effects, rest, std::mem::take(&mut state.held)),
         None => Residual::Effects(effects),
     }
 }
@@ -241,9 +274,12 @@ pub(crate) const REACHED_WAIT: &str = "build-time evaluation reached its first w
 /// run ends here, keeping the runtime as a snapshot (`Residual::Waiting`), which an image
 /// restores to wait for the same input.
 pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>, program: &quench_runtime::ResidualProgram) -> String {
-    match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer)) {
+    match runtime.snapshot_at_rest(program, |host, writer| host.write_snapshot(writer, true)) {
         Ok(rest) => {
-            STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).rest = Some(rest);
+            let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.rest = Some(rest);
+            let (operations, lazy) = runtime.held_host_operations();
+            state.held = (operations, lazy, runtime.held_opcodes());
             REACHED_WAIT.to_owned()
         }
         Err(error) => {

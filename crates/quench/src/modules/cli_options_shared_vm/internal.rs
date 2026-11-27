@@ -1,8 +1,8 @@
 //! Node's `internal/options` facade. Captured state preserves the identities and
 //! refresh boundary of the upstream JS module over the same native projections.
 use super::{embedder_options, flags, info, values};
-use crate::host::shared_vm::operation;
-use quench_runtime::{HostFunctionId, NativeContext, RootId, RootedError};
+use crate::host::shared_vm::{marked_operation, operation, MarkedOperation};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
 type Outcome = Result<RootId, RootedError>;
@@ -11,49 +11,49 @@ type Projection = fn(&mut Context<'_>, RootId, &[RootId]) -> Outcome;
 struct Export {
     name: &'static str,
     function_name: &'static str,
-    operation: HostFunctionId,
+    operation: MarkedOperation,
 }
 
 const EXPORTS: &[Export] = &[
     Export {
         name: "getCLIOptionsInfo",
         function_name: "getCLIOptionsInfoFromBinding",
-        operation: operation!("cliModuleInfo"),
+        operation: marked_operation!("cliModuleInfo"),
     },
     Export {
         name: "getOptionValue",
         function_name: "getOptionValue",
-        operation: operation!("cliModuleValue"),
+        operation: marked_operation!("cliModuleValue"),
     },
     Export {
         name: "getOptionsAsFlagsFromBinding",
         function_name: "getOptionsAsFlagsFromBinding",
-        operation: operation!("cliModuleFlags"),
+        operation: marked_operation!("cliModuleFlags"),
     },
     Export {
         name: "getAllowUnauthorized",
         function_name: "getAllowUnauthorized",
-        operation: operation!("cliModuleAllowUnauthorized"),
+        operation: marked_operation!("cliModuleAllowUnauthorized"),
     },
     Export {
         name: "getEmbedderOptions",
         function_name: "getEmbedderOptions",
-        operation: operation!("cliModuleEmbedder"),
+        operation: marked_operation!("cliModuleEmbedder"),
     },
     Export {
         name: "generateConfigJsonSchema",
         function_name: "generateConfigJsonSchema",
-        operation: operation!("cliModuleSchema"),
+        operation: marked_operation!("cliModuleSchema"),
     },
     Export {
         name: "parseNodeOptionsEnvVar",
         function_name: "parseNodeOptionsEnvVar",
-        operation: operation!("cliParseNodeOptions"),
+        operation: marked_operation!("cliParseNodeOptions"),
     },
     Export {
         name: "refreshOptions",
         function_name: "refreshOptions",
-        operation: operation!("cliModuleRefresh"),
+        operation: marked_operation!("cliModuleRefresh"),
     },
 ];
 
@@ -90,12 +90,12 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     c.assign_named_property_rooted(state, Slot::Process.key(), process)?;
     let module = c.object_rooted()?;
     for export in EXPORTS {
-        let function = if export.operation == operation!("cliParseNodeOptions") {
+        let function = if export.operation.id() == operation!("cliParseNodeOptions") {
             // The JS facade re-exports this exact native binding function.
             let binding = super::binding(c)?;
             c.get_named_property_rooted(binding, export.name)?
         } else {
-            c.host_constructor_named_with_data(export.operation, export.function_name, state)?
+            c.host_constructor_named_with_data(export.operation.id(), export.function_name, state)?
         };
         c.assign_named_property_rooted(module, export.name, function)?;
     }

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(feature = "jit")]
 mod select;
 pub mod relocatable_code;
 mod worker;
@@ -287,6 +288,7 @@ pub fn compile_function<T>(
         return Err(NativeCompileRejection::Cranelift);
     }
     crate::vm::engine_calls::declare_regions(&mut function);
+    #[cfg(feature = "jit")]
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
     context.clear();

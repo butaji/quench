@@ -24,7 +24,7 @@ impl Vm {
         // is one allocation of holes, with no sparse record made and then materialized.
         let length_units = length as usize;
         if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
-            return Some(self.heap.alloc_filled_array(prototype, length_units, Value::DELETED));
+            return Some(self.heap.alloc_holes_array(prototype, length_units));
         }
         let array = self
             .heap

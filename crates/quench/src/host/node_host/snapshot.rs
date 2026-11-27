@@ -5,13 +5,24 @@ use super::*;
 use crate::host::startup_snapshot::{require_quiescent, HostSnap};
 use quench_runtime::{SnapshotReader, SnapshotWriter};
 
+/// Puts `fresh` in `slot` and leaks what it held: a dumped host's value, whose descriptors and
+/// mappings were the dumping process's and are numbered like this process's own.
+fn adopt<T>(slot: &mut T, fresh: T) {
+    std::mem::forget(std::mem::replace(slot, fresh));
+}
+
 impl NodeHost {
-    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+    /// The host's part of a snapshot: of a startup snapshot, which the restoring host finishes
+    /// installing (`Host::resume`), or `at_rest`, of a run saved at its wait for input
+    /// (`aot::prefix::reach_wait`), whose installation is finished and whose run has begun.
+    pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>, at_rest: bool) -> Result<(), String> {
         let Self {
             #[cfg(feature = "native-execution")]
             module_assets: _,
             // The installation and the process's own entry and environment.
             compile_cache: _,
+            // The image's own linked operations and polled sources.
+            capabilities: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             shared_state,
@@ -27,7 +38,8 @@ impl NodeHost {
             building_snapshot: _,
             // Read only while a snapshot is built.
             snapshot_builtins: _,
-            // False at the snapshot point; a restored host sets it in `Host::resume`.
+            // Set again from `at_rest`: a startup snapshot is taken once bootstrap has set it,
+            // and its restoring host still finishes installing.
             bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
@@ -38,6 +50,7 @@ impl NodeHost {
             "socket writes",
         )?;
         writer.u64(crate::host::shared_vm::BOOTSTRAP_ABI);
+        writer.u8(u8::from(at_rest));
         shared_state.borrow().write_snapshot(writer)
     }
 
@@ -45,7 +58,183 @@ impl NodeHost {
         if reader.u64()? != crate::host::shared_vm::BOOTSTRAP_ABI {
             return Err("Node bootstrap ABI does not match runtime".into());
         }
+        self.bootstrapped = reader.u8()? != 0;
         self.shared_state.borrow_mut().read_snapshot(reader)
+    }
+
+    /// Makes this host, which a dump of a run saved at rest holds (`aot::image_dump`), this
+    /// process's: every field the snapshot leaves to the restoring process (`write_snapshot`)
+    /// comes from `fresh`, the host this process made, so the host is the one restoring the
+    /// snapshot over `fresh` (`read_snapshot`) would have made.
+    pub(crate) fn adopt_process(&mut self, fresh: NodeHost) {
+        let Self {
+            #[cfg(feature = "native-execution")]
+            module_assets,
+            compile_cache,
+            capabilities,
+            #[cfg(feature = "native-execution")]
+            native_program_resolver,
+            shared_state,
+            commonjs_entry,
+            inline_source,
+            eval_builtin_globals,
+            eval_source_nonempty,
+            eval_print,
+            eval_crypto,
+            net_pending_writes,
+            net_pending_ends,
+            net_pending_destroys,
+            building_snapshot,
+            snapshot_builtins,
+            // Written (`at_rest`).
+            bootstrapped: _,
+            resolved_imports,
+            esm_required,
+        } = fresh;
+        #[cfg(feature = "native-execution")]
+        {
+            adopt(&mut self.module_assets, module_assets);
+            adopt(&mut self.native_program_resolver, native_program_resolver);
+        }
+        adopt(&mut self.compile_cache, compile_cache);
+        adopt(&mut self.capabilities, capabilities);
+        adopt(&mut self.commonjs_entry, commonjs_entry);
+        adopt(&mut self.inline_source, inline_source);
+        adopt(&mut self.eval_builtin_globals, eval_builtin_globals);
+        adopt(&mut self.eval_source_nonempty, eval_source_nonempty);
+        adopt(&mut self.eval_print, eval_print);
+        adopt(&mut self.eval_crypto, eval_crypto);
+        adopt(&mut self.net_pending_writes, net_pending_writes);
+        adopt(&mut self.net_pending_ends, net_pending_ends);
+        adopt(&mut self.net_pending_destroys, net_pending_destroys);
+        adopt(&mut self.building_snapshot, building_snapshot);
+        adopt(&mut self.snapshot_builtins, snapshot_builtins);
+        adopt(&mut self.resolved_imports, resolved_imports);
+        adopt(&mut self.esm_required, esm_required);
+        {
+            let mut fresh = shared_state.borrow_mut();
+            let mut dumped = self.shared_state.borrow_mut();
+            let SharedNodeState {
+                vm_scripts: _,
+                async_hooks: _,
+                native_tasks,
+                dns: _,
+                performance_native: _,
+                scheduler,
+                fs,
+                fs_watch: _,
+                tls_contexts: _,
+                sqlite,
+                #[cfg(quench_icu)] icu_converters: _,
+                fs_classes: _,
+                fs_stat_watch: _,
+                cwd,
+                module_parent_api: _,
+                active_esm_requires,
+                builtin_cache: _,
+                buffer_pool: _,
+                commonjs_cache: _,
+                event_targets_api: _,
+                trace: _,
+                util_intrinsics: _,
+                node_error_api: _,
+                process_argv,
+                process_control,
+                process_signals,
+                stdin: _,
+                process_ipc: _,
+                node_test,
+                cluster,
+                hmr,
+                repl_resources,
+                #[cfg(quench_openssl_provider)] crypto_hashes: _,
+                #[cfg(quench_openssl_provider)] crypto: _,
+                crypto_key_material: _,
+                #[cfg(quench_openssl_provider)] crypto_signatures: _,
+                crypto_secret_jobs: _,
+                zlib_native: _,
+                messaging: _,
+                dns_channels: _,
+                serdes: _,
+                unhandled_rejection_mode,
+                output,
+                stdout_output,
+                module_require_trace_active,
+                net_auto_select_family_attempt_timeout: _,
+                net_auto_select_family: _,
+                process_module: _,
+                process_capture_state: _,
+                path_module: _,
+                timer_handle_api: _,
+                emitter_keys: _,
+                tick_invocation: _,
+                timer_duration_warnings: _,
+                exec_argv,
+                cli_options,
+                report_config,
+                initial_node_options,
+                initial_pending_deprecation,
+                diagnostics: _,
+                http: _,
+                http2: _,
+                tcp: _,
+                net_sockets,
+                net_closing_sockets,
+                net_socket_close_completed: _,
+                udp: _,
+                native_async_wrap: _,
+                native_pipe: _,
+                native_stream: _,
+                native_tcp_listeners,
+                net_servers,
+                child_process_shell_args_warning_emitted: _,
+                child_processes,
+                net_socket_constructor: _,
+                net_handle_owner_symbol: _,
+                net_server_on_connection: _,
+                net_handle_onclose_symbol: _,
+                net_socket_option_keys: _,
+                net_handle_identities,
+                net_handle_close_callbacks,
+                poll_sources,
+                error_event_name: _,
+                stream_intrinsics: _,
+                stream_high_water_marks: _,
+            } = &mut *fresh;
+            std::mem::swap(&mut dumped.native_tasks, native_tasks);
+            std::mem::swap(&mut dumped.scheduler, scheduler);
+            std::mem::swap(&mut dumped.fs, fs);
+            std::mem::swap(&mut dumped.sqlite, sqlite);
+            std::mem::swap(&mut dumped.cwd, cwd);
+            std::mem::swap(&mut dumped.active_esm_requires, active_esm_requires);
+            std::mem::swap(&mut dumped.process_argv, process_argv);
+            std::mem::swap(&mut dumped.process_control, process_control);
+            std::mem::swap(&mut dumped.process_signals, process_signals);
+            std::mem::swap(&mut dumped.node_test, node_test);
+            std::mem::swap(&mut dumped.cluster, cluster);
+            std::mem::swap(&mut dumped.hmr, hmr);
+            std::mem::swap(&mut dumped.repl_resources, repl_resources);
+            std::mem::swap(&mut dumped.unhandled_rejection_mode, unhandled_rejection_mode);
+            std::mem::swap(&mut dumped.output, output);
+            std::mem::swap(&mut dumped.stdout_output, stdout_output);
+            std::mem::swap(&mut dumped.module_require_trace_active, module_require_trace_active);
+            std::mem::swap(&mut dumped.exec_argv, exec_argv);
+            std::mem::swap(&mut dumped.cli_options, cli_options);
+            std::mem::swap(&mut dumped.report_config, report_config);
+            std::mem::swap(&mut dumped.initial_node_options, initial_node_options);
+            std::mem::swap(&mut dumped.initial_pending_deprecation, initial_pending_deprecation);
+            std::mem::swap(&mut dumped.net_sockets, net_sockets);
+            std::mem::swap(&mut dumped.net_closing_sockets, net_closing_sockets);
+            std::mem::swap(&mut dumped.native_tcp_listeners, native_tcp_listeners);
+            std::mem::swap(&mut dumped.net_servers, net_servers);
+            std::mem::swap(&mut dumped.child_processes, child_processes);
+            std::mem::swap(&mut dumped.net_handle_identities, net_handle_identities);
+            std::mem::swap(&mut dumped.net_handle_close_callbacks, net_handle_close_callbacks);
+            std::mem::swap(&mut dumped.poll_sources, poll_sources);
+        }
+        // What `fresh` holds now is the dumping process's, whose descriptors and mappings this
+        // process numbers as its own: never dropped.
+        std::mem::forget(shared_state);
     }
 }
 
@@ -138,6 +327,7 @@ impl SharedNodeState {
             net_socket_option_keys,
             net_handle_identities,
             net_handle_close_callbacks,
+            poll_sources: _,
             error_event_name,
             stream_intrinsics,
             stream_high_water_marks,
@@ -146,7 +336,7 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
-        require_quiescent(sqlite.snapshot_quiescent(), "open sqlite handles")?;
+        require_quiescent(sqlite.get::<crate::modules::sqlite_shared_vm::State>().is_none_or(crate::modules::sqlite_shared_vm::State::snapshot_quiescent), "open sqlite handles")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()
@@ -230,9 +420,9 @@ impl SharedNodeState {
         self.icu_converters.read_snapshot(reader)?;
         #[cfg(quench_openssl_provider)]
         {
-            self.crypto_hashes.read_snapshot(reader)?;
-            self.crypto.read_snapshot(reader)?;
-            self.crypto_signatures.read_snapshot(reader)?;
+            self.crypto_hashes.unarmed().read_snapshot(reader)?;
+            self.crypto.unarmed().read_snapshot(reader)?;
+            self.crypto_signatures.unarmed().read_snapshot(reader)?;
         }
         self.dns_channels.read_snapshot(reader)?;
         self.vm_scripts.read_snapshot(reader)?;
@@ -240,7 +430,7 @@ impl SharedNodeState {
         self.dns.read_snapshot(reader)?;
         self.performance_native.read_snapshot(reader)?;
         self.fs_watch.read_snapshot(reader)?;
-        self.tls_contexts.read_snapshot(reader)?;
+        self.tls_contexts.unarmed().read_snapshot(reader)?;
         self.fs_classes.read_snapshot(reader)?;
         self.fs_stat_watch.read_snapshot(reader)?;
         self.module_parent_api = HostSnap::read(reader)?;
@@ -253,8 +443,8 @@ impl SharedNodeState {
         self.node_error_api = HostSnap::read(reader)?;
         self.stdin.read_snapshot(reader)?;
         self.process_ipc.read_snapshot(reader)?;
-        self.crypto_key_material.read_snapshot(reader)?;
-        self.crypto_secret_jobs.read_snapshot(reader)?;
+        self.crypto_key_material.unarmed().read_snapshot(reader)?;
+        self.crypto_secret_jobs.unarmed().read_snapshot(reader)?;
         self.zlib_native.read_snapshot(reader)?;
         self.messaging.read_snapshot(reader)?;
         self.serdes.read_snapshot(reader)?;
@@ -341,7 +531,7 @@ if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(M
                 if building { host.building_snapshot = Some(kind); }
                 let mut runtime = Runtime::new(host);
                 if building {
-                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer)).unwrap();
+                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer, false)).unwrap();
                     fs::write(file, bytes).unwrap();
                 } else {
                     #[cfg(feature = "native-execution")]

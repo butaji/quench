@@ -11,6 +11,45 @@ use source_pool::SourcePool;
 pub(super) const NATIVE_ENTRY_NAME: &str = "<quench:aot-entry>";
 pub(super) const NATIVE_ENTRY_UNIT: &str = "entry";
 
+/// The host an image executes on: the Node host (`quench`) or the runtime's own `SystemHost`.
+/// The catalog and driver are the only places the choice appears; the compiled program, the
+/// image objects and the link pipeline are one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ImageHost {
+    Node,
+    Core,
+}
+
+impl ImageHost {
+    pub const fn of(core: bool) -> Self {
+        if core { Self::Core } else { Self::Node }
+    }
+
+    pub const fn crate_path(self) -> &'static str {
+        match self {
+            Self::Node => "quench",
+            Self::Core => "quench_runtime",
+        }
+    }
+
+    pub const fn host_type(self) -> &'static str {
+        match self {
+            Self::Node => "quench::NodeHost",
+            Self::Core => "quench_runtime::SystemHost",
+        }
+    }
+
+    /// Whether the catalog binds the program's module assets (only the Node loader reads them).
+    pub const fn carries_modules(self) -> bool {
+        matches!(self, Self::Node)
+    }
+
+    /// Whether the host library exports the lane helpers (the Node host does, from `aot::lane_helper_symbols`).
+    pub const fn exports_lane_helpers(self) -> bool {
+        matches!(self, Self::Core)
+    }
+}
+
 /// Original source keys, sorted and deduplicated by full equality. This manifest
 /// is compiler input, rather than a list of sources inferred from benchmark names.
 #[derive(Default)]
@@ -39,7 +78,13 @@ pub struct CompiledSources {
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
-    pub fn emit(self, directory: &Path, target: &NativeTarget) -> Result<NativeImageInputs, String> {
+    /// The intrinsic families the programs reach (a core image's realm table).
+    pub fn builtin_families(&self) -> quench_runtime::BuiltinFamilies {
+        super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
+    }
+
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<NativeImageInputs, String> {
+        let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -85,11 +130,16 @@ impl CompiledSources {
         };
         let (entry, entry_symbol) = write(&self.entry, NATIVE_ENTRY_UNIT, None)?;
         let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
-        writeln!(catalog, "quench::linked_source_pool!(quench_native_source_text, {:?});", pool_path.to_str().ok_or("source pool path is not UTF-8")?)
+        writeln!(catalog, "{}::linked_source_pool!(quench_native_source_text, {:?});", host.crate_path(), pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
-        writeln!(catalog, "quench::linked_native_sources! {{\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
+        if host == ImageHost::Core { write_builtin_table(&mut catalog, families)?; }
+        let sources_macro = match host {
+            ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
+            ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
+        };
+        writeln!(catalog, "{sources_macro}\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         for (index, unit) in self.units.iter().enumerate() {
             let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"), Some(&namespace))?;
@@ -105,58 +155,83 @@ impl CompiledSources {
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
-        let entry_path = self.assets.entry.as_deref().map(|path| path.to_str().ok_or("module entry is not UTF-8")).transpose()?;
-        writeln!(catalog, "quench::linked_module_assets! {{ values embedded_modules; entry {entry_path:?}; files {{")
-            .map_err(|error| error.to_string())?;
-        for (index, (path, file)) in self.assets.files.iter().enumerate() {
-            let bytes = match std::str::from_utf8(&file.bytes) {
-                Ok(text) => format!("{}.as_bytes()", pool.reference(text)),
-                Err(_) => {
-                    let bytes_path = directory.join(format!("asset_{index}.bin"));
-                    fs::write(&bytes_path, file.bytes.as_ref()).map_err(|error| error.to_string())?;
-                    format!("include_bytes!({:?})", bytes_path.to_str().ok_or("native image path is not UTF-8")?)
-                }
-            };
-            let prepared = match &file.prepared {
-                Some(PreparedModuleSource::Original) => "Some(quench::aot::PreparedModuleSource::Original)".to_owned(),
-                Some(PreparedModuleSource::Projected(source)) => {
-                    format!("Some(quench::aot::PreparedModuleSource::Projected({}))", pool.reference(source))
-                },
-                None => "None".to_owned(),
-            };
-            writeln!(catalog, "{:?} => (bytes {bytes}, {:?}, {prepared}),", path.to_str().ok_or("module asset path is not UTF-8")?, file.kind)
-                .map_err(|error| error.to_string())?;
-        }
-        writeln!(catalog, "}} resolutions {{").map_err(|error| error.to_string())?;
-        for ((parent, specifier), target) in &self.assets.resolutions {
-            writeln!(catalog, "({:?}, {specifier:?}) => {:?},", parent.to_str().ok_or("module parent is not UTF-8")?, target.to_str().ok_or("module target is not UTF-8")?)
-                .map_err(|error| error.to_string())?;
-        }
-        writeln!(catalog, "}} views {{").map_err(|error| error.to_string())?;
-        for ((path, key), source) in &self.assets.views {
-            writeln!(catalog, "({:?}, {key:?}) => source {},", path.to_str().ok_or("SDK view path is not UTF-8")?, pool.reference(source)).map_err(|error| error.to_string())?;
-        }
-        writeln!(catalog, "}} imports {{").map_err(|error| error.to_string())?;
-        for ((referrer, specifier), target) in &self.assets.imports {
-            writeln!(catalog, "({referrer:?}, {specifier:?}) => {target:?},").map_err(|error| error.to_string())?;
-        }
-        writeln!(catalog, "}} modules {{").map_err(|error| error.to_string())?;
-        for (name, (source, typescript)) in &self.assets.modules {
-            writeln!(catalog, "{name:?} => source {}, typescript {typescript},", pool.reference(source)).map_err(|error| error.to_string())?;
-        }
-        writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
+        if host.carries_modules() { write_module_assets(&mut catalog, &directory, &self.assets, &pool)?; }
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
         // The image's lane helper imports are defined by this library (`aot::lane_helper_symbols`), and the
-        // attention byte its polls read by the runtime (`execution_interrupt`, exported by name).
-        let exports = required_exports.iter().filter(|name| !name.starts_with("quench_lane_helper_") && *name != "quench_execution_attention").map(|name| format!("{name:?}"))
-            .collect::<Vec<_>>().join(",");
-        writeln!(catalog, "quench_runtime::export_native_js_operations!(quench::NodeHost, semantic_exports, [{exports}]);")
+        // attention byte its polls read and the narrow decode's table by the runtime (exported by name).
+        let mut exports = required_exports.iter()
+            .filter(|name| !name.starts_with("quench_lane_helper_")
+                && *name != quench_runtime::execution_interrupt::ATTENTION_SYMBOL
+                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL)
+            .map(|name| format!("{name:?}")).collect::<Vec<_>>();
+        // The Node host defines the lane helper trampolines from its own library
+        // (`aot::lane_helper_symbols`); a core image has no host library, so its catalog does.
+        if host.exports_lane_helpers() { exports.push("\"quench_lane_helper_symbols\"".to_owned()); }
+        writeln!(catalog, "quench_runtime::export_native_js_operations!({}, semantic_exports, [{}]);", host.host_type(), exports.join(","))
             .map_err(|error| error.to_string())?;
-        let host_exports = crate::modules::napi::exported_symbol_names().map(str::to_owned)
-            .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect();
+        let host_exports = match host {
+            ImageHost::Node => crate::modules::napi::exported_symbol_names().map(str::to_owned)
+                .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
+            ImageHost::Core => std::collections::BTreeSet::new(),
+        };
         Ok(NativeImageInputs::new(directory, objects, host_exports))
     }
+}
+
+/// The realm's intrinsic table: a family the program reaches names its installer, and one
+/// it does not keeps its realm objects and its installer out of the image.
+fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::BuiltinFamilies) -> Result<(), String> {
+    use quench_runtime::BuiltinFamilies as F;
+    let installer = |family: F, name: &str| {
+        if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }
+    };
+    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
+        families.bits(),
+        installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
+        installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),
+        installer(F::PROMISE_ASYNC, "PROMISE_ASYNC"), installer(F::SHADOW_REALM, "SHADOW_REALM"))
+        .map_err(|error| error.to_string())
+}
+
+/// Write the Node loader's module assets into the catalog: the entry, files, resolutions,
+/// views and linked module sources. A core image has no loader, so it writes none.
+fn write_module_assets(catalog: &mut fs::File, directory: &Path, assets: &ModuleAssets, pool: &SourcePool) -> Result<(), String> {
+    let entry_path = assets.entry.as_deref().map(|path| path.to_str().ok_or("module entry is not UTF-8")).transpose()?;
+    writeln!(catalog, "quench::linked_module_assets! {{ values embedded_modules; entry {entry_path:?}; files {{").map_err(|error| error.to_string())?;
+    for (index, (path, file)) in assets.files.iter().enumerate() {
+        let bytes = match std::str::from_utf8(&file.bytes) {
+            Ok(text) => format!("{}.as_bytes()", pool.reference(text)),
+            Err(_) => {
+                let bytes_path = directory.join(format!("asset_{index}.bin"));
+                fs::write(&bytes_path, file.bytes.as_ref()).map_err(|error| error.to_string())?;
+                format!("include_bytes!({:?})", bytes_path.to_str().ok_or("native image path is not UTF-8")?)
+            }
+        };
+        let prepared = match &file.prepared {
+            Some(PreparedModuleSource::Original) => "Some(quench::aot::PreparedModuleSource::Original)".to_owned(),
+            Some(PreparedModuleSource::Projected(source)) => format!("Some(quench::aot::PreparedModuleSource::Projected({}))", pool.reference(source)),
+            None => "None".to_owned(),
+        };
+        writeln!(catalog, "{:?} => (bytes {bytes}, {:?}, {prepared}),", path.to_str().ok_or("module asset path is not UTF-8")?, file.kind).map_err(|error| error.to_string())?;
+    }
+    writeln!(catalog, "}} resolutions {{").map_err(|error| error.to_string())?;
+    for ((parent, specifier), target) in &assets.resolutions {
+        writeln!(catalog, "({:?}, {specifier:?}) => {:?},", parent.to_str().ok_or("module parent is not UTF-8")?, target.to_str().ok_or("module target is not UTF-8")?).map_err(|error| error.to_string())?;
+    }
+    writeln!(catalog, "}} views {{").map_err(|error| error.to_string())?;
+    for ((path, key), source) in &assets.views {
+        writeln!(catalog, "({:?}, {key:?}) => source {},", path.to_str().ok_or("SDK view path is not UTF-8")?, pool.reference(source)).map_err(|error| error.to_string())?;
+    }
+    writeln!(catalog, "}} imports {{").map_err(|error| error.to_string())?;
+    for ((referrer, specifier), target) in &assets.imports {
+        writeln!(catalog, "({referrer:?}, {specifier:?}) => {target:?},").map_err(|error| error.to_string())?;
+    }
+    writeln!(catalog, "}} modules {{").map_err(|error| error.to_string())?;
+    for (name, (source, typescript)) in &assets.modules {
+        writeln!(catalog, "{name:?} => source {}, typescript {typescript},", pool.reference(source)).map_err(|error| error.to_string())?;
+    }
+    writeln!(catalog, "}} }}").map_err(|error| error.to_string())
 }
 
 impl SourceManifest {
@@ -225,6 +300,17 @@ impl SourceManifest {
         let mut manifest = Rc::try_unwrap(inputs).map_err(|_| "bootstrap source collector is still borrowed".to_owned())?.into_inner();
         manifest.assets = Rc::try_unwrap(assets).map_err(|_| "module asset collector is still borrowed".to_owned())?.into_inner();
         Ok(manifest)
+    }
+
+    /// Compile a closed program whose whole source is the entry (`Variant::Core`): the entry
+    /// program is the application itself, not the Node loader's empty bootstrap hook.
+    pub fn compile_closed(self, source: &str, kind: quench_runtime::SourceKind) -> Result<CompiledSources, String> {
+        let mut compiler = NativeJsCompiler::new(true);
+        let entry = match kind {
+            quench_runtime::SourceKind::Module => compiler.compile_module(source, NATIVE_ENTRY_NAME),
+            quench_runtime::SourceKind::Script | quench_runtime::SourceKind::Eval => compiler.compile_script(source, NATIVE_ENTRY_NAME, quench_runtime::HostScriptOptions { keep_records: true, ..Default::default() }),
+        }.map_err(|errors| format!("{errors:?}"))?;
+        Ok(CompiledSources { entry: compiler.finish(entry)?, units: Vec::new(), syntax_errors: Vec::new(), assets: self.assets })
     }
 
     /// Compile every recorded body before execution; no application is trained
@@ -330,7 +416,10 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         for (source, requires) in [
             ("eval('1');", true), ("new Function('return 1');", true), ("const F = value.constructor; F(text);", true),
-            ("const key = text(); value[key];", true), ("const o = { a: 1 }; o.a + o['b'] + [1][0];", false),
+            // A computed read alone is an index (`SourceDemands::computed`), not a name the program proves dynamic;
+            // only where it is called does it reach a constructor by a name the flow cannot follow.
+            ("const key = text(); value[key];", false), ("const key = text(); value[key](text);", true),
+            ("const o = { a: 1 }; o.a + o['b'] + [1][0];", false),
         ] {
             let entry = directory.join("entry.cjs");
             fs::write(&entry, source).unwrap();

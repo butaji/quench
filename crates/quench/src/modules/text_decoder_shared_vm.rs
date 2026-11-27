@@ -28,12 +28,11 @@ pub(crate) fn initialize(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation;
     let decoder = context.host_constructor_named(crate::host::shared_vm::operation!("textDecoderConstructor"), "TextDecoder")?;
     let decoder_prototype = context.get_named_property_rooted(decoder, "prototype")?;
     method(context, decoder_prototype, "decode", crate::host::shared_vm::operation!("textDecoderDecodeMethod"))?;
-    for (name, getter) in [("encoding", "textDecoderEncodingGet"), ("fatal", "textDecoderFatalGet"), ("ignoreBOM", "textDecoderIgnoreBomGet")] {
-        accessor(context, decoder_prototype, name, operation(getter))?;
+    for (name, getter) in [("encoding", crate::host::shared_vm::operation!("textDecoderEncodingGet")), ("fatal", crate::host::shared_vm::operation!("textDecoderFatalGet")), ("ignoreBOM", crate::host::shared_vm::operation!("textDecoderIgnoreBomGet"))] {
+        accessor(context, decoder_prototype, name, getter)?;
     }
     to_string_tag(context, decoder_prototype, "TextDecoder")?;
     let global = context.global_root()?;

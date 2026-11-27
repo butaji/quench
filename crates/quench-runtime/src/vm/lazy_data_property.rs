@@ -357,6 +357,31 @@ impl Vm {
         Ok(())
     }
 
+    /// Materializes each lazy data property of the global object that a loaded program reads
+    /// by name (`console`). A run saved at rest (`crate::Runtime::snapshot_at_rest`) does this
+    /// once, where every start of its image would otherwise build the value on the name's
+    /// first read: the saved realm holds the data property instead. A group whose building
+    /// reads a dynamic input is the host's to refuse, as any other host operation is.
+    pub(crate) fn materialize_named_lazy_globals(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let globals = self.realm.globals;
+        for atom in self.residual_name_loads() {
+            let key = PropertyKey::string(atom);
+            // A group whose initializer the host keeps from a run saved at rest stays pending.
+            while let Some(group) = self.lazy_data_group(globals, key) {
+                let initializer = self.heap.environment_slot(group, GroupSlot::Initializer as usize).unwrap_or(Value::UNDEFINED);
+                let settles = self.heap.function(initializer)
+                    .filter(|function| matches!(function.kind, FunctionKind::Native(Native::HostFunction)))
+                    .and_then(|function| self.host_operation_index(function.env))
+                    .is_none_or(|index| self.host.settles_at_rest(index as usize));
+                if self.lazy_group_state(group) != GroupState::Pending || !settles {
+                    break;
+                }
+                self.materialize_lazy_group(p, group)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Materializes `holder`'s own property `key` when it is a lazy data property, so a
     /// reflective operation observes its data descriptor.
     pub fn materialize_lazy_data_property(
@@ -447,6 +472,54 @@ impl Vm {
                 Ok(())
             })
         })
+    }
+
+    /// The functions the global object holds only for globals no loaded program reads by name:
+    /// per pending lazy group, its names and initializer; per other accessor, its name, getter
+    /// and setter. Only code that names one of them, or reaches the global object, runs them.
+    pub(super) fn unnamed_global_functions(&self) -> Vec<(Vec<String>, Vec<Value>)> {
+        let globals = self.realm.globals;
+        let named = self.residual_name_loads();
+        let mut held: Vec<(Option<Value>, Vec<String>, Vec<Value>)> = Vec::new();
+        for atom in self.own_named_keys(globals) {
+            if named.binary_search(&atom).is_ok() {
+                continue;
+            }
+            let key = PropertyKey::string(atom);
+            let name = self.atom_name(atom).to_owned();
+            if let Some(group) = self.lazy_data_group(globals, key) {
+                if self.lazy_group_state(group) != GroupState::Pending {
+                    continue;
+                }
+                let Some(initializer) = self.heap.environment_slot(group, GroupSlot::Initializer as usize) else { continue };
+                match held.iter_mut().find(|(known, ..)| *known == Some(group)) {
+                    Some((_, names, _)) => names.push(name),
+                    None => held.push((Some(group), vec![name], vec![initializer])),
+                }
+            } else if let Some(attributes) = self.property_attributes(globals, key).filter(|attributes| attributes.accessor) {
+                held.push((None, vec![name], attributes.getter.into_iter().chain(attributes.setter).collect()));
+            }
+        }
+        // A group any of whose names a loaded program reads stays held whole.
+        held.retain(|(group, ..)| group.is_none_or(|group| {
+            named.iter().all(|&atom| self.lazy_data_group(globals, PropertyKey::string(atom)) != Some(group))
+        }));
+        held.into_iter().map(|(_, names, functions)| (names, functions)).collect()
+    }
+
+    /// The names the loaded programs' code reads, ascending.
+    fn residual_name_loads(&self) -> Vec<Atom> {
+        let mut atoms = Vec::new();
+        for program in self.programs.residuals() {
+            for index in 0..program.function_count() {
+                let Some(function) = program.function_get(index) else { continue };
+                atoms.extend(function.instructions().filter(|instruction| instruction.op().loads_name())
+                    .map(|instruction| instruction.atom_index()));
+            }
+        }
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms
     }
 
     fn lazy_group_state(&self, group: Value) -> GroupState {

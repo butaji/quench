@@ -97,3 +97,19 @@ pub fn store_unlogged<S: Stage>(stage: &mut S, payload: S::Word, watch: usize, l
     stage.guard(untracked, miss)?;
     value_unlogged(stage, payload, list, record_id, value, miss)
 }
+
+/// `store_unlogged` of a store whose value the slot's type already holds (`Stage::held_store_gate`):
+/// slot observation sees nothing of it, so the watch word's tracking bit is not asked; only the
+/// barrier's log is, as `RecordSpace::store_logs` reads it: while old records keep counts (bit
+/// `counts` of the watch word at byte `watch`) any value needs its owner `unmarked`, else
+/// `value_unlogged` decides.
+#[inline(always)]
+pub fn held_unlogged<S: Stage>(stage: &mut S, payload: S::Word, (watch, counts): (usize, u64), list: MarkList,
+    record_id: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    let word = stage.load_u64(Region::Dispatch.mutable(), payload, watch as i32);
+    let kept = stage.and_imm(word, counts);
+    let counted = stage.ne_imm(kept, 0_u64);
+    let zero = stage.constant(0);
+    stage.choose_leaving(counted, #[inline(always)] |stage| unmarked(stage, payload, list, record_id, miss).map(|()| zero),
+        #[inline(always)] |stage| value_unlogged(stage, payload, list, record_id, value, miss).map(|()| zero)).map(drop)
+}

@@ -12,6 +12,47 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+/// The WebAssembly JS API's entries the VM's native dispatch reaches, installed by the binary
+/// (`enable_wasm_js`): `Vm::new` and an image whose program can reach WebAssembly
+/// (`quench::host::enable_wasm`). An image that never installs them links none of the API.
+struct WasmJsRoutes {
+    install: fn(&mut Vm, &ResidualProgram) -> Result<(), JsError>,
+    call: fn(&mut Vm, &ResidualProgram, Native, Value, &[Value]) -> Result<Value, JsError>,
+    construct: fn(&mut Vm, &ResidualProgram, Native, &[Value]) -> Result<Value, JsError>,
+}
+
+static WASM_JS_ROUTES: std::sync::OnceLock<WasmJsRoutes> = std::sync::OnceLock::new();
+
+/// Links the WebAssembly JS API into this binary; the first installation holds.
+pub fn enable_wasm_js() {
+    WASM_JS_ROUTES.get_or_init(|| WasmJsRoutes {
+        install: |vm, p| vm.install_webassembly(p),
+        call: |vm, p, native, this, args| vm.call_wasm_js_native(p, native, this, args),
+        construct: |vm, p, native, args| vm.construct_wasm_js_native(p, native, args),
+    });
+}
+
+impl Vm {
+    fn wasm_js_routes(&mut self, p: &ResidualProgram) -> Result<&'static WasmJsRoutes, JsError> {
+        WASM_JS_ROUTES.get().ok_or_else(|| self.type_error(p, "WebAssembly is not linked into this image".into()))
+    }
+
+    /// `WebAssembly`'s lazy initializer, through the installed API (`enable_wasm_js`).
+    pub(super) fn install_webassembly_routed(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        (self.wasm_js_routes(p)?.install)(self, p)
+    }
+
+    /// A WebAssembly JS API native's call, through the installed API.
+    pub(super) fn call_wasm_js_routed(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        (self.wasm_js_routes(p)?.call)(self, p, native, this, args)
+    }
+
+    /// A WebAssembly JS API constructor's construction, through the installed API.
+    pub(super) fn construct_wasm_js_routed(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
+        (self.wasm_js_routes(p)?.construct)(self, p, native, args)
+    }
+}
+
 #[path = "wasm_js/copy_shape.rs"]
 mod copy_shape;
 
@@ -1056,6 +1097,7 @@ impl Vm {
 
     /// The JavaScript value of an exported function's encoded `result` of scalar type `ty`
     /// (`CallCompletion::WasmExport`), whose decoding allocates nothing; `undefined` for none.
+    #[cfg(feature = "wasm")]
     pub fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
         let Some(ty) = ty else { return Value::UNDEFINED };
         match self.decode_wasm_value_in(result, ty, None) {
@@ -1065,6 +1107,10 @@ impl Vm {
             _ => unreachable!("a pushed export's result is a validated scalar"),
         }
     }
+
+    /// Without the WebAssembly frontend (`wasm` off) no export completes: its value stands.
+    #[cfg(not(feature = "wasm"))]
+    pub fn wasm_export_result(&self, value: Value, _ty: Option<WasmType>) -> Value { value }
 
     /// The exported function `callee` names, when a JavaScript call can push its frame in place
     /// (`dispatch_fast::lane_wasm_export_frame`): an interpreted function of a Wasm program

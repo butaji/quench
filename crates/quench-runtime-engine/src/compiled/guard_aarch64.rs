@@ -98,9 +98,12 @@ pub(crate) unsafe fn resume_fault(info: *mut libc::siginfo_t, raw_context: *mut 
     unsafe {
         let address = (*info).si_addr() as usize;
         if !active.is_null() && let Some(Some(support)) = SUPPORT.get() {
-            let landing = if (*active).poll_start <= address && address < (*active).poll_end {
+            // The guarded activation, read once through one explicit reference (its fields'
+            // comparisons would otherwise take an implicit autoref of a raw dereference).
+            let active = &*active;
+            let landing = if active.poll_start <= address && address < active.poll_end {
                 Some((support.termination, None))
-            } else if (*active).guard_start <= address && address < (*active).guard_end {
+            } else if active.guard_start <= address && address < active.guard_end {
                 Some((support.landing, Some(trap_status(quench_runtime::WasmTrap::OutOfBoundsMemory) as u64)))
             } else { None };
             if let Some((landing, status)) = landing {
@@ -108,14 +111,14 @@ pub(crate) unsafe fn resume_fault(info: *mut libc::siginfo_t, raw_context: *mut 
                 #[cfg(target_os = "macos")]
                 {
                     let registers = &mut (*context.uc_mcontext).__ss;
-                    registers.__sp = (*active).entry_stack as u64;
+                    registers.__sp = active.entry_stack as u64;
                     registers.__pc = landing as u64;
                     if let Some(status) = status { registers.__x[0] = status; }
                 }
                 #[cfg(target_os = "linux")]
                 {
                     let registers = &mut context.uc_mcontext;
-                    registers.sp = (*active).entry_stack as u64;
+                    registers.sp = active.entry_stack as u64;
                     registers.pc = landing as u64;
                     if let Some(status) = status { registers.regs[0] = status; }
                 }

@@ -20,7 +20,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     }).expect("the function has a loop");
     let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner, &|_| false)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], entry_types: &[], string_entries: &[], operand_kinds: &[], typed_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
+    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[], typed_rows: &[], entry_types: &[], string_entries: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         super::super::tier_policy::STATIC_ROWS, &program, id,
         super::super::compiled::process_lane_helpers(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default(), false, crate::compiled::admission::test_unit(), None)

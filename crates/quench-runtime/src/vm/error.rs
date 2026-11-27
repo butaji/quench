@@ -1321,7 +1321,7 @@ impl Vm {
             self.set_named(program, prototype, "valueOf", native_function)?;
         }
         self.install_boolean(program)?;
-        self.install_bigint(program)?;
+        if self.builtins.families.contains(super::BuiltinFamilies::BIGINT) { self.install_bigint(program)?; }
         for global in self.host.globals() {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
@@ -1345,7 +1345,7 @@ impl Vm {
                     )?;
                     continue;
                 }
-                CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
+                CapabilityId::WriteLine | CapabilityId::WriteErr | CapabilityId::ClockMillis => continue,
             };
             let native_function = self.native_value(native);
             self.global(program, global.name, native_function)?;
@@ -1475,6 +1475,12 @@ impl Vm {
         #[cfg(not(feature = "native-execution"))]
         let native_program_id: Option<super::program_store::ProgramId> = None;
         let program_id = if let Some(id) = native_program_id { id } else {
+            #[cfg(not(feature = "jit"))]
+            {
+                return Err(self.type_error(program, "dynamic source compilation requires the jit feature".into()));
+            }
+            #[cfg(feature = "jit")]
+            {
             self.require_source_compilation(program)?;
             let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
             let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
@@ -1489,7 +1495,7 @@ impl Vm {
             let compiled = kept.is_none();
             let residual = match kept {
                 Some(residual) => residual,
-                None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self)
+                None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self, false)
                     .map_err(|diagnostics| {
                         if diagnostics
                             .iter()
@@ -1516,6 +1522,7 @@ impl Vm {
                 self.dynamic_functions_to_keep -= 1;
             }
             program_id
+            }
         };
         let origin = self.capture_eval_origin(program)?;
         self.programs.set_origin(

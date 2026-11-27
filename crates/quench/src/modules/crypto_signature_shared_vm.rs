@@ -7,6 +7,7 @@ use super::{
     crypto_signature_state::{Error, State as Signature},
 };
 use crate::host::NodeHost;
+use crate::host::shared_vm::marked_operation;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 type Context<'a> = NativeContext<'a>;
 #[derive(Default)]
@@ -211,8 +212,8 @@ pub(crate) fn verify(
 }
 pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     for (name, final_name, final_operation) in [
-        ("Sign", "sign", "cryptoNativeSignFinal"),
-        ("Verify", "verify", "cryptoNativeVerifyFinal"),
+        ("Sign", "sign", marked_operation!("cryptoNativeSignFinal")),
+        ("Verify", "verify", marked_operation!("cryptoNativeVerifyFinal")),
     ] {
         let constructor = c.host_constructor(crate::host::shared_vm::operation!(
             "cryptoNativeSignatureNew",
@@ -222,12 +223,11 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         c.define_data_property_rooted(constructor, property, text, false, false, true)?;
         let prototype = c.object_rooted()?;
         for (name, operation) in [
-            ("init", "cryptoNativeSignatureInit"),
-            ("update", "cryptoNativeSignatureUpdate"),
+            ("init", marked_operation!("cryptoNativeSignatureInit")),
+            ("update", marked_operation!("cryptoNativeSignatureUpdate")),
             (final_name, final_operation),
         ] {
-            let function =
-                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            let function = c.host_function_named(operation.id(), name)?;
             put(c, prototype, name, function)?
         }
         let property = c.string_rooted("constructor");
@@ -238,28 +238,31 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     }
     Ok(())
 }
-pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let dead = shared
-        .borrow()
-        .crypto_signatures
-        .handles
-        .iter()
-        .enumerate()
-        .filter_map(|(index, handle)| {
-            (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    for index in dead.into_iter().rev() {
-        let handle = shared.borrow_mut().crypto_signatures.handles.remove(index);
-        runtime.release_host_weak_root(handle.identity);
+impl crate::host::Teardown for State {
+    fn teardown(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let handles = std::mem::take(&mut shared.borrow_mut().crypto_signatures.handles);
+        for handle in handles {
+            runtime.release_host_weak_root(handle.identity);
+        }
     }
-}
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let handles = std::mem::take(&mut shared.borrow_mut().crypto_signatures.handles);
-    for handle in handles {
-        runtime.release_host_weak_root(handle.identity);
+
+    fn prune(runtime: &mut Runtime<NodeHost>) {
+        let shared = runtime.host_mut().shared_state();
+        let dead = shared
+            .borrow()
+            .crypto_signatures
+            .handles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, handle)| {
+                (!runtime.host_weak_root_is_live(handle.identity)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let handle = shared.borrow_mut().crypto_signatures.handles.remove(index);
+            runtime.release_host_weak_root(handle.identity);
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 //! `internal/bootstrap/realm` under `--expose-internals`: Node's `BuiltinModule` queries
 //! over the public builtin list (`module_shared_vm::BUILTIN_MODULES`), and `internalBinding`.
-use crate::host::shared_vm::operation;
+use crate::host::shared_vm::{marked_operation, MarkedOperation};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a>;
@@ -8,14 +8,14 @@ type Context<'a> = NativeContext<'a>;
 const SCHEME: &str = "node:";
 
 /// `BuiltinModule`'s static queries with their operations.
-const QUERIES: [(&str, &str); 7] = [
-    ("exists", "realmBuiltinByUsers"),
-    ("canBeRequiredByUsers", "realmBuiltinByUsers"),
-    ("canBeRequiredWithoutScheme", "realmBuiltinWithoutScheme"),
-    ("normalizeRequirableId", "realmBuiltinNormalize"),
-    ("isBuiltin", "realmBuiltinIsBuiltin"),
-    ("getSchemeOnlyModuleNames", "realmBuiltinSchemeOnly"),
-    ("getAllBuiltinModuleIds", "realmBuiltinAll"),
+const QUERIES: [(&str, MarkedOperation); 7] = [
+    ("exists", marked_operation!("realmBuiltinByUsers")),
+    ("canBeRequiredByUsers", marked_operation!("realmBuiltinByUsers")),
+    ("canBeRequiredWithoutScheme", marked_operation!("realmBuiltinWithoutScheme")),
+    ("normalizeRequirableId", marked_operation!("realmBuiltinNormalize")),
+    ("isBuiltin", marked_operation!("realmBuiltinIsBuiltin")),
+    ("getSchemeOnlyModuleNames", marked_operation!("realmBuiltinSchemeOnly")),
+    ("getAllBuiltinModuleIds", marked_operation!("realmBuiltinAll")),
 ];
 
 /// Every public builtin id, and whether it is only requirable with the `node:` scheme.
@@ -44,8 +44,8 @@ fn normalize(id: &str) -> Option<&str> {
 
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let class = c.host_constructor_named(crate::host::shared_vm::operation!("processConstructor"), "BuiltinModule")?;
-    for (name, operation_name) in QUERIES {
-        let function = c.host_function_named(operation(operation_name), name)?;
+    for (name, operation) in QUERIES {
+        let function = c.host_function_named(operation.id(), name)?;
         c.assign_named_property_rooted(class, name, function)?;
     }
     let module = c.object_rooted()?;

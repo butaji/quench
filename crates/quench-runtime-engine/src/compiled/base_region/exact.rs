@@ -13,7 +13,7 @@ use super::*;
 use super::super::facts::{self, Observed, Seeds, Text};
 use super::super::lane_region::{leaders, writes};
 use quench_runtime::bytecode::{Constant, Function};
-use cranelift_codegen::bitset::CompoundBitSet;
+use quench_runtime::dataflow::BitSet;
 
 /// The no-overflow kind of an int32 `+` or `-`: the row whose overflow test a proof removed.
 pub(crate) fn exact_kind(kind: Kind) -> Option<Kind> {
@@ -48,7 +48,7 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
     let seeds = Seeds { contracts: &[], observed: Observed::NONE, entering: &[], model: None, signless: &[] };
-    let mut exact: CompoundBitSet = CompoundBitSet::with_capacity(instructions.len());
+    let mut exact: BitSet = BitSet::with_capacity(instructions.len());
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(constants, instructions[pc]) {
             exact.insert(pc);
@@ -62,6 +62,8 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
 /// since the function is entered only at pc 0, so every state a region or resume stub enters with is one it covers.
 /// Inlined callees' rows keep their checked kinds.
 pub(crate) fn promote(function: &Function, constants: &[Constant], origins: &[Origin], rows: &mut [Decoded]) {
+    // A region with no row the promotion could change runs no analysis.
+    if !rows.iter().zip(origins).any(|(row, origin)| matches!(origin, Origin::Caller(_)) && exact_kind(row.kind).is_some()) { return; }
     let Some(exact) = function.caches().exact_sums.get_or_init(|| exact_pcs(function, constants)).as_deref() else { return };
     for (row, origin) in rows.iter_mut().zip(origins) {
         let Origin::Caller(pc) = origin else { continue };

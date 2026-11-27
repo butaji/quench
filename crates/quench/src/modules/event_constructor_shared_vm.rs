@@ -91,8 +91,8 @@ pub(crate) fn install(context: &mut NativeContext<'_>) -> Result<(), RootedError
     let no = context.boolean(false);
     context.define_data_property_rooted(prototype, key, no, true, false, false)?;
     let descriptor = context.null_object_rooted()?;
-    for (name, operation) in [("get", "emitterCaptureDefaultGet"), ("set", "emitterCaptureDefaultSet")] {
-        let accessor = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+    for (name, operation) in [("get", crate::host::shared_vm::operation!("emitterCaptureDefaultGet")), ("set", crate::host::shared_vm::operation!("emitterCaptureDefaultSet"))] {
+        let accessor = context.host_function_named_with_data(operation, name, data)?;
         context.assign_named_property_rooted(descriptor, name, accessor)?;
     }
     let yes = context.boolean(true);

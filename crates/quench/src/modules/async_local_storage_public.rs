@@ -79,7 +79,7 @@ pub(crate) fn storage_bind(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     call(c, resource, "bind", &[function])
 }
 pub(crate) fn storage_snapshot(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let callback = c.host_function_named(crate::host::shared_vm::operation("asyncSnapshotInvoke"), "")?;
+    let callback = c.host_function_named(crate::host::shared_vm::operation!("asyncSnapshotInvoke"), "")?;
     storage_bind(c, callback, &[callback])
 }
 pub(crate) fn snapshot_invoke(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

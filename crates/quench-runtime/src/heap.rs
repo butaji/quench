@@ -138,6 +138,96 @@ mod typed_view;
 pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
 pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+
+/// The word a double backing holds for the Number `number`: its bits, NaN canonical, so a NaN
+/// never reads back as the hole (`Elements::decode_double`).
+#[inline(always)]
+pub fn double_word(number: f64) -> u64 {
+    if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() }
+}
+
+/// A double backing's elements `first + step * k` of a loop kernel's run, decoded into `out`;
+/// `false` where one is a hole.
+///
+/// # Safety
+/// `first + step * k` is below the backing's length for every `k < out.len()`.
+pub unsafe fn double_read_run(words: *const u64, (first, step): (i64, i64), out: &mut [f64]) -> bool {
+    let hole = Value::DELETED.to_bits();
+    let mut numbers = true;
+    for (k, o) in out.iter_mut().enumerate() {
+        // SAFETY: the caller's contract.
+        let word = unsafe { *words.add((first + step * k as i64) as usize) };
+        numbers &= word != hole;
+        *o = f64::from_bits(word);
+    }
+    numbers
+}
+
+/// Whether every element `first + step * k` a loop kernel's store replaces is present.
+///
+/// # Safety
+/// `first + step * k` is below the backing's length for every `k < len`.
+pub unsafe fn double_stores_present(words: *const u64, (first, step): (i64, i64), len: usize) -> bool {
+    let hole = Value::DELETED.to_bits();
+    (0..len as i64).all(|k| unsafe { *words.add((first + step * k) as usize) } != hole)
+}
+
+/// The Number elements `first + step * k` of a wide backing's words, decoded into `out`;
+/// `false` where one is no Number (a hole or a reference).
+///
+/// # Safety
+/// `first + step * k` is below the backing's length for every `k < out.len()`.
+pub unsafe fn word_read_run(words: *const Value, (first, step): (i64, i64), out: &mut [f64]) -> bool {
+    if step == 1 {
+        // SAFETY: the caller's contract.
+        let elements = unsafe { std::slice::from_raw_parts(words.add(first as usize), out.len()) };
+        return decode_run(out, elements);
+    }
+    let mut numbers = true;
+    for (k, o) in out.iter_mut().enumerate() {
+        // SAFETY: the caller's contract.
+        let number = unsafe { *words.add((first + step * k as i64) as usize) }.as_number();
+        numbers &= number.is_some();
+        *o = number.unwrap_or(0.0);
+    }
+    numbers
+}
+
+/// Whether every element `first + step * k` a loop kernel's store replaces is present.
+///
+/// # Safety
+/// `first + step * k` is below the backing's length for every `k < len`.
+pub unsafe fn word_stores_present(words: *const Value, (first, step): (i64, i64), len: usize) -> bool {
+    let mut deleted = 0u64;
+    for k in 0..len as i64 {
+        // SAFETY: the caller's contract.
+        deleted |= u64::from(unsafe { *words.add((first + step * k) as usize) }.is_deleted());
+    }
+    deleted == 0
+}
+
+/// Decodes `elements` into `out` without branches, so the loop vectorizes; `false` where one
+/// is no Number.
+fn decode_run(out: &mut [f64], elements: &[Value]) -> bool {
+    let mut others = 0u64;
+    for (o, element) in out.iter_mut().zip(elements) {
+        let (number, int, double) = element.number_parts();
+        others |= u64::from(!number);
+        *o = std::hint::select_unpredictable(int, f64::from(element.to_bits() as u32 as i32), double);
+    }
+    others == 0
+}
+
+/// Writes each Number `numbers(k)` at the element `first + step * k` of a double backing.
+///
+/// # Safety
+/// `first + step * k` is below the backing's length for every `k < len`.
+pub unsafe fn double_write_run(words: *mut u64, (first, step): (i64, i64), len: usize, numbers: impl Fn(usize) -> f64) {
+    for k in 0..len {
+        // SAFETY: the caller's contract.
+        unsafe { *words.add((first + step * k as i64) as usize) = double_word(numbers(k)) };
+    }
+}
 #[quench_macros::test_visible]
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
@@ -1348,6 +1438,17 @@ impl Heap {
             Some(run) => unsafe { ArrayElements::young(run, len, element) },
             None => ArrayElements::from_fn(len, element),
         };
+        let object = ArrayObject::fresh(prototype, elements);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// A new array of `prototype` holding `len` holes as a double backing
+    /// (`ArrayElements::double_holes`): `new Array(len)`, whose Numbers then store and load as
+    /// their own bits. A hole reads `undefined` still, and a value that is no Number widens
+    /// the backing once (`ArrayElements::make_mut`).
+    #[inline(always)]
+    pub(crate) fn alloc_holes_array(&mut self, prototype: Value, len: usize) -> Value {
+        let elements = ArrayElements::double_holes(len);
         let object = ArrayObject::fresh(prototype, elements);
         self.alloc_slotless_array_of(object, prototype)
     }

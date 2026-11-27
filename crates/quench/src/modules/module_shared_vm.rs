@@ -129,8 +129,8 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
         prototype,
         native_parent_set,
     )?;
-    for (name, operation) in [("require", "moduleRequire"), ("_compile", "moduleCompile")] {
-        let method = context.host_constructor(crate::host::shared_vm::operation(operation))?;
+    for (name, operation) in [("require", crate::host::shared_vm::operation!("moduleRequire")), ("_compile", crate::host::shared_vm::operation!("moduleCompile"))] {
+        let method = context.host_constructor(operation)?;
         name_function(context, method, name)?;
         set(context, prototype, name, method)?;
     }
@@ -171,19 +171,19 @@ pub(crate) fn module(context: &mut NativeContext<'_>) -> Result<RootId, RootedEr
     set(context, constants, "compileCacheStatus", status)?;
     set(context, module, "constants", constants)?;
     for (name, operation) in [
-        ("enableCompileCache", "moduleEnableCompileCache"),
-        ("flushCompileCache", "moduleFlushCompileCache"),
-        ("getCompileCacheDir", "moduleGetCompileCacheDir"),
+        ("enableCompileCache", crate::host::shared_vm::operation!("moduleEnableCompileCache")),
+        ("flushCompileCache", crate::host::shared_vm::operation!("moduleFlushCompileCache")),
+        ("getCompileCacheDir", crate::host::shared_vm::operation!("moduleGetCompileCacheDir")),
     ] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = context.host_function_named(operation, name)?;
         set(context, module, name, function)?;
     }
     for (name, operation) in [
-        ("_initPaths", "moduleInitPaths"),
-        ("_resolveLookupPaths", "moduleResolveLookupPaths"),
-        ("_load", "moduleLoad"),
+        ("_initPaths", crate::host::shared_vm::operation!("moduleInitPaths")),
+        ("_resolveLookupPaths", crate::host::shared_vm::operation!("moduleResolveLookupPaths")),
+        ("_load", crate::host::shared_vm::operation!("moduleLoad")),
     ] {
-        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, module)?;
+        let function = context.host_function_named_with_data(operation, name, module)?;
         set(context, module, name, function)?;
     }
     let resolve_filename =

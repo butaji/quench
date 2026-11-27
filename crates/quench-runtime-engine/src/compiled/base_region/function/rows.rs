@@ -194,6 +194,11 @@ pub(crate) fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers
             None => call(region, at(k), sites, instruction),
         });
     }
+    for (k, instruction) in region.instructions().iter().enumerate() {
+        if calls[k].is_none() && !reads.contains(&at(k)) {
+            calls[k] = calls::method_call_inlined(region, at(k), sites, *instruction);
+        }
+    }
     let facts = decode_facts(region, sites, &calls);
     let parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
         let pc = at(k);

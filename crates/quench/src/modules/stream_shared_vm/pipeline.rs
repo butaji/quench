@@ -48,12 +48,12 @@ fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) 
     put(c, record, "lastStreamCleanup", last_cleanup)?;
     put_number(c, record, "finishCount", 0.0)?;
     put(c, record, "outerSignal", outer_signal)?;
-    let finish = closure(c, "streamPipelineFinish", "finish", &[record])?;
+    let finish = closure(c, crate::host::shared_vm::operation!("streamPipelineFinish"), "finish", &[record])?;
     put(c, record, "finish", finish)?;
-    let finish_only = closure(c, "streamPipelineFinishOnlyHandleError", "finishOnlyHandleError", &[record])?;
+    let finish_only = closure(c, crate::host::shared_vm::operation!("streamPipelineFinishOnlyHandleError"), "finishOnlyHandleError", &[record])?;
     put(c, record, "finishOnly", finish_only)?;
     if c.truthy_rooted(outer_signal)? {
-        let abort = closure(c, "streamPipelineAbort", "abort", &[record])?;
+        let abort = closure(c, crate::host::shared_vm::operation!("streamPipelineAbort"), "abort", &[record])?;
         let disposable = utils::add_abort_listener(c, outer_signal, abort)?;
         put(c, record, "disposable", disposable)?;
     }
@@ -74,10 +74,10 @@ fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) 
                     push_cleanup(c, record, cleanup)?;
                 }
             }
-            let on_error = closure(c, "streamPipelineOnError", "onError", &[record])?;
+            let on_error = closure(c, crate::host::shared_vm::operation!("streamPipelineOnError"), "onError", &[record])?;
             on(c, stream, "error", on_error)?;
             if last && utils::is_readable(c, stream)? == Some(true) {
-                let remove = closure(c, "streamPipelineRemoveErrorListener", "", &[stream, on_error])?;
+                let remove = closure(c, crate::host::shared_vm::operation!("streamPipelineRemoveErrorListener"), "", &[stream, on_error])?;
                 push_cleanup(c, record, remove)?;
             }
         }
@@ -104,7 +104,7 @@ fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) 
         c.truthy_rooted(aborted)
     };
     if aborted(c, signal)? || aborted(c, outer_signal)? {
-        let abort = closure(c, "streamPipelineAbort", "abort", &[record])?;
+        let abort = closure(c, crate::host::shared_vm::operation!("streamPipelineAbort"), "abort", &[record])?;
         next_tick(c, abort, &[])?;
     }
     Ok(current)
@@ -132,6 +132,8 @@ fn stage_options(c: &mut Context<'_>, record: RootId) -> Outcome {
     let mut signal = get(c, record, "signal")?;
     if is_nullish(c, signal) {
         let global = c.global_root()?;
+        // A lazy global read by name: its initializer is linked with this read.
+        let _ = crate::host::shared_vm::operation!("eventGlobalsInitialize");
         let class = get(c, global, "AbortController")?;
         let controller = c.construct_rooted(class, class, &[])?;
         put(c, record, "controller", controller)?;
@@ -213,8 +215,8 @@ fn function_stage(
     if c.is_callable_rooted(then)? {
         add_finishes(c, record, 1.0)?;
         let end_flag = c.boolean(end);
-        let fulfilled = closure(c, "streamPipelineValue", "", &[record, destination, end_flag])?;
-        let rejected = closure(c, "streamPipelineValueFailed", "", &[record, destination])?;
+        let fulfilled = closure(c, crate::host::shared_vm::operation!("streamPipelineValue"), "", &[record, destination, end_flag])?;
+        let rejected = closure(c, crate::host::shared_vm::operation!("streamPipelineValueFailed"), "", &[record, destination])?;
         c.call_rooted(then, produced, &[fulfilled, rejected])?;
     } else if is_iterable(c, produced, Some(true))? {
         add_finishes(c, record, 1.0)?;
@@ -282,11 +284,11 @@ fn destroyer(c: &mut Context<'_>, record: RootId, stream: RootId, reading: bool,
     let stage = c.null_object_rooted()?;
     put(c, stage, "stream", stream)?;
     put_bool(c, stage, "finished", false)?;
-    let closed = closure(c, "streamPipelineStageClosed", "", &[stage])?;
+    let closed = closure(c, crate::host::shared_vm::operation!("streamPipelineStageClosed"), "", &[stage])?;
     on(c, stream, "close", closed)?;
-    let settled = closure(c, "streamPipelineStageSettled", "", &[stage])?;
+    let settled = closure(c, crate::host::shared_vm::operation!("streamPipelineStageSettled"), "", &[stage])?;
     let cleanup = super::eos::eos_with(c, stream, Some(reading), Some(writing), settled)?;
-    let destroy = closure(c, "streamPipelineStageDestroy", "destroy", &[stage])?;
+    let destroy = closure(c, crate::host::shared_vm::operation!("streamPipelineStageDestroy"), "destroy", &[stage])?;
     let destroys = get(c, record, "destroys")?;
     call_method(c, destroys, "push", &[destroy])?;
     Ok(cleanup)
@@ -443,14 +445,14 @@ fn pipe(c: &mut Context<'_>, record: RootId, source: RootId, destination: RootId
     put(c, link, "source", source)?;
     put(c, link, "destination", destination)?;
     put_bool(c, link, "ended", false)?;
-    let closed = closure(c, "streamPipelineDestinationClosed", "", &[link])?;
+    let closed = closure(c, crate::host::shared_vm::operation!("streamPipelineDestinationClosed"), "", &[link])?;
     on(c, destination, "close", closed)?;
     let options = c.object_rooted()?;
     put_bool(c, options, "end", false)?;
     call_method(c, source, "pipe", &[destination, options])?;
     let finish = get(c, record, "finish")?;
     if end {
-        let end_destination = closure(c, "streamPipelineEndDestination", "endFn", &[link])?;
+        let end_destination = closure(c, crate::host::shared_vm::operation!("streamPipelineEndDestination"), "endFn", &[link])?;
         if utils::is_readable_finished(c, source, None)? == Some(true) {
             next_tick(c, end_destination, &[])?;
         } else {
@@ -460,7 +462,7 @@ fn pipe(c: &mut Context<'_>, record: RootId, source: RootId, destination: RootId
         let undefined = c.undefined();
         c.call_rooted(finish, undefined, &[])?;
     }
-    let source_done = closure(c, "streamPipelineSourceDone", "", &[link])?;
+    let source_done = closure(c, crate::host::shared_vm::operation!("streamPipelineSourceDone"), "", &[link])?;
     super::eos::eos_with(c, source, Some(true), Some(false), source_done)?;
     super::eos::eos_with(c, destination, Some(false), Some(true), finish)
 }
@@ -520,7 +522,7 @@ fn pump(c: &mut Context<'_>, iterable: RootId, writable: RootId, finish: RootId,
     put_bool(c, pump, "end", end)?;
     let undefined = c.undefined();
     put(c, pump, "error", undefined)?;
-    let resume = closure(c, "streamPumpResume", "resume", &[pump])?;
+    let resume = closure(c, crate::host::shared_vm::operation!("streamPumpResume"), "resume", &[pump])?;
     put(c, pump, "resume", resume)?;
     on(c, writable, "drain", resume)?;
     let cleanup = super::eos::eos_with(c, writable, Some(false), None, resume)?;
@@ -532,7 +534,7 @@ fn pump(c: &mut Context<'_>, iterable: RootId, writable: RootId, finish: RootId,
     }
     let need_drain = get(c, writable, "writableNeedDrain")?;
     if c.truthy_rooted(need_drain)? {
-        return wait(c, pump, "streamPumpNext");
+        return wait(c, pump, crate::host::shared_vm::operation!("streamPumpNext"));
     }
     next(c, pump)
 }
@@ -548,7 +550,7 @@ fn open_iterator(c: &mut Context<'_>, pump: RootId, iterable: RootId, async_key:
 }
 
 /// `await wait()`, then the continuation `operation`; a failure goes to the pump's catch.
-fn wait(c: &mut Context<'_>, pump: RootId, operation: &str) -> Result<(), RootedError> {
+fn wait(c: &mut Context<'_>, pump: RootId, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     let promise = c.pending_promise_rooted()?;
     let error = get(c, pump, "error")?;
     if c.truthy_rooted(error)? {
@@ -557,7 +559,7 @@ fn wait(c: &mut Context<'_>, pump: RootId, operation: &str) -> Result<(), Rooted
         put(c, pump, "waiting", promise)?;
     }
     let fulfilled = closure(c, operation, "", &[pump])?;
-    let rejected = closure(c, "streamPumpBodyFailed", "", &[pump])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamPumpBodyFailed"), "", &[pump])?;
     await_then(c, promise, fulfilled, rejected)
 }
 
@@ -606,15 +608,15 @@ fn next(c: &mut Context<'_>, pump: RootId) -> Result<(), RootedError> {
         return match step {
             Ok((done, value)) => {
                 let done = c.boolean(done);
-                let fulfilled = closure(c, "streamPumpSyncValue", "", &[pump, done])?;
-                let rejected = closure(c, "streamPumpFailed", "", &[pump])?;
+                let fulfilled = closure(c, crate::host::shared_vm::operation!("streamPumpSyncValue"), "", &[pump, done])?;
+                let rejected = closure(c, crate::host::shared_vm::operation!("streamPumpFailed"), "", &[pump])?;
                 await_then(c, value, fulfilled, rejected)
             }
             Err(thrown) => fail(c, pump, thrown),
         };
     }
-    let fulfilled = closure(c, "streamPumpResult", "", &[pump])?;
-    let rejected = closure(c, "streamPumpFailed", "", &[pump])?;
+    let fulfilled = closure(c, crate::host::shared_vm::operation!("streamPumpResult"), "", &[pump])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamPumpFailed"), "", &[pump])?;
     await_then(c, result, fulfilled, rejected)
 }
 
@@ -646,8 +648,8 @@ pub(crate) fn pump_sync_value(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
     let value = arg(c, args, 0);
     let done = c.truthy_rooted(done)?;
     let result = super::iterator_result(c, value, done)?;
-    let fulfilled = closure(c, "streamPumpResult", "", &[pump])?;
-    let rejected = closure(c, "streamPumpFailed", "", &[pump])?;
+    let fulfilled = closure(c, crate::host::shared_vm::operation!("streamPumpResult"), "", &[pump])?;
+    let rejected = closure(c, crate::host::shared_vm::operation!("streamPumpFailed"), "", &[pump])?;
     await_then(c, result, fulfilled, rejected)?;
     Ok(c.undefined())
 }
@@ -657,7 +659,7 @@ fn body(c: &mut Context<'_>, pump: RootId, chunk: RootId) -> Result<(), RootedEr
     let writable = get(c, pump, "writable")?;
     match super::attempt(call_method(c, writable, "write", &[chunk]))? {
         Ok(more) if c.truthy_rooted(more)? => next(c, pump),
-        Ok(_) => wait(c, pump, "streamPumpNext"),
+        Ok(_) => wait(c, pump, crate::host::shared_vm::operation!("streamPumpNext")),
         Err(thrown) => body_failed_now(c, pump, thrown),
     }
 }
@@ -680,7 +682,7 @@ fn body_failed_now(c: &mut Context<'_>, pump: RootId, error: RootId) -> Result<(
         let method = get(c, iterator, "return")?;
         if c.is_callable_rooted(method)? {
             if let Ok(result) = super::attempt(c.call_rooted(method, iterator, &[]))? {
-                let after = closure(c, "streamPumpClosed", "", &[pump, error])?;
+                let after = closure(c, crate::host::shared_vm::operation!("streamPumpClosed"), "", &[pump, error])?;
                 return await_then(c, result, after, after);
             }
         }
@@ -712,7 +714,7 @@ fn after_loop(c: &mut Context<'_>, pump: RootId) -> Result<(), RootedError> {
     if let Err(thrown) = super::attempt(call_method(c, writable, "end", &[]))? {
         return fail(c, pump, thrown);
     }
-    wait(c, pump, "streamPumpEnded")
+    wait(c, pump, crate::host::shared_vm::operation!("streamPumpEnded"))
 }
 
 pub(crate) fn pump_ended(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
@@ -769,7 +771,7 @@ pub(crate) fn promises_pipeline(c: &mut Context<'_>, _: RootId, args: &[RootId])
         }
     }
     let streams = c.array_rooted(&streams)?;
-    let callback = closure(c, "streamPromisesPipelineSettle", "", &[promise])?;
+    let callback = closure(c, crate::host::shared_vm::operation!("streamPromisesPipelineSettle"), "", &[promise])?;
     if let Err(thrown) = super::attempt(run(c, streams, callback, options))? {
         c.reject_promise_rooted(promise, thrown)?;
     }

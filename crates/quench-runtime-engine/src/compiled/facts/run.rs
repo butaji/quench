@@ -8,7 +8,6 @@ use super::ranges::{self, Edge};
 use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
 use quench_runtime::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
-use cranelift_codegen::bitset::CompoundBitSet;
 use std::cell::{Cell, RefCell};
 use quench_runtime::vm::operations::NumberRelation;
 
@@ -75,7 +74,7 @@ impl<'a> Seeds<'a> {
 pub(crate) struct Text<'a> {
     pub(crate) entry: usize,
     pub(crate) instructions: &'a [WideInstruction],
-    pub(crate) leaders: &'a CompoundBitSet,
+    pub(crate) leaders: &'a quench_runtime::dataflow::BitSet,
     pub(crate) constants: &'a [Constant],
     pub(crate) written: &'a dyn Fn(WideInstruction) -> super::Writes,
     pub(crate) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
@@ -208,7 +207,7 @@ impl Facts {
 
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(crate) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
-    leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> super::Writes,
+    leaders: &quench_runtime::dataflow::BitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> super::Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], seeds: Seeds<'_>) -> Facts {
     analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
 }
@@ -257,7 +256,7 @@ struct FactFlow<'t, 'a, 's> {
     rounds: Vec<Cell<u8>>,
     /// The blocks a backward edge reaches, each marked as its edge is taken.
     headers: Vec<Cell<bool>>,
-    reached: CompoundBitSet,
+    reached: quench_runtime::dataflow::BitSet,
     /// Join of the entry's backedge inputs, without the unknown external input.
     backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
     /// The edges the last `transfer` took: their target blocks, and each one's state and whether
@@ -411,7 +410,7 @@ impl quench_runtime::dataflow::Dataflow for FactFlow<'_, '_, '_> {
 /// fallthrough, and every handler an exception edge enters.
 fn heads(text: &Text<'_>) -> Vec<usize> {
     let length = text.instructions.len();
-    let mut heads: CompoundBitSet = text.leaders.clone();
+    let mut heads: quench_runtime::dataflow::BitSet = text.leaders.clone();
     let mut add = |pc: usize| if pc < length { heads.insert(pc); };
     add(text.entry);
     for (pc, instruction) in text.instructions.iter().enumerate() {
@@ -433,7 +432,7 @@ pub(crate) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) 
         entry: (text.entry < length).then(|| Point::entering(initial, seeds)),
         rounds: (0..blocks).map(|_| Cell::new(0)).collect(),
         headers: (0..blocks).map(|_| Cell::new(false)).collect(),
-        reached: CompoundBitSet::with_capacity(length),
+        reached: quench_runtime::dataflow::BitSet::with_capacity(length),
         backedge: smallvec::SmallVec::new(),
         targets: Vec::new(),
         sends: RefCell::new(Vec::new()),

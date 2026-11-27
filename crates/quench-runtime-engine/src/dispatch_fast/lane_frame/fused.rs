@@ -15,7 +15,7 @@ fn raw_word(raw: bool, value: u64) -> Value {
     if raw && double.is_nan() { Value::number(double) } else { Value::from_bits(value) }
 }
 
-sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler, [A, B];
+sharded_handler! { view_handler, fused_rows_shards, fused_rows_handler, [A, B];
     /// Two adjacent rows as one record, generated from their staged rows (`staged::FUSED_ROWS`):
     /// row `A` steps over this record, then row `B` over the next one, with no dispatch between
     /// them. Neither row is written for the pair: each is its own row's decode and step, so the
@@ -39,6 +39,9 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler, [A, B];
     /// operand form are the record's, so `A` runs its Number relation with no decode.
     #[inline(never)]
     pub(crate) fn fused_rows<A: u16, B: u16, BACKWARD: bool, FAMILY: u8, TEST: u16, PREFIX: u16, CMP: u8>(cx, r, ip, i, view) {
+        // Both rows of the pair come from one program: `A`'s opcode names the view its records
+        // are dispatched from (`row_context`).
+        let cx: *mut LaneContext = row_context::<A>(cx);
         // The settings word of this record (the pair's head), read before `B`'s record is named.
         let mode = i.mode;
         // A proven loop step (`PROVEN_STEP` of `CMP`, `prove_loop_steps`): `A` is `i++` of a register the
@@ -171,7 +174,7 @@ sharded_handler! { lane_handler, fused_rows_shards, fused_rows_handler, [A, B];
     }
 }
 
-sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler, [L0, L1, L2, L3];
+sharded_handler! { view_handler, chain_rows_shards, chain_rows_handler, [L0, L1, L2, L3];
     /// Three or four adjacent rows as one record, generated from their staged rows
     /// (`staged::FUSED_CHAINS`): each link is its row's own decode and step over its record,
     /// with no dispatch between links, as `fused_rows` does for two. A link's miss takes its
@@ -182,6 +185,8 @@ sharded_handler! { lane_handler, chain_rows_shards, chain_rows_handler, [L0, L1,
     /// double result raw (`LaneFrame::raw_result`), which the next link reads as its operand or key.
     #[inline(never)]
     pub(crate) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
+        // Every link of the chain comes from one program: `L0`'s opcode names the view.
+        let cx: *mut LaneContext = row_context::<L0>(cx);
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
         // Each macro takes its link's record (`$ip`, `$i`) as arguments: a `macro_rules!` body's own
@@ -506,14 +511,16 @@ const fn equality_fused<const B: u16, const CMP: u8>() -> Handler {
 }
 
 macro_rules! equality_table { ($jump:expr; $($code:literal)*) => { [$(equality_fused::<{ $jump as u16 }, $code>()),*] }; }
-/// The fused records of `Binary` then `JumpFalse` and of `Binary` then `JumpTrue`, indexed by `CMP` - 1.
-const EQUALITY_JUMP_FALSE: [Handler; 12] = equality_table!(Op::JumpFalse; 1 2 3 4 5 6 7 8 9 10 11 12);
-const EQUALITY_JUMP_TRUE: [Handler; 12] = equality_table!(Op::JumpTrue; 1 2 3 4 5 6 7 8 9 10 11 12);
+/// The fused records of `Binary` then each truth jump (`EQUALITY_JUMP_ROWS`), indexed by `CMP` - 1.
+const EQUALITY_JUMPS: [[Handler; 12]; 2] = [
+    equality_table!(quench_runtime::staged::EQUALITY_JUMP_ROWS[0]; 1 2 3 4 5 6 7 8 9 10 11 12),
+    equality_table!(quench_runtime::staged::EQUALITY_JUMP_ROWS[1]; 1 2 3 4 5 6 7 8 9 10 11 12),
+];
 
 /// The handler of `Binary` then the truth jump `jump` with the fixed equality `code` (`equality_fusion`).
-fn equality_handler(jump: Op, code: u8) -> Handler {
-    let table = if matches!(jump, Op::JumpFalse) { &EQUALITY_JUMP_FALSE } else { &EQUALITY_JUMP_TRUE };
-    table[usize::from(code) - 1]
+fn equality_handler(jump: u16, code: u8) -> Option<Handler> {
+    let table = quench_runtime::staged::EQUALITY_JUMP_ROWS.iter().position(|row| *row == jump)?;
+    Some(EQUALITY_JUMPS[table][usize::from(code) - 1])
 }
 
 /// The fixed equality of the pair `a` then `b` (`plain_equality`): a `Binary` `a` whose operator and right operand
@@ -522,7 +529,8 @@ fn equality_handler(jump: Op, code: u8) -> Handler {
 /// flagged result or a left constant, which the generic pair keeps.
 fn equality_fusion(a: quench_runtime::bytecode::WideInstruction, b: quench_runtime::bytecode::WideInstruction, constants: &[Value]) -> Option<(u8, u64)> {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    if !matches!(a.op(), Op::Binary) || a.result_flags() != 0 || !matches!(b.op(), Op::JumpFalse | Op::JumpTrue) { return None; }
+    if a.op() as u16 != quench_runtime::staged::BINARY_ROW || a.result_flags() != 0
+        || !quench_runtime::staged::EQUALITY_JUMP_ROWS.contains(&(b.op() as u16)) { return None; }
     let index = EQUALITY_OPERATORS.iter().position(|operator| *operator == a.binary_operator())?;
     if a.operand_b().kind() != Some(Register) { return None; }
     let right = a.operand_c();
@@ -638,12 +646,10 @@ pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runti
         // (`dead_first`), a `FUSED_RAW` pair keeps `A`'s result raw only where `raw` holds, and `B`'s raw-out
         // bit is `out`. Each is clear where its table mode does not hold, which is the staged pair without it.
         // A `Binary` equality then a truth jump takes its fixed-equality record and the int32 constant in `mode` (`equality_fusion`).
-        let equality = if *mode == quench_runtime::staged::FUSED_PLAIN { equality_fusion(decoded[pc], decoded[pc + 1], constants) } else { None };
+        let equality = if *mode == quench_runtime::staged::FUSED_PLAIN { equality_fusion(decoded[pc], decoded[pc + 1], constants) } else { None }
+            .and_then(|(code, word)| Some((equality_handler(decoded[pc + 1].op() as u16, code)?, word)));
         let (fused, immediate) = match equality {
-            Some((code, word)) => {
-                let handler = equality_handler(decoded[pc + 1].op(), code);
-                ([handler, handler], word)
-            }
+            Some((handler, word)) => ([handler, handler], word),
             None => (*fused, 0),
         };
         let mut word = (if direction == 1 { quench_runtime::staged::MODE_BACKWARD } else { 0 }) | immediate;

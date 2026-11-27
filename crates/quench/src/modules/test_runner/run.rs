@@ -131,8 +131,8 @@ fn wait(c: &mut Context<'_>, id: NodeId, value: RootId) -> Result<Completion, Ro
         return Ok(Completion::Settled(Ok(())));
     };
     let data = reaction_data(c, id)?;
-    let fulfilled = function(c, "nodeTestSettledFulfilled", "", data)?;
-    let rejected = function(c, "nodeTestSettledRejected", "", data)?;
+    let fulfilled = function(c, crate::host::shared_vm::operation!("nodeTestSettledFulfilled"), "", data)?;
+    let rejected = function(c, crate::host::shared_vm::operation!("nodeTestSettledRejected"), "", data)?;
     match c.call_rooted(then, value, &[fulfilled, rejected]) {
         Ok(_) => Ok(Completion::Suspended),
         Err(RootedError { exception: Some(error), .. }) => Ok(Completion::Settled(Err(error))),
@@ -313,7 +313,7 @@ fn drive(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
                     return proceed(c, id, completion);
                 }
                 let data = reaction_data(c, id)?;
-                let done = function(c, "nodeTestDone", "done", data)?;
+                let done = function(c, crate::host::shared_vm::operation!("nodeTestDone"), "done", data)?;
                 match invoke(c, id, body, receiver, &[receiver, done])? {
                     Completion::Settled(Err(error)) => return proceed(c, id, Completion::Settled(Err(error))),
                     Completion::Settled(Ok(())) => return Ok(()),
@@ -370,7 +370,7 @@ fn start_timeout(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
         return Ok(());
     };
     let data = c.number(id as f64);
-    let expire = function(c, "nodeTestTimeout", "", data)?;
+    let expire = function(c, crate::host::shared_vm::operation!("nodeTestTimeout"), "", data)?;
     let global = c.global_root()?;
     let set_timeout = get(c, global, "setTimeout")?;
     let delay = c.number(timeout);
@@ -453,7 +453,7 @@ pub(super) fn run_before_now(c: &mut Context<'_>, owner: NodeId, hook: RootId) -
             let undefined = c.undefined();
             let chained = c.call_rooted(then, previous, &[undefined, undefined])?;
             let then = get(c, chained, "then")?;
-            let after = function(c, "nodeTestChainBefore", "", promise)?;
+            let after = function(c, crate::host::shared_vm::operation!("nodeTestChainBefore"), "", promise)?;
             c.call_rooted(then, chained, &[after])?
         }
         None => promise,
@@ -493,7 +493,7 @@ pub(super) fn build_suite(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedE
 /// Resume `id` in a microtask, after the code registering tests has finished.
 pub(super) fn schedule(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
     let data = c.number(id as f64);
-    let resume = function(c, "nodeTestResume", "", data)?;
+    let resume = function(c, crate::host::shared_vm::operation!("nodeTestResume"), "", data)?;
     c.queue_microtask_rooted(resume, &[])
 }
 

@@ -145,9 +145,9 @@ fn emit(c: &mut Context<'_>, target: RootId, event: &str, args: &[RootId]) -> Re
     Ok(())
 }
 
-fn closure(c: &mut Context<'_>, operation: &str, captures: &[RootId]) -> Outcome {
+fn closure(c: &mut Context<'_>, operation: quench_runtime::HostFunctionId, captures: &[RootId]) -> Outcome {
     let data = c.array_rooted(captures)?;
-    c.host_function_with_data(crate::host::shared_vm::operation(operation), data)
+    c.host_function_with_data(operation, data)
 }
 
 fn capture(c: &mut Context<'_>, index: usize) -> Outcome {
@@ -200,33 +200,33 @@ fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
     })
 }
 
-const PROTOTYPE_METHODS: [(&str, &str); 26] = [
-    ("bind", "dgramBind"),
-    ("connect", "dgramConnect"),
-    ("disconnect", "dgramDisconnect"),
-    ("send", "dgramSend"),
-    ("sendto", "dgramSendTo"),
-    ("close", "dgramClose"),
-    ("address", "dgramAddress"),
-    ("remoteAddress", "dgramRemoteAddress"),
-    ("setBroadcast", "dgramSetBroadcast"),
-    ("setTTL", "dgramSetTtl"),
-    ("setMulticastTTL", "dgramSetMulticastTtl"),
-    ("setMulticastLoopback", "dgramSetMulticastLoopback"),
-    ("setMulticastInterface", "dgramSetMulticastInterface"),
-    ("addMembership", "dgramAddMembership"),
-    ("dropMembership", "dgramDropMembership"),
-    ("addSourceSpecificMembership", "dgramAddSourceMembership"),
-    ("dropSourceSpecificMembership", "dgramDropSourceMembership"),
-    ("ref", "dgramRef"),
-    ("unref", "dgramUnref"),
-    ("setRecvBufferSize", "dgramSetRecvBufferSize"),
-    ("setSendBufferSize", "dgramSetSendBufferSize"),
-    ("getRecvBufferSize", "dgramGetRecvBufferSize"),
-    ("getSendBufferSize", "dgramGetSendBufferSize"),
-    ("getSendQueueSize", "dgramGetSendQueueSize"),
-    ("getSendQueueCount", "dgramGetSendQueueCount"),
-    ("_healthCheck", "dgramHealthCheck"),
+const PROTOTYPE_METHODS: [(&str, crate::host::shared_vm::MarkedOperation); 26] = [
+    ("bind", crate::host::shared_vm::marked_operation!("dgramBind")),
+    ("connect", crate::host::shared_vm::marked_operation!("dgramConnect")),
+    ("disconnect", crate::host::shared_vm::marked_operation!("dgramDisconnect")),
+    ("send", crate::host::shared_vm::marked_operation!("dgramSend")),
+    ("sendto", crate::host::shared_vm::marked_operation!("dgramSendTo")),
+    ("close", crate::host::shared_vm::marked_operation!("dgramClose")),
+    ("address", crate::host::shared_vm::marked_operation!("dgramAddress")),
+    ("remoteAddress", crate::host::shared_vm::marked_operation!("dgramRemoteAddress")),
+    ("setBroadcast", crate::host::shared_vm::marked_operation!("dgramSetBroadcast")),
+    ("setTTL", crate::host::shared_vm::marked_operation!("dgramSetTtl")),
+    ("setMulticastTTL", crate::host::shared_vm::marked_operation!("dgramSetMulticastTtl")),
+    ("setMulticastLoopback", crate::host::shared_vm::marked_operation!("dgramSetMulticastLoopback")),
+    ("setMulticastInterface", crate::host::shared_vm::marked_operation!("dgramSetMulticastInterface")),
+    ("addMembership", crate::host::shared_vm::marked_operation!("dgramAddMembership")),
+    ("dropMembership", crate::host::shared_vm::marked_operation!("dgramDropMembership")),
+    ("addSourceSpecificMembership", crate::host::shared_vm::marked_operation!("dgramAddSourceMembership")),
+    ("dropSourceSpecificMembership", crate::host::shared_vm::marked_operation!("dgramDropSourceMembership")),
+    ("ref", crate::host::shared_vm::marked_operation!("dgramRef")),
+    ("unref", crate::host::shared_vm::marked_operation!("dgramUnref")),
+    ("setRecvBufferSize", crate::host::shared_vm::marked_operation!("dgramSetRecvBufferSize")),
+    ("setSendBufferSize", crate::host::shared_vm::marked_operation!("dgramSetSendBufferSize")),
+    ("getRecvBufferSize", crate::host::shared_vm::marked_operation!("dgramGetRecvBufferSize")),
+    ("getSendBufferSize", crate::host::shared_vm::marked_operation!("dgramGetSendBufferSize")),
+    ("getSendQueueSize", crate::host::shared_vm::marked_operation!("dgramGetSendQueueSize")),
+    ("getSendQueueCount", crate::host::shared_vm::marked_operation!("dgramGetSendQueueCount")),
+    ("_healthCheck", crate::host::shared_vm::marked_operation!("dgramHealthCheck")),
 ];
 
 fn build(c: &mut Context<'_>) -> Outcome {
@@ -251,7 +251,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     c.set_prototype_rooted(prototype, emitter_prototype)?;
     c.set_prototype_rooted(socket, emitter)?;
     for (name, operation) in PROTOTYPE_METHODS {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let function = c.host_function_named(operation.id(), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -342,7 +342,7 @@ fn new_handle(c: &mut Context<'_>, kind: RootId, lookup: RootId) -> Outcome {
     let handle = c.construct_rooted(udp, udp, &[])?;
     let family_number = c.number(family.number());
     let loopback = c.string_rooted(family.loopback());
-    let resolve = closure(c, "dgramHandleLookup", &[lookup, family_number, loopback])?;
+    let resolve = closure(c, crate::host::shared_vm::operation!("dgramHandleLookup"), &[lookup, family_number, loopback])?;
     put(c, handle, "lookup", resolve)?;
     for (name, method) in ["bind", "connect", "send"].into_iter().zip(family.methods()) {
         let function = get(c, handle, method)?;
@@ -418,7 +418,7 @@ pub(crate) fn socket_construct(c: &mut Context<'_>, this: RootId, args: &[RootId
         let signal = get(c, options, "signal")?;
         if !is_undefined(c, signal) {
             super::util_shared_vm::validate_abort_signal(c, signal, "options.signal")?;
-            let close = closure(c, "dgramCloseOnAbort", &[this])?;
+            let close = closure(c, crate::host::shared_vm::operation!("dgramCloseOnAbort"), &[this])?;
             let aborted = get(c, signal, "aborted")?;
             if c.truthy_rooted(aborted)? {
                 next_tick(c, close, &[])?;
@@ -540,8 +540,8 @@ fn enqueue(c: &mut Context<'_>, socket: RootId, entry: RootId) -> Result<(), Roo
             .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
         let emitter = get(c, emitter_api, "emitterCtor")?;
         let monitor = get(c, emitter, "errorMonitor")?;
-        let success = closure(c, "dgramListenSuccess", &[socket, monitor])?;
-        let failure = closure(c, "dgramListenError", &[socket, success])?;
+        let success = closure(c, crate::host::shared_vm::operation!("dgramListenSuccess"), &[socket, monitor])?;
+        let failure = closure(c, crate::host::shared_vm::operation!("dgramListenError"), &[socket, success])?;
         put(c, state, "queueFailure", failure)?;
         if c.is_symbol_rooted(monitor)? {
             call_method(c, socket, "once", &[monitor, failure])?;
@@ -597,8 +597,8 @@ pub(crate) fn bind(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     if let Some(&callback) = args.last() {
         if c.is_callable_rooted(callback)? {
             let pair = c.array_rooted(&[])?;
-            let remove = closure(c, "dgramBindRemove", &[this, pair])?;
-            let listening = closure(c, "dgramBindListening", &[this, pair, callback])?;
+            let remove = closure(c, crate::host::shared_vm::operation!("dgramBindRemove"), &[this, pair])?;
+            let listening = closure(c, crate::host::shared_vm::operation!("dgramBindListening"), &[this, pair, callback])?;
             put(c, pair, "0", remove)?;
             put(c, pair, "1", listening)?;
             let error_event = c.string_rooted("error");
@@ -623,7 +623,7 @@ pub(crate) fn bind(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
         let family = if c.string_text(kind)?.as_deref() == Some("udp6") { TYPES[1].1 } else { TYPES[0].1 };
         c.string_rooted(family.any())
     };
-    let bound = closure(c, "dgramAfterBindLookup", &[this, port])?;
+    let bound = closure(c, crate::host::shared_vm::operation!("dgramAfterBindLookup"), &[this, port])?;
     call_method(c, handle, "lookup", &[address, bound])?;
     Ok(this)
 }
@@ -744,7 +744,7 @@ pub(crate) fn connect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Out
     }
     set_phase(c, state, ConnectState::Connecting)?;
     bind_implicitly(c, this, state)?;
-    let pending = closure(c, "dgramConnectNow", &[this, port, address, callback])?;
+    let pending = closure(c, crate::host::shared_vm::operation!("dgramConnectNow"), &[this, port, address, callback])?;
     if phase::<BindState>(c, state)? != BindState::Bound {
         enqueue(c, this, pending)?;
     } else {
@@ -766,7 +766,7 @@ pub(crate) fn connect_now(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outco
     }
     let state = state(c, socket)?;
     let handle = handle(c, state)?;
-    let resolved = closure(c, "dgramAfterConnectLookup", &[socket, port, address, callback])?;
+    let resolved = closure(c, crate::host::shared_vm::operation!("dgramAfterConnectLookup"), &[socket, port, address, callback])?;
     call_method(c, handle, "lookup", &[address, resolved])?;
     Ok(c.undefined())
 }
@@ -793,13 +793,13 @@ pub(crate) fn after_connect_lookup(c: &mut Context<'_>, _: RootId, args: &[RootI
     }
     if c.truthy_rooted(error)? {
         set_phase(c, state, ConnectState::Disconnected)?;
-        let report = closure(c, "dgramConnectFailed", &[socket, callback, error])?;
+        let report = closure(c, crate::host::shared_vm::operation!("dgramConnectFailed"), &[socket, callback, error])?;
         next_tick(c, report, &[])?;
         return Ok(c.undefined());
     }
     set_phase(c, state, ConnectState::Connected)?;
     let event = c.string_rooted("connect");
-    let announce = closure(c, "dgramEmitEvent", &[socket, event])?;
+    let announce = closure(c, crate::host::shared_vm::operation!("dgramEmitEvent"), &[socket, event])?;
     next_tick(c, announce, &[])?;
     Ok(c.undefined())
 }
@@ -847,6 +847,8 @@ fn is_view(c: &Context<'_>, value: RootId) -> bool {
 
 fn buffer_class(c: &mut Context<'_>) -> Outcome {
     let global = c.global_root()?;
+    // A lazy global read by name: its getter is linked with this read.
+    let _ = crate::host::shared_vm::operation!("bufferGlobalGet");
     get(c, global, "Buffer")
 }
 
@@ -973,11 +975,11 @@ pub(crate) fn send(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     }
     let list = c.array_rooted(&list)?;
     if phase::<BindState>(c, state)? != BindState::Bound {
-        let pending = closure(c, "dgramQueuedSend", &[this, list, port, address, callback])?;
+        let pending = closure(c, crate::host::shared_vm::operation!("dgramQueuedSend"), &[this, list, port, address, callback])?;
         enqueue(c, this, pending)?;
         return Ok(c.undefined());
     }
-    let resolved = closure(c, "dgramAfterSendLookup", &[this, list, address, port, callback])?;
+    let resolved = closure(c, crate::host::shared_vm::operation!("dgramAfterSendLookup"), &[this, list, address, port, callback])?;
     if connected {
         let null = c.null();
         let undefined = c.undefined();
@@ -1062,7 +1064,7 @@ pub(crate) fn after_send_lookup(c: &mut Context<'_>, _: RootId, args: &[RootId])
         if has_callback {
             next_tick(c, callback, &[error])?;
         } else {
-            let report = closure(c, "dgramEmitError", &[socket, error])?;
+            let report = closure(c, crate::host::shared_vm::operation!("dgramEmitError"), &[socket, error])?;
             next_tick(c, report, &[])?;
         }
         return Ok(c.undefined());
@@ -1142,7 +1144,7 @@ pub(crate) fn close(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outco
     }
     let queue = get(c, state, "queue")?;
     if !is_undefined(c, queue) {
-        let pending = closure(c, "dgramQueuedClose", &[this])?;
+        let pending = closure(c, crate::host::shared_vm::operation!("dgramQueuedClose"), &[this])?;
         call_method(c, queue, "push", &[pending])?;
         return Ok(this);
     }
@@ -1156,7 +1158,7 @@ pub(crate) fn close(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outco
     let null = c.null();
     put(c, state, "handle", null)?;
     let event = c.string_rooted("close");
-    let announce = closure(c, "dgramEmitEvent", &[this, event])?;
+    let announce = closure(c, crate::host::shared_vm::operation!("dgramEmitEvent"), &[this, event])?;
     next_tick(c, announce, &[])?;
     Ok(this)
 }

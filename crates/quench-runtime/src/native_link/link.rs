@@ -1,9 +1,12 @@
+mod audit;
+use audit::audit;
+
 use super::NativeImageInputs;
 use crate::NativeImageSupport;
 use serde_json::Value;
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -30,6 +33,11 @@ pub struct NativeSupport {
     runtime: PathBuf,
     /// The engine layer's library (`quench_runtime_engine`), which names the build (`check_build`).
     engine: Option<PathBuf>,
+    /// The layer facade (`quench-layers`), which a core image names (`extern crate quench_layers`)
+    /// so its `extern "Rust"` engine, intl and stencil symbols link.
+    layers: Option<PathBuf>,
+    /// The allocator (`quench-alloc`), which a core image names as its global allocator.
+    alloc: Option<PathBuf>,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
@@ -41,11 +49,19 @@ pub struct NativeSupport {
 
 const NATIVE_SDK_FEATURE: &str = "native-sdk";
 
+/// The linker script fragment that drops a self-contained image's unwind and landing-pad
+/// tables (`.eh_frame`, `.gcc_except_table`), inserted into the linker's default layout.
+#[cfg(target_os = "linux")]
+const DISCARD_UNWIND_TABLES: &str =
+    "SECTIONS { /DISCARD/ : { *(.eh_frame) *(.eh_frame.*) *(.gcc_except_table) *(.gcc_except_table.*) } } INSERT AFTER .text;\n";
+
 impl NativeSupport {
     pub fn from_cargo_report(report: &str, host_crate: &str, support: NativeImageSupport) -> Result<Self, String> {
         let mut host = None;
         let mut runtime = None;
         let mut engine = None;
+        let mut layers = None;
+        let mut alloc = None;
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
@@ -68,10 +84,11 @@ impl NativeSupport {
                     // A dynamic-source image links the standard build's artifacts (default features:
                     // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
                     // symbol audit checks that the compiler is dropped.
-                    if name == "quench_runtime_engine" {
-                        let files = artifact["filenames"].as_array().ok_or("Cargo artifact has no files")?;
-                        if let Some(file) = files.iter().filter_map(Value::as_str).find(|file| Path::new(file).extension().is_some_and(|extension| extension == "rlib")) {
-                            engine = Some(exact_dependency(Path::new(file), name, files)?);
+                    if let Some(library) = layer_library(&artifact, name)? {
+                        match name {
+                            "quench_runtime_engine" => engine = Some(library),
+                            "quench_layers" => layers = Some(library),
+                            _ => alloc = Some(library),
                         }
                     }
                     if name == host_crate || name == "quench_runtime" {
@@ -146,6 +163,8 @@ impl NativeSupport {
             host_semantic_exports,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
             engine,
+            layers,
+            alloc,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
@@ -199,55 +218,92 @@ impl NativeSupport {
     pub fn link_audited(
         &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path,
     ) -> Result<NativeLinkAudit, String> {
+        self.link_audited_with(inputs, driver, executable, true)
+    }
+
+    /// Link a core image, which runs on `quench_runtime`'s own host: the driver's `--extern`s
+    /// name the runtime alone, so no Node host library and none of its dependencies can reach
+    /// the executable.
+    pub fn link_audited_core(
+        &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path,
+    ) -> Result<NativeLinkAudit, String> {
+        self.link_audited_with(inputs, driver, executable, false)
+    }
+
+    fn link_audited_with(
+        &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path, node_host: bool,
+    ) -> Result<NativeLinkAudit, String> {
+        let mut command = self.base_command(driver)?;
+        self.add_externs(&mut command, node_host)?;
+        command.arg("-o").arg(executable).env("QUENCH_NATIVE_CATALOG", inputs.catalog());
+        self.apply_link_options(&mut command, inputs, executable)?;
+        self.add_objects(&mut command, inputs, executable);
+        let interface = super::exports::configure(&mut command, inputs, executable)?;
+        checked_output(&mut command, "native image link")?;
+        let symbols = audit(inputs, executable, self.support)?;
+        let footprint = super::footprint::read(executable, &symbols)?;
+        let dynamic_interface = interface.verify(executable)?;
+        Ok(NativeLinkAudit { dynamic_interface, footprint })
+    }
+
+    /// `rustc` with the compiler-owned crate identity and the profile's optimization.
+    fn base_command(&self, driver: &Path) -> Result<Command, String> {
         let mut command = Command::new("rustc"); // The rustc that built the rlibs: their checkout's pin.
         command.current_dir(self.host.parent().ok_or("support library has no parent")?)
-            .args([
-                "--edition=2024",
-                "--crate-name=quench_native_image",
-                "-C",
-                "debuginfo=0",
-                "-C",
-                "panic=abort",
-            ])
-            .arg("-C")
-            .arg(format!("opt-level={}", self.optimization))
+            .args(["--edition=2024", "--crate-name=quench_native_image", "-C", "debuginfo=0", "-C", "panic=abort"])
+            .arg("-C").arg(format!("opt-level={}", self.optimization))
             // `QUENCH_IMAGE_RUSTC_ARGS` (whitespace-separated) adds driver options, such as
             // `-C target-feature=+crt-static`, to measure link variants of an image.
             .args(std::env::var("QUENCH_IMAGE_RUSTC_ARGS").unwrap_or_default().split_whitespace())
-            .arg(driver)
-            .arg("--extern")
-            .arg(format!("{}={}", self.host_crate, self.host.display()))
-            .arg("--extern")
-            .arg(format!("quench_runtime={}", self.runtime.display()))
-            .arg("-L")
-            .arg(format!(
-                "dependency={}",
-                self.host
-                    .parent()
-                    .ok_or("support library has no parent")?
-                    .display()
-            ))
-            .arg("-L")
-            .arg(format!(
-                "dependency={}",
-                self.runtime
-                    .parent()
-                    .ok_or("runtime library has no parent")?
-                    .display()
-            ))
-            .arg("-o")
-            .arg(executable)
-            .env("QUENCH_NATIVE_CATALOG", inputs.catalog());
+            .arg(driver);
+        Ok(command)
+    }
+
+    /// The runtime, and for a Node image its host; a core image names the shared layer facade
+    /// instead, so the engine, intl and stencil symbols of its `extern "Rust"` calls link.
+    fn add_externs(&self, command: &mut Command, node_host: bool) -> Result<(), String> {
+        let parent = |path: &Path, what: &str| path.parent().ok_or_else(|| format!("{what} has no parent")).map(Path::to_path_buf);
+        command.arg("--extern").arg(format!("quench_runtime={}", self.runtime.display()))
+            .arg("-L").arg(format!("dependency={}", parent(&self.runtime, "runtime library")?.display()));
+        if node_host {
+            command.arg("--extern").arg(format!("{}={}", self.host_crate, self.host.display()))
+                .arg("-L").arg(format!("dependency={}", parent(&self.host, "support library")?.display()));
+        } else {
+            let layers = self.layers.as_ref().ok_or("Cargo report has no layer support library")?;
+            command.arg("--extern").arg(format!("quench_layers={}", layers.display()))
+                .arg("-L").arg(format!("dependency={}", parent(layers, "layer library")?.display()));
+            // The runtime's own allocator: a core image's global allocator.
+            let alloc = self.alloc.as_ref().ok_or("Cargo report has no allocator support library")?;
+            command.arg("--extern").arg(format!("quench_alloc={}", alloc.display()))
+                .arg("-L").arg(format!("dependency={}", parent(alloc, "allocator library")?.display()));
+        }
+        Ok(())
+    }
+
+    /// Dynamic-source, bootstrap, LTO and platform link flags, then the support's native paths
+    /// and the host's own executable link arguments.
+    fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
         }
         if let Some(bootstrap) = &inputs.bootstrap {
-            command.args(["--cfg", "quench_native_bootstrap"])
-                .env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
+            command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
+        self.apply_platform_flags(command, inputs, executable)?;
+        for path in &self.native_paths {
+            command.arg("-L").arg(path);
+        }
+        command.args(self.executable_link_args.iter().flat_map(|argument| ["-C".to_owned(), format!("link-arg={argument}")]));
+        Ok(())
+    }
+
+    /// The platform's link flags: static C runtime and unwind hooks on Linux, chained fixups and
+    /// dead dylib stripping on macOS.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    fn apply_platform_flags(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
         // A self-contained image links glibc statically and position-dependent.
         #[cfg(target_os = "linux")]
         if inputs.is_self_contained() {
@@ -259,22 +315,35 @@ impl NativeSupport {
             for hook in ["__register_frame_info", "__deregister_frame_info"] {
                 command.arg("-C").arg(format!("link-arg=-Wl,--defsym={hook}=0"));
             }
+            // An image aborts on panic, so nothing in it unwinds: its unwind tables and
+            // landing-pad tables (5% of a readline REPL image) are discarded at link time.
+            let mut script = executable.as_os_str().to_owned();
+            script.push(".discard-unwind.ld");
+            let script = PathBuf::from(script);
+            std::fs::write(&script, DISCARD_UNWIND_TABLES).map_err(|error| format!("{}: {error}", script.display()))?;
+            command.arg("-C").arg("link-arg=-Wl,--no-eh-frame-hdr")
+                .arg("-C").arg(format!("link-arg=-Wl,-T,{}", script.display()));
         }
-        // Apple Silicon's macOS floor already supports chained fixups. Request
-        // them explicitly: rustc's default deployment target otherwise selects
-        // classic relocations, dirtying every pointer-bearing constant page at
-        // launch. Newer kernels can apply chains on page-in instead. Leave the
-        // deployment target and older x86-64 platform behavior unchanged.
+        // Apple Silicon's macOS floor already supports chained fixups. Request them explicitly:
+        // rustc's default deployment target otherwise selects classic relocations, dirtying every
+        // pointer-bearing constant page at launch. Newer kernels can apply chains on page-in
+        // instead. Leave the deployment target and older x86-64 platform behavior unchanged.
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         command.args(["-C", "link-arg=-Wl,-fixup_chains"]);
-        for path in &self.native_paths {
-            command.arg("-L").arg(path);
-        }
-        command.args(self.executable_link_args.iter().flat_map(|argument| ["-C".to_owned(), format!("link-arg={argument}")]));
+        // Record only the shared libraries the image references: the support archives' native
+        // dependencies (`openssl-sys` names `-lssl -lcrypto` for every link) otherwise become
+        // load commands even when the program can reach no host operation that uses them.
+        #[cfg(target_os = "macos")]
+        command.args(["-C", "link-arg=-Wl,-dead_strip_dylibs"]);
+        #[cfg(target_os = "linux")]
+        command.args(["-C", "link-arg=-Wl,--as-needed"]);
+        Ok(())
+    }
+
+    /// The image objects, the linker's map, and `QUENCH_EXTRA_LINK_ARGS` diagnostics.
+    fn add_objects(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) {
         for object in inputs.objects() {
-            command
-                .arg("-C")
-                .arg(format!("link-arg={}", object.display()));
+            command.arg("-C").arg(format!("link-arg={}", object.display()));
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let map = {
@@ -287,18 +356,17 @@ impl NativeSupport {
         command.args(["-C", "link-arg=-Xlinker", "-C", if cfg!(target_os = "macos") { "link-arg=-map" } else { "link-arg=-Map" },
             "-C", "link-arg=-Xlinker", "-C"]).arg(format!("link-arg={}", map.display()));
         // `QUENCH_EXTRA_LINK_ARGS` (whitespace-separated linker driver arguments, such as
-        // `-Wl,--why-live=SYMBOL`) diagnoses what keeps code in an image.
-        if let Some(extra) = std::env::var_os("QUENCH_EXTRA_LINK_ARGS") {
+        // `-Wl,--why-live=SYMBOL`) diagnoses what keeps code in an image: in every link, or in
+        // the `QUENCH_EXTRA_LINK_ROUND`th alone, counted from 1, of a compile that links again
+        // until the operations it keeps settle.
+        static LINKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let link = LINKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let round = std::env::var("QUENCH_EXTRA_LINK_ROUND").ok().and_then(|round| round.parse::<usize>().ok());
+        if let Some(extra) = std::env::var_os("QUENCH_EXTRA_LINK_ARGS").filter(|_| round.is_none_or(|round| round == link)) {
             for argument in extra.to_string_lossy().split_whitespace() {
                 command.arg("-C").arg(format!("link-arg={argument}"));
             }
         }
-        let interface = super::exports::configure(&mut command, inputs, executable)?;
-        checked_output(&mut command, "native image link")?;
-        let symbols = audit(inputs, executable, self.support)?;
-        let footprint = super::footprint::read(executable, &symbols)?;
-        let dynamic_interface = interface.verify(executable)?;
-        Ok(NativeLinkAudit { dynamic_interface, footprint })
     }
 }
 
@@ -346,6 +414,19 @@ fn requires_rust_lto(library: &Path) -> Result<bool, String> {
         magic,
         LLVM_RAW_BITCODE_MAGIC | LLVM_WRAPPED_BITCODE_MAGIC
     ))
+}
+
+/// The rlib of a reported layer crate (`quench_runtime_engine`, `quench_layers`,
+/// `quench_alloc`), selected by Cargo's own artifact identity; none for any other crate.
+fn layer_library(artifact: &Value, name: &str) -> Result<Option<PathBuf>, String> {
+    if !matches!(name, "quench_runtime_engine" | "quench_layers" | "quench_alloc") {
+        return Ok(None);
+    }
+    let files = artifact["filenames"].as_array().ok_or("Cargo artifact has no files")?;
+    let file = files.iter().filter_map(Value::as_str)
+        .find(|file| Path::new(file).extension().is_some_and(|extension| extension == "rlib"));
+    let Some(file) = file else { return Ok(None); };
+    exact_dependency(Path::new(file), name, files).map(Some)
 }
 
 fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result<PathBuf, String> {
@@ -421,96 +502,10 @@ pub fn checked_output(command: &mut Command, operation: &str) -> Result<Vec<u8>,
     Ok(output.stdout)
 }
 
-const BACKEND_COMPILER_SYMBOLS: &[&str] = &[
-    "cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for",
-];
-const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
-    "FunctionCompiler", "specialize_host_script", "specialize_with_mode",
-    "specialize_module_with_atom_prefix", "specialize_eval_with_context",
-    "specialize_function_constructor",
-];
-const SYNTAX_FRONTEND_SYMBOLS: &[&str] = &["oxc_parser::", "oxc_semantic::"];
-const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
-    "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
-    "::step_wasm", "::js_tier_frame_entry",
-];
-
-#[cfg(test)]
-fn is_interpreter_symbol(symbol: &str) -> bool {
-    INTERPRETER_DISPATCH_SYMBOLS.iter().any(|name| symbol.contains(name))
-}
-
-#[cfg(test)]
-fn is_compiler_symbol(symbol: &str) -> bool {
-    compiler_symbol_patterns(symbol).next().is_some()
-}
-
-fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
-    BACKEND_COMPILER_SYMBOLS.iter().chain(SYNTAX_FRONTEND_SYMBOLS).copied()
-        .chain(JS_SOURCE_COMPILER_SYMBOLS.iter().copied().filter(|_| symbol.contains("quench_runtime")))
-        .filter(|name| symbol.contains(name))
-}
-
-/// One representative per forbidden mechanism exposes independent retention
-/// roots in one link, without repeating every monomorph of the same mechanism.
-fn retained_execution_support(symbols: &str) -> BTreeMap<&'static str, &str> {
-    let mut retained = BTreeMap::new();
-    for line in symbols.lines() {
-        for pattern in compiler_symbol_patterns(line).chain(
-            INTERPRETER_DISPATCH_SYMBOLS.iter().copied().filter(|name| line.contains(name)),
-        ) {
-            retained.entry(pattern).or_insert(line);
-        }
-    }
-    retained
-}
-
-fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<String, String> {
-    let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
-    let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
-    // Inspect whole demangled names: Rust types may contain spaces, and a
-    // required core generic emitted by OXC does not itself retain an OXC operation.
-    if !support.allows_dynamic_source() {
-        let retained = retained_execution_support(&symbols);
-        if !retained.is_empty() {
-            let examples = retained.into_iter().map(|(mechanism, line)| format!("{mechanism}: {line}"))
-                .collect::<Vec<_>>().join("\n");
-            // `QUENCH_AUDIT_WARN` publishes the image anyway, so its footprint can be measured
-            // while the retention roots are being cut; a shipped compile never sets it.
-            if std::env::var_os("QUENCH_AUDIT_WARN").is_none() {
-                return Err(format!("native image retained compilation or interpretation support:\n{examples}"));
-            }
-            eprintln!("warning: native image retained compilation or interpretation support:\n{examples}");
-        }
-    }
-    let mut exports = BTreeSet::new();
-    for line in symbols.lines() {
-        let mut fields = line.split_whitespace().rev();
-        let Some(symbol) = fields.next() else {
-            continue;
-        };
-        let symbol = symbol.trim_start_matches('_');
-        if fields.next() == Some("T")
-            && symbol.starts_with(crate::NATIVE_JS_OPERATION_PREFIX)
-        {
-            exports.insert(symbol.to_owned());
-        }
-    }
-    let expected: BTreeSet<_> = fs::read_to_string(inputs.required_exports())
-        .map_err(|error| error.to_string())?
-        .lines()
-        .filter(|name| name.starts_with(crate::NATIVE_JS_OPERATION_PREFIX))
-        .map(str::to_owned)
-        .collect();
-    if exports != expected {
-        return Err("native semantic helper exports do not match object imports".into());
-    }
-    Ok(symbols)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::audit::{is_compiler_symbol, is_interpreter_symbol, retained_execution_support};
 
     #[test]
     fn retention_report_includes_each_mechanism_once() {
