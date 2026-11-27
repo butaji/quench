@@ -9,6 +9,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
+use super::base_region::call_plan::planned;
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
@@ -213,12 +214,14 @@ impl Vm {
     /// PC) a stitch calls by their entries or inlines, and the Stable fact that holds each one's
     /// callee register (`Vm::stable_callees`).
     pub(crate) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
-        let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
+        let facts = self.programs.aot_facts(self.active_program);
+        let plans = planned::of(program, facts.as_deref(), function, code.len(), self.programs.tiers().stitch.max_instructions);
+        let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates, &plans));
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
-        Callees::of(code, candidates, &inline_body, stable, natives)
+        Callees::of(code, candidates, &inline_body, stable, natives, plans)
     }
 
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
