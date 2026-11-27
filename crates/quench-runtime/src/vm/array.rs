@@ -377,7 +377,7 @@ impl Vm {
             return Some(None);
         };
         // record-only: slot_attributes takes the record
-        if data.record_only().and_then(|record| self.slot_attributes(record, slot))?.accessor {
+        if self.slot_attributes(data, slot)?.accessor {
             return None;
         }
         Some(Some(self.heap.property_get_ref(data, slot)?))

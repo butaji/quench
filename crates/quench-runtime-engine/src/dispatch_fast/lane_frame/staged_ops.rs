@@ -204,7 +204,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
             return getter_entry(call, site);
         }
         // The form the proved calls make: a callee and a receiver register and a window. A returning
-        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // call is admitted by its form alone (`CallRow::returns`, which `specialize_script_calls` sets
         // where `returning_call_admitted` holds for the function); a forwarding call is never.
         let (Callee::Register(callee_register), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
@@ -237,12 +237,12 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // The callee and the entry's admission are checked here, once, at run time: the plan names the
         // callee folded (`Identity::Folded`), so the staged call reads and compares neither again.
         if target.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
+        // A static count is the row's (`call_row`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
         // The target's admission is checked with its callee in the row's one guard (`call_admission`).
         if (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
-            || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
+            || (leaf != NOT_LEAF && target.entry.leaf_form() != leaf)
             || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
         {
             return quench_runtime::staged::CallEntry::Helper;
@@ -323,10 +323,6 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
     #[inline(always)]
     fn call_hand_over(&mut self, _stage: &mut Concrete, this: u64, _room: quench_runtime::staged::Room<u64>) -> Option<LaneControl> {
         let call = self.call.as_ref()?;
-        // The activation's `this`, checked once where the call bound it: a bound direct object folds
-        // with the binding's own test (`bind_this_with`), so only a strict callee's receiver tests here.
-        // SAFETY: the running lane's context; the entry `call_entry` admitted.
-        unsafe { note_lane_this(vm(call.context.cast()), Value::from_bits(this), || (*(*call.target.get()).view).this_rows) };
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.

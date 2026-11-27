@@ -1,11 +1,12 @@
 //! The fixpoint of `transfer` over the control-flow graph, and the replay of its rows: the one
 //! analysis, which every consumer of a type, a range or a length relation reads.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lengths::Relations;
 use super::ranges::{self, Edge};
-use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
+use super::{hold_contracts, join_types, meet_relations, set, transfer_instruction, typed_read, Contract, Facts, Flow, TypedRead, INLINE_ANALYSIS_ITEMS};
 use quench_runtime::bytecode::{Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
 use quench_runtime::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use std::cell::{Cell, RefCell};
@@ -51,8 +52,8 @@ pub(crate) enum TypedAccess {
 pub(crate) struct Seeds<'a> {
     /// The guarded block input contracts the fixed point keeps.
     pub(crate) contracts: &'a [Contract],
-    /// The element reads observed or known to hold integers or Numbers.
-    pub(crate) observed: Observed<'a>,
+    /// The typed element reads (sorted PCs) and the element type their typed array's kind proves each yields.
+    pub(crate) typed_reads: &'a [TypedRead],
     /// The registers the entry guards to a range narrower than int32 (`Lowering::guard_entering_ranges`).
     pub(crate) entering: &'a [(Register, IntRange)],
     /// The unit the run proves ranges of; a type-only run has none and tracks no relations.
@@ -64,9 +65,9 @@ pub(crate) struct Seeds<'a> {
 }
 
 impl<'a> Seeds<'a> {
-    /// A type-only run that takes `observed` reads and no contract.
-    pub(crate) fn observing(observed: Observed<'a>) -> Self {
-        Self { contracts: &[], observed, entering: &[], model: None, signless: &[] }
+    /// A type-only run: no contract, entry range or model.
+    pub(crate) fn typed() -> Self {
+        Self { contracts: &[], typed_reads: &[], entering: &[], model: None, signless: &[] }
     }
 }
 
@@ -175,7 +176,7 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     if let Some((register, shape)) = (text.own_shape)(pc) { set(&mut point.types, register, Type::direct_object(shape)); }
     let signless = seeds.signless.binary_search(&pc).is_ok()
         .then(|| ranges::signless_range(&ranges::lookup(&point.types, text.constants), instruction)).flatten();
-    let flow = transfer_observed(&mut point.types, instruction, text.constants, text.written, text.native_calls, seeds.observed.at(pc));
+    let flow = transfer_instruction(&mut point.types, instruction, text.constants, text.written, text.native_calls, typed_read(seeds.typed_reads, pc));
     if let Some(range) = signless { set(&mut point.types, instruction.result_register(), Type::int(range)); }
     flow
 }

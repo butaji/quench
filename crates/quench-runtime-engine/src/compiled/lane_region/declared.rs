@@ -10,7 +10,7 @@ use super::*;
 /// `scalar::checkable` names (a String, an array or a plain object included). A BigInt, Symbol or a mixed set with Number is not checked here.
 pub(crate) fn checkable_declared(bits: u16) -> Option<Type> {
     let ty = Type::languages(bits);
-    (ty == Type::NUMBER || scalar::checkable(bits)).then_some(ty)
+    (super::number_domains::is_double(ty) || scalar::checkable(bits)).then_some(ty)
 }
 
 /// The checkable return type of program function `function`, from its declared signature keyed by

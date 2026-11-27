@@ -34,6 +34,16 @@ pub enum IcOp<'a> {
     /// `key` (`ImageWord::Layout`): a construction's exact shape, a plain arena run and its
     /// prototype link, proved by one compare, so the `LoadSlot` after it reads the run untested.
     GuardImageLayout(u32),
+    /// The reached cell's class (`object::cell_class`) is this one, else the read misses. The reached word is a
+    /// class cell (`object::cell_of`), so the guard is one compare of its header's low half: a departed object's
+    /// header holds `DEPARTED_CLASS`, which no class guard names, so it misses here and takes the record path.
+    GuardClass(u32),
+    /// `GuardClass` of the class an ahead image's loader resolves for field guard key `key` (`ImageWord::Layout`,
+    /// the class id it names on this heap), for the image's construction and its fields.
+    GuardImageClass(u32),
+    /// The value at `slot` of the class cell the guard before it proved (`object::cell_fields`): tagged, at
+    /// `cell + 8 + 8 * slot`. It ends the read.
+    LoadField { slot: u16, rep: Representation },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
@@ -86,6 +96,8 @@ pub enum IcOp<'a> {
 /// loading again. A prototype the read reaches starts with none.
 #[derive(Clone, Copy)]
 pub struct Reached<W, C> {
+    /// The object part the read starts from: a record's address, or for a class-fixed object the class cell
+    /// (`object::cell_of`), which the class ops (`GuardClass`, `LoadField`) read.
     pub record: W,
     pub shape: Option<W>,
     pub inline: Option<C>,
@@ -170,6 +182,9 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
             at.shaped = Some(guarded!(guard_image_layout(stage, at, key, miss)));
             at.formed = Some(0);
         }
+        IcOp::GuardClass(class) => at.shaped = Some(guarded!(guard_class(stage, at, class, miss))),
+        IcOp::GuardImageClass(key) => at.shaped = Some(guarded!(guard_image_class(stage, at, key, miss))),
+        IcOp::LoadField { slot, rep } => return Break(Some(load_field(stage, at, (slot, rep)))),
         IcOp::GuardFormed { id, form } => {
             at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
@@ -277,10 +292,9 @@ pub const HINTED_FORM: u32 = u32::MAX;
 /// shape table stops short of it (`vm::push_child`).
 pub const SYMBOLIC_SHAPE: u32 = 1 << 30;
 
-/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
-/// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes
-/// nothing. The handler is chosen with the flag when its hint is installed, so the switch is
-/// read once per installation, not per read. Below every storage-form bit.
+/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of a record is a tagged
+/// `Value` (the arena writes no raw doubles, `ValueArena::float`), so the read decodes nothing.
+/// Below every storage-form bit.
 pub const TAGGED_SLOTS: u32 = 1 << 26;
 const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
 
@@ -381,7 +395,7 @@ mod tests {
     /// The interpreter's reading of `run`: `None` for a miss.
     fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
         let mut stage = Concrete::over(heap);
-        let record = heap.object(object)?.record() as *const Object as u64;
+        let record = heap.object(object)?.record_only()? as *const Object as u64;
         let records = heap.object_record_base()? as u64;
         run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
     }
@@ -445,7 +459,7 @@ mod tests {
             let holder = heap.object(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
-                let interpreter = unsafe { heap.holder_property_get_flat(holder.record(), slot) };
+                let interpreter = unsafe { heap.holder_property_get_flat(holder.record_only().unwrap(), slot) };
                 assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
                     "slot {slot} of {len}");
             }

@@ -45,7 +45,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
         vm.heap
             .object(receiver)
             .unwrap()
-            .record().inline_properties()
+            .record_only().and_then(|record| record.inline_properties())
             .is_none(),
         ARENA
     );
@@ -120,7 +120,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
         vm.heap
             .object(receiver)
             .unwrap()
-            .record().inline_properties()
+            .record_only().and_then(|record| record.inline_properties())
             .is_none(),
         ARENA
     );

@@ -2,6 +2,7 @@
 //! compare-and-jump rows (`expanded`), the facts those rows decode by (`decode_facts`), and the caller's rows collected
 //! from the planned calls and the rest (`parts`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -42,7 +43,11 @@ pub(crate) fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
 }
 
-/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`).
+/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`), each rule read off the staged
+/// operation the record decodes to: an owner step (`steps_on_owner`), a value step over registers and constants, an
+/// allocation the lane's allocator makes (`base_body::allocation_step`), or a call-out (`base_body::call_out_step`). Every
+/// other record, a constant load, a closure (which captures its frame's environment), an element define and a throw,
+/// makes its step as the general step does (`LaneHelper::Step`).
 fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper> {
     use crate::compiled::LaneHelper;
     let plain = instruction.without_return();
@@ -55,14 +60,11 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
         None => false,
     };
     if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
-    // A closure captures its owner's binding environment, a frame's or an activation's (`base_body::closure_step`).
-    if instruction.result_flags() == 0 && quench_runtime::staged::makes_closure(plain.op()) { return Some(LaneHelper::ClosureStep); }
-    // An array literal's element define (`base_body::define_element_step`).
-    if instruction.result_flags() == 0 && matches!(quench_runtime::staged::Operation::<(), ()>::decode_literal(instruction, ()), Some(quench_runtime::staged::Operation::DefineElement { .. })) {
-        return Some(LaneHelper::DefineElementStep);
+    // An allocation the lane's allocator makes; a closure is the general step's, over its frame's environment.
+    if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[])
+        .is_some_and(|(_, allocation)| !matches!(allocation, quench_runtime::staged::Allocation::Closure { .. })) {
+        return Some(LaneHelper::AllocationStep);
     }
-    // An allocation the lane's allocator makes (`base_body::allocation_step`).
-    if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[]).is_some() { return Some(LaneHelper::AllocationStep); }
     // Any other step the staged row makes as a call-out (`staged::CallOut`, not a decision a jump reads) is the VM's call-out
     // over the running frame (`base_body::call_out_step`).
     let call = quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
@@ -70,7 +72,7 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
         && call.is_some_and(|(call, _)| !matches!(call, quench_runtime::staged::CallOut::Decide { .. })) {
         return Some(LaneHelper::CallOutStep);
     }
-    (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
+    None
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls

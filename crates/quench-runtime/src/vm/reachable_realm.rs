@@ -61,7 +61,7 @@ static COMPLETE_REALM: BuiltinTable = BuiltinTable::ALL;
 /// Computes what `programs` (the entry first, then its units) reach of the build-time realm.
 pub fn reachable_realm(programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<ReachableRealm, JsError> {
     let (entry, _) = programs.split_first().ok_or_else(|| JsError("the closed world needs an entry program".into()))?;
-    let mut vm = Vm::new_static_with_builtins(SystemHost, &COMPLETE_REALM);
+    let mut vm = Vm::new_static_with_builtins(crate::SystemHost, &COMPLETE_REALM, &ExecutionTable::ALL);
     vm.initialize_shared(&Rc::new((*entry).clone()), RealmScope::Complete)?;
     vm.close_world(entry, programs, roots)
 }
@@ -95,7 +95,7 @@ pub(super) struct Closure {
 
 /// The error constructors whose prototypes the runtime reaches whatever the program names, since any
 /// operation can throw.
-const RUNTIME_GLOBALS: &[&str] = &[
+pub(super) const RUNTIME_GLOBALS: &[&str] = &[
     "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError", "AggregateError",
 ];
 
@@ -149,14 +149,25 @@ fn is_dynamic_source(native: &Native) -> bool {
 
 impl Vm {
     fn close_world(&mut self, entry: &ResidualProgram, programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<ReachableRealm, JsError> {
+        let closure = self.close(entry, programs, roots)?;
+        let eval = programs.iter().any(|program| program.kind == ProgramKind::Eval);
+        let makes_code = eval || closure.natives.iter().any(is_dynamic_source);
+        Ok(self.realm_summary(&closure, makes_code))
+    }
+
+    /// The closure of `entry`, `programs` and `roots` over this Vm's own realm (`Closure`). The
+    /// compile process runs it over the complete realm for the report (`close_world`), and a core
+    /// image runs it over its closed realm at its dump (`Vm::collect_for_image`): one definition.
+    pub(super) fn close(&mut self, entry: &ResidualProgram, programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<Closure, JsError> {
         let mut closure = Closure::default();
         self.root_runtime(entry, &mut closure)?;
         for program in programs {
             self.root_constants(entry, &mut closure, program)?;
             self.admit_program(program, &mut closure);
         }
+        let eval = programs.iter().any(|program| program.kind == ProgramKind::Eval);
         // Code of a program that is itself eval code names any global.
-        if programs.iter().any(|program| program.kind == ProgramKind::Eval) {
+        if eval {
             self.enqueue(&mut closure, self.realm.globals);
             make_wild(&mut closure);
         }
@@ -168,8 +179,7 @@ impl Vm {
             self.enqueue(&mut closure, value);
         }
         self.close_reachable(entry, &mut closure)?;
-        let makes_code = eval || closure.natives.iter().any(is_dynamic_source);
-        Ok(self.realm_summary(&closure, makes_code))
+        Ok(closure)
     }
 
     /// Roots what the runtime's own code reaches whatever the program names: the error, `with` and

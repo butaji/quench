@@ -50,13 +50,13 @@ pub mod wasm_indirect;
 pub mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
-    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+    NEW_TARGET_BINDING, Op, Operand, ProgramRecord, Register, ResidualProgram, WideInstruction};
 use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_add_property_held, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
+    IteratorHelper, IteratorKind, Native, Object, ObjectRef, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
@@ -241,7 +241,7 @@ pub mod object_static;
 pub mod object_symbols;
 pub mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
-#[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod record_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
@@ -2213,10 +2213,6 @@ pub struct Vm {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     pub with_scope_entered: bool,
-    /// Whether the lane's rows may trust every activation's `this` as a direct object
-    /// (`dispatch_fast::note_lane_this`): 1 trusted from the start (every tier checks the `this` it binds
-    /// once, `CallFrame::call_this_bound`, and the lane each frame it takes over), 2 retired for good.
-    pub this_trust: std::cell::Cell<u8>,
     /// What lane reads of names past an eval's scope rely on (`name_scope`).
     pub scope_names: name_scope::DynamicScopeNames,
     test262_agent: Test262AgentState,

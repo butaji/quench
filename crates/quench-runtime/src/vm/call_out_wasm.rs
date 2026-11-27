@@ -22,7 +22,7 @@ fn operand_reader(
 impl Vm {
     /// The Wasm `step` of its operand values (`first` is the first operand register's value,
     /// `second` the second's): the value it defines, if any.
-    pub(super) fn wasm_host_step(&mut self, _p: &ResidualProgram, _site: super::call_out::CallSite, step: WasmHostStep,
+    pub(super) fn wasm_host_step(&mut self, _p: &ProgramRecord, _site: super::call_out::CallSite, step: WasmHostStep,
         first: Option<Value>, second: Option<Value>) -> Result<Option<Value>, JsError> {
         let i = step.fields().instruction();
         let frame = self.own_frame();

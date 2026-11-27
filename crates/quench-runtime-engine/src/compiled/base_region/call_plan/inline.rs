@@ -36,8 +36,7 @@ use quench_runtime::bytecode::{Class, FieldBase, FieldLookup, Register, WideInst
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::tier_surface::GlobalFact;
 use quench_runtime::value::Value;
-use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, InlinedCall};
-use super::super::super::osr_loop::{inlined_returning, renamed};
+use super::super::super::lane_unit::{inlined_returning, renamed, CallRecovery, CallTarget, CalleeBinding, InlinedCall};
 use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
 use super::super::super::base_rows::Heap;
@@ -431,7 +430,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, fill: quench_runtime::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false, descriptor: 0 }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false, closed: false, descriptor: 0 }
     }
 
     fn operand(register: Register) -> u16 {

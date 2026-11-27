@@ -182,8 +182,8 @@ impl Vm {
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if function.arguments_alias_parameters()
-                && let Some(object) = self.heap.object_mut(arguments) {
-                    object.record_mut_departing().set_arguments_map((0..function.params.min(args.len() as u16)).collect());
+                && let Some(object) = self.heap.object_record_mut(arguments) {
+                    object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
         }
         self.initialize_frame_invocation(p, &mut frame, function, context, args);

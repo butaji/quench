@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
@@ -1140,16 +1142,15 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.heap.object_mut(arguments)
+            self.heap.object_record_mut(arguments)
                 .expect("arguments object is an array")
-                .record_mut_departing()
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.heap.object_mut(arguments) {
-            object.record_mut_departing().set_arguments_object();
+        if let Some(object) = self.heap.object_record_mut(arguments) {
+            object.set_arguments_object();
         }
         let length = self.length_atom;
         self.set_property_with_attributes(
@@ -2374,7 +2375,6 @@ impl Vm {
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
                 {
-                    self.note_int_update(self.read(frame, ins.register_b()), value);
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }

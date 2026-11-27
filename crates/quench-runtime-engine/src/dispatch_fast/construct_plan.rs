@@ -95,14 +95,37 @@ impl ConstructPlan {
         for (index, value) in values.iter_mut().enumerate().take(fields) {
             *value = field(index);
         }
-        vm.allocate_planned_object(self.header, self.prototype, &values, fields)
+        self.allocate_receiver(vm, &values, fields)
     }
 
     /// The receiver this plan allocates with `values`, as `values` computed them: no second
     /// array gathered from them.
     #[inline(always)]
     pub(crate) fn allocate_values(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS]) -> Value {
-        vm.allocate_planned_object(self.header, self.prototype, values, usize::from(self.fields))
+        self.allocate_receiver(vm, values, usize::from(self.fields))
+    }
+
+    /// The receiver of `values`' first `fields` fields. A plan whose class's header is recorded (`recorded`) allocates
+    /// it alone; the first construction of an unrecorded class records it (`record_unrecorded`).
+    #[inline(always)]
+    fn allocate_receiver(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS], fields: usize) -> Value {
+        let this = vm.allocate_planned_object(self.header, self.prototype, values, fields);
+        if !self.recorded {
+            self.record_unrecorded(vm, this);
+        }
+        this
+    }
+
+    /// The first construction of a class whose header is not recorded: records it (`Vm::record_class_header`, which
+    /// resolves the class's planned arms) and marks the plan in the lane stack recorded, so its later constructions
+    /// take `allocate_receiver` alone. A construction of a constructor that is no user function records nothing.
+    #[cold]
+    #[inline(never)]
+    fn record_unrecorded(&self, vm: &mut Vm, this: Value) {
+        vm.record_class_header(self.callee, this);
+        if let Some(index) = construct_plan_index(self.callee) && vm.lane_stack.construct_plans[index].callee == self.callee {
+            vm.lane_stack.construct_plans[index].recorded = true;
+        }
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver

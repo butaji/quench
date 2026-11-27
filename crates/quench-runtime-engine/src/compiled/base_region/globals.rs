@@ -20,6 +20,7 @@
 //!
 //! A name call's receiver, `undefined`, is a second definition of the row (`Decoded::also`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -86,7 +87,7 @@ pub(crate) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
 /// The row of an access of the global object's slot: a load reads it (a `typeof`'s load too, whose
 /// value the `Unary` after it names), and a store writes it.
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
-    if loads_global(instruction) {
+    if read_op(instruction).is_some() {
         Some(Decoded {
             hole: access.offset(),
             global: Some(access),
@@ -98,7 +99,7 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
                 None,
             )
         })
-    } else if stores_name(instruction) {
+    } else if store_op(instruction).is_some() {
         store_row(known, instruction, access)
     } else {
         None
@@ -108,9 +109,9 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
 /// The row of an access of a global lexical binding's word at its address: a load reads it, leaving where it is in its dead zone, and a store
 /// writes it where it is initialized. Any other access is the VM's.
 fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
-    let row = if named_load(instruction) {
+    let row = if quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() {
         Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) }
-    } else if stores_name(instruction) {
+    } else if store_op(instruction).is_some() {
         Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None)
     } else {
         return None;
@@ -121,28 +122,26 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
 /// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
 pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
-    crate::compiled::meaning_compiled::stores_name(instruction)
-        || matches!(quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY),
-            Some(quench_runtime::staged::Operation::GlobalLexicalStore { .. }))
+    store_op(instruction).is_some()
 }
 
-/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
-/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
-fn named_load(instruction: WideInstruction) -> bool {
-    quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+/// The staged operation of a by-name read of `instruction`: `LoadName` or a call's `LoadNameCall` (`decode_load_name`, whose
+/// proof decides nothing about the opcode), or the `typeof` read `GlobalTypeof`. Every row of a read is chosen by this.
+fn read_op(instruction: WideInstruction) -> Option<quench_runtime::staged::Operation<(), ()>> {
+    quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ())
+        .or_else(|| crate::compiled::decoded(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalTypeof { .. })))
 }
 
-/// Whether `instruction` loads a global name's value: a by-name read (`named_load`), or the load a
-/// `typeof` reads (`Operation::GlobalTypeof`).
-fn loads_global(instruction: WideInstruction) -> bool {
-    named_load(instruction)
-        || matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::GlobalTypeof { .. }))
+/// The staged operation of a store to a global name: `GlobalWrite` (the global object's slot, which a flagged record
+/// performs too, `performed`) or `GlobalLexicalStore` (a script-top-level lexical). Every store row is chosen by this.
+fn store_op(instruction: WideInstruction) -> Option<quench_runtime::staged::Operation<(), ()>> {
+    crate::compiled::performed(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalWrite { .. }))
+        .or_else(|| crate::compiled::decoded(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalLexicalStore { .. })))
 }
 
 /// The register a name call's `undefined` receiver is defined in.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
-    matches!(quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()),
-        Some(quench_runtime::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
+    matches!(read_op(instruction), Some(quench_runtime::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
 }
 
 /// The row that defines the load's result as the constant `value`, an immutable global's.

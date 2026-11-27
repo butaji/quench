@@ -2,6 +2,7 @@
 //! the guards they hold (`number_guard`, `live_guard`, `poll_row`), which rows a body interprets (`interprets`),
 //! and which rows control reaches (`reachable`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -131,51 +132,4 @@ pub(crate) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&Operand
         planned = completing(planned, layout, pc, row.dst)?;
     }
     Ok(planned)
-}
-
-/// The loop heads of a body's `function` whose interpreter kernel (installed on the head record by
-/// `loop_kernel::install_loop_kernels`) runs the loop in fewer instructions than the rows (`LoopKernel::beats_rows`),
-/// dropped from the body's `entries`: a body is not entered at a kernel head, where the interpreter's head runs the
-/// kernel (`kernel_entries`). A region keeps them all.
-pub(crate) fn kernel_heads(ending: Ending, function: &Function, constants: &[Value], live: Option<&quench_runtime::compile::liveness::RegisterMasks>, entries: &mut Vec<(u32, u32)>) -> Vec<u32> {
-    if ending != Ending::Body {
-        return Vec::new();
-    }
-    let heads = body_kernel_heads(function, constants, live);
-    entries.retain(|(pc, _)| *pc == 0 || !heads.contains(pc));
-    heads
-}
-
-fn body_kernel_heads(function: &Function, constants: &[Value], live: Option<&quench_runtime::compile::liveness::RegisterMasks>) -> Vec<u32> {
-    let code: Vec<_> = function.instructions().collect();
-    let jump = |word: quench_runtime::bytecode::WideInstruction| matches!(quench_runtime::staged::Operation::<(), ()>::decode(word, quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump));
-    code.iter().enumerate().filter(|&(backedge, &word)| jump(word) && (word.jump_target() as usize) < backedge)
-        .filter(|&(backedge, &word)| crate::dispatch_fast::loop_kernel::LoopKernel::beats_rows(&code, constants, function, (word.jump_target() as usize, backedge), live))
-        .map(|(_, word)| word.jump_target()).collect()
-}
-
-/// The interpreter's loop kernels on their loops' entry edges: a body loop whose head is a kernel head (`kernel_heads`)
-/// runs the kernel as the interpreter's head does, through the kernel helper (`LaneHelper::KernelStep`) after the row
-/// that falls into the head, so the entry pays the kernel's entry once and the back edge nothing. The body is not
-/// entered at such a head (`assemble` drops it from the entries), where the interpreter's head runs the kernel. The
-/// helper reads the head record, so a head without a kernel (stood down, or not installed) runs the rows; where the
-/// kernel ran, the body leaves at the head and the interpreter goes on after the loop. The kernel is the head's own
-/// semantics, the one definition every tier derives (S1.11).
-pub(crate) fn kernel_entries(layout: &Layout, heads: &[u32], decoded: &[Decoded], reached: &Bits, planned: &mut [Planned], helpers: LaneHelpers) -> Result<(), String> {
-    if layout.ending != Ending::Body {
-        return Ok(());
-    }
-    for &header in heads {
-        let Some(row) = (1..decoded.len() as u32).find(|&row| !layout.inlined(row) && layout.record(row) == header) else { continue };
-        let before = row as usize - 1;
-        // The row falls into the head: no jump, and a conditional branch only on its fall-through (`if (n > 0) do ...`),
-        // where its run's parts after it (`Planned::then_run`) are laid out.
-        let falls = reached.contains(before) && !layout.inlined(row - 1) && decoded[before].kind != Kind::Jump && !leaves(layout, &decoded[before]);
-        if !falls || planned[before].stop.is_some() || matches!(planned[before].branch, Some(Branch::Part(_))) {
-            continue;
-        }
-        let chain = super::steps::helper_chain(layout, row, &layout.spills(row), (super::super::super::LaneHelper::KernelStep, helpers), None)?;
-        planned[before].then_run(chain);
-    }
-    Ok(())
 }

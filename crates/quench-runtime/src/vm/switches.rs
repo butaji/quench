@@ -8,56 +8,6 @@ fn named(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| value != "0")
 }
 
-#[cfg(any(test, feature = "test-support"))]
-thread_local! {
-    /// A test's override of `float_slots`, for the thread that sets it.
-    static FLOAT_SLOTS_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// `QUENCH_FLOAT_SLOTS`: a slot whose owner's type is Number holds its Number as the raw IEEE
-/// double (`value_vec::encode_slot`), so native code reads and writes it with one load or store
-/// and no tag test. Slot types are kept only where native code runs (`ValueArena::track`).
-/// Read per slot decode (`value_vec::read_type`), so the initialized value is one inlined load.
-#[inline(always)]
-pub fn float_slots() -> bool {
-    #[cfg(any(test, feature = "test-support"))]
-    if FLOAT_SLOTS_FOR_TEST.get() { return true; }
-    // One byte loaded and tested once on the decided path, not a `OnceLock`'s state and value:
-    // every field read decodes through here (`value_vec::read_type`). Only the unread state takes
-    // the cold reader, which stores the answer; OFF and ON are then one compare, not two.
-    let state = FLOAT_SLOTS.load(std::sync::atomic::Ordering::Relaxed);
-    if state == SWITCH_UNREAD { return read_float_slots(); }
-    state == SWITCH_ON
-}
-
-/// `float_slots`'s state: `SWITCH_UNREAD` until the environment is read, then off or on.
-static FLOAT_SLOTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SWITCH_UNREAD);
-const SWITCH_UNREAD: u8 = 0;
-const SWITCH_OFF: u8 = 1;
-const SWITCH_ON: u8 = 2;
-
-/// `QUENCH_FLOAT_SLOTS` where it is set; otherwise off in every mode. A slot's form is not the mode's: a
-/// raw-double slot makes every read of every slot of its shape decode the owner's type
-/// (`value_vec::read_type`), which an interpreter row and a body's guarded read pay where no double is
-/// ever stored (richards' default run read its int and object slots through the decode, 5.7M Ir of
-/// 21.9M a run, against tagged slots' plain load under `--no-jit`). One representation for every tier.
-#[cold]
-#[inline(never)]
-fn read_float_slots() -> bool {
-    let on = named("QUENCH_FLOAT_SLOTS");
-    FLOAT_SLOTS.store(if on { SWITCH_ON } else { SWITCH_OFF }, std::sync::atomic::Ordering::Relaxed);
-    on
-}
-
-/// Runs `body` with `float_slots` on for this thread.
-#[cfg(any(test, feature = "test-support"))]
-pub fn with_float_slots<R>(body: impl FnOnce() -> R) -> R {
-    FLOAT_SLOTS_FOR_TEST.set(true);
-    let result = body();
-    FLOAT_SLOTS_FOR_TEST.set(false);
-    result
-}
-
 /// `QUENCH_PROFILE_RETAIN_BYTECODE`: a function-level profile keeps every replayable function's
 /// instruction records after compilation, where they would otherwise be released.
 #[cfg(feature = "profile-aggregate")]

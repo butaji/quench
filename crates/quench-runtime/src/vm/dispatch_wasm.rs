@@ -227,7 +227,7 @@ impl Vm {
 
     /// The effective address of an access: the 32-bit address in `b` plus the constant's static
     /// offset, as 64 bits; a sum that wraps traps. The memory is in `c`.
-    fn wasm_address_step(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<(), JsError> {
+    fn wasm_address_step(&mut self, p: &ProgramRecord, f: usize, i: WideInstruction) -> Result<(), JsError> {
         let memory = self.read(f, i.register_c());
         let index = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
         let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {

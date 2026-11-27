@@ -1,7 +1,7 @@
 //! Composite call row of the environment call family (call protocol v2): composed from the staged
 //! protocol rows (`protocol`), Stage-generic, no alloc or std, so every tier runs the same rows.
 //!
-//! An environment callee (`CallEntry::Environment`) runs on a window that holds, after its
+//! An environment callee (`CallEntry::framed(Framed::Environment)`) runs on a window that holds, after its
 //! `registers` words, the environment's entries (`ENTRY_*`, `ENTRY_WORDS` words), then its
 //! `locals`, then every value the call passed (kept for legacy reflection). The words below
 //! register 0 are the frame context (`frame::CONTEXT_*`); an environment activation keeps a full

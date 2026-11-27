@@ -9,6 +9,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // table is dead, amortizing the rebuild and cache invalidation across GCs.
 const SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR: usize = 2;
 
+/// Which realm roots a collection takes. `Full` roots the whole realm, as every collection of a
+/// running program does. `Closed` roots a realm value only where the closed world reaches it (the
+/// values of `seen`, `Vm::close`), so a dump frees the realm the program cannot reach.
+#[derive(Clone, Copy)]
+enum Roots<'a> {
+    Full,
+    Closed(&'a rustc_hash::FxHashSet<Value>),
+}
+
+/// Retains the entries of realm tables whose values the collection kept (`live`), so no entry
+/// names a freed record. Each argument is a table with `retain` in the `FxHashMap` shape.
+macro_rules! retain_live_values {
+    ($live:ident; $($table:expr),* $(,)?) => {
+        $( $table.retain(|key, value| $live(*key) && $live(*value)); )*
+    };
+}
+
+/// Nulls the realm fields of a closed collection whose values were freed (`Value::UNDEFINED`
+/// reads as no object, and the closed world never reaches one of them).
+macro_rules! null_dead_values {
+    ($live:ident; $($field:expr),* $(,)?) => {
+        $( if !$live($field) { $field = Value::UNDEFINED; } )*
+    };
+}
+
 /// The closure reads of the VM's programs, which a full collection traces closure
 /// environments through (`heap::EnvironmentTrace`).
 struct ProgramClosureReads<'a> {
@@ -342,7 +367,7 @@ impl Vm {
     #[inline(never)]
     fn collect_due(&mut self, program: &ResidualProgram) {
         let full = self.heap.should_full_collect();
-        self.collect_inner(program, full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
     #[cold]
@@ -421,11 +446,63 @@ impl Vm {
     }
 
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
-        self.collect_inner(program, full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
-    /// A stop-the-world collection, full or minor.
-    fn collect_inner(&mut self, _program: &ResidualProgram, full: bool) {
+    /// A full collection of a closed world's dump (C5 D3): the realm keeps only what the closure
+    /// reaches (`close`), and the realm values it frees leave their fields and tables
+    /// (`prune_closed_realm`). The program's own state stays rooted whatever the closure says,
+    /// and so does the input chain the dump resumes (`resume`, C5 D1c).
+    pub fn collect_for_image(
+        &mut self,
+        program: &ResidualProgram,
+        programs: &[&ResidualProgram],
+        roots: super::reachable_realm::RealmRoots<'_>,
+        resume: Option<&super::activation::FrameRecord>,
+    ) -> Result<(), JsError> {
+        let globals = roots.globals;
+        let closure = self.close(program, programs, super::reachable_realm::RealmRoots { globals, natives: roots.natives })?;
+        // The global names the program reads, and the ones the runtime reads by name, stay bound.
+        let kept = globals
+            .iter()
+            .map(|name| &**name)
+            .chain(super::reachable_realm::RUNTIME_GLOBALS.iter().copied())
+            .chain(["String", "Number", "Boolean", "BigInt"])
+            .chain([crate::bytecode::ITERATOR_CLOSE_BINDING, crate::bytecode::WITH_ENTER_BINDING, crate::bytecode::WITH_EXIT_BINDING])
+            .filter_map(|name| self.lookup_atom(name))
+            .collect::<rustc_hash::FxHashSet<Atom>>();
+        self.unlink_unreached_globals(&closure, &kept);
+        let seen = closure.seen;
+        self.collect_inner(program, true, Roots::Closed(&seen), resume);
+        Ok(())
+    }
+
+    /// Deletes the global object's own string-keyed properties the closure does not read: no reached
+    /// read admits the key (`admitted`, `setter_admitted`) and the program or runtime does not name it
+    /// (`kept`). The program cannot observe such a deletion, and the values only those keys reached
+    /// become unreachable, so a closed collection frees them.
+    fn unlink_unreached_globals(&mut self, closure: &super::reachable_realm::Closure, kept: &rustc_hash::FxHashSet<Atom>) {
+        let globals = self.realm.globals;
+        let Some(shape) = self.heap.object(globals).map(|object| object.shape()) else {
+            return;
+        };
+        for key in self.shape_keys(shape) {
+            let PropertyKey::String(atom) = key else { continue };
+            if kept.contains(&atom) || self.admitted(closure, globals, key) || self.setter_admitted(closure, key) {
+                continue;
+            }
+            if self.property_attributes(globals, key).is_some_and(|attributes| !attributes.configurable) {
+                continue;
+            }
+            if let Some((_, slot)) = self.object_property_slot(globals, key) {
+                self.delete_shape_slot(globals, slot, key);
+            }
+        }
+    }
+
+    /// A stop-the-world collection, full or minor. `policy` decides which realm roots enter
+    /// (`Roots`); a minor collection only ever runs under `Roots::Full`.
+    fn collect_inner(&mut self, _program: &ProgramRecord, full: bool, policy: Roots<'_>, resume: Option<&super::activation::FrameRecord>) {
         // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.
@@ -519,8 +596,23 @@ impl Vm {
         roots.extend(self.wasm_js.roots());
         roots.extend(self.native_roots.live().iter().copied());
         roots.extend(self.typed_array_protos);
+        // The global object and the fields the program's own state uses are rooted in every collection.
+        roots.extend([self.realm.globals, self.reused_iterator_result, self.shared_entry_pair, self.spare_await_state]);
+        // The active realm's top-level lexical bindings, then every inactive realm's: the program's own state.
+        roots.extend(self.realm.global_lexical_bindings.values().copied());
+        roots.extend(
+            self.realm
+                .global_lexical_states
+                .iter()
+                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
+                .flat_map(|(global, state)| {
+                    std::iter::once(*global).chain(state.bindings.values().copied())
+                }),
+        );
+        // The realm roots from here to the end of the iterator prototypes enter a closed collection
+        // only where its closure reaches them (`Roots::Closed`).
+        let realm_start = roots.len();
         roots.extend([
-            self.realm.globals,
             self.object_proto,
             self.function_proto,
             self.promise_proto,
@@ -550,21 +642,7 @@ impl Vm {
             self.async_generator_proto,
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
-            self.reused_iterator_result,
-            self.shared_entry_pair,
-            self.spare_await_state,
         ]);
-        // The active realm's top-level lexical bindings, then every inactive realm's.
-        roots.extend(self.realm.global_lexical_bindings.values().copied());
-        roots.extend(
-            self.realm
-                .global_lexical_states
-                .iter()
-                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
-                .flat_map(|(global, state)| {
-                    std::iter::once(*global).chain(state.bindings.values().copied())
-                }),
-        );
         roots.extend(
             self.realm
                 .intrinsics
@@ -746,9 +824,6 @@ impl Vm {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
-        let kept_atoms = self.heap.kept_atom_roots(all_roots);
-        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -760,6 +835,21 @@ impl Vm {
                 ]
             },
         ));
+        // The realm roots end here: the closed collection's filter applies to this segment only.
+        if let Roots::Closed(seen) = policy {
+            let mut kept = realm_start;
+            for index in realm_start..roots.len() {
+                let value = roots[index];
+                if value.heap_reference().is_none() || seen.contains(&value) {
+                    roots[kept] = value;
+                    kept += 1;
+                }
+            }
+            roots.truncate(kept);
+        }
+        roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
+        let kept_atoms = self.heap.kept_atom_roots(all_roots);
+        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.test262_agent.roots());
         roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
         self.host_frame_roots(&mut roots);
@@ -808,6 +898,10 @@ impl Vm {
         let lane_start = roots.len();
         self.lane_stack.extend_roots(&self.programs, &mut roots);
         self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
+        // The input chain an image dump resumes is a root of its own: the dump owns it, not the heap.
+        if let Some(chain) = resume {
+            chain.extend_roots(&mut roots);
+        }
         let heap = &self.heap;
         let mut kept = lane_start;
         for index in lane_start..roots.len() {
@@ -948,6 +1042,9 @@ impl Vm {
             Some(&closure_reads),
             full,
         );
+        if let Roots::Closed(_) = policy {
+            self.prune_closed_realm();
+        }
         // The heap's collection counter advanced inside that call, the only path into it: every
         // cache keyed on `CacheEpochs::gc` retires here, before any VM code reads one again.
         self.cache_epochs.bump_gc();
@@ -1043,6 +1140,66 @@ impl Vm {
             let phase = format!("gc_{}_after", self.heap.collection_count());
             self.report_memory_snapshot(&phase);
         }
+    }
+
+    /// After a closed collection's sweep (`Roots::Closed`): the realm fields the sweep freed read as
+    /// none, and the intrinsics tables and the native table drop or clear each freed entry, so no
+    /// edge names a freed record. The fields and tables are listed once, here.
+    fn prune_closed_realm(&mut self) {
+        let heap = &self.heap;
+        let live = |value: Value| value.heap_reference().is_none() || heap.is_live(value);
+        null_dead_values!(live;
+            self.object_proto, self.function_proto, self.promise_proto, self.promise_constructor, self.array_proto,
+            self.array_buffer_proto, self.shared_array_buffer_proto, self.array_iterator_proto, self.typed_array_proto,
+            self.data_view_proto, self.map_proto, self.set_proto, self.shadow_realm_proto, self.map_iterator_proto,
+            self.set_iterator_proto, self.weak_map_proto, self.weak_set_proto, self.weak_ref_proto,
+            self.finalization_registry_proto, self.iterator_proto, self.string_iterator_proto,
+            self.regexp_string_iterator_proto, self.generator_proto, self.iterator_helper_proto,
+            self.wrap_for_valid_iterator_proto, self.async_iterator_proto, self.async_generator_proto,
+            self.async_from_sync_iterator_proto, self.regexp_proto,
+        );
+        // Tables keyed by realm whose entries hold one value.
+        retain_live_values!(live;
+            self.realm.intrinsics.intl_number_format_constructors, self.realm.intrinsics.intl_number_format_prototypes,
+            self.realm.intrinsics.intl_number_format_fallback_symbols, self.realm.intrinsics.intl_collator_constructors,
+            self.realm.intrinsics.intl_collator_prototypes, self.realm.intrinsics.intl_plural_rules_prototypes,
+            self.realm.intrinsics.intl_datetime_format_constructors, self.realm.intrinsics.intl_datetime_format_prototypes,
+            self.realm.intrinsics.intl_datetime_format_fallback_symbols, self.realm.intrinsics.intl_display_names_constructors,
+            self.realm.intrinsics.intl_display_names_prototypes, self.realm.intrinsics.intl_duration_format_constructors,
+            self.realm.intrinsics.intl_duration_format_prototypes, self.realm.intrinsics.intl_list_format_constructors,
+            self.realm.intrinsics.intl_list_format_prototypes, self.realm.intrinsics.intl_relative_time_format_prototypes,
+            self.realm.intrinsics.intl_segmenter_prototypes, self.realm.intrinsics.intl_segment_iterator_prototypes,
+            self.realm.intrinsics.intl_segments_prototypes, self.realm.intrinsics.intl_locale_prototypes,
+        );
+        self.realm.intrinsics.promise_constructors.retain(|realm, constructor| live(*realm) && live(*constructor));
+        // Tables keyed by (realm, native).
+        self.realm.intrinsics.builtin_prototypes.retain(|(realm, _), prototype| live(*realm) && live(*prototype));
+        self.realm.intrinsics.function_constructors.retain(|(realm, _), constructor| live(*realm) && live(*constructor));
+        // Tables whose entries hold several values: an entry is kept only when all of them are live.
+        self.realm.intrinsics.error_intrinsics.retain(|realm, intrinsics| {
+            live(*realm)
+                && live(intrinsics.constructor)
+                && live(intrinsics.stack_getter)
+                && live(intrinsics.stack_setter)
+                && live(intrinsics.call_site_constructor)
+                && live(intrinsics.call_site_prototype)
+                && intrinsics.host_formatter.map_or(true, |formatter| live(formatter))
+        });
+        self.realm.intrinsics.regexp_intrinsics.retain(|realm, intrinsics| {
+            if let Some(exec) = intrinsics.builtin_exec.get() {
+                if !live(exec) {
+                    intrinsics.builtin_exec.set(None);
+                }
+            }
+            live(*realm)
+                && live(intrinsics.constructor)
+                && live(intrinsics.prototype)
+                && intrinsics.result_template.map_or(true, |template| live(template.anchor))
+        });
+        self.realm.intrinsics.iterator_prototypes.retain(|realm, prototypes| {
+            live(*realm) && live(prototypes.helper) && live(prototypes.wrapper) && live(prototypes.generator) && live(prototypes.async_generator)
+        });
+        self.natives.forget_dead(&live);
     }
 
     /// A home stays reachable through its environment; entries of swept environments go

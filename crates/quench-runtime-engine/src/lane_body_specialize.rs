@@ -23,77 +23,36 @@ impl LaneView {
         declined
     }
 
-    /// Counts an entry of a warming body between its attempts in place (not its first, which weighs the mode's decline):
-    /// whether it did. The full path cost a warming or unpaid recursive callee ~50 Ir a call (the mode's decline, the
-    /// image lookup, the body's move out and back; k02_fib under --u-jit).
-    /// The count to weigh at is found once per stretch between attempts (`weigh_at`), not per entry.
-    pub(crate) fn counted_between_attempts(&self, looped: bool) -> bool {
-        // SAFETY: as `lane_body`.
-        let LaneBody::Unspecialized { entries, .. } = (unsafe { &mut *self.tier().tier_lane.get() }) else { return false };
-        if *entries == 0 || looped { return false; }
-        let next = entries.saturating_add(1);
-        let epoch = self.body_epoch();
-        let (found_epoch, from, at) = self.tier().weigh_at.get();
-        if found_epoch == epoch && from <= *entries && next < at {
-            *entries = next;
-            return true;
-        }
-        if self.attempts_at(next) || self.recurrent(next) { return false; }
-        *entries = next;
-        self.tier().weigh_at.set((epoch, next, self.next_weighed(next)));
-        true
-    }
-
-    /// The first entry count past `entries` at which a warming body weighs its compile: its next attempt
-    /// (`attempts_at`), or, where it may still recur, the next `RECURRENT_ENTRIES` multiple (`recurrent`).
-    fn next_weighed(&self, entries: u32) -> u32 {
-        let mut attempt = self.warmup_entries();
-        while attempt <= entries { attempt = attempt.saturating_add(attempt); if attempt == u32::MAX { break; } }
-        let history = self.tier().history.get();
-        let recurs = history.lifetimes == 0 && !history.unpaid;
-        if recurs { attempt.min((entries - entries % RECURRENT_ENTRIES).saturating_add(RECURRENT_ENTRIES)) } else { attempt }
-    }
-
     /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
     pub(crate) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
 
-    /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
-    /// the body is still warming or specialized, so its prologue stays. A specialized body is
-    /// a fact of the view from then on: its prologue record enters it with `entry`, which
-    /// tests nothing the specialization proved (`lane_body_entry`).
-    pub(crate) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
-        if self.counted_between_attempts(looped) { return true; }
+    /// Specializes the frameless body at the function's entry: the attempt the static benefit admits (`lane_facts::body_pick`),
+    /// or none, where the interpreter runs the function. Whether the body is still compiling or specialized, so its
+    /// prologue stays. A specialized body is a fact of the view from then on: its prologue record enters it with `entry`,
+    /// which tests nothing the specialization proved (`lane_body_entry`).
+    pub(crate) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         if awaits_look(body) { return true; }
-        let (outcome, entries, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
-            // A looping caller's trips ask for the attempt at once: its entries may not advance (a single call).
-            LaneBody::Unspecialized { entries, recompiles, stuck } if looped || self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
+        let (outcome, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
+            LaneBody::Unspecialized { recompiles, stuck } => {
                 if !self.affords_compile() {
-                    *body = LaneBody::Unspecialized { entries, recompiles, stuck };
+                    *body = LaneBody::Unspecialized { recompiles, stuck };
                     return false;
                 }
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
-                if !self.attempts_at(entries.saturating_add(1)) { crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyRecurrent); }
-                // A predecessor's few leaves are the specialization's feedback (`stuck`). Every attempt is priced on its entries
-                // and loop work, a recurrent or looping one too: unpriced, setup functions compiled 8k-30k IR for nothing (TOD-2194).
+                // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: Some(entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
-            }
-            LaneBody::Unspecialized { entries, recompiles, stuck } => {
-                let ticks = warm_ticks();
-                if entries == 0 { self.tier().warm_since.set(ticks); }
-                *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
-                return true;
+                (work(crate::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, looped: None, called: self.called_by_bodies(), caller: self }), recompiles, stuck, 0)
             }
             LaneBody::Compiling { pending, recompiles, stuck, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(pending, self)), 0, recompiles, stuck, looks.saturating_add(1)),
+                (work(crate::compiled::LaneBodyWork::Poll(pending, self)), recompiles, stuck, looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, quench_runtime::vm::tier_policy::body_tier_in_lane(), entry, entries, recompiles, stuck, looks);
-        // A state change moves the epoch; a body still warming (its entries counted) does not, so a refused loop backs off.
+        *body = self.body_after(outcome, quench_runtime::vm::tier_policy::body_tier_in_lane(), entry, recompiles, stuck, looks);
+        // A state change moves the epoch; a body still waiting for its next entry does not, so a refused loop backs off.
         if !matches!(body, LaneBody::Unspecialized { .. }) {
             let epochs = &self.tier().body_epoch;
             epochs.set(epochs.get().wrapping_add(1));
@@ -102,23 +61,17 @@ impl LaneView {
     }
 
     /// The body of a function of a program with a loaded AOT image: `install` takes it from the
-    /// image (`Vm::install_ahead_body`) at once, with no warm-up, no compile budget and no tier
-    /// gate, since an image has no profiling phase. It is the ladder's first body: its leaves
+    /// image (`Vm::install_ahead_body`) at once, with no compile budget and no tier gate, since an image
+    /// has no profiling phase. It is the ladder's first body: its leaves
     /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
-    /// It is priced as a quick body of `quick_ir` IR instructions: once its runs repay the optimizing compile, the
-    /// JIT respecializes it on what the run observed, its call targets above all (`LaneView::optimize_due`).
-    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, quick_ir: usize, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
+    pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                let published = matches!(outcome, crate::compiled::LaneBodyOutcome::Published(_));
-                *body = self.body_after(outcome, quench_runtime::jit_mode::Tier::Ahead, entry, 0, recompiles, stuck, 0);
-                // Priced as a quick body only where the mode can compile the optimizing one: under `--no-jit` an image
-                // body is the last body, and a due respecialization would only retire it to the interpreter.
-                if published && mode_compiles_bodies() { self.note_compile_level(true, quick_ir); }
+                *body = self.body_after(outcome, quench_runtime::jit_mode::Tier::Ahead, entry, recompiles, stuck, 0);
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -129,12 +82,12 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: quench_runtime::jit_mode::Tier, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: quench_runtime::jit_mode::Tier, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred, O::Base => Event::BodyBase,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
             });
         }
         match outcome {
@@ -150,21 +103,13 @@ impl LaneView {
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
             crate::compiled::LaneBodyOutcome::Stale => {
                 self.note_dropped_compile();
-                LaneBody::Unspecialized { entries: 0, recompiles, stuck }
+                LaneBody::Unspecialized { recompiles, stuck }
             }
-            crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
-            // A b-jit body serves it better: the entry stitches that body (`Vm::base_body_work`), and the u-jit body waits.
-            crate::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
-            // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
+            crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { recompiles, stuck },
+            // The static benefit refused it: no loop or call cycle reaches it, and its residue is small. The interpreter runs it.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
-                let next = entries.saturating_add(1);
-                // The attempts double with each warm-up; past the last one the counter can
-                // name, the model has priced every entry this function can give and refused.
-                // The lane would keep running it through its records for nothing, slower than
-                // the general interpreter, so decline it there (`release_from_tier`).
-                if self.last_attempt(next) { return LaneBody::Declined }
-                LaneBody::Unspecialized { entries: next, recompiles, stuck }
+                LaneBody::Declined
             }
             crate::compiled::LaneBodyOutcome::Short => {
                 self.tier().history.set(LaneBodyHistory { short: true, ..self.tier().history.get() });
@@ -178,27 +123,7 @@ impl LaneView {
         }
     }
 
-    /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
-    /// its calls, so their sites have linked (`lane_loop_retire`).
-    pub(crate) fn specialize_lane_body_now(&self, entry: Handler, looped: bool, specialize: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) {
-        self.skip_warm_up();
-        self.specialize_lane_body(entry, looped, specialize);
-        // Its entries are few (the loop is what is hot): the next one compiles where this one
-        // waited for its callees' bodies (`LaneBodyOutcome::Deferred`).
-        self.skip_warm_up();
-    }
-
-    /// Whether the tier model priced a compile of its body and found it would not pay
-    /// (`LaneBodyOutcome::Unpaid`): its entries alone decide when it looks again.
+    /// Whether the static benefit refused a compile of its body (`LaneBodyOutcome::Unpaid`), which the loop tier reads
+    /// before it waits for its own iterations.
     pub(crate) fn body_unpaid(&self) -> bool { self.tier().history.get().unpaid }
-
-    /// A function whose bodies lifecycle edges discarded warms as any entry does.
-    fn skip_warm_up(&self) {
-        // SAFETY: as `lane_body`; no lane body runs here.
-        if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier().tier_lane.get() }
-            && self.tier().history.get().lifetimes == 0 && !self.tier().history.get().unpaid
-        {
-            *entries = u32::from(self.tiers.lane_body.warmup()) - 1;
-        }
-    }
 }

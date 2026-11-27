@@ -53,6 +53,8 @@ fn plain_local_form(op: Op) -> Option<Op> {
 }
 pub mod aot_facts;
 pub mod signatures;
+pub mod call_plan;
+pub mod call_graph;
 mod annex_b_targets;
 mod arrow;
 mod ast;
@@ -3758,8 +3760,7 @@ impl<'a> Compiler<'a> {
                 call_sites: Default::default(),
                 layout: Default::default(),
             })),
-            atoms,
-            constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
+            record: crate::bytecode::ProgramRecord { atoms, constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()) },
             // Collected into a table of its own size: an in-place collect would keep the
             // records' larger allocation.
             functions: {

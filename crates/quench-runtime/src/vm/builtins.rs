@@ -82,6 +82,19 @@ impl NativeTable {
             .chain(self.functions.iter().copied())
             .filter(|value| !value.is_null())
     }
+
+    /// After a collection that freed some of the table's values: each freed entry reads as
+    /// absent (`get` takes a null entry as none), so no entry names a freed record.
+    pub(super) fn forget_dead(&mut self, live: impl Fn(Value) -> bool) {
+        if !live(self.realm) {
+            self.realm = Value::NULL;
+        }
+        for function in &mut self.functions {
+            if !live(*function) {
+                *function = Value::NULL;
+            }
+        }
+    }
 }
 
 /// How much of a realm a VM installs when it initializes.
@@ -704,7 +717,7 @@ impl Vm {
     }
     pub fn set_named(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         object: Value,
         name: &str,
         value: Value,
@@ -738,7 +751,7 @@ impl Vm {
 
     pub fn set_builtin_named(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

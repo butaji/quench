@@ -306,7 +306,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let child = vm.object();
     assert!(!vm.hinted_primary_field_store_hit::<true>(hint, receiver, atom, child),
         "the hinted no-log store must defer a reference barrier");
-    let record = vm.heap.record_id(receiver.direct_object_index().unwrap());
+    let record = vm.heap.record_id(receiver.direct_object_index().unwrap()).unwrap();
     // SAFETY: the same exact own-data shape still proves this initialized slot.
     assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },
         "a Number pointer store must not consume the owner's reference barrier");

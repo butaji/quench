@@ -1,25 +1,80 @@
 //! Which bindings are written exactly once, with a closure: the callee a binding-loaded register
 //! names.
 
+use super::accessors::Accessors;
 use super::flow::FunctionFlow;
 use super::gate::World;
 use super::value::{Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::FactKey;
+use crate::typed_ir::{Classes, ElementClass, FactKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The most closures a method read's closed set may hold (`candidates`): a test per arm.
 pub(crate) const MAX_CANDIDATES: usize = 8;
 
 /// The fact key a binding's value is settled under (`AotFacts::cell`), so the world says whether new code can move it.
-/// A named property read off any object is the name-wide join, which the solve keeps as `AnyField`.
-fn fact_key(key: Key) -> FactKey {
+/// A named property read off any object is the name-wide join, which the solve keeps as `AnyField`. The elements of a
+/// key's element class are `Elements` of that class (`ElementClass`).
+pub(super) fn fact_key(key: Key) -> FactKey {
     match key {
         Key::Global(atom) => FactKey::Global(atom),
         Key::Slot { owner, slot } => FactKey::Slot { owner, slot },
         Key::Member(atom) | Key::MemberAny(atom) => FactKey::AnyField(atom),
         Key::MemberOn { class, instance, atom } => FactKey::Field { class, instance, atom },
         Key::Return(function) => FactKey::Return(function),
-        Key::Element(atom) => FactKey::Elements(atom),
+        Key::Element(class) => FactKey::Elements(class),
+    }
+}
+
+/// The element classes of the program's arrays: a Steensgaard union-find over `ElementClass`. Each link a flow makes
+/// (`FunctionFlow::links`), and each link the types add (a call's callees' returns, the classes escapes reach), joins
+/// the classes of its two keys. An array's elements are whatever is stored into any array of its class, because an
+/// array reached through another register, a binding or a field is the same array, and a store through any of them
+/// must be seen through all of them. A class no link joins is its own, so two arrays that never meet stay apart.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(super) struct ElementClasses {
+    /// Per class a link joined into another, the class it joined. A class's root has no entry.
+    parent: BTreeMap<ElementClass, ElementClass>,
+    /// Per class root, the classes of its class, the root among them: the classes a read of the class's elements joins.
+    class_keys: BTreeMap<ElementClass, Vec<ElementClass>>,
+}
+
+impl ElementClasses {
+    /// The classes `links` make. Each class's members are listed once the links are all joined, so a read of a class is
+    /// a walk over its members, never a search over every class.
+    pub(super) fn of<'a>(links: impl Iterator<Item = &'a (ElementClass, ElementClass)>) -> Self {
+        let mut classes = Self::default();
+        for &(from, to) in links { classes.join(from, to); }
+        let keys: BTreeSet<ElementClass> = classes.parent.iter().flat_map(|(&key, &parent)| [key, parent]).collect();
+        for key in keys {
+            let root = classes.root(key);
+            classes.class_keys.entry(root).or_default().push(key);
+        }
+        classes
+    }
+
+    /// The root of `key`'s class: the class every class of it follows to.
+    fn root(&self, mut key: ElementClass) -> ElementClass {
+        while let Some(&parent) = self.parent.get(&key) { key = parent; }
+        key
+    }
+
+    /// Joins the classes of `from` and `to`. Roots only are linked, so the chains stay as short as the links make them.
+    fn join(&mut self, from: ElementClass, to: ElementClass) {
+        let (from, to) = (self.root(from), self.root(to));
+        if from != to { self.parent.insert(from, to); }
+    }
+
+    /// Every class a link names, each once: the classes that have a class of their own among the links.
+    pub(super) fn linked(&self) -> impl Iterator<Item = ElementClass> + '_ {
+        self.class_keys.values().flatten().copied()
+    }
+
+    /// Every class of `key`'s class, `key` among them: the classes a store into any array of it writes, so the classes
+    /// whose elements a read of its elements joins. A class no link names is its own class.
+    pub(super) fn members(&self, key: ElementClass) -> impl Iterator<Item = ElementClass> + '_ {
+        let root = self.root(key);
+        let listed: &[ElementClass] = self.class_keys.get(&root).map_or(&[][..], Vec::as_slice);
+        listed.iter().copied().chain(std::iter::once(root).filter(move |_| listed.is_empty()))
     }
 }
 
@@ -39,6 +94,8 @@ pub(super) struct Census {
     members: BTreeMap<u32, BTreeSet<u32>>,
     /// Per class and property (static or prototype), the one closure every store of it writes.
     members_on: BTreeMap<(u32, bool, u32), Option<u32>>,
+    /// The accessors the program defines and what may shadow them (`accessors::Accessors`).
+    pub(super) accessors: Accessors,
 }
 
 impl Census {
@@ -65,21 +122,30 @@ impl Census {
                 _ => {}
             }
         }
-        Self {
+        let mut census = Self {
             world,
             member_wild: flows.iter().any(|flow| flow.member_wild),
             members,
             members_on,
             writes,
-            global_wild: flows.iter().any(|flow| flow.global_wild),
+            global_wild: flows.iter().any(|flow| flow.global_wild || flow.computed_global),
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
-        }
+            accessors: Accessors::default(),
+        };
+        census.accessors = Accessors::of(flows, &census);
+        census
     }
 
     /// The closures stored under name `atom` (`members`): the closed set a method call of that name may
     /// reach, where it holds at least one and at most `MAX_CANDIDATES`.
     pub(super) fn method_closures(&self, atom: u32) -> Option<&BTreeSet<u32>> {
         self.members.get(&atom).filter(|set| (1..=MAX_CANDIDATES).contains(&set.len()))
+    }
+
+    /// Whether new code (`World`) can move `key`: a store under a live key may put any closure where the solve reads it,
+    /// so the closure stored escapes (`types::escapes`).
+    pub(super) fn live(&self, key: FactKey) -> bool {
+        self.world.live(key)
     }
 
     /// Whether `target(callee)` is a guess rather than a proof: the value was read from a key new code can
@@ -96,17 +162,41 @@ impl Census {
         live || method_guess
     }
 
-    /// The closure `key` holds, when it is written once, with a closure, and no write the
-    /// analysis cannot follow reaches it.
-    fn single(&self, key: Key) -> Option<u32> {
-        let wild = match key {
+    /// Whether a write the analysis cannot follow may reach `key`: a global written by code it cannot name
+    /// (`global_wild`), a slot of a function whose frame it cannot follow (`wild_owner`), or a named property
+    /// written through a computed key (`member_wild`). The keys with no such write are never wild.
+    pub(super) fn wild(&self, key: Key) -> bool {
+        match key {
             Key::Global(_) => self.global_wild,
             Key::Slot { owner, .. } => self.wild_owner.get(owner as usize).copied().unwrap_or(true),
             Key::Member(_) => self.member_wild,
-            Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => return None,
-        };
+            Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => false,
+        }
+    }
+
+    /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
+    pub(super) fn wild_read(&self, origin: Origin) -> bool {
+        match origin {
+            Origin::Binding(key) => self.wild(key),
+            Origin::Member(atom) | Origin::MemberOn { atom, .. } => self.wild(Key::Member(atom)),
+            _ => false,
+        }
+    }
+
+    /// Whether every class `classes` lists holds its own method `atom` (`members_on`), and every one of those is one of
+    /// `callees`. A method call whose receiver is such a closed set of program classes runs the program's own method, so
+    /// no builtin of the same name is the callee (`types::resolved`).
+    pub(super) fn own_methods(&self, classes: Classes, atom: u32, callees: &[u32]) -> bool {
+        let ids = classes.ids();
+        !ids.is_empty() && ids.iter().all(|&class| matches!(self.members_on.get(&(class, true, atom)), Some(Some(function)) if callees.contains(function)))
+    }
+
+    /// The closure `key` holds, when it is written once, with a closure, and no write the
+    /// analysis cannot follow reaches it.
+    fn single(&self, key: Key) -> Option<u32> {
+        if matches!(key, Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_)) { return None; }
         match self.writes.get(&key) {
-            Some(&(1, fact)) if !wild => fact.cell.ty.body_index(),
+            Some(&(1, fact)) if !self.wild(key) => fact.cell.ty.body_index(),
             _ => None,
         }
     }

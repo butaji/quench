@@ -23,6 +23,8 @@ use crate::typed_ir::Type;
 mod concrete;
 mod word_ops;
 pub mod numeric;
+/// The one typing of an operation over the typed cells: the solve, the graph lowering and check deletion all read it.
+pub mod typing;
 pub mod proof;
 pub use proof::{Float64, HeldLayouts, HeldShapes, HeldViews, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped, TypedViewFact, Viewed};
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
@@ -82,7 +84,12 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
-pub use operation::Operation;
+pub use operation::{HandlerEdge, Operation, OperationOperationExt, OperationOperationRecordsExt, operation_is_call_index};
+pub use names::OperationNamesExt;
+pub use generic::OperationGenericExt;
+pub use compare::{ComparisonCompareExt, OperationCompareExt};
+pub use element_rows::OperationElementRowsExt;
+pub use forms::{CallRecordFormsExt, InvocationFormsExt};
 pub mod c_twins;
 pub use c_twins::{CKernel, CTwin};
 pub use operation::kind as op_kind;
@@ -109,7 +116,7 @@ pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
 pub use compare::{nullish_of, Comparison}; pub use generic::{decide as equality_decided, number_strict_equal};
-pub use concrete::Concrete;
+pub use concrete::{Concrete, concrete_over_arena, concrete_over_vm};
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub mod builtins;
@@ -173,6 +180,8 @@ pub mod naming;
 pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
+/// The exit status of an activation (`staged/exit.rs`), mounted by the b-jit call record.
+pub use quench_bjit::call_record::exit;
 pub(crate) mod native_frame;
 pub mod call_keeping;
 pub mod call_environment;
@@ -186,7 +195,7 @@ pub mod call_complete;
 pub mod call_return;
 pub mod call_iteration;
 #[allow(unused_imports)]
-pub use forms::{Arguments, CallFacts, CallForm, Callee, FunctionId, Invocation, Receiver, RegisterList};
+pub use forms::{Arguments, CallFacts, CallRecord, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod prologue;
@@ -629,9 +638,6 @@ pub const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
 /// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
 /// are the only rows a raw result (`MODE_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
 pub const BINARY_ROW: u16 = Op::Binary as u16;
-/// The truth jumps a `Binary` equality fuses with into one fixed-equality record (`FUSED_ROWS`' `Binary` pairs),
-/// false-jump first: the lane names their rows from here, never by opcode.
-pub const EQUALITY_JUMP_ROWS: [u16; 2] = [Op::JumpFalse as u16, Op::JumpTrue as u16];
 /// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
 pub const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
 /// The row of `NumericMultiply`, a Number binary operator (see `BINARY_ROW`).

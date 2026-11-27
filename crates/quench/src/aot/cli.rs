@@ -314,13 +314,13 @@ fn compile(options: Options) -> Result<(), String> {
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
     // A core entry is probed before anything is saved: one that reaches its end with no input folds
-    // to a replay image, and any other saves its realm and program at the last point it can
-    // capture (`core_rest`, which names the frames that cannot be captured).
+    // to a replay image; one that reaches an input saves its realm, program and the frames that
+    // called the input (`core_rest`); any other saves its realm and program before it runs.
     if let (true, Some(tables)) = (core, closed) {
         let reach = super::core_rest::probe(&native_entry, tables)?;
         report["core_probe"] = match &reach {
             super::core_rest::Reach::Folds => json!({"status": "folds"}),
-            super::core_rest::Reach::Input(input) => json!({"status": "input", "input": input, "save_point": "realm_and_program"}),
+            super::core_rest::Reach::Captured(_) => json!({"status": "captured", "save_point": "input_chain"}),
             super::core_rest::Reach::Unfinished(diagnostic) => json!({"status": "unfinished", "diagnostic": diagnostic, "save_point": "realm_and_program"}),
         };
         if matches!(reach, super::core_rest::Reach::Folds) {

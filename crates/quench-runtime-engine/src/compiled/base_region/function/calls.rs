@@ -58,15 +58,11 @@ pub(crate) fn method_call_inlined(region: &LoopRegion, pc: u32, sites: &mut Site
 /// evaluation of the call on the callee the site proves.
 pub(crate) fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
     use quench_runtime::vm::global_facts::GlobalRead;
-    (shape.form == CallForm::Plain && (1..=2).contains(&shape.argc)).then_some(())?;
+    (shape.form == CallForm::Plain).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
     let GlobalRead::NativeMember { value, native, holder, cell, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
-    let kind = fold::math_kind(native)?;
-    let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
-    (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
-    let second = binary.then(|| Source::Register(shape.window + 1));
-    let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), second, None);
+    let operation = fold::number_row(fold::math_kind(native)?, shape)?;
     // Where the read is the callee's only definition on every path to the call, the callee is the native while the code runs:
     // the holder's exact shape is held (a change of its values retires the body, and a run inside it learns that from the
     // invalidation word after a call), as `fold::pairs` holds it for a folded call. The identity guard is then none.
@@ -97,6 +93,7 @@ pub(crate) fn sole_definition(region: &LoopRegion, defined: usize, local: usize,
 pub(crate) fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
     use quench_runtime::vm::global_facts::GlobalRead;
     use quench_runtime::tier_surface::Native;
+    use quench_runtime::staged::native_row::{native_row_of, NativeRow};
     (shape.form == CallForm::Plain).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
@@ -107,7 +104,7 @@ pub(crate) fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape)
     let row = match native {
         Native::ParseInt if shape.argc == 1 || (shape.argc == 2 && radix_is_ten(region, sites, local, shape.window + 1)) =>
             Decoded::heap(Heap::ParseInt, Some(shape.result), Some(Source::Register(shape.window)), None),
-        Native::StringCharCodeAt if shape.argc == 1 =>
+        _ if shape.argc == 1 && matches!(native_row_of(native), Some(NativeRow::CharCodeAt)) =>
             Decoded::heap(Heap::CharCodeAt, Some(shape.result), Some(Source::Register(shape.this)), Some(Source::Register(shape.window))),
         _ => return None,
     };

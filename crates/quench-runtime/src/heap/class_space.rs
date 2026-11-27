@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use super::layouts::{class_link, class_shape};
+use super::layouts::{self, class_link, class_shape};
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -319,6 +319,21 @@ impl ClassSpace {
         unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
     }
 
+    /// Field `slot` of the live cell at `g` as a `Value`: a raw double's word is read as the Number it holds, the
+    /// class's representation of the field (`layouts::class_field_reps`); a tagged field is its word.
+    pub(super) fn field_value(&self, g: u32, slot: usize) -> Value {
+        let reps = layouts::class_field_reps(header_class(self.header(g)));
+        if reps.is_raw(slot) { Value::number(f64::from_bits(self.field(g, slot).to_bits())) } else { self.field(g, slot) }
+    }
+
+    /// Writes field `slot` of the cell at `g` as the word `bits`: a tagged `Value`'s bits, or a raw double's bits.
+    /// The caller has the class's representation of the field (`field_value`), and runs the write barrier.
+    pub(super) fn write_field_bits(&mut self, g: u32, slot: usize, bits: u64) {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` is the word `slot + 1` of the cell, inside its span (the assert), and `&mut self` is exclusive.
+        unsafe { self.cell_ptr(g).cast::<u64>().add(1 + slot).write(bits) };
+    }
+
     /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the
     /// collector traces as any field and no object reads.
     pub(super) fn delete_slack(&mut self, g: u32, from: usize) {
@@ -365,14 +380,31 @@ impl ClassSpace {
         unsafe { cell_fields_at(self.base, g) }
     }
 
-    /// Granule `g`'s cell as an exclusive view: its header word and its fields (`region_capacity(g)` values).
-    /// The space must be reserved.
-    pub(super) fn cell_mut(&mut self, g: u32) -> (&mut u64, &mut [Value]) {
+    /// The header word of granule `g`'s cell, by reference (`CellView`). The space must be reserved.
+    #[inline(always)]
+    pub(super) fn cell_header(&self, g: u32) -> &u64 {
+        debug_assert!(self.range.is_some());
+        // SAFETY: `g` names a cell of the reserved space; its header is a readable word that nothing writes
+        // while `self` is borrowed.
+        unsafe { &*self.cell_ptr(g) }
+    }
+
+    /// The header and the fields of granule `g`'s cell, exclusively (`CellViewMut`). The space must be reserved.
+    #[inline(always)]
+    pub(super) fn cell_parts_mut(&mut self, g: u32) -> (&mut u64, &mut [Value]) {
         debug_assert!(self.range.is_some());
         let cell = self.cell_ptr(g);
-        // SAFETY: `g` names a cell of this reserved space; its header and its fields are disjoint words of it,
-        // and `&mut self` is exclusive.
+        // SAFETY: the header and the `region_capacity(g)` fields after it lie inside the cell at `g`; they
+        // are disjoint, and `&mut self` is exclusive, so no other reference to them exists.
         unsafe { (&mut *cell, std::slice::from_raw_parts_mut(cell.cast::<Value>().add(1), region_capacity(g) as usize)) }
+    }
+
+    /// Writes field `slot` of granule `g`'s cell as a `Value`. The caller passed the store's barrier.
+    #[inline(always)]
+    pub(super) fn set_field(&mut self, g: u32, slot: usize, value: Value) {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` lies inside the cell (the assert), and `&mut self` is exclusive.
+        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(value) };
     }
 
     /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region

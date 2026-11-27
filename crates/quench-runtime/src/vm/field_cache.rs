@@ -145,7 +145,7 @@ impl Vm {
         // virtual `size`, as a cell's does (`shape_property_lookup_cell`). Without this arm a
         // collection record's reads (`m.get`, `s.has`) were never cached.
         if value.direct_collection_index().is_some() {
-            return self.shape_answers(self.heap.object(value)?.record(), class, ReceiverKind::Exotic);
+            return self.shape_answers(self.heap.object(value)?.record_only()?, class, ReceiverKind::Exotic);
         }
         // A promise's internal slots change no object operation, as for its cell form below.
         if let Some(promise) = self.heap.promise(value) {

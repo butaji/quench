@@ -31,7 +31,7 @@ script_handler! {
         // activation's in place, another leaf form's through it, any other through the
         // full form.
         if target.entry != CallEntry::leaf(LEAF) {
-            if target.entry == CallEntry::Activates {
+            if target.entry == CallEntry::framed(Framed::Activates) {
                 match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
                     Some(resumed) => resume!(cx, resumed),
                     None => sibling!(script_call_full_miss, r, ip, Carried::script(cx)),
@@ -101,7 +101,7 @@ pub(crate) unsafe fn lane_run_leaf<const LEAF: u8, const ARGC: u16>(
     unsafe {
         let window = Registers(vm(cx).lane_stack.values.top());
         let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
-        lane_enter_leaf(cx, AdmittedWindow::of(target, passed, ARGC), window, ip, r, target, LEAF, ARGC, this, None, true)
+        lane_enter_leaf(cx, AdmittedWindow::of(target, passed, ARGC), window, ip, r, target, LEAF, ARGC, this, None)
     }
 }
 
@@ -227,15 +227,8 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
     argc: u16,
     this: Value,
     caller_program: Option<ProgramId>,
-    checked: bool,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::call_leaf::{step_leaf_call_of, LeafContext, LeafEntry};
-    // A form that binds the receiver writes the leaf's `this` (`call_leaf::binds_this`); any other reads none.
-    // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
-    if !checked && quench_runtime::staged::call_leaf::binds_this(form) {
-        // SAFETY: the running lane's context; the program store keeps the view alive.
-        note_lane_this(unsafe { vm(cx) }, this, || unsafe { (*target.view).this_rows });
-    }
     // SAFETY: the function's contract.
     unsafe {
         let entry = LeafEntry {
@@ -363,7 +356,7 @@ pub(crate) fn cross_leaf_call_in_lane(
         let window = Registers(vm.lane_stack.values.top());
         let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
         let caller_program = (*cx).program;
-        let entered = lane_enter_leaf(cx, AdmittedWindow::of(target, passed, argc), window, ip, r, target, form, argc, this, Some(caller_program), false);
+        let entered = lane_enter_leaf(cx, AdmittedWindow::of(target, passed, argc), window, ip, r, target, form, argc, this, Some(caller_program));
         enter_program_in_lane(cx, target.program());
         Some(entered)
     }

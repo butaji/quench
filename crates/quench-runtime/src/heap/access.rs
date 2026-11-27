@@ -5,7 +5,7 @@ use super::{
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, ObjectRef32, Value};
 use crate::value_vec::ValueArena;
-use super::object_view::{CellView, CellViewMut, ObjectMut, ObjectRef};
+use super::object_view::{ObjectMut, ObjectRef};
 use std::collections::HashSet;
 
 mod subscribe; mod function_shapes; mod slot_types; mod remembered; mod collections;
@@ -271,7 +271,7 @@ impl Heap {
                 // ObjectRecord is initialized, and records retire after weak pruning.
                 return Some(ObjectRef::Record(&unsafe { self.object_records.get_live(record_id) }.object));
             }
-            return self.class_cell_ref(object.granule()).map(ObjectRef::Cell);
+            return Some(self.live_cell(object.granule()));
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: a direct-array Value names an initialized array record.
@@ -453,7 +453,7 @@ impl Heap {
                 widen_narrow_run(object, &mut self.properties);
                 return Some(ObjectMut::Record(object));
             }
-            return self.class_cell_mut(object_ref.granule()).map(ObjectMut::Cell);
+            return Some(self.live_cell_mut(object_ref.granule()));
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
@@ -489,7 +489,7 @@ impl Heap {
                 if self.class_space.store_logs(granule, stored) {
                     self.class_space.barrier(granule, &self.properties);
                 }
-                return self.class_cell_mut(granule).map(ObjectMut::Cell);
+                return Some(self.live_cell_mut(granule));
             };
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
@@ -983,21 +983,6 @@ impl Heap {
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         self.depart_for_mutation(value);
         self.object_mut(value)?.record_only_mut()
-    }
-
-    /// The class cell at granule `granule`, as its shared view, when it is a live class cell.
-    #[inline(always)]
-    fn class_cell_ref(&self, granule: u32) -> Option<CellView<'_>> {
-        let class = self.class_space.live_class(granule)?;
-        Some(CellView::new(class, self.class_space.cell_fields(granule)))
-    }
-
-    /// The class cell at granule `granule`, as its exclusive view, when it is a live class cell.
-    #[inline(always)]
-    fn class_cell_mut(&mut self, granule: u32) -> Option<CellViewMut<'_>> {
-        self.class_space.live_class(granule)?;
-        let (header, fields) = self.class_space.cell_mut(granule);
-        Some(CellViewMut::new(header, fields))
     }
 
     #[quench_macros::test_visible]

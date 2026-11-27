@@ -294,16 +294,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::loop_body::LoopBodyOps1 as _;
     pub use crate::dispatch_fast::loop_body::LoopSiteOps3 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps2 as _;
-    pub use crate::dispatch_fast::loop_kernel::LoopKernelOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::machine::MachineOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::CodeOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::RecurrenceOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::FoldOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::ChainOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::FusionOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::WordsOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::run::StateOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::run::LoopKernelOps2 as _;
     pub use crate::dispatch_fast::loop_runs::LoopSiteRunsOps as _;
     pub use crate::dispatch_fast::loop_tier::LoopTierOps1 as _;
     pub use crate::dispatch_fast::mapped_windows::DispatchFastMappedWindowsVm as _;
@@ -320,7 +310,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::string_case_filter::StringCaseFilterOps1 as _;
     pub use crate::dispatch_fast::string_case_filter::derivation::StringCaseFilterOpsX3 as _;
     pub use crate::dispatch_fast::this_binding::ThisBindingOps1 as _;
-    pub use crate::dispatch_fast::vector_region::VectorRegionOps1 as _;
     pub use crate::dispatch_fast::window_owner::DispatchFastWindowOwnerVm as _;
     pub use crate::dispatch_fast::with_scopes::LaneStackOps7 as _;
     pub use crate::dispatch_fast::with_scopes::DispatchFastWithScopesVm as _;

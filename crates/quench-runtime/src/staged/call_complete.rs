@@ -157,19 +157,18 @@ pub fn concrete_settles_without_promise(rooted: bool, object: bool) -> bool {
     settles_without_promise(&mut super::Concrete::pure(), rooted, object)
 }
 
-/// Whether a returning call is admitted to the lane: it is, unless the host makes the call a
-/// proper tail call and the caller is strict, which the general dispatch path takes instead.
-/// Reads the two facts; writes nothing.
+/// Whether a returning call is admitted to the lane: it is, unless the caller is strict, since a strict
+/// caller's terminal call is a proper tail call (`call_plan` tail sites), which the general dispatch path
+/// takes as a jump. The lane has no frame reuse, so it cannot take that call itself. Reads one fact; writes nothing.
 #[inline(always)]
-pub(crate) fn admits_returning_call<S: Stage>(stage: &mut S, proper_tail_calls: S::Cond, strict: S::Cond) -> S::Cond {
-    let proper_strict = stage.all(proper_tail_calls, strict);
-    stage.not(proper_strict)
+pub(crate) fn admits_returning_call<S: Stage>(stage: &mut S, strict: S::Cond) -> S::Cond {
+    stage.not(strict)
 }
 
 /// `admits_returning_call` on machine words.
 #[inline(always)]
-pub fn concrete_admits_returning_call(proper_tail_calls: bool, strict: bool) -> bool {
-    admits_returning_call(&mut super::Concrete::pure(), proper_tail_calls, strict)
+pub fn concrete_admits_returning_call(strict: bool) -> bool {
+    admits_returning_call(&mut super::Concrete::pure(), strict)
 }
 
 /// The packed word of the frame whose window is `window` (`frame::CONTEXT_PACKED`, call protocol
@@ -371,9 +370,8 @@ mod tests {
     }
 
     #[test]
-    fn a_strict_caller_under_proper_tail_calls_takes_the_general_path() {
-        assert!(concrete_admits_returning_call(false, true), "without proper tail calls every return is admitted");
-        assert!(concrete_admits_returning_call(true, false), "a sloppy caller is admitted");
-        assert!(!concrete_admits_returning_call(true, true));
+    fn a_strict_caller_takes_the_general_path_whatever_the_host() {
+        assert!(concrete_admits_returning_call(false), "a sloppy caller is admitted");
+        assert!(!concrete_admits_returning_call(true), "a strict caller's terminal call is a tail call the lane cannot reuse");
     }
 }

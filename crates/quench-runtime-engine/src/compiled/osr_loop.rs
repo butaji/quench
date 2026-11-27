@@ -28,8 +28,10 @@
 //! Collection debt exits with live values restored before the VM can collect. Other effect
 //! boundaries exit before their effects.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+use super::lane_unit::{inlined_returning, renamed};
 use quench_runtime::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
@@ -733,85 +735,12 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
     Some(parts)
 }
 
-/// Whether an inlined callee's instruction computes its result and returns it in one
-/// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
-/// the computation and the `Return` it makes.
-pub(crate) fn inlined_returning(instruction: WideInstruction) -> bool {
-    instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER
-        && !quench_runtime::staged::returns(instruction.op())
-        && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
-        && instruction.defined_register().is_some()
-}
-
 /// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
 /// none that names its function's own state (captures, frame, calls).
 fn inlinable(op: Op) -> bool {
     op.traits().has(quench_runtime::bytecode::Traits::INLINABLE)
 }
 
-
-/// `instruction` with each register `register` renames, a `this` field base made the
-/// `this` register, and a jump target `target` renames; `None` for a field it cannot
-/// rename, or a register with flags.
-pub(crate) fn renamed(
-    instruction: WideInstruction,
-    register: &dyn Fn(Register) -> Register,
-    this: Register,
-    target: &dyn Fn(u32) -> Option<u32>,
-) -> Option<WideInstruction> {
-    let op = instruction.op();
-    let rename = |field: InstructionField, raw: u16| -> Option<u16> {
-        Some(match op.field_layout(field) {
-            FieldLayout::Unused
-            | FieldLayout::BooleanFlag
-            | FieldLayout::BinaryOperator
-            | FieldLayout::CacheSiteIndex
-            | FieldLayout::FieldLookupCacheSiteIndex => raw,
-            FieldLayout::ResultRegister
-            | FieldLayout::Register
-            | FieldLayout::WriteRegister
-            | FieldLayout::ReadWriteRegister => {
-                (raw <= Operand::PAYLOAD_MASK).then_some(())?;
-                register(raw)
-            }
-            FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
-                let operand = Operand(raw);
-                match operand.kind()? {
-                    OperandKind::Register => Operand::register(register(operand.payload())).0,
-                    OperandKind::Constant => raw,
-                    OperandKind::Field | OperandKind::Local => return None,
-                }
-            }
-            FieldLayout::FieldBase => {
-                let base = FieldBase(raw);
-                if base == FieldBase::THIS {
-                    FieldBase::register(this).0
-                } else {
-                    FieldBase::register(register(base.register_index()?)).0
-                }
-            }
-            _ => return None,
-        })
-    };
-    let a = rename(InstructionField::A, instruction.a())?;
-    let b = rename(InstructionField::B, instruction.b())?;
-    let c = rename(InstructionField::C, instruction.c())?;
-    let imm = match op.immediate_role() {
-        ImmediateRole::JumpTarget => target(instruction.imm())?,
-        // A call's argument window renames as one block: each of its registers to the one
-        // after the base's rename.
-        _ if quench_runtime::staged::calls(op) => {
-            let imm = instruction.imm();
-            let base = ImmediateLayout::call_window_base(imm);
-            let count = ImmediateLayout::argument_count(imm);
-            let renamed_base = register(base);
-            (0..count).all(|offset| register(base + offset) == renamed_base + offset).then_some(())?;
-            ImmediateLayout::call_immediate(renamed_base, count, ImmediateLayout::direct_eval(imm), ImmediateLayout::parameter_eval(imm))
-        }
-        _ => instruction.imm(),
-    };
-    Some(WideInstruction::new(op, a, b, c, imm))
-}
 
 /// The registers an instruction reads as objects: a field read's receiver, an indexed
 /// access's array.
@@ -2179,11 +2108,6 @@ pub(crate) struct Observation<'a> {
     /// The own entries of each store site whose receiver the region redefines
     /// (`LoopRegion::dynamic_field_stores`), by cache site: the shapes its in-place arms take.
     pub(crate) store_loads: &'a [(u16, Vec<NativeFieldLoad>)],
-    /// The registers holding arrays whose sampled elements were all int32s, or all Numbers, at
-    /// entry, with that type: reads through them have it, leaving where one does not.
-    pub(crate) number_arrays: &'a [(Register, quench_runtime::typed_ir::Type)],
-    /// The element reads that left again after their observation widened to Numbers: typed no more.
-    pub(crate) abandoned: &'a [usize],
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
     pub(crate) int_entries: &'a [(Register, quench_runtime::typed_ir::IntRange)],

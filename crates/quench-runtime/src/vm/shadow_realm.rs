@@ -18,7 +18,7 @@ impl Vm {
 
     pub(super) fn install_shadow_realm_for_realm(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         global: Value,
         constructor: Value,
         object_prototype: Value,

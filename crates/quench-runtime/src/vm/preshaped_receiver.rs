@@ -168,7 +168,31 @@ impl Vm {
         let start = object.shape();
         let this = self.heap.alloc_object(object);
         self.preshape_receiver(this, start, constructor, constructor);
+        self.record_class_header(constructor, this);
         this
+    }
+
+    /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
+    /// (`ProgramStore::class_header`), once per class, at the class-header edge (`record_class_edge`). A class whose
+    /// instances keep one layout (`AotFacts::class_layout`) takes it from its first instance, and a planned call site
+    /// (`planned_call_row`) reads a receiver's class from that header: no receiver reaches such a site before its
+    /// class's header is recorded.
+    pub fn record_class_header(&mut self, constructor: Value, this: Value) {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
+        let Some((layout, prototype)) = self.object_data(this).map(|object| (object.layout_id(), object.proto())) else { return };
+        if self.programs.class_header(program, class).is_some_and(|header| header.get() == 0) {
+            self.record_class_edge(program, class, layout, prototype);
+        }
+    }
+
+    /// The class-header edge, the one path a construction and a restored snapshot both take: sets class `class`'s
+    /// header of program `program` to `layout`, records its instances' `prototype`, and resolves the class's planned
+    /// arms from that prototype (`layer_hooks::planned_class_recorded`).
+    pub(crate) fn record_class_edge(&mut self, program: ProgramId, class: u32, layout: u32, prototype: Value) {
+        let Some(header) = self.programs.class_header(program, class) else { return };
+        header.set(layout);
+        self.programs.record_class_prototype(program, class, prototype);
+        layer_hooks::planned_class_recorded(self, program, class, prototype);
     }
 
     /// Gives `this`, a just-allocated empty receiver of template shape `start` that no code has
@@ -272,7 +296,7 @@ impl Vm {
         let (layout, prototype, shape) = (data.layout_id(), data.proto(), data.shape());
         // Inline runs and extras are record data.
         if layout == self.learned_receivers[index].template
-            || data.record().inline_properties().is_none()
+            || data.record_only().and_then(|record| record.inline_properties()).is_none()
             || data.record_only().is_some_and(|record| record.has_extras())
             || data.has_exotic_access()
             || self.shape_is_dictionary(shape)
@@ -314,7 +338,7 @@ impl Vm {
     fn receiver_storage_len(&self, receiver: Value) -> Option<usize> {
         let data = self.heap.object(receiver)?;
         // The property table is record data.
-        if data.record().properties().is_dictionary() {
+        if data.record_only().is_some_and(|record| record.properties().is_dictionary()) {
             return None;
         }
         let shape = data.shape();

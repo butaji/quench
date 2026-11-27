@@ -80,15 +80,15 @@ impl AccessorCall {
     /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
     /// by the field cache entry its record answers with.
     fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
-        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
+        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::frameless(Frameless::Reads))?;
         let vm = unsafe { vm(self.cx) };
         (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
-        // SAFETY: a `CallEntry::Reads` target of the running program.
+        // SAFETY: a `CallEntry::frameless(Frameless::Reads)` target of the running program.
         let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of(&target) }? else {
             return None;
         };
         let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(base.direct_object_index()?));
+        let receiver = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(base.direct_object_index()?)?);
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())

@@ -1,3 +1,4 @@
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 // The body of `generated_row`, included once per shard module (`lane_frame::generated_rows_*`,
 // `generated_row_handler`): each module is its own codegen unit.
 view_handler! {
@@ -155,7 +156,7 @@ view_handler! {
         .map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
         let Some(operation) = decoded else { sibling!(general_step_in_lane, r, ip, view) };
         // The row's stage reads the heap's tables (the property arena, the class space) and the store gate.
-        let mut stage = Concrete::over_vm(unsafe { vm(cx) });
+        let mut stage = quench_runtime::staged::concrete_over_vm(unsafe { vm(cx) });
         let mut frame = row_frame::<OP, ACC, FLAG>(cx, r, ip, i, view);
         frame.trust_this = TRUSTS_THIS;
         // A numeric local target: the frame's slot the value moves to, and the register of that number the

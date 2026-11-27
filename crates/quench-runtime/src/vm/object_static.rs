@@ -391,7 +391,7 @@ impl Vm {
         let Some(data) = self.heap.object(object) else {
             return true;
         };
-        match data.record_only().and_then(|record| self.slot_attributes(record, slot)) {
+        match self.slot_attributes(data, slot) {
             Some(attributes) => attributes.enumerable,
             None => self
                 .side_descriptor(object, PropertyKey::string(atom))
@@ -488,7 +488,7 @@ impl Vm {
 
     pub(super) fn set_realm_builtin_named(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

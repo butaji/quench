@@ -309,7 +309,7 @@ pub(super) fn forwarded_resolution(
         return None;
     }
     let apply_holder = object.proto();
-    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?.record(), method.apply.0)?;
+    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?.record_only()?, method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))
@@ -600,8 +600,8 @@ pub(super) fn activate_in_lane(
     let i = unsafe { &*ip };
     let argc = ImmediateLayout::argument_count(i.imm());
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane. A host permitting proper tail calls
-    // sends strict terminal calls to the general dispatch path instead.
+    // activation's return does in the lane. A strict caller's terminal calls are proper tail
+    // calls, which the general dispatch path takes as jumps instead.
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));
@@ -615,7 +615,7 @@ pub(super) fn activate_in_lane(
     if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
         // A call keeping every value it was passed, a rest body's array aside, takes the plain
         // push with the values after its registers.
-        if !constructs && target.entry != CallEntry::Gathers {
+        if !constructs && target.entry != CallEntry::framed(Framed::Gathers) {
             return activate_keeping_window_in_lane::<true>(cx, r, ip, target, arguments, this);
         }
         return activate_keeping_in_lane::<true>(
@@ -661,8 +661,6 @@ pub(super) fn tier_prologue_resumed(cx: *mut LaneContext, r: Registers, view: Ca
     let base = unsafe { (*cx).base };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
-    // A body warming between attempts has nothing to enter: the entry is counted and its first record runs.
-    if let Some(own) = own && crate::compiled::admission::lane_bodies_enrolled(vm) && own.counted_between_attempts(false) { return Resumed::At(r, base, Carried::script_in(cx, view)); }
     // A function of a program with a loaded AOT image enters the image's body at its first entry.
     // SAFETY: the prologue is this record, written when the tier claimed the function (`claim_for_tier`).
     if let Some(own) = own && vm.images_run_in_lane() && vm.programs.ahead_images(unsafe { (*cx).program }, unsafe { &*(*cx).code }).is_some() {
@@ -764,7 +762,7 @@ pub(super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, own: Optio
     // SAFETY: the activation just set the context to its own function's.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     if crate::compiled::admission::lane_bodies_enrolled(vm) && let Some(own) = own {
-        if !specialize_in_lane(cx, own, function, false, parameters, None) { own.release_from_tier(); }
+        if !specialize_in_lane(cx, own, function, parameters, None) { own.release_from_tier(); }
         return None;
     }
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
@@ -942,55 +940,25 @@ pub(super) fn body_inlined_activation_in_lane(
         // Only the frames' own reach: the scratch window may be wider (another code's), past this storage.
         Vm::adopt_window_in_lane(r.0.cast_const(), usize::from(run.caller_registers), crate::compiled::window_width(frames, run.caller_registers));
     }
-    let mut chain = vec![frame];
-    while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
-        chain.push(parent);
-    }
-    let (mut registers, mut records) = (r, base);
-    let mut view = std::ptr::null::<LaneView>();
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    for (depth, &index) in chain.iter().enumerate().rev() {
-        let call = frames[index];
-        let vm = unsafe { vm(cx) };
-        // Cache eviction is not invalidation of an immutable callee binding: a lifecycle
-        // edge retires the body first (`ProgramStore::retire_dead_native_calls`). Resolve
-        // only when recovery needs the activation, rather than scanning at entry.
-        // A frame bound by its function (closed world) names no closure: its callee register holds it,
-        // live through the frame (`lane_region`'s liveness).
-        let parent = call.parent_base(frames);
-        let callee = call.target.identity().unwrap_or_else(|| registers.get(call.callee_register - parent));
-        let target = vm.script_call_entry(callee)
-            // SAFETY: copy the current cache row before any cache mutation.
-            .map(|target| unsafe { *target })
-            .or_else(|| vm.resolve_call_target_in_lane(code, callee, true))
-            .unwrap_or_else(|| panic!("an inlined callee resolves: {:#x} (frame {index} of {}, callee register {}, parent {parent}, function {}, call {})",
-                callee.to_bits(), frames.len(), call.callee_register, call.target.function, call.call));
-        // SAFETY: the record is the call's in its parent's view.
-        let (target, record) = (&target, unsafe { records.add(call.call as usize) });
-        let this = call_this_in_lane(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
-        // The frame's own window and count: a call through `call` passes past its receiver
-        // (`lane_unit::InlinedCall::function_call`).
-        // SAFETY: the call's window of `registers` holds its values.
-        let passed = unsafe { registers.0.add(usize::from(call.window - parent)).cast_const() };
-        let (callee, _) = push_passed_in_lane::<false, false>(cx, registers, record, target, passed, call.arguments, this, false);
-        // The frame's registers live where it stands, the leave's PC or its inner frame's
-        // call; the exit wrote only those (`lane_region`), the rest keep the activation's.
-        let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
-        let live = code.register_root_masks(call.target.function);
-        let scratch = usize::from(call.base - run.caller_registers);
-        Vm::scratch_in_lane(scratch, usize::from(call.registers), |register, value| {
-            if live.is_none_or(|live| live.is_live(at as usize, register)) {
-                callee.set(register, value);
-            }
-        });
-        // The activation's records start at the context's base, past any tier prologue its
-        // entry record is.
-        (registers, records, view) = (callee, unsafe { (*cx).base }, target.view);
-    }
-    // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
-    let resume = unsafe { records.add(pc as usize) };
-    (registers, resume, carried_at_in_lane(cx, view, registers, pc))
+    let caller_registers = run.caller_registers;
+    super::inlined_views::materialize(cx, r, base, frames, frame, pc,
+        // Cache eviction is not invalidation of an immutable callee binding: a lifecycle edge retires
+        // the body first (`ProgramStore::retire_dead_native_calls`), so a miss resolves the callee again.
+        // Resolved now: the activation recovery makes is one whose runs all ran inlined, so none
+        // counted toward the callee's view (`resolve_call_target_in_lane`).
+        |vm, code, callee| vm.resolve_call_target_in_lane(code, callee, true),
+        // The registers native code held for the frame, which the leave's PC `at` keeps live; the
+        // rest the activation keeps (`lane_region`'s liveness).
+        |call, at, sink| {
+            let live = code.register_root_masks(call.target.function);
+            Vm::scratch_in_lane(usize::from(call.base - caller_registers), usize::from(call.registers), |register, value| {
+                if live.is_none_or(|live| live.is_live(at as usize, register)) {
+                    sink(register, value);
+                }
+            });
+        })
 }
 
 /// What an activation carries into the record at `pc` of its function's `view`: the script
@@ -1160,7 +1128,6 @@ pub(super) fn body_left_in_lane(
         native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
-    crate::compiled::admission::retire_after_native(unsafe { vm(cx) }, || !matches!(exit, crate::compiled::LaneExit::Returned { .. }) || native_frames::left_native_frames(cx));
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
     (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
 }
@@ -1204,7 +1171,7 @@ pub(super) fn frames_resumed_in_lane(
         crate::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         crate::compiled::LaneExit::Terminated | crate::compiled::LaneExit::Entry | crate::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
         crate::compiled::LaneExit::At(pc) => {
-            body_resume_at_in_lane(cx, r, own, loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc))
+            body_resume_at_in_lane(cx, r, own, pc)
         }
         crate::compiled::LaneExit::Inlined { frame, pc } => {
             let method = method.expect("a leave inside an inlined callee is a lane body's");
@@ -1306,14 +1273,10 @@ pub(super) fn raised_exit_in_lane(cx: *mut LaneContext, record: Ip) -> Ip {
     exit(record)
 }
 
-/// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: in
-/// the loop's published BaseJIT code where it has a resume stub for `pc` (`loop_resume`),
-/// else at the record, with the accumulator that record reads.
+/// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: at
+/// the record, with the accumulator that record reads.
 pub(super) fn body_resume_at_in_lane(cx: *mut LaneContext, r: Registers, own: &LaneView, pc: usize) -> LaneBodyLeft {
     let accumulator = own.accumulator_registers.get(pc).copied().filter(|&register| register != NO_ACCUMULATOR);
-    if accumulator.is_none() && let Some(left) = loop_resume::resume_loop(cx, r, own, pc) {
-        return left;
-    }
     let mut carried = Carried::script(cx);
     if let Some(register) = accumulator {
         carried.acc = Slot::of(r.get(register));
@@ -1414,6 +1377,40 @@ pub(super) fn enter_cell_body_in_lane(
     Some(cell_body_ended_in_lane(cx, window, own, target.function, method, vm.run_lane_body(&run)))
 }
 
+/// A frameless call of `target` (`CallEntry::frameless(Frameless::Native)`), passed the `argc` values at `passed`
+/// (the call's argument window), whose body's compiled entry runs with no activation and no frame. The window is
+/// the lane stack's top, filled from the arguments (`fill_window_in_lane`): the caller's registers past its call
+/// window are not known dead (liveness reads the window alone), so the body may not write through them. The body
+/// is entered as `enter_cell_body_in_lane` enters one, minus the activation: a frameless callee leaves nothing, so
+/// nothing observes the window and the stack's top is restored at its return. Arguments past the parameters are
+/// dropped, which a frameless body observes nowhere (an `arguments` object or rest array allocates).
+/// `None`, which changes nothing, where the cell holds no body (it retired since the target resolved), the lane has
+/// no room, or a `with` scope is entered: the call then takes its general form.
+#[inline(never)]
+pub(super) fn native_call_in_lane(cx: *mut LaneContext, target: &ScriptCallTarget, passed: *const Value, argc: u16, this: Value) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let own = unsafe { &*target.view };
+    let method = own.cell_method()?;
+    if vm.with_scope_entered || !activation_room_in_lane(vm, target) || !body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS) {
+        return None;
+    }
+    let window = fill_window_in_lane(vm, target, passed, argc.min(target.params));
+    let receiver = if own.binds_this() { body_calls::body_this_in_lane(target, this) } else { Value::DELETED };
+    let run = crate::compiled::BodyRun {
+        method, direct_calls: direct_calls_in_lane(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
+        registers: window.0, receiver, captures: capture_reads(target.capture), lane_context: cx.cast(),
+        pending: NO_PENDING_ACTIVATIONS, bases_stand: false };
+    let exit = vm.run_lane_body(&run);
+    // SAFETY: the window is the stack's top the fill moved; a returned call leaves the stack as it found it.
+    unsafe { vm.lane_stack.values.set_top(window.0) };
+    record_end_in_lane(cx, own, method, exit);
+    match exit {
+        crate::compiled::LaneExit::Returned { value, .. } => Some(value),
+        _ => unreachable!("a frameless body leaves nothing: its call form's leaves are Never"),
+    }
+}
+
 /// Makes the call of `target` the context's running leaf (`CONTEXT_LEAF`), which holds what its
 /// activation would (`materialize_leaf_in_lane`): the callee's receiver, environment, captures,
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.
@@ -1425,7 +1422,7 @@ pub(super) fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
     unsafe {
-        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None, false);
+        lane_enter_leaf(cx, leaf_calls::FilledWindow, window, ip, r, target, CONTEXT_LEAF, argc, this, None);
     }
 }
 
@@ -1515,7 +1512,6 @@ pub(super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, 
     kept: Option<u16>,
 ) -> (Registers, Ip) {
     // The receiver goes to its context word first, so it holds no register past the push.
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     callee_registers.set_this(this);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
@@ -1583,7 +1579,6 @@ pub(super) fn enter_plain_window(
     depth: usize,
     argc: u16,
     this: Value,
-    checked: bool,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::protocol::{push_plain_at, PlainHeader};
     let stack: &mut LaneStack = &mut vm.lane_stack;
@@ -1608,8 +1603,6 @@ pub(super) fn enter_plain_window(
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
-    if !checked { note_lane_this(vm, this, || unsafe { (*target.view).this_rows }); }
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
@@ -1663,7 +1656,7 @@ pub(super) fn push_callback_in_lane(
     Some(start)
 }
 
-/// `activate_in_lane` of an environment target (`CallEntry::Environment`): its window holds
+/// `activate_in_lane` of an environment target (`CallEntry::framed(Framed::Environment)`): its window holds
 /// its registers, then its environment, made now as the frame's promotion would make it
 /// (each captured slot its parameter's argument or `undefined`, every other slot owned
 /// elsewhere), then its frame locals (each parameter its argument, a captured slot owned
@@ -1762,7 +1755,6 @@ pub(super) fn activate_environment_in_lane(
     debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.room));
     let rest = if let Some(gathered) = gathered { Some((target.params - 1, gathered.to_bits())) } else { None };
     let self_binding = if let Some(slot) = self_binding { Some((slot, target.callee.to_bits())) } else { None };
-    note_lane_this(vm, this, || unsafe { (*target.view).this_rows });
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.

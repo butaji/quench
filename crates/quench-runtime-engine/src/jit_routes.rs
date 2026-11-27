@@ -19,8 +19,6 @@ pub(crate) struct JitRoutes {
     pub(crate) body: crate::compiled::lane_compile::BodyWork,
     /// A numeric function's image (`js_compiled::start`).
     pub(crate) numeric: crate::js_compiled::NumericStart,
-    /// A hot loop's region (`compiled::start_osr_region`).
-    pub(crate) region: crate::compiled::RegionStart,
     /// A Wasm program's code (`compile_program_with_diagnostics_and_root_mode`).
     pub(crate) wasm: crate::compiled::WasmCompile,
     /// The compiler of hot regexp programs (`regexp_native::enable`).
@@ -29,7 +27,7 @@ pub(crate) struct JitRoutes {
     pub(crate) fuse: LaneFusion,
 }
 
-pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction], &[quench_runtime::value::Value],
+pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction],
     Option<&quench_runtime::compile::liveness::RegisterMasks>, bool, bool) -> Vec<(usize, usize)>;
 
 static JIT: std::sync::OnceLock<JitRoutes> = std::sync::OnceLock::new();
@@ -52,16 +50,15 @@ fn quench_layer_enable_jit() {
         lane: crate::dispatch_fast::jit_lane_body,
         body: <quench_runtime::vm::Vm as crate::compiled::lane_compile::CompiledLaneCompileVm>::compile_body_work,
         numeric: crate::js_compiled::start_numeric,
-        region: crate::compiled::compile_osr_region,
         wasm: <quench_runtime::vm::Vm as crate::compiled::CompiledVm4>::compile_wasm_program,
         regexp: crate::regexp_native::enable_compiler,
         // Chains, the target back edges, then pairs (`derive_lane_view`); an image, whose bodies leave to the
         // lane only at misses, links no fused row.
-        fuse: |records, decoded, constants, live, loop_tier, raw_results| {
+        fuse: |records, decoded, live, loop_tier, raw_results| {
             use crate::dispatch_fast::{fuse_target_backedges, lane_frame::{fuse_chains, fuse_rows}};
             let mut fused = fuse_chains(records, decoded, live, raw_results);
             fuse_target_backedges(records, loop_tier);
-            fused.extend(fuse_rows(records, decoded, constants, live, loop_tier, raw_results));
+            fused.extend(fuse_rows(records, decoded, live, loop_tier, raw_results));
             fused
         },
     });

@@ -450,13 +450,13 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
 #[inline]
 pub(crate) fn activation_form(target: &ScriptCallTarget, argc: u16) -> Option<CallActivation<bool>> {
     let fixed = argc <= target.params.min(FIXED_ARGUMENT_COPIES);
-    let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, matches!(target.entry, CallEntry::Environment));
+    let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, target.entry == CallEntry::framed(Framed::Environment));
     (form.plain || form.keeping || form.environment).then_some(form)
 }
 
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
 #[inline]
-fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
+pub(super) fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
     Value::from_bits(quench_runtime::staged::call_body::concrete_body_this(this.to_bits(), target.this_binding == ThisBinding::Lexical))
 }
 
@@ -500,7 +500,7 @@ fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptC
 fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, registers: Registers) -> u64 {
     let vm = unsafe { vm(cx) };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
-    // lies outside its records: a loop region's `Callee` exit (`loop_native_in_lane`) leaves the
+    // lies outside its records: a loop body's `Callee` exit leaves the
     // lane there and needs its PC. The warming below takes the prologue's step.
     let start = unsafe { (*cx).base };
     // The activation's index among every frame, which `finish` finds it at where it is.
@@ -513,7 +513,7 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         return leave(start, Value::UNDEFINED)
     };
     let respecializes = own.respecializes();
-    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
+    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[], None); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         // Each call of it from native code leaves that code until it has a body (`note_native_caller`).
@@ -592,7 +592,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     // One the image holds no lane body for gives its prologue back, once: its entries run its records,
     // not this path and the image lookup again (as `tier_enter_in_lane` releases a declined body).
     if own.cell_body().is_none() && own.body_view_in_lane().is_none() && !own.declined_in_lane() && vm.programs.ahead_images(program, code).is_some()
-        && !specialize_in_lane(cx, own, function, true, &[], None)
+        && !specialize_in_lane(cx, own, function, &[], None)
     {
         own.release_from_tier();
         return Resumed::At(r, base, Carried::script_in(cx, view));

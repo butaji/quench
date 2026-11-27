@@ -4,10 +4,17 @@
 //! other code reshapes an instance. Its prototype layout is the names the program installs on its
 //! `prototype`, and it holds only where no object of unknown class receives a name outside them.
 //! Execution reads the layouts (`FunctionFacts::field_slot`); no site re-checks an instance's shape.
+//!
+//! Order: code that may run while an instance is reachable (a call, a getter, a setter, a store that hands
+//! an object out) may store a name on the instance before the constructor's own store, and move its slot.
+//! So a path is sealed at the first point that may run guest code (`effects::runs_guest_code`), and an own
+//! store of `this` on a sealed path leaves no order. A derived constructor, which binds `this` through
+//! `super()`, has no instance layout: the parent's stores are its fields too.
 
 use super::blocks::Blocks;
 use super::census::Census;
 use super::flow::FunctionFlow;
+use super::quiet::{Proofs, Quiet};
 use super::shape::{Change, Owner, Shape};
 use crate::bytecode::{ControlEdge, Function, ResidualProgram, Successors};
 use crate::dataflow::{Dataflow, solve};
@@ -27,9 +34,11 @@ pub(crate) struct ClassLayouts {
 pub(super) fn of_program(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, classes: &BTreeSet<u32>) -> ClassLayouts {
     let shapes = || flows.iter().flat_map(|flow| flow.shapes.iter());
     let names = prototype_names(flows, census);
+    let proofs = Proofs::of(flows);
     let mut layouts = ClassLayouts::default();
     for &class in classes {
-        let body = program.with_record(class as usize, |function| body_fields(function, &flows[class as usize].shapes, class));
+        let flow = &flows[class as usize];
+        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs));
         if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields))) {
             layouts.instances.insert(class, fields.into_boxed_slice());
         }
@@ -60,8 +69,7 @@ fn prototype_names(flows: &[FunctionFlow], census: &Census) -> BTreeMap<u32, Vec
 fn outside(change: Change, fields: &[u32]) -> bool {
     match change {
         Change::Field(atom) => !fields.contains(&atom),
-        Change::Any => true,
-        Change::Escape => false,
+        Change::Any | Change::Define => true,
     }
 }
 
@@ -85,27 +93,51 @@ fn reshapes_prototype(shape: &Shape, class: u32, fields: &[u32], census: &Census
 }
 
 /// The named fields the body of constructor `class` stores on `this`, in order, on every path to its end; None
-/// where the paths disagree, or where the body changes an object it cannot order (`BodyOrder::step`).
-fn body_fields(function: &Function, shapes: &[Shape], class: u32) -> Option<Vec<u32>> {
+/// where the paths disagree, where the body changes an object it cannot order (`BodyOrder::step`), or where the
+/// body is derived (`super()` binds `this`, so the parent's stores are fields of the instance too).
+fn body_fields(function: &Function, flow: &FunctionFlow, class: u32, proofs: &Proofs) -> Option<Vec<u32>> {
+    if (0..function.code.len()).any(|pc| function.instruction_at(pc).op().binds_this()) {
+        return None;
+    }
     let blocks = Blocks::of(&Successors::of_code(function), function.code.len());
-    let mut order = BodyOrder { class, blocks: &blocks, shapes };
+    let mut order = BodyOrder { class, blocks: &blocks, shapes: &flow.shapes[..], guest_runs: &flow.guest_runs[..], quiet: &flow.quiet[..], proofs };
     let inputs = solve(&mut order);
     let exit = (0..blocks.ranges.len())
         .filter(|&block| blocks.targets[block].is_empty())
         .filter_map(|block| inputs[block].as_ref().map(|input| order.through(block, input.clone())))
-        .reduce(|a, b| if a == b { a } else { Order::Conflict });
-    match exit? {
-        Order::Fields(fields) => Some(fields),
+        .reduce(Order::merge)?;
+    match exit {
+        Order::Fields { fields, .. } => Some(fields),
         Order::Conflict => None,
     }
 }
 
-/// The named fields a constructor body has stored on `this` so far, in order. `Conflict` once two paths store
-/// differently, or the body changes an object it cannot order.
+/// The named fields a constructor body has stored on `this` so far, in order, and whether a point on the way
+/// may have run guest code (`sealed`): no own store may follow one. `Conflict` once two paths store differently,
+/// or the body changes an object it cannot order.
 #[derive(Clone, PartialEq, Eq)]
 enum Order {
-    Fields(Vec<u32>),
+    Fields { fields: Vec<u32>, sealed: bool },
     Conflict,
+}
+
+impl Order {
+    /// The order past a point that may run guest code with the instance reachable.
+    fn seal(self) -> Self {
+        match self {
+            Self::Fields { fields, .. } => Self::Fields { fields, sealed: true },
+            Self::Conflict => Self::Conflict,
+        }
+    }
+
+    /// The order two paths meet in: the same fields, sealed where either path is sealed; otherwise no order.
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Fields { fields, sealed }, Self::Fields { fields: other_fields, sealed: other_sealed }) if fields == other_fields =>
+                Self::Fields { fields, sealed: sealed || other_sealed },
+            _ => Self::Conflict,
+        }
+    }
 }
 
 /// The dataflow of one constructor body over its basic blocks: the `Order` its shapes build on the way.
@@ -113,32 +145,59 @@ struct BodyOrder<'a> {
     class: u32,
     blocks: &'a Blocks,
     shapes: &'a [Shape],
+    /// The PCs of the instructions that may run guest code (`FunctionFlow::guest_runs`), in order.
+    guest_runs: &'a [u32],
+    /// The proofs that a point runs no guest code (`FunctionFlow::quiet`), by PC.
+    quiet: &'a [(u32, Quiet)],
+    proofs: &'a Proofs,
 }
 
 impl BodyOrder<'_> {
     /// The order at the end of `block`, from `order` at its start.
     fn through(&self, block: usize, order: Order) -> Order {
-        let range = &self.blocks.ranges[block];
-        let from = self.shapes.partition_point(|shape| (shape.pc as usize) < range.start);
-        let to = self.shapes.partition_point(|shape| (shape.pc as usize) < range.end);
+        self.blocks.ranges[block].clone().fold(order, |order, pc| self.at(pc, order))
+    }
+
+    /// The order after the instruction at `pc`: sealed first where it may run guest code no proof covers, then changed by
+    /// the shapes it makes.
+    fn at(&self, pc: usize, order: Order) -> Order {
+        let at = pc as u32;
+        let from = self.shapes.partition_point(|shape| shape.pc < at);
+        let to = self.shapes.partition_point(|shape| shape.pc <= at);
+        let order = if self.unproven_run(at, &order) { order.seal() } else { order };
         self.shapes[from..to].iter().fold(order, |order, shape| self.step(order, shape))
     }
 
+    /// Whether the instruction at `at` may run guest code that no proof covers on the path that stored `order`'s fields.
+    /// A read of a field the path stored is an own data property, so it runs no getter.
+    fn unproven_run(&self, at: u32, order: &Order) -> bool {
+        let Order::Fields { fields, .. } = order else { return false };
+        if self.guest_runs.binary_search(&at).is_err() {
+            return false;
+        }
+        let from = self.quiet.partition_point(|(pc, _)| *pc < at);
+        let to = self.quiet.partition_point(|(pc, _)| *pc <= at);
+        !self.quiet[from..to].iter().any(|(_, proof)| match proof {
+            Quiet::OwnField(atom) => fields.contains(atom),
+            proof => self.proofs.proves(*proof),
+        })
+    }
+
     /// The order after `shape`. An object that may be an instance of the class changes in order only through
-    /// `this`, by a store of a name, while `this` is exactly that class: any other change to it (a store through
-    /// another register, a computed key, a call that may run code with it) leaves the order unknown. Objects of
-    /// other classes and prototypes are left alone.
+    /// `this`, by a store of a name, while `this` is exactly that class and no guest code has run since the
+    /// constructor began to hold it (`seal`). Any other change to it (a store through another register, a computed
+    /// key, a builtin that adds properties) leaves the order unknown. Objects of other classes and prototypes are left alone.
     fn step(&self, order: Order, shape: &Shape) -> Order {
-        let Order::Fields(mut fields) = order else { return Order::Conflict };
+        let Order::Fields { mut fields, sealed } = order else { return Order::Conflict };
         let Some(classes) = shape.owner.classes().filter(|classes| classes.may_hold(self.class)) else {
-            return Order::Fields(fields);
+            return Order::Fields { fields, sealed };
         };
         match (shape.owner, shape.change) {
-            (Owner::This(_), Change::Field(atom)) if classes.single().is_some_and(|(class, _)| class == self.class) => {
+            (Owner::This(_), Change::Field(atom)) if !sealed && classes.single().is_some_and(|(class, _)| class == self.class) => {
                 if !fields.contains(&atom) {
                     fields.push(atom);
                 }
-                Order::Fields(fields)
+                Order::Fields { fields, sealed }
             }
             _ => Order::Conflict,
         }
@@ -157,16 +216,15 @@ impl Dataflow for BodyOrder<'_> {
     }
 
     fn entry_state(&self, block: usize) -> Option<Order> {
-        (block == 0).then(|| Order::Fields(Vec::new()))
+        (block == 0).then(|| Order::Fields { fields: Vec::new(), sealed: false })
     }
 
-    /// Two paths that disagree on the order, or one that is unknown, make the order unknown.
+    /// Two paths that disagree on the order make it unknown; a sealed path seals the join.
     fn join(&self, into: &mut Order, incoming: &Order) -> bool {
-        if *into == *incoming || *into == Order::Conflict {
-            return false;
-        }
-        *into = Order::Conflict;
-        true
+        let merged = into.clone().merge(incoming.clone());
+        let changed = merged != *into;
+        *into = merged;
+        changed
     }
 
     fn transfer(&mut self, block: usize, state: &Order) -> Order {

@@ -174,7 +174,6 @@ struct Totals {
     regions: u64,
     ops: u64,
     bytes: u64,
-    nanos: u64,
     rejected: u64,
     /// Whole-function bodies built (`function::build_body`), and their instructions that run as
     /// rows and that leave the body.
@@ -187,7 +186,7 @@ struct Totals {
     helper_calls: u64,
 }
 
-static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
+static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 static LEAVES: Mutex<BTreeMap<(u32, u32), (quench_runtime::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
@@ -206,13 +205,11 @@ pub(crate) enum Event {
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
-    /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
-    BodyRecurrent,
     /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
     BodyPlanned,
     /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
     /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
-    /// deferred, or handed to a b-jit body (base).
+    /// or deferred.
     BodyPublished,
     BodyCompiling,
     BodyUnpaid,
@@ -220,11 +217,10 @@ pub(crate) enum Event {
     BodyDeclined,
     BodyStale,
     BodyDeferred,
-    BodyBase,
 }
 
 /// How many `Event`s there are.
-const EVENT_COUNT: usize = Event::BodyBase as usize + 1;
+const EVENT_COUNT: usize = Event::BodyDeferred as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -310,9 +306,8 @@ extern "C" fn report() {
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
-        "bjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1}",
-        totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
-        totals.nanos as f64 / ops as f64
+        "bjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1}",
+        totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);

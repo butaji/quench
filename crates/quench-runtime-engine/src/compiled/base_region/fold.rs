@@ -6,10 +6,12 @@
 //! moves (a second run of them is the first, as they read nothing they write). The method's identity is held by the native holder's
 //! exact shape (`Decoded::holder`): a change of its values retires the code, and the row holds that Stable fact, so a call the code
 //! makes that changes it is read through the invalidation word.
+#[allow(unused_imports)] use quench_runtime::staged::{CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use super::call_plan::{CallForm, CallShape};
+use quench_runtime::staged::native_row::{native_row_of, NativeRow};
 
 /// A field read folded into the call that invokes it: the read's PC, the call's, the call's row (which leaves at the read) and a
 /// returning call's completion.
@@ -52,7 +54,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let pc = region.header + k as u32;
     (!lands.contains(k) && crate::compiled::meaning_compiled::is_get_field(read) && read.result_flags() == 0).then_some(())?;
     let &GlobalRead::NativeMember { native, holder, cell, .. } = known.globals?.get(&(pc as usize))? else { return None };
-    (native == quench_runtime::tier_surface::Native::StringCharCodeAt || math_kind(native).is_some()).then_some(())?;
+    (matches!(native_row_of(native), Some(NativeRow::CharCodeAt)) || math_kind(native).is_some()).then_some(())?;
     let callee = read.result_register();
     let Some(FieldLookup::Atom { base, .. }) = read.field_lookup() else { return None };
     let receiver = base.register_index()?;
@@ -138,10 +140,15 @@ pub(crate) fn math_kind(native: quench_runtime::tier_surface::Native) -> Option<
 /// The row a call of `native` with `shape` runs: `charCodeAt`'s `Heap::CharCodeAt` on the receiver and argument, or a Math
 /// method's Number operation on its arguments, if the call takes the arguments it computes.
 fn row_of(native: quench_runtime::tier_surface::Native, shape: &CallShape) -> Option<Decoded> {
-    if native == quench_runtime::tier_surface::Native::StringCharCodeAt {
+    if matches!(native_row_of(native), Some(NativeRow::CharCodeAt)) {
         return (shape.argc == 1).then(|| Decoded::heap(Heap::CharCodeAt, Some(shape.result), Some(Source::Register(shape.this)), Some(Source::Register(shape.window))));
     }
-    let kind = math_kind(native)?;
+    number_row(math_kind(native)?, shape)
+}
+
+/// The Number operation `kind` on a call's arguments: the window's first, and the second window register where the operation
+/// takes two (`Math.min`, `Math.max`, `Math.imul`). The call must pass exactly those arguments.
+pub(crate) fn number_row(kind: Kind, shape: &CallShape) -> Option<Decoded> {
     let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
     (u16::from(binary) + 1 == shape.argc).then_some(())?;
     let second = binary.then(|| Source::Register(shape.window + 1));

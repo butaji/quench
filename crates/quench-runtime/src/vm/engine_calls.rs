@@ -76,7 +76,6 @@ unsafe extern "Rust" {
     safe fn quench_engine_fn_flush_retired_writers() -> ();
     safe fn quench_engine_fn_direct_memory(vm: &Vm, binding: Value) -> Option<(*mut u8, usize)>;
     safe fn quench_engine_fn_in_place_in_loop(native: Native) -> bool;
-    safe fn quench_engine_fn_note_int_speculation_retired() -> bool;
     safe fn quench_engine_fn_retire_running_lane_context() -> ();
     safe fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool;
     safe fn quench_engine_fn_lane_miss_report(events: &crate::vm::tier_events::TierEvents) -> String;
@@ -320,9 +319,6 @@ pub fn direct_memory(vm: &Vm, binding: Value) -> Option<(*mut u8, usize)> { quen
 pub fn in_place_in_loop(native: Native) -> bool { quench_engine_fn_in_place_in_loop(native) }
 
 #[inline(always)]
-pub fn note_int_speculation_retired() -> bool { quench_engine_fn_note_int_speculation_retired() }
-
-#[inline(always)]
 pub fn retire_running_lane_context() -> () { quench_engine_fn_retire_running_lane_context() }
 
 #[inline(always)]
@@ -456,7 +452,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_fn_flush_retired_writers = fn() -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_direct_memory = fn(&Vm, Value) -> Option<(*mut u8, usize)>;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_in_place_in_loop = fn(Native) -> bool;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_note_int_speculation_retired = fn() -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_retire_running_lane_context = fn() -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_names_dead_callee = fn(&[InlinedCall], &[DirectCallee], &dyn Fn(Value) -> bool) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_miss_report = fn(&crate::vm::tier_events::TierEvents) -> String;

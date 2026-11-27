@@ -68,7 +68,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         _ => first,
     };
     for owner in owners {
-        assert_eq!(vm.heap.object(owner).unwrap().record().inline_properties().is_none(), ARENA);
+        assert_eq!(vm.heap.object(owner).unwrap().record_only().unwrap().inline_properties().is_none(), ARENA);
     }
     assert_eq!(vm.get_field_cached(&program, first, atom, site).unwrap(), second);
     if PRIMARY {
@@ -146,7 +146,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         assert_eq!(super::super::dispatch_fast::nested_own_field_hit(&mut vm, &program, &field, probe), expected);
     }
     for owner in owners {
-        assert_eq!(vm.heap.object(owner).unwrap().record().inline_properties().is_none(), ARENA);
+        assert_eq!(vm.heap.object(owner).unwrap().record_only().unwrap().inline_properties().is_none(), ARENA);
     }
 }
 

@@ -5497,9 +5497,8 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 super::property_key::PropertyKey::string(atom),
                 attributes,
             );
-            let mut object = vm.heap.object_mut(namespace).unwrap();
+            let object = vm.heap.object_record_mut(namespace).unwrap();
             object.set_proto(Value::NULL);
-            let object = object.record_mut_departing();
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -7377,7 +7376,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             ));
             let clone = vm
                 .heap
-                .alloc_object(vm.heap.object(error).unwrap().record().clone());
+                .alloc_object(vm.heap.object(error).unwrap().record_only().unwrap().clone());
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -22961,7 +22960,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             let method = vm.compile_lane_method(&program, id as u32, &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             let marked = |vm: &Vm, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-                let id = vm.heap.record_id(object.direct_object_index().unwrap()) as usize;
+                let id = vm.heap.record_id(object.direct_object_index().unwrap()).unwrap() as usize;
                 let (blocks, count) = vm.heap.native_object_mark_blocks();
                 let block = id / layout.mark_records_per_block;
                 assert!(block < count);
@@ -23330,7 +23329,7 @@ fn leaf_call_output(source: &str, name: &str) -> (Vec<String>, u64) {
 
 #[test]
 fn lane_leaf_calls_follow_callee_redefinition() {
-    // A site that called leaves (`CallEntry::Leaf`, `CallEntry::ContextLeaf`) and meets another
+    // A site that called leaves (`CallEntry::frameless(Frameless::Leaf)`, `CallEntry::frameless(Frameless::ContextLeaf)`) and meets another
     // callee calls it, whatever it captures (expected values from Node).
     let source = r#"
       var f = function (x) { return (x + 1) | 0; };
@@ -23439,7 +23438,7 @@ fn lane_leaf_calls_survive_collections_their_getters_make() {
 
 #[test]
 fn lane_capture_leaf_calls_keep_binding_semantics() {
-    // Leaves reading and storing captures (`CallEntry::CaptureLeaf`, a store followed by a
+    // Leaves reading and storing captures (`CallEntry::frameless(Frameless::CaptureLeaf)`, a store followed by a
     // read of its capture as one record): shared captures, per-iteration and wide per-iteration
     // bindings, TDZ and constant stores, sloppy `this`, `arguments` and direct eval beside
     // them, closures recreated after warm-up, and a throw's frames and receiver (expected

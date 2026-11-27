@@ -51,6 +51,8 @@ impl Vm {
             shared_entry_pair: _,
             share_entry_pair: _,
             builtins: _,
+            // Like `builtins`, a static table of the build: the restoring host supplies it.
+            execution: _,
             main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
@@ -101,7 +103,7 @@ impl Vm {
             step_native_proofs: _,
             with_stack: _,
             startup_intrinsics,
-            with_scope_entered, this_trust: _, scope_names: _,
+            with_scope_entered, scope_names: _,
             test262_agent: _,
             shared_async_waiters: _,
             programs,
@@ -519,6 +521,11 @@ impl Vm {
         self.rebuild_program_cache_layouts();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
+        // The recorded classes take the class-header edge again, so their headers and planned arms are as the snapshot
+        // left them (`ProgramStore::write_snapshot`).
+        for (program, class, layout, prototype) in self.programs.take_restored_classes() {
+            self.record_class_edge(program, class, layout, prototype);
+        }
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which

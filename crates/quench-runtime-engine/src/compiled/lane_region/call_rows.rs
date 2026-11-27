@@ -2,6 +2,7 @@
 //! facts admit it (`Operation::admitted`: the registers it holds, completing by status, no
 //! forwarding), and runs it, not the opcode it decoded from. A construction whose window is not
 //! the caller's, or that no row admits, takes the construct plan (`Lowering::construct`).
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

@@ -785,7 +785,7 @@ fn uint8_array_subarray(vm: &mut Vm, p: &ResidualProgram, _native: Native, this:
     vm.typed_array_subarray_native(p, this, args)
 }
 
-fn uint8_array_reverse(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+fn uint8_array_reverse(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
     let length = typed_array_mutable_view(vm, p, native, this)?;
     for index in 0..length / 2 {
         let other = length - index - 1;
@@ -1147,7 +1147,7 @@ fn typed_array_to_locale_string(vm: &mut Vm, p: &ResidualProgram, _native: Nativ
     vm.array_to_locale_string_with_length(p, this, length, args)
 }
 
-fn array_buffer_is_view(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+fn array_buffer_is_view(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
     let value = args.first().copied().unwrap_or(Value::UNDEFINED);
     Ok(Value::boolean(vm.is_array_buffer_view(value)))
 }

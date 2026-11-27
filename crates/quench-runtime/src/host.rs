@@ -240,12 +240,6 @@ pub trait Host: core::any::Any {
     }
     fn clock_millis(&mut self) -> f64;
 
-    /// ECMAScript proper tail calls discard strict caller activations. Hosts
-    /// matching engines that retain those observable frames can disable them.
-    fn proper_tail_calls(&self) -> bool {
-        true
-    }
-
     /// V8's `--allow-natives-syntax`: eval code may carry its optimization directives
     /// (`%PrepareFunctionForOptimization(f)`), which then evaluate only their argument.
     fn allows_natives_syntax(&self) -> bool {
@@ -635,17 +629,17 @@ impl<'a> HostContext<'a> {
         match capability {
             CapabilityId::WriteLine => {
                 // Output past the host's streams, which a build-time evaluation cannot keep.
-                crate::clock::note_input("the host's direct output");
+                crate::clock::note_input();
                 self.host.write_line(text.unwrap_or_default());
                 0.0
             }
             CapabilityId::WriteErr => {
-                crate::clock::note_input("the host's direct output");
+                crate::clock::note_input();
                 self.host.write_err(text.unwrap_or_default());
                 0.0
             }
             CapabilityId::ClockMillis => {
-                crate::clock::note_input("the clock");
+                crate::clock::note_input();
                 self.host.clock_millis()
             }
             CapabilityId::Done => {

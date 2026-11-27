@@ -1,4 +1,5 @@
 //! The coverage tests: which opcodes the staged layer decodes, and that tiers derive from it.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 /// Hand-written decodes of the object and narrow layouts outside `staged`, per native-tier
 /// file: each is a second home of a rule `staged` owns (AGENTS.md, manifesto 4). The counts
 /// only go down; a new decode belongs in `staged` as an operation every tier runs.
@@ -45,7 +46,9 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
 // The debt counts every spelling such a decision can take, so renaming does not pay it off:
 // `Op::X`, the opcode-index constants (`index::X` and any `use bytecode::index as ...` alias),
 // the catalog's opcode predicates (`.is_get_field()` ...), and the family tags `Class::X` and
-// `JsDenotation::X`; plus every hand-written lane handler (`fn lane_*` outside a macro), and every
+// `JsDenotation::X`; in the lowering directories (`LOWERING_ROOTS`), the staged variants `Operation::X`
+// and `NumberOperation::X`, the meaning predicates `meaning_compiled::is_x(` and the opcode queries
+// `.op().x()`; plus every hand-written lane handler (`fn lane_*` outside a macro), and every
 // opcode with no staged row. Only `staged/`, the catalog (`bytecode/`) and the compiler that
 // emits opcodes (`compile/`, apart from the peephole rewriter) may name an opcode. `staged/derivation_debt.txt` lists the debt per
 // file and token; it may only shrink. `QUENCH_DEBT_WRITE=1` rewrites it after a shrink.
@@ -192,12 +195,52 @@ fn enum_variants(source: &str, name: &str) -> Vec<String> {
         .map(|line| line.chars().take_while(char::is_ascii_alphanumeric).collect()).collect()
 }
 
+/// The variants of the top-level enum whose header `header` opens (`enum Operation<`): the lines
+/// indented exactly one level that start with a capital, so a field of a struct variant is no variant.
+fn top_level_variants(source: &str, header: &str) -> std::collections::BTreeSet<String> {
+    let body = source.split(header).nth(1).unwrap().split("\n}").next().unwrap();
+    body.lines().filter_map(|line| line.strip_prefix("    "))
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
+        .map(|rest| rest.chars().take_while(|c| ident_char(*c)).collect::<String>()).collect()
+}
+
+/// The `(self) -> bool` and `(self) -> Option<..>` methods of the `impl Op` blocks anywhere under
+/// `root`, except `is_*` (counted by the `.is_x()` spelling): the opcode queries a tier asks
+/// (`.op().steps_on_owner()`). A layout accessor (`control_flow_layout()`) answers with its own type,
+/// so it stays out: the CFG home owns that read.
+fn op_decision_methods(root: &std::path::Path, into: &mut std::collections::BTreeSet<String>) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); continue; }
+            if !path.to_string_lossy().ends_with(".rs") { continue; }
+            let source = std::fs::read_to_string(&path).unwrap();
+            if !source.contains("impl Op {") { continue; }
+            for (at, _) in source.match_indices("fn ") {
+                if source[..at].ends_with(ident_char) { continue; }
+                let name = ident_at(&source, at + 3);
+                let rest = &source[at + 3 + name.len()..];
+                if !name.starts_with("is_") && (rest.starts_with("(self) -> bool") || rest.starts_with("(self) -> Option<")) {
+                    into.insert(name.to_owned());
+                }
+            }
+        }
+    }
+}
+
 /// The vocabulary that names an opcode or an opcode family.
 struct Vocabulary {
     opcodes: std::collections::BTreeSet<&'static str>,
     predicates: std::collections::BTreeSet<String>,
     classes: std::collections::BTreeSet<String>,
     denotations: std::collections::BTreeSet<String>,
+    /// The staged `Operation` variants: a tier that matches one decides its meaning by hand.
+    operations: std::collections::BTreeSet<String>,
+    /// The staged `NumberOperation` variants.
+    number_operations: std::collections::BTreeSet<String>,
+    /// The opcode queries of `impl Op` (`op_decision_methods`), called as `.op().name()`.
+    decisions: std::collections::BTreeSet<String>,
 }
 
 fn vocabulary() -> Vocabulary {
@@ -207,13 +250,31 @@ fn vocabulary() -> Vocabulary {
     for file in ["bytecode.rs", "bytecode/op_classes.rs", "bytecode/field_store.rs", "bytecode/op_catalog.rs"] {
         op_predicate_methods(&read(file), &mut predicates);
     }
+    let mut decisions = std::collections::BTreeSet::new();
+    op_decision_methods(&root, &mut decisions);
     Vocabulary {
         opcodes: quench_runtime::bytecode::Op::NAMES.iter().copied().collect(),
         predicates,
         classes: enum_variants(&read("bytecode/op_catalog.rs"), "Class").into_iter().filter(|v| v != "Other").collect(),
         denotations: enum_variants(&read("bytecode/denotation.rs"), "JsDenotation").into_iter().collect(),
+        operations: top_level_variants(&read("staged/operation.rs"), "pub enum Operation<"),
+        number_operations: top_level_variants(&read("staged/numeric.rs"), "pub enum NumberOperation {"),
+        decisions,
     }
 }
+
+/// Whether `file` (relative to `src`, or `../` for another crate) is one of the engine's lowering
+/// directories or their root files: the tiers that lower opcodes into their own rows, which the
+/// lowering recognizers (`count_decisions`) scan.
+fn lowering_file(file: &str) -> bool {
+    let Some(engine) = file.strip_prefix("../../quench-runtime-engine/src/") else { return false };
+    LOWERING_ROOTS.iter().any(|root| engine == format!("{root}.rs") || engine.starts_with(&format!("{root}/")))
+}
+
+/// The engine's lowering directories and root files, relative to its `src`.
+const LOWERING_ROOTS: &[&str] = &[
+    "compiled/lane_region", "compiled/base_region", "compiled/base_body", "compiled/base_rows", "compiled/osr_loop", "dispatch_fast",
+];
 
 fn ident_char(c: char) -> bool { c.is_ascii_alphanumeric() || c == '_' }
 
@@ -248,6 +309,26 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
             if code[..at].ends_with(ident_char) { continue; }
             let name = ident_at(code, at + tag.len());
             if variants.contains(name) { add(format!("{}{name}", &tag[..tag.len() - 1])); }
+        }
+    }
+    // Lowering tiers: a staged `Operation` or `NumberOperation` variant they match (`Operation::X`),
+    // a meaning predicate they call (`meaning_compiled::is_x(`) and an opcode query they ask
+    // (`.op().x()`). Counted in the lowering directories only; `.is_x()` above counts everywhere.
+    if lowering_file(file) {
+        for (path, variants) in [("Operation::", &words.operations), ("NumberOperation::", &words.number_operations)] {
+            for (at, _) in code.match_indices(path) {
+                if code[..at].ends_with(ident_char) { continue; }
+                let name = ident_at(code, at + path.len());
+                if variants.contains(name) { add(format!("{}:{name}", &path[..path.len() - 2])); }
+            }
+        }
+        for (path, token) in [("meaning_compiled::", "meaning"), (".op().", "pred")] {
+            for (at, _) in code.match_indices(path) {
+                let name = ident_at(code, at + path.len());
+                let called = code[at + path.len() + name.len()..].starts_with('(');
+                let known = if token == "meaning" { name.starts_with("is_") } else { words.decisions.contains(name) };
+                if called && known { add(format!("{token}:{name}")); }
+            }
         }
     }
     // Hand-written lane handlers: a `fn lane_` a macro did not generate.
@@ -461,6 +542,28 @@ fn opcode_and_family_names_count_per_file() {
     assert_eq!(debt.len(), 2, "{debt:?}");
 }
 
+/// The lowering recognizers count the staged variant, meaning predicate and opcode query spellings in
+/// the lowering directories, and nowhere else. `Operation::Arithmetic` is no staged `Operation` variant
+/// and `NumberOperation::Move` is no `Operation` spelling, so neither counts.
+#[test]
+fn lowering_recognizers_count_variant_meaning_and_query_spellings() {
+    let words = vocabulary();
+    assert!(words.operations.contains("Move") && words.number_operations.contains("Arithmetic") && words.decisions.contains("steps_on_owner"));
+    let code = "fn f() { match a { Operation::Move { .. } => {} _ => {} } let b = NumberOperation::Arithmetic { .. }; \
+        let c = Operation::Arithmetic; let d = NumberOperation::Move; meaning_compiled::is_call(x); x.op().steps_on_owner(); }";
+    let lowering = "../../quench-runtime-engine/src/compiled/base_region/tile.rs";
+    let mut debt = std::collections::BTreeMap::new();
+    count_decisions(code, lowering, &words, &mut debt);
+    assert_eq!(debt.get(&(lowering.to_owned(), "Operation:Move".to_owned())), Some(&1));
+    assert_eq!(debt.get(&(lowering.to_owned(), "NumberOperation:Arithmetic".to_owned())), Some(&1));
+    assert_eq!(debt.get(&(lowering.to_owned(), "meaning:is_call".to_owned())), Some(&1));
+    assert_eq!(debt.get(&(lowering.to_owned(), "pred:steps_on_owner".to_owned())), Some(&1));
+    assert_eq!(debt.len(), 4, "{debt:?}");
+    let mut elsewhere = std::collections::BTreeMap::new();
+    count_decisions(code, "tier.rs", &words, &mut elsewhere);
+    assert!(elsewhere.is_empty(), "{elsewhere:?}");
+}
+
 const DEBT_FILE: &str = include_str!("../../src/staged/derivation_debt.txt");
 
 fn render_debt(debt: &std::collections::BTreeMap<(String, String), usize>) -> String {
@@ -530,8 +633,8 @@ fn staged_encoders_round_trip_through_their_decode_arms() {
         assert!(matches!(Row::of(Row::encode_construct(a, b, c, imm)), Some(Operation::Call(_))), "construct {a} {b} {c} {imm}");
     }
     assert!(matches!(Row::of(Row::encode_nop()), Some(Operation::Nop)), "nop");
-    assert!(Row::is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
-    assert!(!Row::is_call_index(Row::encode_nop().op() as u16));
+    assert!(quench_runtime::staged::operation_is_call_index(Row::encode_call(0, 1, 0, 0).op() as u16));
+    assert!(!quench_runtime::staged::operation_is_call_index(Row::encode_nop().op() as u16));
 }
 
 /// Each row constant a tier selects a row by (`staged::*_ROW`) names the opcode whose decode arm

@@ -102,7 +102,7 @@ impl Lowering<'_, '_> {
             let fact = state.values[index];
             fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
                 fact.value.representation == Representation::Int32
-            } else if ty == Type::NUMBER {
+            } else if super::number_domains::is_double(ty) {
                 fact.value.representation == Representation::Float64
             } else { fact.tagged.current() }
         }) { return false; }

@@ -94,7 +94,6 @@ struct LoopInput {
     span: (usize, usize),
     generic: Vec<usize>,
     global_reads: quench_runtime::vm::global_facts::GlobalReads,
-    number_reads: Vec<super::facts::ObservedRead>,
     sites: super::lane_region::DirectSites,
 }
 
@@ -163,7 +162,7 @@ impl LoopJob {
                 names: Some(&names), own_constant: &own_constant, root_constant: &root_constant });
             super::lane_region::RegionSpecializer {
                 admitted: self.admitted,
-                number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
+                kinds: &[], int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
                 typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures, typed_kinds: &self.facts.typed_kinds,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), online, ..VmFacts::STATIC }, generic: &plan.generic,
@@ -271,26 +270,6 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     super::lane_region::flat_table(reads.chain(stores))
 }
 
-/// A store site the observation names no load for, whose receiver register the loop just read the
-/// same field of (`o.f = o.f + x`), takes that read's loads: the store meets the shapes the read
-/// met, whose facts the region already names, and its row guards the shape it holds.
-fn stored_after_reads(instructions: &[quench_runtime::bytecode::WideInstruction], fields: &mut Vec<Option<Vec<NativeFieldLoad>>>) {
-    for (at, store) in instructions.iter().enumerate() {
-        let Some(receiver) = store.field_store_register() else { continue };
-        let site = usize::from(store.cache_site_index());
-        if fields.get(site).is_some_and(|loads| loads.as_ref().is_some_and(|loads| !loads.is_empty())) { continue }
-        let atom = store.atom_index();
-        let read = instructions[..at].iter().rev().take_while(|earlier| earlier.defined_register() != Some(receiver))
-            .find_map(|earlier| match super::meaning_compiled::is_get_field(*earlier).then(|| earlier.field_lookup()).flatten() {
-                Some(FieldLookup::Atom { atom: read, cache_site, .. }) if read == atom && earlier.register_b() == receiver => Some(cache_site),
-                _ => None,
-            });
-        let Some(loads) = read.and_then(|read| fields.get(usize::from(read)).cloned().flatten()) else { continue };
-        if fields.len() <= site { fields.resize(site + 1, None) }
-        fields[site] = Some(loads);
-    }
-}
-
 #[quench_macros::ext(OsrFactsOps2)]
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
@@ -309,63 +288,6 @@ impl OsrFacts {
     }
 }
 
-/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
-/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
-/// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
-    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
-    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| {
-            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
-            let read = matches!(crate::compiled::decoded_completed(*instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }));
-            read && !abandoned.contains(pc)
-        })
-        .filter_map(|(pc, instruction)| {
-            let register = instruction.operand_b().register_index()?;
-            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
-            // An inlined callee's reads are Numbers whatever the entry showed: its registers
-            // hold nothing at entry that the sample could have seen. So is a read that left
-            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
-            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
-            Some(super::facts::ObservedRead { pc, ty, kind: None })
-        }).collect();
-    // A register's `length` read defines an int32: the region reads it as one
-    // (`Lowering::array_length`), leaving where it is not.
-    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
-        && instruction.result_flags() == 0
-        && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
-        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
-    reads.sort_by_key(|read| read.pc);
-    reads
-}
-
-/// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
-/// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
-/// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
-fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
-    (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
-    // A u-jit region lowers in Cranelift. A b-jit region BaseJIT declines is declined here, in every mode: the default
-    // mode compiles the site again as a u-jit region, from the u-jit region's own inputs (`loop_compile_in_lane`).
-    if !base { return crate::compiled::admission::unbuilt_region_declined().then_some(None); }
-    if region.inlining.is_some() { return Some(None); }
-    let registers = known.program.function(function as usize).registers;
-    let spec = BodySpec { function, registers, known, realm: Some(calls.realm), widened, seen: observation.entry_types, kinds: observation.operand_kinds, typed: observation.typed_rows };
-    // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
-    let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
-    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return Some(None) };
-    if let Some(directory) = native_dump_directory() {
-        dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
-    }
-    let held = calls.callees.captured_identities(region.header as usize..=region.backedge as usize).map(|(_, callee)| callee).collect();
-    let calls = CallCode { held, ..CallCode::of((frames, calls.callees.owned, records), registers, invalidation) };
-    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, chains, instanceofs, atoms, layouts, slots: slot_types, ..Default::default() },
-        calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
-    let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
-    let code = quench_runtime::vm::jit_backend::OffThread::ready(Some(LoopLowered {
-        plan: 0, stable: StableFacts::default(), roots: Default::default(), clif: None, code: Ok(code) }));
-    let call_frame = (registers, calls.invalidation.clone());
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts,
-        calls: Some(calls), directs: Vec::new(), call_frame, taken: Vec::new(), function }))
 }
 
 /// The plans a loop's lowering may take, in order: the inlined unit where the region has one,
@@ -379,10 +301,9 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads, widened: &[usize],
     unit_calls: &[DirectCandidates], (fields, mut online): (&[Option<Vec<NativeFieldLoad>>], Option<&mut OsrOnline<'_>>)) -> (Vec<LoopInput>, Vec<Box<[DirectCallee]>>) {
     let mut input = |unit: lane_unit::Unit, entry_fields: Vec<Option<u32>>, span: (usize, usize), generic: Vec<usize>, sites| {
-        let number_reads = observed_reads(program, &unit, observation.number_arrays, observation.abandoned, &generic);
         let global_reads = global_reads(&unit, GlobalTable::Lane);
         let tables = online.as_mut().map(|online| (online.tables)(&unit, fields, &global_reads));
-        LoopInput { unit, tables, entry_fields, span, generic, global_reads, number_reads, sites }
+        LoopInput { unit, tables, entry_fields, span, generic, global_reads, sites }
     };
     let (mut plans, mut directs) = (Vec::new(), Vec::new());
     if let Some((unit, fields)) = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten() {
@@ -399,132 +320,6 @@ fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32,
     plans.push(input(plain, plain_entry_fields(region, program), (region.header as usize, region.backedge as usize), widened.to_vec(), sites));
     directs.push(direct);
     (plans, directs)
-}
-
-/// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
-/// `None` where it lowers no code (a typed plan hoisting no view would leave at an access), or
-/// without the JIT's routes (`jit_routes`).
-/// A Cranelift region is planned here and lowered on the code generator's thread with its code
-/// (`LoopJob`): lowering on the loop's own thread stalled it as compiling did.
-pub(crate) fn start_osr_region(
-    region: &LoopRegion, views: super::ElementViews,
-    observation: &Observation<'_>,
-    tiers: &'static Tiers,
-    program: &ResidualProgram,
-    function_id: u32,
-    helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
-    widened_stores: (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
-    calls: RegionCalls,
-    base: bool,
-    admitted: super::admission::CompiledUnit,
-    online: Option<OsrOnline<'_>>,
-) -> Option<PendingOsrRegion> {
-    (crate::jit_routes::jit()?.region)(region, views, observation, tiers, program, function_id, helpers, global_reads, widened_stores, calls, base, admitted, online)
-}
-
-/// `start_osr_region`'s route, which `jit_routes` installs.
-pub(crate) type RegionStart = fn(&LoopRegion, super::ElementViews, &Observation<'_>, &'static Tiers, &ResidualProgram, u32, LaneHelpers,
-    &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
-    (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>), RegionCalls, bool, super::admission::CompiledUnit, Option<OsrOnline<'_>>) -> Option<PendingOsrRegion>;
-
-pub(crate) fn compile_osr_region(
-    region: &LoopRegion, views: super::ElementViews,
-    observation: &Observation<'_>,
-    tiers: &'static Tiers,
-    program: &ResidualProgram,
-    function_id: u32,
-    helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
-    (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
-    calls: RegionCalls,
-    base: bool,
-    admitted: super::admission::CompiledUnit,
-    online: Option<OsrOnline<'_>>,
-) -> Option<PendingOsrRegion> {
-    #[cfg(feature = "jit")]
-    { start_osr_region_compiled(region, views, observation, tiers, program, function_id, helpers, global_reads, (widened, stores), calls, base, admitted, online) }
-    #[cfg(not(feature = "jit"))]
-    {
-        let _ = (region, views, observation, tiers, program, function_id, helpers, global_reads, widened, stores, calls, base, admitted, online);
-        None
-    }
-}
-
-/// An execution-only build (no `jit`) starts no run-time region compile.
-#[cfg(feature = "jit")]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn start_osr_region_compiled(
-    region: &LoopRegion, views: super::ElementViews,
-    observation: &Observation<'_>,
-    tiers: &'static Tiers,
-    program: &ResidualProgram,
-    function_id: u32,
-    helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> quench_runtime::vm::global_facts::GlobalReads,
-    (widened, stores): (&[usize], Option<&quench_runtime::vm::method_cache::AtomBits>),
-    mut calls: RegionCalls,
-    base: bool,
-    admitted: super::admission::CompiledUnit,
-    mut online: Option<OsrOnline<'_>>,
-) -> Option<PendingOsrRegion> {
-    if !cfg!(feature = "jit") {
-        return None; // no run-time compile without the JIT: only image bodies run natively
-    }
-    let isa = quench_runtime::vm::jit_backend::target_isa()?;
-    // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
-    let invalidation = Invalidation::default();
-    // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
-    let globals = (base && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
-    // The field sites' loads the observation recorded, which its facts name (`OsrFacts::observed`): a
-    // shape compaction retires the region, so its inline-cache rows may patch these shapes in.
-    let fields = loop_fields(region, observation);
-    let mut row_fields = fields.clone();
-    stored_after_reads(region.instructions(), &mut row_fields);
-    let reads = |site: u16| row_fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
-    // A field site the observation recorded a load for is filled, so its packed field rows may run direct
-    // (`function::feedback_admits`); a loop's rows need the same admission a body's do.
-    let filled = |site: u16| !reads(site).is_empty();
-    let filled = stores.is_some().then_some(&filled as &dyn Fn(u16) -> bool);
-    let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
-    let shapes = loop_shapes(region, observation);
-    let known =super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: filled, globals: globals.as_ref(), stitch: &tiers.stitch, classes: &[], shapes: &shapes };
-    let unit_calls = std::mem::take(&mut calls.direct);
-    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone()), base) {
-        return decided;
-    }
-    let (plans, directs) = loop_inputs(program, region, function_id, observation, global_reads, widened, &unit_calls, (&fields, online.as_mut()));
-    // What the plans took from the VM, which still holds where the code publishes (`PendingOsrRegion::taken`).
-    let taken = plans.iter().map(|plan| plan.tables.clone().map(|tables| TakenPlan { unit: plan.unit.clone(), fields: fields.clone(),
-        global_reads: plan.global_reads.clone(), tables })).collect();
-    // The functions the lowering reads: its own, its plans' inlined callees' and their direct callees'.
-    let functions: Vec<u32> = std::iter::once(function_id)
-        .chain(plans.iter().flat_map(|plan| plan.unit.frames.iter().map(|frame| frame.target.function)))
-        .chain(directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.target.function))).collect();
-    // The scalar construction plans of those functions' constructions, owned (`Observation::construct_plans`).
-    let construct_plans = observation.construct_plans.map(|plans| functions.iter().flat_map(|&function| {
-        let count = program.function(function as usize).instructions().count() as u32;
-        (0..count).filter_map(move |pc| Some(((function, pc), plans(function, pc)?)))
-    }).collect()).unwrap_or_default();
-    let number_entries: Vec<quench_runtime::bytecode::Register> = observation.entry_types.iter().enumerate()
-        .filter(|(_, ty)| **ty == quench_runtime::typed_ir::Type::NUMBER)
-        .filter_map(|(register, _)| quench_runtime::bytecode::Register::try_from(register).ok()).collect();
-    let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries, string_registers: observation.string_entries.to_vec(),
-        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(), typed_kinds: observation.typed_kinds.to_vec(),
-        frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds, construct_plans };
-    let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers, admitted,
-        held: stores.map(|names| (names.clone(), invalidation.address())),
-        online: online.map(|online| (online.atoms, online.constants, invalidation.address())) };
-    // The job reads the plans' direct callees by pointer (`directs`), which the pending region keeps: guarded.
-    let code = quench_runtime::vm::jit_backend::OffThread::guarded(job, |job: LoopJob| {
-        let header = job.plans.first().map_or(0, |plan| plan.span.0 as u32);
-        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "region", job.function_id, header, || job.plans.iter().map(|plan| plan.span.1 + 1 - plan.span.0).sum());
-        job.run()
-    });
-    let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
-    let call_frame = (program.function(function_id as usize).registers, invalidation);
-    Some(PendingOsrRegion { code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,
-        resumes: super::base_region::ResumeTable::empty(), calls: None, directs, call_frame, taken, function: function_id })
 }
 
 #[quench_macros::ext(PendingOsrRegionOps1)]

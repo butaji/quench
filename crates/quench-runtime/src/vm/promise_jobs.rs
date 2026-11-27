@@ -437,7 +437,7 @@ impl Vm {
 
     pub(super) fn enqueue_promise_reaction(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         reaction: PromiseReaction,
         state: PromiseState,
         value: Value,

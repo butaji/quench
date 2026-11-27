@@ -588,7 +588,7 @@ impl Vm {
             None => {
                 if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
                     || !self.heap.object(object)
-                        .is_some_and(|data| !data.is_module_namespace() && data.record().deferred_module().is_none()) // record-only: deferred module
+                        .is_some_and(|data| !data.is_module_namespace() && data.record_only().and_then(|record| record.deferred_module()).is_none()) // record-only: deferred module
                 {
                     return None;
                 }

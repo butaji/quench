@@ -189,18 +189,12 @@ pub(crate) fn complete_cross_activation_in_lane(cx: *mut LaneContext, value: Val
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
 /// activation, which completes in turn, or from the frame, which the general loop then
-/// completes with the value (`frame_return`). A host permitting proper tail calls sends
-/// a strict caller's terminal calls to the general dispatch path instead.
+/// completes with the value (`frame_return`). A strict caller's terminal call is a proper tail call, which the
+/// general dispatch path takes as a jump (`Vm::js_tail_call_allowed`), so the lane does not admit it.
 #[inline(always)]
 pub(crate) fn returning_call_admitted(cx: *mut LaneContext) -> bool {
-    let vm = unsafe { vm(cx) };
-    let proper = vm.host.proper_tail_calls();
-    // The running function's strictness is read only where proper tail calls are on.
-    let strict = proper && {
-        let function = running_function_in_lane(cx);
-        unsafe { &*(*cx).code }.function(function as usize).strict
-    };
-    concrete_admits_returning_call(proper, strict)
+    let function = running_function_in_lane(cx);
+    concrete_admits_returning_call(unsafe { &*(*cx).code }.function(function as usize).strict)
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the

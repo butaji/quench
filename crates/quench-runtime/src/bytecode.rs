@@ -1990,7 +1990,7 @@ impl Function {
     /// Reusing an activation is observable while its call is protected by a handler.
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
-    pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+    pub fn permits_js_tail_call_at(&self, pc: u32) -> bool {
         self.strict && !self.class_initializer && self.handler_at(pc).is_none()
     }
 
@@ -2586,7 +2586,7 @@ impl Function {
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
-            // (`CallEntry::Gathers`) and a plain frame does not.
+            // (`CallEntry::framed(Framed::Gathers)`) and a plain frame does not.
             let ordinary_with_rest = registers_layout && !self.activation_binding_reads(tables);
             // A base class constructor laid out as an ordinary function runs frameless when
             // constructed (`script_construct_miss`); its calls, which throw, keep a frame.
@@ -2671,7 +2671,7 @@ impl Function {
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
-                        // (`CallEntry::Gathers`), which legacy reflection reads.
+                        // (`CallEntry::framed(Framed::Gathers)`), which legacy reflection reads.
                         !addresses_locals && (!legacy_reflection || live_parameters || self.rest)
                     } else {
                         reaches_only_forwarded_arguments
@@ -3999,6 +3999,29 @@ impl CacheSiteCounts {
     }
 }
 
+/// The part of a program that a native reads at run time: its atom names and its constants. A
+/// native that needs nothing else of the program takes `&ProgramRecord`; a `&ResidualProgram`
+/// passes there by deref coercion, so the program's own fields are reached as before.
+#[derive(Clone, Debug)]
+pub struct ProgramRecord {
+    pub atoms: AtomTable,
+    pub constants: append_vec::AppendVec<Constant>,
+}
+
+impl std::ops::Deref for ResidualProgram {
+    type Target = ProgramRecord;
+
+    fn deref(&self) -> &ProgramRecord {
+        &self.record
+    }
+}
+
+impl std::ops::DerefMut for ResidualProgram {
+    fn deref_mut(&mut self) -> &mut ProgramRecord {
+        &mut self.record
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub specialized: bool,
@@ -4010,8 +4033,8 @@ pub struct ResidualProgram {
     pub declared_types: Option<Box<DeclaredTypes>>,
     pub source_name: String,
     pub source: Option<ProgramSource>,
-    pub atoms: AtomTable,
-    pub constants: append_vec::AppendVec<Constant>,
+    /// The names and constants natives read (`ProgramRecord`), reached through `Deref`.
+    pub record: ProgramRecord,
     pub functions: append_vec::AppendVec<FunctionSlot>,
     pub(crate) cache_sites: chunk_append::SiteCount,
     pub(crate) method_sites: append_vec::AppendVec<MethodSite>,

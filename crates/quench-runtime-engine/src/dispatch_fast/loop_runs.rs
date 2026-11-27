@@ -48,15 +48,6 @@ impl super::LoopSite {
         self.settle(&mut tier);
     }
 
-    /// Whether this entry passes to the interpreter untried, counting it off the backoff.
-    #[inline(always)]
-    pub(crate) fn skips_entry(&self) -> bool {
-        let skipped = self.skipped_entries.get();
-        if skipped == 0 { return false; }
-        self.skipped_entries.set(skipped - 1);
-        true
-    }
-
     /// Stops entering native code once the entries cost more than the iterations they ran save.
     /// The check is due only once the entries pass `settle_at`, the count the last check found the
     /// spare covers: iterations only add, so until then every entry is repaid, and a run or decline

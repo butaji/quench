@@ -16,6 +16,8 @@
 //! and the lane's activation record); the receiver rule of a
 //! construction through an initializer is `construct`.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
 use super::call::admit_room;
 use super::frame;
 use super::layout_offsets::{JS_STEP_BODY_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_PLAIN_DEPTH, JS_STEP_RETURNED_PC};
@@ -448,10 +450,31 @@ pub enum HelperOutcome {
 }
 
 #[cfg(not(stencil_build))]
+impl HelperOutcome {
+    /// The exit this outcome is (`exit::Exit`, the one meaning of a status).
+    pub const fn exit(self) -> super::exit::Exit {
+        match self {
+            Self::Completed => super::exit::Exit::Completed,
+            Self::Missed => super::exit::Exit::Missed,
+            Self::Raised => super::exit::Exit::Raised,
+        }
+    }
+
+    /// The helper status word the outcome is encoded as: the helper encoding of its exit.
+    pub const fn word(self) -> u64 {
+        match self.exit().to_helper() {
+            Some(word) => word,
+            None => unreachable!(),
+        }
+    }
+}
+
+#[cfg(not(stencil_build))]
 /// The helper statuses a call site tests, in the order it tests them (the common one first),
-/// paired with where each goes: the one table both the helper and its call sites share.
+/// paired with where each goes: derived from each outcome's exit, the one table both the helper and
+/// its call sites share.
 pub const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [
-    (quench_bjit::call_record::LANE_CALL_COMPLETED, HelperOutcome::Completed),
-    (quench_bjit::call_record::LANE_CALL_MISSED, HelperOutcome::Missed),
-    (quench_bjit::call_record::LANE_CALL_RAISED, HelperOutcome::Raised),
+    (HelperOutcome::Completed.word(), HelperOutcome::Completed),
+    (HelperOutcome::Missed.word(), HelperOutcome::Missed),
+    (HelperOutcome::Raised.word(), HelperOutcome::Raised),
 ];

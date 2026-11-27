@@ -2,6 +2,8 @@
 //! that runs those rows in place. The lane's helper (`dispatch_fast::vm_operation_step`) makes the same
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationNamesExt};
 use super::*;
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
@@ -184,10 +186,7 @@ impl Vm {
     /// (its BigInt update). The value the update defines.
     pub(super) fn inc_dec_value(&mut self, p: &ResidualProgram, input: Value, is_decrement: bool) -> Result<Value, JsError> {
         match super::dispatch::number_increment(input, is_decrement) {
-            Some(value) => {
-                self.note_int_update(input, value);
-                Ok(value)
-            }
+            Some(value) => Ok(value),
             None => {
                 let numeric = self.to_numeric(p, input)?;
                 match super::dispatch::number_increment(numeric, is_decrement) {
@@ -195,26 +194,6 @@ impl Vm {
                     None => self.numeric_update(p, numeric, is_decrement),
                 }
             }
-        }
-    }
-
-    /// Notes an update of `input` to `value`: an int32 stepped past the int32 range retires the
-    /// views' speculative int32 kinds before the double is written (`dispatch_fast::int_kinds`).
-    #[inline(always)]
-    pub(super) fn note_int_update(&self, input: Value, value: Value) {
-        if input.as_int().is_some() && value.as_int().is_none() {
-            self.retire_int_speculation();
-        }
-    }
-
-    /// Retires every view's speculative int32 kinds, once per thread (`dispatch_fast::int_kinds`):
-    /// an update overflowed one, or native code ran an activation the lane goes on in
-    /// (`int_kinds::retire_after_native`).
-    #[cold]
-    #[inline(never)]
-    pub fn retire_int_speculation(&self) {
-        if crate::vm::engine_calls::note_int_speculation_retired() {
-            self.programs.retire_int_speculation();
         }
     }
 
@@ -419,7 +398,7 @@ impl Vm {
 
     /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
     fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>, op: crate::bytecode::Op) -> Result<(), JsError> {
-        let mut stage = Concrete::over_vm(self);
+        let mut stage = crate::staged::concrete_over_vm(self);
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut stage, &mut frame, row) {
             Step::Unresolved => Err(frame.raised.unwrap_or_else(|| panic!("a step left to the VM raised: {op:?}"))),

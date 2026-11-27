@@ -81,14 +81,14 @@ pub struct CallPlan {
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame: an ordinary body (`in_loop`), a base class
     /// constructor's construction, or a `settles_in_loop` body with no rest parameter or
-    /// `arguments` binding, whose return settles its call's promise (`CallEntry::Settles`).
+    /// `arguments` binding, whose return settles its call's promise (`CallEntry::framed(Framed::Settles)`).
     pub registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
     /// it makes and the iteration copies of its environment, with no `arguments`, binding
     /// site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
-    /// may run such a body without a frame (`CallEntry::Environment`).
+    /// may run such a body without a frame (`CallEntry::framed(Framed::Environment)`).
     pub environment_activation: bool,
     /// A function that suspends (a generator, an async function or an async generator) laid out
     /// as its registers: no locals, `arguments`, closures or dynamic scope, so what its

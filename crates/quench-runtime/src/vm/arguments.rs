@@ -144,8 +144,8 @@ impl Vm {
 
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
         if let Some(mapping) = self
-            .heap.object_mut(object)
-            .and_then(|object| object.record_mut_departing().arguments_map_mut()) // record-only: argument mapping
+            .heap.object_record_mut(object)
+            .and_then(|object| object.arguments_map_mut()) // record-only: argument mapping
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

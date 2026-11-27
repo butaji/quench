@@ -6,10 +6,8 @@ use super::*;
 use quench_runtime::{library_surface::Heap, tier_surface::{Cell, Object, PlainPropertyStorage}};
 use quench_runtime::staged::ic;
 use quench_runtime::staged::object::{own_layout, read_slot, Form, PackedAccess};
-use quench_runtime::staged::slot_store::store_flat;
 use quench_runtime::staged::Region;
 use quench_runtime::typed_ir::Representation;
-use quench_runtime::vm::switches::with_float_slots;
 
 /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
 /// plain and marked as prototypes.
@@ -86,7 +84,7 @@ fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
             // SAFETY: the function reads the record and the arena run it names, both live.
             let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
             for (object, values) in &objects {
-                let data = heap.object(*object).unwrap().record();
+                let data = heap.object(*object).unwrap().record_only().unwrap();
                 let Some(expected) = values.get(usize::from(slot)) else { continue };
                 let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.property_values_base() as u64) });
                 let storage = data.plain_property_storage();
@@ -314,63 +312,6 @@ fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
     }
 }
 
-/// Native code running `record.slot0 -= dx * record.slot1 * mag` over a record whose arena values
-/// are raw doubles (`Representation::Float64`), and its CLIF.
-fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMemory, String) {
-    let mut signature = Signature::new(isa.default_call_conv());
-    signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64), AbiParam::new(types::F64), AbiParam::new(types::F64)]);
-    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-    let mut context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let [record, base, dx, mag] = builder.block_params(entry).try_into().unwrap();
-    let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None, facts: Default::default() };
-    let inline = quench_runtime::staged::object::inline_storage(&mut stage, record);
-    let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
-    let velocity = read_slot(&mut stage, layout, 0, Representation::Float64);
-    let mass = read_slot(&mut stage, layout, 1, Representation::Float64);
-    let payload = stage.load_u64(Region::Payload.mutable(), record, quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
-    let pull = stage.builder.ins().fmul(dx, mass);
-    let pull = stage.builder.ins().fmul(pull, mag);
-    let updated = stage.builder.ins().fsub(velocity, pull);
-    store_flat(&mut stage, payload, 0, (updated, Representation::Float64));
-    builder.ins().return_(&[]);
-    builder.switch_to_block(miss);
-    builder.ins().return_(&[]);
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    let clif = native.display().to_string();
-    (compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap(), clif)
-}
-
-/// A field update over raw-double slots (nbody's `a.vx -= dx * b.m * mag`) is a `load.f64` per
-/// operand, the arithmetic and one store, with no tag test or box, and it computes what the
-/// interpreter's reads and writes of the same slots do.
-#[test]
-fn a_float_slot_update_is_loads_arithmetic_and_a_store() {
-    with_float_slots(|| {
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let (memory, clif) = compiled_float_update(&*isa);
-        assert_eq!(clif.matches("load.f64").count(), 2, "{clif}");
-        assert_eq!(clif.matches("fmul").count(), 2, "{clif}");
-        assert_eq!(clif.matches("fsub").count(), 1, "{clif}");
-        assert_eq!(clif.matches("store").count(), 1, "{clif}");
-        assert!(!clif.contains("bitcast"), "{clif}");
-        let mut heap = Heap::new();
-        heap.track_slot_representations(&[(0, None), (3, None)]);
-        let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::number(1.5), Value::number(2.0), Value::number(0.25)]);
-        let record = heap.object(object).unwrap().record() as *const Object as u64;
-        // SAFETY: the function reads and writes the record's arena run, which is live.
-        let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, f64, f64)>(memory.pointer()) };
-        unsafe { run(record, heap.property_values_base() as u64, 0.5, 4.0) };
-        let read = |slot| heap.property_get_ref(heap.object(object).unwrap(), slot);
-        assert_eq!((read(0), read(1), read(2)), (Some(Value::number(-2.5)), Some(Value::integer(2)), Some(Value::number(0.25))));
-    });
-}
-
 /// How Cranelift writes an immediate in its CLIF text: decimal below ten thousand, else hex in
 /// groups of four digits from the right (`0x2000_0000`).
 fn clif_immediate(value: u64) -> String {
@@ -427,7 +368,7 @@ fn a_formed_arena_read_emits_no_inline_flag_test() {
     let mut heap = Heap::new();
     let objects = objects_of_every_form(&mut heap);
     let arena_object = objects.iter().map(|(object, _)| *object)
-        .find(|object| heap.object(*object).unwrap().record().plain_property_storage() == Some(PlainPropertyStorage::Arena))
+        .find(|object| heap.object(*object).unwrap().record_only().unwrap().plain_property_storage() == Some(PlainPropertyStorage::Arena))
         .expect("a wide object keeps its values in the arena");
     let id = heap.object(arena_object).unwrap().hint_shape();
     assert_eq!(ic::form_of_layout(id), Form::Arena);

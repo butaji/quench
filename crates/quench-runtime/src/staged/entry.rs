@@ -385,7 +385,7 @@ mod tests {
         let mut heap = Heap::new();
         let count = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
         let (object, shape) = object_of(&mut heap, count);
-        let record = heap.object(object).unwrap().record();
+        let record = heap.object(object).unwrap().record_only().unwrap();
         for slot in 0..count as u16 {
             let entry = stored(shape, ENTRY.own_holder, u32::from(slot));
             let by_entry = concrete_read_entry(&heap, object, &entry);

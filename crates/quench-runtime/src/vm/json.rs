@@ -1684,9 +1684,9 @@ impl Vm {
         }
         let object = self.json_object();
         self.with_call_roots([object], |vm| {
-            if let Some(data) = vm.heap.object_mut(object) {
+            if let Some(data) = vm.heap.object_record_mut(object) {
                 data.set_proto(Value::NULL);
-                data.record_mut_departing().set_raw_json();
+                data.set_raw_json();
             }
             let raw_atom = vm.intern_atom("rawJSON");
             let raw_text_value = vm.heap.alloc_string(text);

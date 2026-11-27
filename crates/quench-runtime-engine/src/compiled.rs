@@ -23,6 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use tier_policy::Tiers;
@@ -115,9 +116,8 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{start_osr_region, RegionStart, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
 #[cfg(feature = "jit")]
-pub(crate) use osr_compile::compile_osr_region;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
@@ -960,7 +960,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
-/// `trusted`: the code holds the lane's `this` trust (`VmFacts::this_trusted`), so `this` is a direct
+/// `trusted`: the receiver fact holds (`dispatch_fast::receiver_trusted`), so `this` is a direct
 /// object the binding checked once, and only the tables are tested.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
@@ -1054,7 +1054,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\njmp {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1063,7 +1065,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\nb {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1075,8 +1079,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 2\n_quench_lane_helper_ahead_Step:\nb {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1086,8 +1092,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 4\n_quench_lane_helper_ahead_Step:\njmp {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1095,9 +1103,18 @@ macro_rules! lane_helper_inventory {
     };
 }
 
-/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`): the ahead entry of
+/// `Step` (`ahead_general_step`, over the payload), else the helper's own.
 pub(crate) fn lane_helper_symbol(index: usize) -> Option<String> {
-    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
+    let name = LaneHelper::NAMES.get(index)?;
+    Some(if index == LaneHelper::Step as usize { format!("quench_lane_helper_ahead_{name}") } else { format!("quench_lane_helper_{name}") })
+}
+
+/// The address an ahead image's helper `index` is in this process, as `lane_helper_symbol` names it: `ahead_general_step` for
+/// `Step`, else the helper's own address.
+pub(crate) fn ahead_helper_address(index: usize) -> Option<usize> {
+    if index == LaneHelper::Step as usize { return Some(crate::dispatch_fast::ahead_general_step as *const () as usize); }
+    LaneHelper::addresses().get(index).map(|address| *address as usize)
 }
 lane_helper_inventory! {
     FunctionCapture => function_capture_read_in_lane,
@@ -1175,8 +1192,6 @@ lane_helper_inventory! {
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
     /// (`dispatch_fast::lane_body_step_packed`).
     StepPacked => crate::dispatch_fast::lane_body_step_packed,
-    /// A loop's interpreter kernel on the loop's entry edge, which the b-jit plans before its head (`base_region::kernel_entries`).
-    KernelStep => base_body::kernel_step_in_lane,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
@@ -1208,16 +1223,11 @@ lane_helper_inventory! {
     /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
     /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
     OwnerStep => crate::dispatch_fast::owner_step,
-    /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
-    /// which an image body cannot fold (a string's address is the run's), in place of the general step.
-    ConstantStep => base_body::constant_step,
     /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
     /// values, in place of the general step.
     ValueStep => base_body::value_step,
-    ClosureStep => base_body::closure_step,
     AllocationStep => base_body::allocation_step,
     ThrowStep => base_body::throw_step,
-    DefineElementStep => base_body::define_element_step,
     CallOutStep => base_body::call_out_step,
     /// A collection lookup a call runs by its callee's identity (`lane_allocations::collection_lookup_in_lane`).
     CollectionLookup => collection_lookup_in_lane,
@@ -1533,16 +1543,13 @@ pub(crate) struct VmFacts<'a> {
     /// `None` where a leave returns its exit word.
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
-    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::closed_call`),
+    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
     /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
-    /// Whether the lane trusts every activation's `this` as a direct object (`Vm::this_trust`): code that
-    /// holds the trust (`StableFacts::this_trust`) takes its receiver as one, and retires with the trust.
-    pub(crate) this_trusted: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1558,7 +1565,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false, this_trusted: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1566,8 +1573,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false,
-            this_trusted: self.this_trust.get() == 1 }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false }
     }
 }
 
@@ -3473,12 +3479,15 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         use quench_runtime::vm::native_op_profile::StoreStorage;
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
-            Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(id));
-                if object.plain_storage_start().is_some() { StoreStorage::Arena }
-                else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
-                else { StoreStorage::OtherRecord }
-            }
+            Some(id) => match vm.heap_reads().record_id(id) {
+                None => StoreStorage::NonRecord,
+                Some(record) => {
+                    let object = vm.heap_reads().object_record_by_id(record);
+                    if object.plain_storage_start().is_some() { StoreStorage::Arena }
+                    else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
+                    else { StoreStorage::OtherRecord }
+                }
+            },
         }
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
@@ -4182,7 +4191,7 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
         }
@@ -4210,7 +4219,7 @@ impl JsStepDispatch {
     /// lazily made empty string and unit strings exist: then one pass of compares replaces the
     /// rereads every allocating, call or step helper ends with.
     #[inline]
-    fn refresh_object_bases(&mut self, vm: &Vm) {
+    pub(crate) fn refresh_object_bases(&mut self, vm: &Vm) {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
@@ -4274,7 +4283,7 @@ impl JsStepDispatch {
             return;
         }
         let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.record().stored_words();
+        let (payload, layout) = record.stored_words();
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
     }
@@ -4287,7 +4296,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object(array) else { return };
+        let Some(record) = vm.heap_reads().object(array).and_then(|object| object.record_only()) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4519,9 +4528,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         return "non-direct-object";
     }
     let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
-    if object.record().inline_properties().is_some() {
+    if object.record_only().and_then(|record| record.inline_properties()).is_some() {
         "inline-storage"
-    } else if object.record().plain_storage_start().is_none() {
+    } else if object.record_only().and_then(|record| record.plain_storage_start()).is_none() {
         "extras-storage"
     } else {
         if vm.active_program != vm.frames[frame].program {
@@ -4534,9 +4543,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
             } else if let Some(holder) = object.proto_link().object_granule().and_then(|granule| vm.heap_reads().object_record(quench_runtime::Value::direct_object(granule))) {
                 if holder.exact_shape() != cache.holder {
                     "prototype-holder-shape-miss"
-                } else if holder.record().inline_properties().is_some() {
+                } else if holder.record_only().and_then(|record| record.inline_properties()).is_some() {
                     "prototype-holder-inline"
-                } else if holder.record().extras_storage_start().is_some() {
+                } else if holder.record_only().and_then(|record| record.extras_storage_start()).is_some() {
                     "prototype-holder-extras"
                 } else if holder.plain_storage_start().is_some() {
                     "prototype-holder-plain"
@@ -5425,11 +5434,8 @@ impl Analysis<'_> {
 
     /// The function's plan, assuming every function in `callable` compiles.
     fn plan(&self, index: usize, callable: &quench_runtime::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
-        let plan_started = self
-            .compile_rejections
-            .as_ref()
-            .map(|_| std::time::Instant::now());
-        let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
+        let diagnose = self.compile_rejections.is_some();
+        let memory_before = diagnose.then(jit_memory_snapshot).flatten();
         let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
@@ -5563,8 +5569,8 @@ impl Analysis<'_> {
                     .unwrap_or_default()
             })
             .collect();
-        if let Some(started) = plan_started {
-            plan_report::report(index, started, memory_before, instructions.len(), registers, &states);
+        if diagnose {
+            plan_report::report(index, memory_before, instructions.len(), registers, &states);
         }
         Some(Plan {
             params,
@@ -7964,9 +7970,8 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
-        let compile_started = admission::diagnosing(self).then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
+        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);
@@ -7990,9 +7995,9 @@ impl Vm {
         let compiled = artifact.and_then(CompiledJsFunction::from_artifact).map(Rc::new);
         let compile_rejection = Self::js_tier_compile_rejection(&residual, function_id, artifact_failed, compiled.is_none());
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone());
-        if let Some(compile_started) = compile_started {
+        if admission::diagnosing(self) {
             let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
-            self.record_js_tier_compile(program_id, function_id, compile_started, compiled.as_deref().filter(|_| installed), rejection);
+            self.record_js_tier_compile(program_id, function_id, compiled.as_deref().filter(|_| installed), rejection);
         }
         installed.then_some(())?;
         compiled
@@ -8009,14 +8014,13 @@ impl Vm {
         }
     }
 
-    /// Records a compile for the diagnostics: its time, the installed code's size, and why
-    /// nothing was installed.
-    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32, started: std::time::Instant,
+    /// Records a compile for the diagnostics: the installed code's size, and why nothing was
+    /// installed.
+    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32,
         installed: Option<&CompiledJsFunction>, rejection: Option<&'static str>) {
         self.programs.record_js_jit_compile(
             program_id,
             function_id,
-            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             installed.map_or(0, CompiledJsFunction::mapped_bytes),
             installed.is_some(),
             rejection,
@@ -8172,7 +8176,6 @@ impl Vm {
     ) -> Option<CompiledProgram> {
         let _ = unit;
         let code = self.programs.get(program)?;
-        let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
@@ -8423,8 +8426,7 @@ impl Vm {
             build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
-                let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
-                let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
                 let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                 let built = WasmSpecializer {
                     index,
@@ -8435,11 +8437,10 @@ impl Vm {
                     tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
                 }
                 .specialize(&code);
-                if let Some(started) = body_build_started {
+                if diagnostics_enabled {
                     let memory_after = jit_memory_snapshot();
                     eprintln!(
-                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                        started.elapsed().as_micros(),
+                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
                         body_memory_before.map(|memory| memory.0),
                         memory_after.map(|memory| memory.0),
                         body_memory_before.map(|memory| memory.1),
@@ -8619,7 +8620,6 @@ impl Vm {
                 compiled_functions,
                 code_bytes: bytes.len(),
                 mapped_bytes,
-                compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
                 native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 compiled_to_vm_callouts: std::cell::Cell::new(0),
@@ -8887,7 +8887,6 @@ impl Vm {
                     // keeps its callees in the VM; root-first mode allows a
                     // hot callee to enter the existing bounded tier below.
                     let diagnose = jit_diagnostics_enabled();
-                    let started = diagnose.then(std::time::Instant::now);
                     let root = jit_root_override().ok().flatten();
                     let compiled = root
                         .and_then(|root| {
@@ -8901,14 +8900,10 @@ impl Vm {
                             "\"root_only\":true"
                         };
                         eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{},\"compile_ns\":{}}}",
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{}}}",
                             program.raw(),
                             mode_field,
                             root.map_or_else(|| "null".to_owned(), |root| root.to_string()),
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
                         );
                     }
                     self.programs.set_compiled(program, compiled);
@@ -8930,7 +8925,6 @@ impl Vm {
                             .programs
                             .get(program)
                             .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-                    let started = diagnose.then(std::time::Instant::now);
                     let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
                     if diagnose && compiled.is_none() {
                         let total_functions = self
@@ -8938,13 +8932,9 @@ impl Vm {
                             .get(program)
                             .map_or(0, |code| code.functions.len());
                         eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{}}}",
                             program.raw(),
                             total_functions,
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
                         );
                     }
                     self.programs.set_compiled(program, compiled);
@@ -8974,9 +8964,9 @@ impl Vm {
             // Their records' addresses name private-name sites' entries (`PrivateSiteHomes`).
             self.private_site_homes.clear();
         }
-        let started = jit_diagnostics_enabled().then(std::time::Instant::now);
+        let diagnose = jit_diagnostics_enabled();
         let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-        if let Some(started) = started {
+        if diagnose {
             let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
                 (0..code.functions.len())
                     .filter_map(|index| code.function_get(index))
@@ -8984,11 +8974,10 @@ impl Vm {
                     .sum()
             });
             eprintln!(
-                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
+                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{}}}",
                 program.raw(),
                 compiled.is_some(),
                 bytecodes,
-                started.elapsed().as_nanos(),
             );
         }
         self.programs.set_compiled(program, compiled);
@@ -10532,7 +10521,7 @@ mod tests {
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let atom = vm.lookup_atom("box").unwrap();
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object(receiver).unwrap().record().inline_properties().is_some());
+        assert!(vm.heap_reads().object(receiver).unwrap().record_only().unwrap().inline_properties().is_some());
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let function = program.functions.iter().position(|function|
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
@@ -10545,6 +10534,7 @@ mod tests {
         let prototype = vm.heap_reads().object(receiver).unwrap().proto();
         let holder = vm.heap_reads().object(prototype).unwrap();
         assert_eq!(holder.exact_shape(), cache.holder);
+        let holder = holder.record_only().expect("a prototype record");
         assert_eq!(holder.inline_properties().is_some(), inline_holder);
         assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
 

@@ -1703,10 +1703,10 @@ impl Vm {
                 .collect(),
             "Deferred Module",
         )?;
-        let Some(mut object) = self.heap.object_mut(namespace) else {
+        let Some(object) = self.heap.object_record_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
-        object.record_mut_departing().set_deferred_module(Some(module.clone()));
+        object.set_deferred_module(Some(module.clone()));
         Ok(namespace)
     }
 
@@ -1769,8 +1769,8 @@ impl Vm {
             }
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
-                if let Some(mut object) = self.heap.object_mut(namespace) {
-                    object.record_mut_departing().set_deferred_module(Some(module));
+                if let Some(object) = self.heap.object_record_mut(namespace) {
+                    object.set_deferred_module(Some(module));
                 }
                 settled?;
                 Ok(namespace)
@@ -1861,9 +1861,9 @@ impl Vm {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         if self.heap.copy_property_storage(&source, target)
-            && let Some(mut object) = self.heap.object_mut(target)
+            && let Some(record) = self.heap.object_record_mut(target)
         {
-            let target = object.record_mut_departing();
+            let target = record;
             target.set_proto(source.proto());
             if source.is_module_namespace() {
                 target.set_module_namespace();
@@ -4502,8 +4502,8 @@ impl Vm {
             values.push((name, value));
         }
         let namespace = self.module_namespace(values)?;
-        if let Some(mut object) = self.heap.object_mut(namespace) {
-            object.record_mut_departing().set_module_bindings(bindings);
+        if let Some(object) = self.heap.object_record_mut(namespace) {
+            object.set_module_bindings(bindings);
         }
         Ok(namespace)
     }
@@ -4636,8 +4636,8 @@ impl Vm {
         let namespace = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
-        if let Some(mut object) = self.heap.object_mut(namespace) {
-            object.record_mut_departing().set_module_namespace();
+        if let Some(object) = self.heap.object_record_mut(namespace) {
+            object.set_module_namespace();
         }
         self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
         // Export names are distinct, so each is appended with its final attributes and
@@ -5087,7 +5087,7 @@ impl Vm {
 
     pub(super) fn promise_finally_continuation_handler(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         _args: &[Value],
     ) -> Result<Value, JsError> {
         let function = self

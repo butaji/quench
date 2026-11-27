@@ -4,9 +4,10 @@
 //! (`entry_pins`: int32s and doubles), which every entry checks before pc 0 runs. A call's argument is proven where its register holds a Number at the call on every path. The analysis is an
 //! invariant of the bytecode, as `exact.rs` relies on: a region or resume stub enters only in states it covers.
 
+#[allow(unused_imports)] use quench_runtime::staged::{CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::super::facts::{self, Observed, Seeds, Text};
+use super::super::facts::{self, Seeds, Text};
 use super::super::lane_region::writes;
 use super::call_plan::{CallForm, CallShape};
 use super::link::INT32_BIT;
@@ -44,7 +45,7 @@ pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numb
     }
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
-    let seeds = Seeds { contracts: &[], observed: Observed::NONE, entering: &[], model: None, signless: &[] };
+    let seeds = Seeds { contracts: &[], entering: &[], model: None, signless: &[] };
     let mut masks = vec![0u64; instructions.len()];
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         let instruction = instructions[pc];

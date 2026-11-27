@@ -121,7 +121,7 @@ pub(crate) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &
     constants: &[quench_runtime::bytecode::Constant], native_calls: bool, raises: &[super::super::facts::Raise]) -> quench_runtime::dataflow::BitSet {
     // A unit with no generic operator has none to find, and needs no analysis to say so.
     if !instructions.iter().any(|instruction| super::super::facts::heap_operator(*instruction)) { return quench_runtime::dataflow::BitSet::new(); }
-    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, raises, super::super::facts::Seeds::observing(super::super::facts::Observed::NONE));
+    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, raises, super::super::facts::Seeds::typed());
     let mut pcs = quench_runtime::dataflow::BitSet::with_capacity(instructions.len());
     for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::heap_operator(**instruction) && facts.reached(*pc)) {
         let operand = |operand| super::super::facts::operand_type(constants, operand, |register|

@@ -104,7 +104,7 @@ impl Vm {
             let data = self.heap.object(template)?;
             let shape = data.shape();
             let slot = self.property_shape_slot(shape, key)?;
-            if self.shape_may_have_accessors(shape) && data.record_only().and_then(|record| self.slot_attributes(record, slot))?.accessor {
+            if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                 return None;
             }
             slots.push(u32::try_from(slot).ok()?);

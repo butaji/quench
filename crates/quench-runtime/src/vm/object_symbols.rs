@@ -429,7 +429,8 @@ impl Vm {
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
             // Shaped values are read from the record.
-            if !self.read_shaped_values(data.record(), &slots, &mut values) {
+            let Some(record) = data.record_only() else { return false };
+            if !self.read_shaped_values(record, &slots, &mut values) {
                 return false;
             }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
@@ -455,7 +456,7 @@ impl Vm {
             }
             let slot = *slot as usize;
             // Slot attributes are record data.
-            if data.record_only().and_then(|record| self.slot_attributes(record, slot)).is_none_or(|attributes| attributes.accessor) {
+            if self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor) {
                 return false;
             }
             let Some(value) = self.heap.property_get_ref(data, slot) else {
@@ -588,7 +589,7 @@ impl Vm {
         let data = self.heap.object(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
         // Slot values are record data.
-        data.record_only().and_then(|record| self.slot_data_value(record, slot))
+        self.slot_data_value(data, slot)
     }
 
     pub fn set_symbol_property(
@@ -617,7 +618,7 @@ impl Vm {
         let (shape, proto) = (data.shape(), data.proto());
         if let Some(slot) = self.property_shape_slot(shape, symbol) {
             // Slot attributes are record data.
-            let attributes = data.record_only().and_then(|record| self.slot_attributes(record, slot))?;
+            let attributes = self.slot_attributes(data, slot)?;
             if attributes.accessor {
                 return None;
             }
@@ -660,7 +661,7 @@ impl Vm {
         if let Some(slot) = self.property_shape_slot(data.shape(), symbol) {
             let writable = self
                 // Slot attributes are record data.
-                .slot_attributes(data.record(), slot)
+                .slot_attributes(data, slot)
                 .is_some_and(|attributes| !attributes.accessor && attributes.writable);
             if writable {
                 self.heap.property_set(object, slot, value);

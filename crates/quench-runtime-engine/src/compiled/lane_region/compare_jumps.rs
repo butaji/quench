@@ -3,6 +3,7 @@
 //! or `undefined`, a bitwise test, an ordering, an equality, `instanceof` or `in`, all by the
 //! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
 //! not name leaves the jump to the exact path.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

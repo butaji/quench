@@ -38,11 +38,12 @@ fn relation_edges_overapproximate_all_signed_integer_outcomes() {
 fn only_a_product_that_may_be_negative_zero_loses_its_integer_type() {
     let range = |min, max| IntRange { min, max };
     let multiply = NumberArithmetic::Multiply;
-    assert!(negative_zero(multiply, range(-3, 2), range(0, 5)));
-    assert!(negative_zero(multiply, range(0, 5), range(-3, 2)));
-    assert!(!negative_zero(multiply, range(1, 5), range(-3, -1)));
-    assert!(!negative_zero(multiply, range(0, 5), range(0, 5)));
-    assert!(!negative_zero(NumberArithmetic::Add, range(-3, 2), range(0, 5)));
+    let zero_free = quench_runtime::typed_ir::arithmetic::zero_free;
+    assert!(!zero_free(multiply, range(-3, 2), range(0, 5)));
+    assert!(!zero_free(multiply, range(0, 5), range(-3, 2)));
+    assert!(zero_free(multiply, range(1, 5), range(-3, -1)));
+    assert!(zero_free(multiply, range(0, 5), range(0, 5)));
+    assert!(zero_free(NumberArithmetic::Add, range(-3, 2), range(0, 5)));
 }
 
 #[test]

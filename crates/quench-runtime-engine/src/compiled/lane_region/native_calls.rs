@@ -15,6 +15,7 @@
 //! (`builtin_calls`) runs its staged row, its result a tagged Boolean, Number or string, or an
 //! int32.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

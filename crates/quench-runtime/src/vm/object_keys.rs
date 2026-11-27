@@ -205,7 +205,7 @@ impl Vm {
             .map(|&(atom, slot)| {
                 let slot = slot as usize;
                 // Slot attributes are record data.
-                if data.record_only().and_then(|record| self.slot_attributes(record, slot))?.accessor {
+                if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 Some((self.atom_value(atom).host_string().to_owned(), self.heap.property_get_ref(data, slot)?))
@@ -251,7 +251,7 @@ impl Vm {
             .iter()
             .map(|&(_, slot)| {
                 let slot = slot as usize;
-                (data_only || data.record_only().and_then(|record| self.slot_attributes(record, slot)).is_some_and(|attributes| !attributes.accessor))
+                (data_only || self.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor))
                     .then(|| self.heap.property_get_ref(data, slot))
                     .flatten()
             })

@@ -4,6 +4,8 @@
 //! source once and a read defines its destination once. A binding the frame's own access does
 //! not take (an uninitialized `let`, a `const`, a shared slot) is the interpreter's exact path.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::{NumericFrame, NumericStage, Operation, Step};
 
 /// Run the capture row `operation`: its word, or `Unresolved` where the frame's access declines.

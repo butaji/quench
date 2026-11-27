@@ -81,9 +81,6 @@ pub(crate) struct EmitFrame<'a> {
     pub(crate) proven_arguments: std::cell::Cell<bool>,
     /// Whether that call reads its closure and captures from the callee's bound words (`DirectCallee::bound`).
     pub(crate) rebinds: std::cell::Cell<bool>,
-    /// Where the code holds the lane's `this` trust (`VmFacts::this_trusted`): set once a call's bound
-    /// `this` is guarded a direct object (`CallFrame::call_this_bound`, `StableFacts::this_trust`).
-    pub(crate) this_trust: Option<&'a mut bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
@@ -427,11 +424,12 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     };
     builder.def_var(variable, value);
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
+    // The definition's word takes the shape its type names: a fact of that object (`kept_shapes`).
+    let kept = fact.value.ty.object_shape().filter(|_| fact.value.representation == Representation::Tagged);
     state.values[index] = fact;
     state.proofs.homed.remove(index);
-    state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
-    state.proofs.kept_shapes.remove(&register);
+    if let Some(shape) = kept { state.proofs.kept_shapes.insert(builder.func.dfg.resolve_aliases(value), shape); }
     state.proofs.typed.retain(|view| view.register != register);
 }
 
@@ -445,9 +443,6 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
         .then(|| register_tagged(builder, registers, state, source));
     let receiver = state.proofs.receivers.contains(&source);
-    let kept = state.proofs.kept_shapes.get(&source).copied();
-    let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
-        (*owner == Some(source)).then_some((*shape, *projection))).collect();
     let typed: smallvec::SmallVec<[_; 2]> = state.proofs.typed.iter().filter(|view| view.register == source)
         .map(|view| super::TypedProof { register: destination, ..*view }).collect();
     register_define(builder, registers, written, state, destination, value, fact);
@@ -455,9 +450,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         builder.def_var(registers.tagged[usize::from(destination)], bits);
         state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
     }
-    for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
-    if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
     state.proofs.typed.extend(typed);
     value
 }

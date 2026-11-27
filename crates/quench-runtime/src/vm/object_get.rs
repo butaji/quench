@@ -1154,13 +1154,12 @@ impl Vm {
 
     /// Whether `object` may gain a private element: always, unless the host applies
     /// non-extensibility to private elements (`Host::nonextensible_applies_to_private`).
-    pub fn private_element_addable(&self, object: &Object) -> bool {
-        object.is_extensible() || !self.host.nonextensible_applies_to_private()
+    pub fn private_element_addable<'a>(&self, object: impl Into<ObjectRef<'a>>) -> bool {
+        object.into().is_extensible() || !self.host.nonextensible_applies_to_private()
     }
 
     pub fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        // record: private_element_addable takes the record
-        let Some(addable) = self.heap.object(target).and_then(|object| object.record_only().map(|record| self.private_element_addable(record))) else {
+        let Some(addable) = self.heap.object(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
         if !addable {
@@ -1179,8 +1178,7 @@ impl Vm {
     pub fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
-            // record: private_element_addable takes the record
-            let Some((addable, branded)) = self.heap.object(object).and_then(|data| data.record_only().map(|record| (self.private_element_addable(record), self.has_private_name(object, brand)))) else {
+            let Some((addable, branded)) = self.heap.object(object).map(|data| (self.private_element_addable(data), self.has_private_name(object, brand))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {

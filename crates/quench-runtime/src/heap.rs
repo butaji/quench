@@ -180,7 +180,7 @@ mod store_gate;
 mod typed_view;
 pub use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
-use layouts::{class_link, class_shape};
+use layouts::{class_field_reps, class_link, class_shape};
 pub use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 
 /// The word a double backing holds for the Number `number`: its bits, NaN canonical, so a NaN
@@ -190,88 +190,6 @@ pub fn double_word(number: f64) -> u64 {
     if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() }
 }
 
-/// A double backing's elements `first + step * k` of a loop kernel's run, decoded into `out`;
-/// `false` where one is a hole.
-///
-/// # Safety
-/// `first + step * k` is below the backing's length for every `k < out.len()`.
-pub unsafe fn double_read_run(words: *const u64, (first, step): (i64, i64), out: &mut [f64]) -> bool {
-    let hole = Value::DELETED.to_bits();
-    let mut numbers = true;
-    for (k, o) in out.iter_mut().enumerate() {
-        // SAFETY: the caller's contract.
-        let word = unsafe { *words.add((first + step * k as i64) as usize) };
-        numbers &= word != hole;
-        *o = f64::from_bits(word);
-    }
-    numbers
-}
-
-/// Whether every element `first + step * k` a loop kernel's store replaces is present.
-///
-/// # Safety
-/// `first + step * k` is below the backing's length for every `k < len`.
-pub unsafe fn double_stores_present(words: *const u64, (first, step): (i64, i64), len: usize) -> bool {
-    let hole = Value::DELETED.to_bits();
-    (0..len as i64).all(|k| unsafe { *words.add((first + step * k) as usize) } != hole)
-}
-
-/// The Number elements `first + step * k` of a wide backing's words, decoded into `out`;
-/// `false` where one is no Number (a hole or a reference).
-///
-/// # Safety
-/// `first + step * k` is below the backing's length for every `k < out.len()`.
-pub unsafe fn word_read_run(words: *const Value, (first, step): (i64, i64), out: &mut [f64]) -> bool {
-    if step == 1 {
-        // SAFETY: the caller's contract.
-        let elements = unsafe { std::slice::from_raw_parts(words.add(first as usize), out.len()) };
-        return decode_run(out, elements);
-    }
-    let mut numbers = true;
-    for (k, o) in out.iter_mut().enumerate() {
-        // SAFETY: the caller's contract.
-        let number = unsafe { *words.add((first + step * k as i64) as usize) }.as_number();
-        numbers &= number.is_some();
-        *o = number.unwrap_or(0.0);
-    }
-    numbers
-}
-
-/// Whether every element `first + step * k` a loop kernel's store replaces is present.
-///
-/// # Safety
-/// `first + step * k` is below the backing's length for every `k < len`.
-pub unsafe fn word_stores_present(words: *const Value, (first, step): (i64, i64), len: usize) -> bool {
-    let mut deleted = 0u64;
-    for k in 0..len as i64 {
-        // SAFETY: the caller's contract.
-        deleted |= u64::from(unsafe { *words.add((first + step * k) as usize) }.is_deleted());
-    }
-    deleted == 0
-}
-
-/// Decodes `elements` into `out` without branches, so the loop vectorizes; `false` where one
-/// is no Number.
-fn decode_run(out: &mut [f64], elements: &[Value]) -> bool {
-    let mut others = 0u64;
-    for (o, element) in out.iter_mut().zip(elements) {
-        let (number, int, double) = element.number_parts();
-        others |= u64::from(!number);
-        *o = std::hint::select_unpredictable(int, f64::from(element.to_bits() as u32 as i32), double);
-    }
-    others == 0
-}
-
-/// Writes each Number `numbers(k)` at the element `first + step * k` of a double backing.
-///
-/// # Safety
-/// `first + step * k` is below the backing's length for every `k < len`.
-pub unsafe fn double_write_run(words: *mut u64, (first, step): (i64, i64), len: usize, numbers: impl Fn(usize) -> f64) {
-    for k in 0..len {
-        // SAFETY: the caller's contract.
-        unsafe { *words.add((first + step * k as i64) as usize) = double_word(numbers(k)) };
-    }
-}
 #[quench_macros::test_visible]
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
@@ -289,14 +207,12 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod view_holders;
-mod this_holders;
 mod collection_entries;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
 mod float_slots;
 mod slot_words;
-#[cfg(test)] mod float_slot_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -316,7 +232,7 @@ mod class_space;
 mod departure;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
-pub use object_view::{CellView, CellViewMut, ObjectMut, ObjectRef};
+pub use object_view::{ObjectMut, ObjectRef};
 mod root;
 mod slots;
 mod snapshot;
@@ -338,7 +254,6 @@ mod weak;
 pub use cell::*;
 pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub use view_holders::{subscribe_typed_views, typed_views_stable};
-pub use this_holders::{retire_this_holders, subscribe_this_trust};
 pub(crate) use view_holders::live_view_changed;
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
@@ -1370,6 +1285,8 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        // A prototype is a record: a class cell departs before it is read or marked (R4-C4).
+        self.depart_for_mutation(prototype);
         // A prototype marked and watched before, as most allocations' prototypes are, only
         // takes the recent entry when its run is still wide: no exclusive access, which
         // widens and barriers.
@@ -4714,17 +4631,17 @@ impl Heap {
         for (slot, value) in values.into_iter().enumerate() {
             self.note_value_slot(object, slot, value);
         }
+        if let Some(granule) = self.live_class_cell(object) {
+            // A store that breaks a field's representation departs the object; the record path then stores them all.
+            if values.into_iter().enumerate().all(|(slot, value)| self.class_cell_store(granule, slot, value)) {
+                return;
+            }
+        }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let record = match self.object_store_mut(object, stored).expect("property owner is an object") {
-            // A class cell's leading fields are the values themselves.
-            ObjectMut::Cell(mut cell) => {
-                cell.note_constant_write();
-                for (slot, value) in values.into_iter().enumerate() {
-                    cell.set_slot(slot, value);
-                }
-                return;
-            }
+            // The class cell stored in place above, or it departed when a store broke its representation.
+            ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
             ObjectMut::Record(record) => record,
         };
         record.note_constant_write();
@@ -4793,14 +4710,15 @@ impl Heap {
 
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
+        if let Some(granule) = self.live_class_cell(object) {
+            if self.class_cell_store(granule, slot, value) {
+                return;
+            }
+        }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // A class cell's field is the store: its constant mark ends, as a record's write does.
-                ObjectMut::Cell(mut cell) => {
-                    cell.note_constant_write();
-                    cell.set_slot(slot, value);
-                    return;
-                }
+                // The class cell stored in place above, or it departed when a store broke its representation.
+                ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
                 ObjectMut::Record(record) => record,
             };
             record.note_value_write(slot);
@@ -4846,14 +4764,15 @@ impl Heap {
         value: Value,
     ) {
         self.note_value_slot(object, slot, value);
+        if let Some(granule) = self.live_class_cell(object) {
+            if self.class_cell_store(granule, slot, value) {
+                return;
+            }
+        }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // A class cell's field is the store, as in `property_set`.
-                ObjectMut::Cell(mut cell) => {
-                    cell.note_constant_write();
-                    cell.set_slot(slot, value);
-                    return;
-                }
+                // The class cell stored in place above, or it departed when a store broke its representation.
+                ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
                 ObjectMut::Record(record) => record,
             };
             record.note_value_write(slot);
@@ -5145,7 +5064,7 @@ impl Heap {
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
         let value = self.object_value(record_id);
-        self.note_object_slots(value, slot + 1);
+        self.memory_profile.object_slots_changed(value, slot + 1);
         true
     }
 
@@ -5312,7 +5231,8 @@ impl Heap {
     /// The edges of live class cell `owner` (of class `class`, with fields `fields`), pushed as an object's are
     /// (`object_children_marking`): the class's prototype once per run of siblings, the class's shape roots,
     /// then each heap field that `mark_leaf` does not mark. A cell is never a prototype (its first use departs
-    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge.
+    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge, and
+    /// a raw-double field (`FieldReps`) holds f64 bits, which are no edge either.
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn cell_children_marking(
@@ -5333,7 +5253,11 @@ impl Heap {
             }
         }
         object_roots(trace_kind, owner, class_shape(class), false, work);
-        for &value in fields {
+        let reps = class_field_reps(class);
+        for (slot, &value) in fields.iter().enumerate() {
+            if reps.is_raw(slot) {
+                continue;
+            }
             if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                 work.push(value);
             }
@@ -5884,7 +5808,7 @@ fn join_object_slot_values(object: &Object, properties: &mut ValueArena) {
 #[inline(always)]
 unsafe fn read_exact_slot(object: &Object, properties: &ValueArena, slot: usize) -> Value {
     // SAFETY: the caller proves the exact slot exists; the arena holds the object's run.
-    unsafe { crate::staged::concrete_own_read(object, crate::staged::Concrete::over_arena(properties), slot) }
+    unsafe { crate::staged::concrete_own_read(object, crate::staged::concrete_over_arena(properties), slot) }
 }
 
 /// Whether a store that `widened` its slot's owner is left to the caller: a native-preserving
