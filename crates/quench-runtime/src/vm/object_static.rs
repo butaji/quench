@@ -499,102 +499,15 @@ impl Vm {
         self.set_builtin_value_named(object, name, function)
     }
 
+    /// Runs an object static through its table entry. Callers outside the table (the in-place
+    /// fast path, embedding, tests) reach the statics through here.
     pub fn call_object_native(
         &mut self,
         p: &ResidualProgram,
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        match native {
-            Native::Object => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if value.is_null() || value.is_undefined() {
-                    Ok(self.object())
-                } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
-                    self.box_bigint_object(p, value)
-                } else {
-                    self.box_object(value)
-                }
-            }
-            Native::ObjectGetOwnPropertyNames => {
-                self.object_names(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectGetOwnPropertySymbols => {
-                self.object_symbols(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectGetOwnPropertyDescriptor => {
-                self.object_get_own_property_descriptor(p, args)
-            }
-            Native::ObjectGetOwnPropertyDescriptors => {
-                self.object_get_own_property_descriptors(p, args)
-            }
-            Native::ObjectDefineProperty => self.object_define_property(p, args),
-            Native::ObjectDefineProperties => self.object_define_properties(p, args),
-            _ if let Some(kind) = EnumerableOwnPropertyKind::of(native) => {
-                let object = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.declined_fast.take() != Some(native)
-                    && self.is_object_like(object)
-                    && let Some(listed) = self.plain_enumerable_own_properties(object, kind)
-                {
-                    return Ok(listed);
-                }
-                self.enumerable_own_properties(p, object, kind)
-            }
-            Native::ObjectFromEntries => {
-                self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectGroupBy => self.group_by(p, args, GroupByKind::Object),
-            Native::ObjectIs => {
-                let left = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let right = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.same_value(left, right) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::ObjectCreate => {
-                let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let Some(object) = self.object_create(proto) else {
-                    return Err(JsError("Object prototype is not an object".into()));
-                };
-                if let Some(descriptors) = args.get(1).copied()
-                    && !descriptors.is_undefined()
-                {
-                    return self.object_define_properties(p, &[object, descriptors]);
-                }
-                Ok(object)
-            }
-            Native::ObjectAssign => self.object_assign(p, args),
-            Native::ObjectGetPrototypeOf => {
-                self.object_get_prototype_of(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectSetPrototypeOf => self.object_set_prototype_of(
-                p,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-                args.get(1).copied().unwrap_or(Value::UNDEFINED),
-            ),
-            Native::ObjectHasOwn => {
-                let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if target.is_null() || target.is_undefined() {
-                    return Err(self.type_error(p, "Object.hasOwn target is nullish".into()));
-                }
-                let target = self.box_object(target)?;
-                let target_root = self.heap.root(target);
-                let key = self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED));
-                let target = self.heap.root_value(target_root).unwrap();
-                self.heap.release_root(target_root);
-                let found = self.own_property_enumerable(p, target, key?)?.is_some();
-                Ok(if found { Value::TRUE } else { Value::FALSE })
-            }
-            Native::ObjectPreventExtensions => self.object_prevent_extensions(p, args),
-            Native::ObjectIsExtensible => self.object_is_extensible(p, args),
-            Native::ObjectSeal => self.object_set_integrity(p, args, false),
-            Native::ObjectIsSealed => self.object_is_integrity_level(p, args, false),
-            Native::ObjectFreeze => self.object_set_integrity(p, args, true),
-            Native::ObjectIsFrozen => self.object_is_integrity_level(p, args, true),
-            _ => Err(JsError("invalid object native".into())),
-        }
+        self.call_native_dispatch(p, native, Value::UNDEFINED, args)
     }
 
     pub(super) fn object_from_entries(
@@ -831,4 +744,163 @@ pub fn array_index(name: &str) -> Option<u32> {
         index = index.checked_mul(10)?.checked_add(u32::from(byte - b'0'))?;
     }
     (index < u32::MAX).then_some(index)
+}
+
+/// The entry of `Object` and the `Object.*` statics, each a standalone function. `Object.keys`,
+/// `Object.values` and `Object.entries` share one.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::Object => static_object,
+        Native::ObjectGetOwnPropertyNames => static_own_property_names,
+        Native::ObjectGetOwnPropertySymbols => static_own_property_symbols,
+        Native::ObjectGetOwnPropertyDescriptor => static_own_property_descriptor,
+        Native::ObjectGetOwnPropertyDescriptors => static_own_property_descriptors,
+        Native::ObjectDefineProperty => static_define_property,
+        Native::ObjectDefineProperties => static_define_properties,
+        Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries => static_enumerable_own_properties,
+        Native::ObjectFromEntries => static_from_entries,
+        Native::ObjectGroupBy => static_group_by,
+        Native::ObjectIs => static_is,
+        Native::ObjectCreate => static_create,
+        Native::ObjectAssign => static_assign,
+        Native::ObjectGetPrototypeOf => static_get_prototype_of,
+        Native::ObjectSetPrototypeOf => static_set_prototype_of,
+        Native::ObjectHasOwn => static_has_own,
+        Native::ObjectPreventExtensions => static_prevent_extensions,
+        Native::ObjectIsExtensible => static_is_extensible,
+        Native::ObjectSeal => static_seal,
+        Native::ObjectIsSealed => static_is_sealed,
+        Native::ObjectFreeze => static_freeze,
+        Native::ObjectIsFrozen => static_is_frozen,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+fn first_argument(args: &[Value]) -> Value {
+    args.first().copied().unwrap_or(Value::UNDEFINED)
+}
+
+fn static_object(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let value = first_argument(args);
+    if value.is_null() || value.is_undefined() {
+        Ok(vm.object())
+    } else if matches!(vm.heap.get(value), Some(Cell::BigInt(_))) {
+        vm.box_bigint_object(p, value)
+    } else {
+        vm.box_object(value)
+    }
+}
+
+fn static_own_property_names(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_names(p, first_argument(args))
+}
+
+fn static_own_property_symbols(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_symbols(p, first_argument(args))
+}
+
+fn static_own_property_descriptor(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_get_own_property_descriptor(p, args)
+}
+
+fn static_own_property_descriptors(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_get_own_property_descriptors(p, args)
+}
+
+fn static_define_property(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_define_property(p, args)
+}
+
+fn static_define_properties(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_define_properties(p, args)
+}
+
+fn static_enumerable_own_properties(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let kind = EnumerableOwnPropertyKind::of(native).expect("Object.keys, values and entries list their kind");
+    let object = first_argument(args);
+    if vm.declined_fast.take() != Some(native)
+        && vm.is_object_like(object)
+        && let Some(listed) = vm.plain_enumerable_own_properties(object, kind)
+    {
+        return Ok(listed);
+    }
+    vm.enumerable_own_properties(p, object, kind)
+}
+
+fn static_from_entries(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_from_entries(p, first_argument(args))
+}
+
+fn static_group_by(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.group_by(p, args, GroupByKind::Object)
+}
+
+fn static_is(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let left = first_argument(args);
+    let right = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+    Ok(if vm.same_value(left, right) { Value::TRUE } else { Value::FALSE })
+}
+
+fn static_create(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let proto = first_argument(args);
+    let Some(object) = vm.object_create(proto) else {
+        return Err(JsError("Object prototype is not an object".into()));
+    };
+    if let Some(descriptors) = args.get(1).copied()
+        && !descriptors.is_undefined()
+    {
+        return vm.object_define_properties(p, &[object, descriptors]);
+    }
+    Ok(object)
+}
+
+fn static_assign(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_assign(p, args)
+}
+
+fn static_get_prototype_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_get_prototype_of(p, first_argument(args))
+}
+
+fn static_set_prototype_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_set_prototype_of(p, first_argument(args), args.get(1).copied().unwrap_or(Value::UNDEFINED))
+}
+
+fn static_has_own(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let target = first_argument(args);
+    if target.is_null() || target.is_undefined() {
+        return Err(vm.type_error(p, "Object.hasOwn target is nullish".into()));
+    }
+    let target = vm.box_object(target)?;
+    let target_root = vm.heap.root(target);
+    let key = vm.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED));
+    let target = vm.heap.root_value(target_root).unwrap();
+    vm.heap.release_root(target_root);
+    let found = vm.own_property_enumerable(p, target, key?)?.is_some();
+    Ok(if found { Value::TRUE } else { Value::FALSE })
+}
+
+fn static_prevent_extensions(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_prevent_extensions(p, args)
+}
+
+fn static_is_extensible(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_is_extensible(p, args)
+}
+
+fn static_seal(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_set_integrity(p, args, false)
+}
+
+fn static_is_sealed(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_is_integrity_level(p, args, false)
+}
+
+fn static_freeze(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_set_integrity(p, args, true)
+}
+
+fn static_is_frozen(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.object_is_integrity_level(p, args, true)
 }
