@@ -1474,7 +1474,6 @@ impl Vm {
     #[inline]
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
-        frame.js_jit_interpreter_started = None;
         frame.original_arguments.clear();
         frame.with_objects.clear();
         frame.dynamic_bindings.clear();
@@ -2426,20 +2425,6 @@ impl Vm {
             let (step, mut yielded) = self.materialized_stop(pending_calls.last(), frame, pc, step);
             match step {
                 Ok(StepResult::Return(mut value)) => {
-                    let completion = {
-                        let completed = &mut self.frames[frame];
-                        completed.js_jit_interpreter_started.take().map(|started| {
-                            (
-                                completed.program,
-                                completed.function,
-                                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                            )
-                        })
-                    };
-                    if let Some((program, function, elapsed_ns)) = completion {
-                        self.programs
-                            .record_js_jit_interpreter_completion(program, function, elapsed_ns);
-                    }
                     let mut settle_error;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {

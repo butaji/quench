@@ -1247,10 +1247,6 @@ pub struct WasmJitDiagnostics {
     pub mapped_bytes: usize,
     pub compile_ns: u128,
     pub native_entry_requests: Vec<std::cell::Cell<u64>>,
-    /// Deterministic 1-in-256 samples of inclusive native-entry wall time.
-    pub native_entry_samples: Vec<std::cell::Cell<u64>>,
-    /// Sum of sampled elapsed nanoseconds; nested native calls may overlap.
-    pub native_entry_sampled_ns: Vec<std::cell::Cell<u64>>,
     pub interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     pub compiled_to_vm_callouts: std::cell::Cell<u64>,
     pub compiled_import_callouts: std::cell::Cell<u64>,
@@ -5764,18 +5760,6 @@ impl Drop for CompiledProgram {
             })
             .collect::<Vec<_>>()
             .join(",");
-        let native_entry_samples = stats
-            .native_entry_samples
-            .iter()
-            .zip(&stats.native_entry_sampled_ns)
-            .enumerate()
-            .filter_map(|(function, (samples, elapsed_ns))| {
-                let samples = samples.get();
-                let elapsed_ns = elapsed_ns.get();
-                (samples > 0).then(|| format!("[{function},{samples},{elapsed_ns}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
         let fallbacks = stats
             .interpreter_fallback_entries
             .iter()
@@ -5837,7 +5821,7 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"native_entry_sampling_interval\":{},\"native_entry_samples\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -5845,8 +5829,6 @@ impl Drop for CompiledProgram {
             stats.mapped_bytes,
             stats.compile_ns,
             entries,
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL,
-            native_entry_samples,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),
             stats.compiled_import_callouts.get(),
@@ -5938,8 +5920,6 @@ impl LoopTier {
         self.code.as_ref().is_some_and(|code| code.is_published())
     }
 }
-
-pub const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 
 
 /// Where a walked frame is, for a writer that edits it there (`LaneStack::recomplete_at`).

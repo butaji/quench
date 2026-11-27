@@ -4106,7 +4106,6 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
-        js_jit_interpreter_started: None,
         fixed_this: false,
     }));
 
@@ -7259,7 +7258,6 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         active_iterators: vec![],
         with_objects: vec![Value::heap(16)],
         with_base: 0,
-        js_jit_interpreter_started: None,
         fixed_this: false,
     };
 
@@ -9547,7 +9545,6 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 }],
                 with_objects: Vec::new(),
                 with_base: 0,
-                js_jit_interpreter_started: None,
                 fixed_this: false,
             };
             let continuation = Continuation::suspend(

@@ -1820,7 +1820,6 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-use quench_runtime::vm::engine_types::JIT_NATIVE_ENTRY_SAMPLE_INTERVAL;
 use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
@@ -2232,10 +2231,6 @@ fn note_compiled_callout(counter: *mut u64) {
     }
 }
 
-fn native_entry_sample_due(entry_count: u64) -> bool {
-    entry_count > 0 && entry_count.is_multiple_of(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL)
-}
-
 unsafe fn note_import_callout_target(
     counters: *const std::cell::Cell<u64>,
     counter_count: usize,
@@ -2566,7 +2561,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // returns.
             let callee_root = unsafe { &mut *vm_pointer }.hold_root(callee);
             direct_target_root = Some(callee_root);
-            let native_entry_should_sample = compiled.note_direct_reference_entry(function);
+            compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             // SAFETY: the record belongs to the environment the target runs in.
             nested.enter(unsafe { &*record });
@@ -2581,8 +2576,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
                     && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
                 target_same_artifact_native = same_artifact_direct_hit;
             }
-            let native_entry_sample_started =
-                native_entry_should_sample.then(std::time::Instant::now);
             // SAFETY: as the direct path's call; the nested context outlives the call.
             let status = unsafe {
                 enter_wasm(
@@ -2594,9 +2587,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
                     entry,
                 )
             };
-            if let Some(started) = native_entry_sample_started {
-                compiled.finish_native_entry_sample(function, started);
-            }
             if status == RAISED_STATUS as u32 {
                 match nested.raised.take() {
                     Some(Raised::Error(error)) => return Err(error),
@@ -2876,50 +2866,28 @@ impl CompiledProgram {
             .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
     }
 
-    fn note_direct_reference_entry(&self, function: usize) -> bool {
-        let native_entry_should_sample = self.note_native_entry(function);
+    fn note_direct_reference_entry(&self, function: usize) {
+        self.note_native_entry(function);
         #[cfg(test)]
         if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
         }
-        native_entry_should_sample
     }
 
-    fn note_native_entry(&self, function: usize) -> bool {
-        let native_entry_should_sample = if let Some(stats) = &self.diagnostics
+    fn note_native_entry(&self, function: usize) {
+        if let Some(stats) = &self.diagnostics
             && let Some(entries) = stats.native_entry_requests.get(function)
         {
-            let entry_count = entries.get().saturating_add(1);
-            entries.set(entry_count);
-            native_entry_sample_due(entry_count)
-        } else {
-            false
-        };
+            entries.set(entries.get().saturating_add(1));
+        }
         #[cfg(test)]
         if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
         }
-        native_entry_should_sample
-    }
-
-    fn finish_native_entry_sample(&self, function: usize, started: std::time::Instant) {
-        let stats = self
-            .diagnostics
-            .as_ref()
-            .expect("sampled entries require JIT diagnostics");
-        let (Some(samples), Some(sampled_ns)) = (
-            stats.native_entry_samples.get(function),
-            stats.native_entry_sampled_ns.get(function),
-        ) else {
-            unreachable!("sampled function is present in diagnostic function tables");
-        };
-        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        samples.set(samples.get().saturating_add(1));
-        sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
     }
 
     #[cfg(test)]
@@ -4866,15 +4834,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
             } else {
                 None
             };
-            let sample_call = diagnostics_enabled
-                && is_call
-                && vm.programs.should_sample_js_jit_call_site(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    current_pc,
-                    current_instruction.op(),
-                );
-            let call_sample_started = sample_call.then(std::time::Instant::now);
             let capture = if matches!(quench_runtime::staged::Operation::<u64, ()>::of(current_instruction),
                 Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
@@ -4955,9 +4914,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                     current_instruction.op(),
                     direct_call_target,
                     outcome,
-                    call_sample_started.map(|started| {
-                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
-                    }),
                 );
             }
             match step {
@@ -7882,12 +7838,6 @@ impl Vm {
             return Some(return_pc);
         }
         self.programs.record_js_jit_fallback_entry(program_id, function);
-        if program.kind != quench_runtime::bytecode::ProgramKind::Wasm
-            && self.programs.js_jit_diagnostics_enabled()
-            && self.frames[frame].js_jit_interpreter_started.is_none()
-        {
-            self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
-        }
         None
     }
 
@@ -8623,8 +8573,6 @@ impl Vm {
                 mapped_bytes,
                 compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
                 native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                native_entry_samples: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                native_entry_sampled_ns: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 compiled_to_vm_callouts: std::cell::Cell::new(0),
                 compiled_import_callouts: std::cell::Cell::new(0),
@@ -9095,9 +9043,7 @@ impl Vm {
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
             let mut out = 0u64;
-            let native_entry_should_sample = compiled.note_native_entry(id as usize);
-            let native_entry_sample_started =
-                native_entry_should_sample.then(std::time::Instant::now);
+            compiled.note_native_entry(id as usize);
             // SAFETY: the entry is compiled code for this function's
             // signature; the context, arguments and result outlive the call,
             // and the memory view stays valid because compiled code never
@@ -9112,9 +9058,6 @@ impl Vm {
                     function.entry,
                 )
             };
-            if let Some(started) = native_entry_sample_started {
-                compiled.finish_native_entry_sample(id as usize, started);
-            }
             if let Some(stats) = &compiled.diagnostics {
                 stats.compiled_to_vm_callouts.set(
                     stats
@@ -11279,19 +11222,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn native_entry_sampling_is_sparse_and_deterministic() {
-        assert!(!native_entry_sample_due(0));
-        assert!(!native_entry_sample_due(1));
-        assert!(native_entry_sample_due(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL));
-        assert!(!native_entry_sample_due(
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL + 1
-        ));
-        assert!(native_entry_sample_due(
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL * 2
-        ));
     }
 
     #[test]
