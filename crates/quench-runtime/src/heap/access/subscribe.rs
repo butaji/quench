@@ -39,7 +39,7 @@ impl Heap {
         let mut link = prototype;
         for _ in 0..depth {
             self.mark_prototype(link);
-            let object = self.object(link)?;
+            let object = self.object_ref(link)?;
             subjects.push(object.watched_subject()?);
             link = object.proto();
         }
