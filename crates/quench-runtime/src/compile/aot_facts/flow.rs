@@ -7,7 +7,9 @@ use super::scope::Scope;
 use super::value::{Word, Key, PrototypeBase};
 use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
 use crate::dataflow::{Dataflow, solve};
-use crate::typed_ir::{Representation, Type};
+use crate::staged::{Comparison, Operation};
+use crate::typed_ir::{Cell, Classes, Elements, Representation, Type, language_bit};
+use crate::ValueType;
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
@@ -156,12 +158,109 @@ impl Dataflow for Solver<'_> {
         out
     }
 
-    /// An exception edge may leave the block before any of its writes, so it carries no fact.
+    /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal
+    /// edge carries the fact its block's conditional jump proves on it (`Solver::refine`).
     fn transfer_edge_at(&self, block: usize, index: usize, out: &Vec<Word>) -> Vec<Word> {
         match self.blocks.kinds[block][index] {
             ControlEdge::Handler => vec![Word::UNKNOWN; out.len()],
-            ControlEdge::Normal => out.clone(),
+            ControlEdge::Normal => self.refine(block, self.blocks.targets[block][index], out),
         }
+    }
+}
+
+/// What a conditional jump's test proves about the value it tests, on one of its edges.
+#[derive(Clone, Copy)]
+enum Fact {
+    /// The value is `null` or `undefined` (or, by a loose test, an object an IsHTMLDDA cell may be).
+    Nullish,
+    /// The value is neither `null` nor `undefined`.
+    NotNullish,
+}
+
+impl Solver<'_> {
+    /// The state the normal edge from `block` to `target` carries, from `block`'s output `out`. Edge-fact
+    /// law: the jump at the end of a block proves a fact about the register it tests on each of its two
+    /// edges, and that fact is proven at the test, not assumed. The refined word is carried on the value
+    /// from the edge on, and every read after the edge trusts it, so `x.f` after `x != null` is one load
+    /// (the true edge carries `x: C`, not `C | Null`). An edge the test proves nothing on, or a jump whose
+    /// operands the state does not name with certainty, carries `out` as it is.
+    fn refine(&self, block: usize, target: usize, out: &Vec<Word>) -> Vec<Word> {
+        let last = self.blocks.ranges[block].end - 1;
+        let instruction = self.function.instruction_at(last);
+        let Some(jump) = conditional_target(instruction) else { return out.clone() };
+        let fallthrough = last + 1;
+        let edge = self.blocks.ranges[target].start;
+        // A jump to the next instruction has one edge that two indices name: no test tells them apart.
+        if jump == fallthrough || (edge != jump && edge != fallthrough) { return out.clone(); }
+        let Some((register, fact)) = edge_fact(instruction, out, edge == jump) else { return out.clone() };
+        let word = out[register];
+        let mut refined = out.clone();
+        refined[register] = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
+        refined
+    }
+}
+
+/// The jump target of a conditional jump (`JumpIf`, or the fused `CompareJump`); `None` for any other instruction.
+fn conditional_target(instruction: WideInstruction) -> Option<usize> {
+    matches!(Operation::<u64, ()>::of(instruction), Some(Operation::JumpIf { .. } | Operation::CompareJump { .. }))
+        .then(|| instruction.jump_target() as usize)
+}
+
+/// The fact a conditional jump's test proves about the register it tests, on its target edge (`to_target`)
+/// or its fallthrough, from the state `state` the jump leaves. Recognized with certainty only:
+/// - `JumpIf` on a register `r` is a truth test. Its truthy edge proves `r` not nullish; its falsy edge may
+///   be `null`, `undefined`, `false`, `0` or `""`, so it proves nothing.
+/// - `CompareJump` with an equality operator (`==`, `===`, `!=`, `!==`) of one register against a register
+///   whose word is exactly `null` or `undefined`. The equal edge proves `r` nullish. The unequal edge of a
+///   loose test proves `r` not nullish; a strict unequal edge may still be the other nullish value, so it proves nothing.
+/// Every other jump, and a comparison of two registers neither of which is a nullish constant, is `None`.
+fn edge_fact(instruction: WideInstruction, state: &[Word], to_target: bool) -> Option<(usize, Fact)> {
+    match Operation::<u64, ()>::of(instruction)? {
+        Operation::JumpIf { register, taken } => {
+            // The target is taken where `r` is truthy when `taken`, and where it is falsy when not.
+            let truthy = if to_target { taken } else { !taken };
+            truthy.then_some((usize::from(register), Fact::NotNullish))
+        }
+        // The jump is taken where the comparison fails (`negate`), so the target's edge holds the comparison false.
+        Operation::CompareJump { comparison: Comparison::Equality { strict, negated }, left, right, negate: true } => {
+            let holds = !to_target;
+            let equal = holds != negated;
+            let (left, right) = (usize::from(left.register_index()?), usize::from(right.register_index()?));
+            let register = match (is_nullish_constant(state[left]), is_nullish_constant(state[right])) {
+                (false, true) => left,
+                (true, false) => right,
+                _ => return None,
+            };
+            if equal {
+                // A loose `== null` also holds of a legacy heap cell an IsHTMLDDA object is, so only a type that
+                // holds no such cell proves the value nullish.
+                (strict || !may_be_legacy_nullish(state[register].cell.ty)).then_some((register, Fact::Nullish))
+            } else {
+                (!strict).then_some((register, Fact::NotNullish))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether a word is exactly `null` or exactly `undefined`: its type holds no other value, so it is that constant.
+fn is_nullish_constant(word: Word) -> bool {
+    word.cell.ty == Type::language(ValueType::Null) || word.cell.ty == Type::language(ValueType::Undefined)
+}
+
+/// Whether a value of type `ty` may be a legacy heap cell (an IsHTMLDDA object) that a loose `== null` holds of:
+/// any type outside `null`, `undefined`, Number and Boolean, except a direct object, which no such cell is.
+fn may_be_legacy_nullish(ty: Type) -> bool {
+    let plain = language_bit(ValueType::Null) | language_bit(ValueType::Undefined)
+        | language_bit(ValueType::Number) | language_bit(ValueType::Boolean);
+    ty.direct_object_part().is_none() && ty.may_be_languages(Type::languages(!plain))
+}
+
+/// The cell a value of cell `cell` holds on an edge proving `fact`. A nullish value holds no object and no array.
+fn refine_cell(cell: Cell, fact: Fact) -> Cell {
+    match fact {
+        Fact::NotNullish => Cell { ty: cell.ty.not_nullish(), ..cell },
+        Fact::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER },
     }
 }
 
