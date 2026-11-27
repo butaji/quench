@@ -5748,7 +5748,25 @@ unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneI
     }
     let second = machine.form_hint(entry, first);
     let (Some(first_class), Some(second_class)) = (nested_hop_class(hint.receiver), nested_hop_class(second.receiver)) else { return };
+    // A loop header keeps its site in the record, and a header's `mode` is the loop's: it keeps the generic row.
+    if holds_loop_site(ip) { return; }
+    // The formed row reads its second hop and base from the record (`nested_mode`), not from the site
+    // and the cache: the hops' guards are the check, so a stale word only misses.
+    // SAFETY: as `requicken`; an unfused field record's `mode` is zero and no fusion names it.
+    unsafe { (*ip.cast_mut()).mode = nested_mode(entry.receiver, entry.slot, site.base) };
     requicken(ip, nested_formed_handler(first_class, second_class));
+}
+
+/// The `mode` word of a formed nested record: the second hop's layout id (bits 0..32) and slot
+/// (32..48), and the site's base (48..64), which the formed row reads with no site or cache lookup.
+const fn nested_mode(layout: u32, slot: u16, base: quench_runtime::bytecode::FieldBase) -> u64 {
+    layout as u64 | (slot as u64) << 32 | (base.0 as u64) << 48
+}
+
+/// The second hop and base `nested_mode` packed.
+#[inline(always)]
+pub(crate) const fn nested_mode_parts(mode: u64) -> (u32, u16, quench_runtime::bytecode::FieldBase) {
+    (mode as u32, (mode >> 32) as u16, quench_runtime::bytecode::FieldBase((mode >> 48) as u16))
 }
 
 script_handler! {

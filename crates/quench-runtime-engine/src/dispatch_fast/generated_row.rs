@@ -244,6 +244,16 @@ lane_handler! {
                 // slot, the site's second entry the second, both primary own entries; the base is
                 // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
                 let machine = unsafe { vm(script) };
+                if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) } {
+                    // A formed instance's hops are its record's (`requicken_nested`): the hint the first,
+                    // `mode` the second and the base. Their guards are the check, so nothing is looked up.
+                    let hint = i.field_hint();
+                    let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
+                    if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
+                    let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
+                    frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
+                        machine.heap_reads().live_object_records() as u64));
+                } else {
                 let code = unsafe { &*(*script).code };
                 let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
                 let Some((_, cache)) = site.second else { property_miss!() };
@@ -267,6 +277,7 @@ lane_handler! {
                 let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
                 frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
                     machine.heap_reads().live_object_records() as u64));
+                }
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
