@@ -53,9 +53,10 @@ view_handler! {
                     requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
                 }
             }
-            // A store instance missed: its hint may have moved, so the record retires to the plain row, which re-chooses.
+            // A store instance missed: the plain row stores it, with the VM's stores the instance does not
+            // carry (`frame.stores`), and re-chooses the instance from the hint it leaves (`requicken_store_form`).
             if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
+                sibling!(generated_row!(OP, ACC_NONE, FLAG_UNREAD), r, ip, Carried::script_in(script, view))
             }
             if this_store {
                 sibling!(crate::dispatch_fast::row_set_field_classify::<OP, true>, r, ip, Carried::script_in(script, view))
@@ -193,8 +194,10 @@ view_handler! {
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
-            // its siblings), at every store row.
-            frame.stores = Some(FieldStores::of(script));
+            // its siblings), at every plain store row.
+            // A store instance (`store_formed_site`) carries none: what its plan refuses, the plain row
+            // completes (`store_miss!`), so the instance makes no call and keeps its values in registers.
+            if const { !crate::dispatch_fast::store_formed_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
             frame.plan = Some(if const { FLAG == crate::dispatch_fast::ADD_SITE } {
                 RecordPlan::own_add()
             } else if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
