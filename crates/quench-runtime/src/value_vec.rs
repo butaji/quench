@@ -758,6 +758,14 @@ impl ValueArena {
         }
     }
 
+    /// Retires the readers of `shape`, the class an object leaves when it departs its class cell
+    /// (`Heap::depart_class_object`): `note_shape_transition` retires them on any other change.
+    #[inline(always)] pub(crate) fn note_class_departure(&mut self, shape: u32) {
+        if self.shape_readers.retire(shape) {
+            fact_stats::retired(FactKind::Shape, u64::from(shape));
+        }
+    }
+
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened. Only a
     /// widening is out of line (`widen_owner`): an untracked store is the test alone.
     #[inline(always)] pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
