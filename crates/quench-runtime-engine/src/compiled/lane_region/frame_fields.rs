@@ -41,8 +41,6 @@ pub(crate) struct FieldFacts<'a> {
 pub(crate) struct HeldRead {
     /// A read the loop made once on its entry edge.
     pub(crate) hoisted: Option<LoopRead>,
-    /// The word of the OSR region's entry record that holds the field's value.
-    pub(crate) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
     pub(crate) known: Option<ir::Value>,
     /// The slot a loop's entry projected for the store at this access (`StorePlan::Entry`).
@@ -242,11 +240,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(if read.representation == Representation::Int32 { int_tagged(stage.builder, raw) } else { raw })
     }
 
-    fn entry_field(&mut self, stage: &mut Emit<'b, 'c>, _lookup: FieldLookup) -> Option<ir::Value> {
-        let word = self.fields.as_ref()?.held.entry_word?;
-        Some(entry_record_word(stage.builder, self.payload, word))
-    }
-
     fn field_get_host(&mut self, stage: &mut Emit<'b, 'c>, object: ir::Value, atom: u32, site: u16,
         miss: ir::Block) -> Option<ir::Value> {
         Some(calls::field_get_host(self, stage, object, atom, site, miss))
@@ -385,12 +378,4 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         self.retire_fast_proofs(owner, &before);
         Some(value)
     }
-}
-
-/// Word `word` of the loop's entry record (`JsStepDispatch::loop_entry`).
-pub(crate) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, word: u32) -> ir::Value {
-    let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.loop_entry));
-    let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-        * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-    emit(builder).load_u64(Region::LoopEntry.readonly(), entry, offset)
 }

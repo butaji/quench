@@ -3,9 +3,10 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::accessors::{accessor_definition, accessor_mode, site_holder};
+use super::quiet::StringMethod;
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin, PrototypeBase};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, IntRange, Length, View};
 use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -161,7 +162,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None, holes: false });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -208,14 +209,11 @@ fn value_of(
         if ctx.scope.prototype == Some(atom) && let Some(prototype) = owner.and_then(prototype_base) {
             return Word::from(Origin::Prototype(prototype));
         }
+        if let Some(length) = string_length(ctx, base_fact(ctx, base, state), atom) {
+            return Word::of(length);
+        }
         let cell = member_type(ctx, base_fact(ctx, base, state), atom);
-        return match owner.and_then(Word::class_site) {
-            Some(site) => {
-                let (holder, instance, guess) = site_holder(ctx, site, atom);
-                Word { cell, ..Word::member_on(holder, instance, atom, guess) }
-            }
-            None => Word::member(atom, cell),
-        };
+        return named_word(ctx, owner, cell, atom);
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && (instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 || instruction.returns_from_frame())
@@ -233,6 +231,9 @@ fn value_of(
     }
     if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
         return typed;
+    }
+    if ctx.types.is_some() && let Some(string) = string_call(ctx, instruction, state) {
+        return string;
     }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
@@ -252,14 +253,14 @@ fn value_of(
         return Word::closure(function);
     }
     // An array of `length` elements: its length is fixed by its literal, and its element type is what the
-    // definitions that follow join in (`step`). A literal that leaves an index undefined holds a hole, which reads `undefined`.
+    // definitions that follow join in (`step`). A literal that leaves an index out holds a hole, which reads `undefined`.
     // The array is its own element class, named by its allocation site (`Origin::Alloc`).
     if ctx.types.is_some() && let Some((_, Allocation::Array { length, .. })) = Allocation::decode(instruction, &[]) {
-        let hole = if ctx.whole_literals.get(pc).copied().unwrap_or(false) { Type::NEVER } else { Type::language(crate::ValueType::Undefined) };
+        let holes = !ctx.whole_literals.get(pc).copied().unwrap_or(false);
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
+            elements: Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain, holes },
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -271,6 +272,16 @@ fn value_of(
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
     if instruction.op() == crate::bytecode::Op::GetIndex {
+        // A key that is one atom reads the named field it spells, as `o.name` does; an array index is an element instead.
+        let key = state[usize::from(instruction.register_c())].cell.ty.string_fact().and_then(|fact| fact.atom());
+        if let Some(atom) = key.filter(|&atom| !ctx.scope.names_index(atom)) {
+            let owner = state[usize::from(instruction.register_b())];
+            if let Some(length) = string_length(ctx, Some(owner), atom) {
+                return Word::of(length);
+            }
+            let cell = member_type(ctx, Some(owner), atom);
+            return named_word(ctx, Some(owner), cell, atom);
+        }
         let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
         return Word::of_cell(typing::element(&before, base, index));
     }
@@ -295,6 +306,60 @@ fn value_of(
     }
 }
 
+/// The fact of a named read of `atom` whose type is `cell`, off `owner`: the holder's class where the owner is an instance
+/// (`Word::member_on`), else the name it is read by (`Word::member`).
+fn named_word(ctx: &Ctx<'_>, owner: Option<Word>, cell: Cell, atom: u32) -> Word {
+    match owner.and_then(Word::class_site) {
+        Some(site) => {
+            let (holder, instance, guess) = site_holder(ctx, site, atom);
+            Word { cell, ..Word::member_on(holder, instance, atom, guess) }
+        }
+        None => Word::member(atom, cell),
+    }
+}
+
+/// The Number a read of `length` off `owner` is, where `owner` is a string: the integer range of its length
+/// (`StringFact::length`). `None` for any other read.
+fn string_length(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Option<Type> {
+    let fact = owner?.cell.ty.string_fact()?;
+    if ctx.scope.length != Some(atom) { return None; }
+    let length = fact.length();
+    Some(Type::int(IntRange { min: i64::from(length.min), max: i64::from(length.max) }))
+}
+
+/// The cell a call of a String builtin defines over the facts before it (`Types::strings`): `String(x)` converts `x`, and
+/// `charAt`, `charCodeAt`, `substring` and `slice` of a string receiver are typed by their arguments' types
+/// (`typing::char_at` and the rest). A call of a name the program rebinds, or of a receiver not known to be a string,
+/// defines none.
+fn string_call(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let strings = ctx.types?.strings();
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let arguments: Vec<Type> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)].cell.ty).collect();
+    let argument = |index: usize| arguments.get(index).copied().unwrap_or(Type::language(crate::ValueType::Undefined));
+    let ty = match invocation.callee {
+        crate::staged::Callee::Register(register) => {
+            let Some(Origin::Binding(Key::Global(atom))) = state[usize::from(register)].origin else { return None };
+            if strings.global != Some(atom) { return None; }
+            let [value] = arguments.as_slice() else { return None };
+            typing::to_string(*value)
+        }
+        crate::staged::Callee::Method { atom, .. } => {
+            let crate::staged::Receiver::Register(receiver) = invocation.receiver else { return None };
+            let receiver = state[usize::from(receiver)].cell.ty;
+            receiver.string_fact()?;
+            let (_, method) = strings.methods.iter().find(|(named, _)| *named == atom)?;
+            match method {
+                StringMethod::CharAt => typing::char_at(receiver, argument(0)),
+                StringMethod::CharCodeAt => typing::char_code_at(receiver, argument(0)),
+                StringMethod::Substring => typing::substring_length(receiver, argument(0), argument(1), false),
+                StringMethod::Slice => typing::substring_length(receiver, argument(0), argument(1), true),
+            }
+        }
+        crate::staged::Callee::Known(_) => return None,
+    };
+    Some(Word::of_cell(Cell::of(ty)))
+}
+
 /// The array `new Array(...)` or `Array(...)` allocates at `pc`, named by its allocation site as a literal is (`Origin::Alloc`).
 /// Its holes are `undefined` where its one argument is a Number (the length), and any value where the arguments are the
 /// elements (`Array(x)` holds `x`); no argument leaves it empty. Its length is unknown, as the length is not a constant here.
@@ -303,15 +368,15 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
     let crate::staged::Callee::Register(register) = invocation.callee else { return None };
     if !ctx.scope.is_array_constructor(state[usize::from(register)].origin) { return None; }
     let arguments: Vec<Word> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
-    let holes = match arguments.as_slice() {
-        [] => Type::NEVER,
-        [length] if length.is_number() => Type::language(crate::ValueType::Undefined),
-        _ => Type::ANY,
+    let (stored, holes) = match arguments.as_slice() {
+        [] => (Type::NEVER, false),
+        [length] if length.is_number() => (Type::NEVER, true),
+        _ => (Type::ANY, false),
     };
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
+        elements: Elements { ty: stored, classes: Classes::Never, length: Length::Any, view: View::Plain, holes },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -331,6 +396,7 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
             classes: Classes::Never,
             length: Length::Any,
             view: View::One(kind),
+            holes: false,
         },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
@@ -417,9 +483,9 @@ impl Abstract for Before<'_, '_> {
 }
 
 /// The write that makes the length of the arrays of element class `class` unknown: a length write, a method that
-/// changes an array, an index store past the length, a `delete`.
+/// changes an array, an index store past the length, a `delete`. A length change may leave a hole.
 fn length_change(class: ElementClass) -> (Key, Word) {
-    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
+    let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: true };
     (Key::Element(class), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
 }
 
@@ -463,7 +529,7 @@ fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, operati
             let length = settled(ctx, array).elements.length;
             let in_bounds = index.is_number() && (length == Length::Never || typing::within_length(length, index.cell.ty));
             let length = if in_bounds { Length::Never } else { Length::Any };
-            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None };
+            let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length, view: View::None, holes: !in_bounds };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));

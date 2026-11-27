@@ -537,6 +537,18 @@ fn an_element_of_a_typed_array_of_one_kind_is_that_kind() {
 }
 
 #[test]
+fn an_index_below_a_bound_that_is_within_the_length_is_below_it_through_the_chain() {
+    let program = program("function f(a) { for (var j = 0; j < a.length; j++) { for (var i = 0; i < j; i++) { a[i] = 0; } } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the inner loop stores into the array");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i < j` with `j` within the length proves `i` at {pc}");
+    }
+}
+
+#[test]
 fn an_element_of_an_array_that_may_be_plain_or_typed_has_no_view() {
     let program = program("function f(c) { var a = c ? new Int32Array(2) : [1, 2]; return a[0]; } f(true);");
     let facts = analyze(&program);
@@ -545,6 +557,20 @@ fn an_element_of_an_array_that_may_be_plain_or_typed_has_no_view() {
     assert!(!accesses.is_empty(), "the function reads the array");
     for (pc, _, _) in accesses {
         assert_eq!(facts.function_facts(f as u32).element_view(pc), None, "a plain array beside a typed one is no one kind at {pc}");
+    }
+}
+
+#[test]
+fn the_midpoint_of_two_bounded_indices_is_below_the_larger() {
+    let program = program(
+        "function f(a) { var lo = 0, hi = a.length - 1; while (lo < hi) { var mid = (lo + hi) >>> 1; a[mid] = 0; if (a[mid] < 0) lo = mid + 1; else hi = mid; } } f([0, 0, 0]);",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the search reads the array at its midpoint");
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the midpoint is below the length at {pc}");
     }
 }
 
@@ -560,4 +586,95 @@ fn a_captured_slot_read_in_an_inner_function_takes_the_slots_settled_cell() {
     assert_eq!(cell, facts.captured_slot_cell(outer as u32, slot), "the read takes the slot's settled cell");
     assert!(cell.ty.is_subtype(Type::NUMBER), "the owner's stores of the slot are Numbers");
     assert!(facts.function_facts(inner as u32).dependencies().contains(&FactKey::Slot { owner: outer as u32, slot }), "the inner function depends on the slot");
+}
+
+#[test]
+fn a_decrement_keeps_the_bound_on_the_index_it_lowers() {
+    let program = program("function f(a) { var i = 0; while (i < a.length) { i += 1; i -= 1; a[i] = 0; } } f([0, 0, 0]);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "`i - 1` after `i + 1` keeps `i` below the length at {pc}");
+    }
+}
+
+#[test]
+fn an_alias_of_the_array_keeps_the_bound_the_test_proved() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { var b = a; b[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "the copy `b` holds `a`'s bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_writes_no_element_of_the_array_keeps_its_bound() {
+    let program = program("function g(b) { return b.length; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(1); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(facts.function_facts(f as u32).below_length(pc, index, array), "a callee that writes no element keeps the bound at {pc}");
+    }
+}
+
+#[test]
+fn a_call_that_stores_into_the_array_retires_its_bound() {
+    let program = program("function g(b) { b[0] = 1; } function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { g(a); a[i] = i; } } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "a callee that stores into the array retires the bound at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_retires_the_bound_on_element_accesses() {
+    let program = program(
+        "function f() { var a = [0, 0, 0]; Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } }); \
+         for (var i = 0; i < a.length; i++) { a[i] = i; } } f();",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty());
+    for (pc, index, array) in accesses {
+        assert!(!facts.function_facts(f as u32).below_length(pc, index, array), "an index accessor may run at {pc}");
+    }
+}
+
+#[test]
+fn a_number_keyed_read_of_an_array_runs_nothing_in_a_closed_world() {
+    let program = program("function f() { var a = [1, 2]; var i = 1; return a[i]; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        let effects = facts.function_facts(f as u32).site_effects(pc);
+        assert!(!effects.may_call_js && !effects.may_throw, "a Number-keyed read of a closed array runs no guest code at {pc}");
+    }
+}
+
+#[test]
+fn an_index_accessor_the_program_defines_keeps_an_element_read_open() {
+    let program = program(
+        "function f() { var a = [1, 2]; var i = 1; return a[i]; } f(); \
+         Object.defineProperty(Array.prototype, '0', { get: function () { return 1; } });",
+    );
+    let facts = analyze(&program);
+    let f = function_named(&program, "f");
+    let accesses = element_accesses(&program, f);
+    assert!(!accesses.is_empty(), "the function reads the array");
+    for (pc, _, _) in accesses {
+        assert!(facts.function_facts(f as u32).site_effects(pc).may_call_js, "an index accessor may run at {pc}");
+    }
 }

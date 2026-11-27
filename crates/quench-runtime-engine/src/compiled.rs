@@ -116,7 +116,7 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 #[cfg(feature = "jit")]
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
@@ -298,7 +298,7 @@ pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
-    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;
@@ -483,12 +483,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
+    backing: quench_runtime::staged::elements::BackingAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
@@ -1544,7 +1545,7 @@ pub(crate) struct VmFacts<'a> {
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
     /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
     /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
-    /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
+    /// its Number registers are entry types (`int_inputs::solved_entry_types`), and its register cells
     /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
     pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards

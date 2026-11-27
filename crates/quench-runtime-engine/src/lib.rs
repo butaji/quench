@@ -214,7 +214,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::numeric_image::NumericImageOps1 as _;
     pub use crate::compiled::object_slots::InheritedConstantOps1 as _;
     pub use crate::compiled::object_slots::NativeFieldLoadOps1 as _;
-    pub use crate::compiled::osr_compile::OsrFactsOps2 as _;
     pub use crate::compiled::osr_compile::PendingOsrRegionOps1 as _;
     pub use crate::compiled::osr_compile::calls::CompiledOsrCompileCallsVm as _;
     pub use crate::compiled::osr_compile::calls::CallCodeOps1 as _;

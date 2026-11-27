@@ -265,7 +265,7 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, regions::backing_access(self.unit.effects()), exit);
                 (view.values, view.length)
             }
         };
@@ -315,7 +315,7 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, regions::backing_access(self.unit.effects()), exit);
                 (view.values, view.length)
             }
         };

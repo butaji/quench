@@ -16,6 +16,21 @@ use crate::vm::register_file::RegisterFile;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
 use crate::Value;
 
+/// A native call a chain's top frame is parked in: the native the frame called at `call_pc` (the
+/// frame's pc at the call instruction), with its receiver and arguments. `new_target` is `None`
+/// for a call and `Some` for a construction (`new`), whose receiver is then unused.
+/// `Vm::resume_chain` makes the call again through the ordinary call or construct path and
+/// delivers its result to that instruction's destination. Holds only values and ids, so the chain
+/// serializes with the heap.
+#[derive(Clone)]
+pub struct ParkedNative {
+    pub callee: Value,
+    pub this: Value,
+    pub args: Box<[Value]>,
+    pub call_pc: u32,
+    pub new_target: Option<Value>,
+}
+
 /// A frame's record. Its window is its register file's first register (`WINDOW`, `staged::frame`),
 /// so it names no address of its own; the receiver lives in the record alone (`receiver`,
 /// `THIS`). The program is the one the frame resumes in, and the realm the owner's
@@ -35,6 +50,9 @@ pub struct FrameRecord {
     /// and the GC traces every link (`extend_roots`). No record has one until an exit
     /// materializes a chain: a suspension of one frame, as today, has none.
     pub(in crate::vm) caller: Option<Box<FrameRecord>>,
+    /// The native call this frame is parked in, when the chain was captured at a native's edge
+    /// (`Vm::capture_chain_parked`); `None` for every frame a suspension makes.
+    pub(in crate::vm) parked: Option<ParkedNative>,
     pub env: Value,
     pub(in crate::vm) locals: Vec<Value>,
     pub captured: bool,
@@ -187,6 +205,7 @@ impl FrameRecord {
             function,
             pc: 0,
             caller: None,
+            parked: None,
             env: Value::NULL,
             locals: Vec::new(),
             captured: false,
@@ -285,8 +304,10 @@ impl FrameRecord {
     /// `frame`'s suspended state, moved: its register file and buffers keep their storage, but
     /// for the rarely held ones that are empty (`FrameCold`), which are freed. What a run derives
     /// for itself (the operation's field and binding site, the capture cache,
-    /// the `with` base) is not kept.
-    pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
+    /// the `with` base) is not kept. The one conversion from a popped frame to a record: a
+    /// suspension calls it at the pop that retires the frame (`split_stop`, the general loop's
+    /// await), so no suspension API takes a `Frame`.
+    pub fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
@@ -322,11 +343,12 @@ impl FrameRecord {
     pub(in crate::vm) fn into_buffers(self: Box<Self>, with_base: usize) -> Box<Frame> {
         let this = self.this();
         let Self {
-            receiver: _, context, cold, program, function, pc, caller, env, locals, captured, registers, active_iterators,
+            receiver: _, context, cold, program, function, pc, caller, parked, env, locals, captured, registers, active_iterators,
             traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _,
             resuming_generator: _, fixed_this,
         } = *self;
         debug_assert!(caller.is_none(), "a finished chain is split before it pools");
+        debug_assert!(parked.is_none(), "a parked native is resumed before its frame pools");
         let FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: _ } = FrameCold::unbox(cold);
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -354,6 +376,11 @@ impl FrameRecord {
         out.extend([self.env, self.this()]);
         if let Some(caller) = &self.caller {
             caller.extend_roots(out);
+        }
+        if let Some(parked) = &self.parked {
+            out.extend([parked.callee, parked.this]);
+            out.extend_from_slice(&parked.args);
+            out.extend(parked.new_target);
         }
         Value::extend_heap_values(out, &self.locals);
         out.extend(cold.dynamic_bindings.iter().map(|(_, value)| *value));
@@ -384,6 +411,7 @@ impl Clone for FrameRecord {
             cold: self.cold.as_deref().and_then(|cold| FrameCold { binding_site_pc: None, ..cold.clone() }.boxed()),
             pc: self.pc,
             caller: self.caller.clone(),
+            parked: self.parked.clone(),
             env: self.env,
             locals: self.locals.clone(),
             captured: self.captured,
@@ -425,7 +453,18 @@ impl Snap for FrameRecord {
         self.active_iterators.snap(writer)?;
         cold.with_objects.snap(writer)?;
         self.captured.snap(writer)?;
-        self.caller.snap(writer)
+        self.caller.snap(writer)?;
+        match &self.parked {
+            Some(parked) => {
+                true.snap(writer)?;
+                parked.callee.snap(writer)?;
+                parked.this.snap(writer)?;
+                parked.args.snap(writer)?;
+                parked.call_pc.snap(writer)?;
+                parked.new_target.snap(writer)
+            }
+            None => false.snap(writer),
+        }
     }
 
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
@@ -439,8 +478,20 @@ impl Snap for FrameRecord {
         cold.with_objects = Snap::unsnap(reader)?;
         let captured = Snap::unsnap(reader)?;
         let caller = Snap::unsnap(reader)?;
+        let parked = if bool::unsnap(reader)? {
+            let (callee, this) = (Value::unsnap(reader)?, Value::unsnap(reader)?);
+            Some(ParkedNative {
+                callee,
+                this,
+                args: Snap::unsnap(reader)?,
+                call_pc: Snap::unsnap(reader)?,
+                new_target: Snap::unsnap(reader)?,
+            })
+        } else {
+            None
+        };
         Ok(Self {
-            receiver, context, cold: cold.boxed(), pc, env, locals, active_iterators, captured, caller,
+            receiver, context, cold: cold.boxed(), pc, env, locals, active_iterators, captured, caller, parked,
             ..Self::at_rest(program, function, registers)
         })
     }

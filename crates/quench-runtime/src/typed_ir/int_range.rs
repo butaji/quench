@@ -34,9 +34,6 @@ impl IntRange {
     /// The integers a Number holds exactly.
     pub const EXACT: Self = Self { min: -(1 << EXACT_BITS), max: 1 << EXACT_BITS };
 
-    /// What an int32 observed to be `value` gives a later entry to guard once: its sign.
-    pub const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
-
     pub fn singleton(value: impl Into<i64>) -> Self {
         let value = value.into();
         Self { min: value, max: value }

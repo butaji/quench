@@ -17,7 +17,7 @@
 //! and `stop` end a run at a host operation before it runs, and a core probe (`Probe`,
 //! `core_rest::probe`) ends its run at the input the runtime notes, and makes no output of its own.
 //! What a build keeps is the state before its first input: a core probe's input native captures the
-//! frames that called it, and the run returns them as its outcome (`JsError::into_captured`).
+//! frames that called it, and the run ends with them as its `Captured` exit (`vm::exit::Exit`).
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -126,7 +126,7 @@ pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u1
 
 /// What a build-time run left: its effects in order; a question it asked with no answer
 /// assumed, which a run per answer specializes; or a dynamic input it read, named. A captured
-/// caller chain is the run's own outcome (`JsError::into_captured`), not a residual.
+/// caller chain is the run's own exit (`vm::exit::Exit::Captured`), not a residual.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, the runtime there as a snapshot, and

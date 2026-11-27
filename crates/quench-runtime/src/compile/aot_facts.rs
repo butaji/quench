@@ -22,6 +22,7 @@ mod effects;
 mod escapes;
 mod flow;
 mod gate;
+mod length_settle;
 mod lengths;
 mod quiet;
 mod readers;
@@ -89,9 +90,12 @@ pub struct AotFacts {
     /// Per function, the cells and sources its registers hold at every point of the settled solve (`registers::RegisterCells`):
     /// what a tier lowering the function reads instead of re-deriving a register's type, range or classes.
     pub(crate) registers: BTreeMap<u32, RegisterCells>,
-    /// Per function, the length relations each pc holds before its instruction (`lengths::Settled`): an index proven below
+    /// Per function, the length relations each pc holds before its instruction (`length_settle::Settled`): an index proven below
     /// an array's length, which `FunctionFacts::below_length` answers.
-    pub(crate) lengths: BTreeMap<u32, lengths::Settled>,
+    pub(crate) lengths: BTreeMap<u32, length_settle::Settled>,
+    /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
+    /// no guest code for a key that converts to none (`lengths::element_runs_guest_code`).
+    pub(crate) index_accessors_absent: bool,
     /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`).
     pub(crate) dependencies: BTreeMap<u32, Box<[crate::typed_ir::FactKey]>>,
     /// `(function, pc)` of an element access (a read or a store) whose base is a typed array of one native kind
@@ -137,6 +141,7 @@ impl AotFacts {
             access_classes: BTreeMap::new(),
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
+            index_accessors_absent: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
             captures: BTreeMap::new(),
@@ -363,6 +368,36 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function)?.at(pc, register)
     }
 
+    /// The interned atoms the string register `register` holds just before `pc` is one of, sorted (`typed_ir::StringFact`),
+    /// where the settled solve names some. Each is an interned string, so `===` between two atom-known operands is a
+    /// pointer compare (`staged::typing::both_interned`), and a key atom-known here reads like a named property.
+    /// Empty where the solve names none, or the register holds no string.
+    pub fn string_atoms(&self, pc: u32, register: u16) -> Vec<u32> {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map_or_else(Vec::new, |fact| fact.atoms().to_vec())
+    }
+
+    /// The UTF-16 length range of the string register `register` holds just before `pc` (`typed_ir::StringLength`), where
+    /// the settled solve reached a string there; `None` otherwise.
+    pub fn string_length(&self, pc: u32, register: u16) -> Option<crate::typed_ir::StringLength> {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
+    }
+
+    /// Whether `===` between the registers `left` and `right` just before `pc` is a pointer compare: both hold interned
+    /// atoms (`staged::typing::both_interned`).
+    pub fn interned_compare(&self, pc: u32, left: u16, right: u16) -> bool {
+        match (self.cell_at(pc, left), self.cell_at(pc, right)) {
+            (Some(left), Some(right)) => crate::staged::typing::both_interned(left.ty, right.ty),
+            _ => false,
+        }
+    }
+
+    /// Whether `===` between the string registers `left` and `right` just before `pc` is decided by their facts
+    /// (`staged::typing::string_equality`): `Some(outcome)`, or `None` where the facts leave it open.
+    pub fn string_equal(&self, pc: u32, left: u16, right: u16) -> Option<bool> {
+        let (left, right) = (self.cell_at(pc, left)?, self.cell_at(pc, right)?);
+        crate::staged::typing::string_equality(left.ty, right.ty)
+    }
+
     /// The source of the value register `register` holds just before the instruction at `pc` (`RegisterCells::source_at`),
     /// where the solve settled: a binding it was loaded from or a property it was read off, else `Computed`. Computed also
     /// where no path reaches `pc` or the solve did not settle, the answer that assumes nothing about the value's origin.
@@ -447,6 +482,11 @@ impl<'a> FunctionFacts<'a> {
     /// register holds (`index = base + k`) is proven through its base.
     pub fn below_length_offset(&self, pc: u32, index: u16, array: u16, offset: u32) -> bool {
         self.facts.lengths.get(&self.function).is_some_and(|settled| settled.proves_below(pc, index, array, i64::from(offset)))
+    }
+
+    /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
+    pub(super) fn index_accessors_absent(&self) -> bool {
+        self.facts.index_accessors_absent
     }
 
     /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.
@@ -617,7 +657,6 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             // The callees of this function's calls are settled now: its reads and escapes are scanned against them.
             field_readers.scan(program, id, &flow, &facts, &scope);
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
-            facts.lengths.insert(id, std::mem::take(&mut flow.lengths));
         }
         open_escapes = Some(escapes::escapes(&settled_flows, &facts, &census, &scope));
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
@@ -632,9 +671,19 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         facts.readers = Some(field_readers);
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
+        // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
+        facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
+        // The length relations are solved after the signatures, over the settled words (`length_settle::settle`): a call resizes only
+        // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
+        let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
+            let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &found, &facts.function_facts(id as u32)));
+            (id as u32, settled)
+        }).collect();
+        facts.lengths = settled_lengths;
     }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());

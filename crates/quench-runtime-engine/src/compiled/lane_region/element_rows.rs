@@ -336,7 +336,7 @@ impl Lowering<'_, '_> {
     /// Whether the hoisted dense `array` holds int32s throughout its loop (`int32_loop`) and the
     /// read at `pc` is one the loop observed as an int32 (`int32_read_at`): such a read takes no tag test.
     fn int32_read(&self, array: LoopArray, pc: usize) -> bool {
-        let ArraySource::Register(source) = array.source else { return false };
+        let source = array.source;
         self.int32_loop(array) && self.int32_read_at(pc, source) && !self.generic.contains(&pc)
     }
 
@@ -357,7 +357,7 @@ impl Lowering<'_, '_> {
     /// Only an array the loop reads as int32s (`int32_read_at`) qualifies, so the guard never
     /// leaves for an array the loop would not read as one.
     pub(crate) fn int32_loop(&self, array: LoopArray) -> bool {
-        let ArraySource::Register(source) = array.source else { return false };
+        let source = array.source;
         array.writable && array.views == ElementViews::Dense && self.int32_stores(array, source)
             && (array.header..=array.back).any(|pc| self.int32_read_at(pc, source) && !self.generic.contains(&pc))
     }
@@ -465,7 +465,7 @@ impl Lowering<'_, '_> {
     /// Whether the loop's array `array` is a register its entering facts type as a string: such a
     /// base is no array, so its element reads take the string row and it is no hoisted view.
     pub(crate) fn string_base(&self, array: &LoopArray) -> bool {
-        let super::loop_arrays::ArraySource::Register(register) = array.source else { return false };
+        let register = array.source;
         self.facts.at(array.header).and_then(|types| types.get(usize::from(register)).copied())
             .is_some_and(|ty| ty.is_subtype(Type::language(quench_runtime::ValueType::String)))
     }

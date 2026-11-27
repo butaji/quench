@@ -217,6 +217,17 @@ impl Effects {
     pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), elements: ElementWrites::Any, may_alloc: false,
         may_collect: false, may_call_js: false, may_throw: false };
 
+    /// Whether the row may write `region`.
+    pub const fn writes_region(self, region: Region) -> bool {
+        self.writes.contains(region)
+    }
+
+    /// Whether the row may run guest code, allocate or collect: any of these may move records or change
+    /// what a call leaves behind, so a word read across it is not fixed.
+    pub const fn may_move_or_call(self) -> bool {
+        self.may_call_js || self.may_alloc || self.may_collect
+    }
+
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
     pub const fn join(self, other: Self) -> Self {

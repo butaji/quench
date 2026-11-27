@@ -17,7 +17,7 @@
 
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt, InvocationFormsExt};
-use crate::bytecode::{Constant, FieldBase, FieldLookup, Operand, OperandKind, ResidualProgram, Traits, WideInstruction};
+use crate::bytecode::{Constant, FieldBase, FieldLookup, Operand, OperandKind, Register, ResidualProgram, Traits, WideInstruction};
 use crate::staged::effects::{call_form, CallForm, ClassWrite, Effects, ElementWrites, Signature, Step};
 use crate::staged::{Callee, DecodeContext, Invocation, NumberOperation, Operation};
 use crate::typed_ir::{Cell, Classes, ElementClass, FactKey, Type};
@@ -231,6 +231,16 @@ fn element_store_grade(site: Site<'_>) -> Effects {
     }
 }
 
+/// The grade of an element read `base[key]`: with no index accessor in the closed world (`AotFacts::index_accessors_absent`),
+/// a Number key converts to no guest code (`lengths::element_runs_guest_code`), and a base that is never nullish throws
+/// nothing, so the read runs nothing (`RUNS_NOTHING`). A hole reads `undefined` through the prototype chain, which holds
+/// no index accessor, so the read's bounds do not change its grade. Any other read is open (`ANY`).
+fn element_read_grade(site: Site<'_>, base: Register, key: Operand) -> Effects {
+    let function = site.facts.function_facts(site.function);
+    let never_nullish = function.cell_at(site.pc, base).is_some_and(|cell| !cell.ty.may_be_languages(Type::NULLISH));
+    if function.index_accessors_absent() && numeric_operand(site, key) && never_nullish { Effects::RUNS_NOTHING } else { Effects::ANY }
+}
+
 /// What the settled facts prove of the operation `op` at `site`, as a grade for `Effects::meet`. Each arm names
 /// the one fact that clears the operation's flags; an operation no arm names is `ANY`, so the kind row stands.
 ///
@@ -239,9 +249,11 @@ fn element_store_grade(site: Site<'_>) -> Effects {
 /// 3. A Number operation, a numeric `Binary`, `Equality` or `CompareJump` is graded by `numeric_grade`.
 /// 4. An element store names its array's class and indices where the solve found them (`element_store_grade`): it
 /// narrows the arrays it may write and clears no flag.
+/// 5. An element read is graded by `element_read_grade`: it runs nothing where no index accessor exists and its key is a Number.
 fn facts_grade(op: &Operation<(), ()>, site: Site<'_>) -> Effects {
     match op {
         Operation::ElementWrite { .. } => element_store_grade(site),
+        Operation::ElementRead { base, key, .. } => element_read_grade(site, *base, *key),
         Operation::SetField { base, atom, .. } | Operation::StoreField { base, atom, .. } => {
             store_grade(site, (*base).map_or(FieldBase::THIS, FieldBase::register), *atom)
         }
