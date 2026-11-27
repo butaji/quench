@@ -457,14 +457,13 @@ mod tests {
     }
 
     fn link_and_run(object: Vec<u8>) -> Option<i32> {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "quench-native-object-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
+        let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).unwrap();
         let object_path = directory.join("program.o");
         let executable = directory.join("program");

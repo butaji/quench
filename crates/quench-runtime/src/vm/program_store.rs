@@ -37,7 +37,6 @@ struct JsJitCounters {
     compile_attempts: u64,
     compile_successes: u64,
     rejection_reason: Option<&'static str>,
-    compile_ns: u64,
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
@@ -2339,7 +2338,6 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
-        elapsed_ns: u64,
         code_bytes: usize,
         installed: bool,
         rejection: Option<&'static str>,
@@ -2353,7 +2351,6 @@ impl ProgramStore {
             counters.compile_successes = counters
                 .compile_successes
                 .saturating_add(u64::from(installed));
-            counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
             counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
             if rejection.is_some() {
                 counters.rejection_reason = rejection;
