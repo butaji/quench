@@ -722,7 +722,6 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
             Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
             #[cfg(feature = "wasm")]
             Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
@@ -1263,18 +1262,6 @@ impl Vm {
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
-            Native::MathLog | Native::MathPow => {
-                let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let x = self.to_number(p, a)?;
-                let y = if native == Native::MathPow {
-                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
-                } else {
-                    f64::NAN
-                };
-                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
-                Ok(Value::number(result.unwrap_or(f64::NAN)))
-            }
             Native::ArrayPush => self.array_push_native(p, this, args),
             Native::ArrayIsArray => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1402,8 +1389,6 @@ impl Vm {
             | Native::NumberIsFinite
             | Native::NumberIsInteger
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
-            Native::NumberFixed => self.number_format(p, this, args, native),
-            Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
                 let text = if let Some(description) = self.heap.symbol_data(argument) {
@@ -1476,7 +1461,6 @@ impl Vm {
             | Native::CallSiteIsNative
             | Native::CallSiteToString => self.call_site_native(p, native, this),
             Native::ArrayBufferSpecies => Ok(this),
-            Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => {
                 let callee = self
                     .active_native_callable()
@@ -2121,6 +2105,7 @@ pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
         .or_else(|| method_entry(native))
         .or_else(|| realm_entry(native))
         .or_else(|| value_entry(native))
+        .or_else(|| super::number_natives::entry(native))
         .unwrap_or(enter_table)
 }
 

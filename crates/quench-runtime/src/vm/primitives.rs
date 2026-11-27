@@ -176,20 +176,6 @@ impl Vm {
                     })
                 }
             }
-            Native::NumberValueOf => {
-                if this.as_number().is_some() {
-                    Ok(this)
-                } else {
-                    self.boxed_primitive_value(this)
-                        .filter(|value| value.as_number().is_some())
-                        .ok_or_else(|| {
-                            self.type_error(
-                                p,
-                                "Number.prototype.valueOf called on incompatible receiver".into(),
-                            )
-                        })
-                }
-            }
             Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {
                 self.type_error(
                     p,
@@ -427,59 +413,6 @@ impl Vm {
                 }
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
-            }
-            native if super::number::is_math_unary(native) => {
-                let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(Value::number(
-                    super::number::math_unary(native, value).expect("a unary Math native"),
-                ))
-            }
-            Native::MathAtan2 => {
-                let y = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let x = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let numbers = [self.to_number(p, y)?, self.to_number(p, x)?];
-                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.atan2")))
-            }
-            Native::MathMin | Native::MathMax => {
-                let mut numbers = smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
-                for value in args {
-                    numbers.push(self.to_number(p, *value)?);
-                }
-                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.min or Math.max")))
-            }
-            Native::MathHypot => self.math_hypot(p, args),
-            Native::MathImul => {
-                let left = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let right = self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(Value::number(super::number::math_numbers(native, &[left, right]).expect("Math.imul")))
-            }
-            Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
-            Native::MathRandom => {
-                crate::clock::note_input("Math.random");
-                let mut state = self.random_state;
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                self.random_state = state;
-                Ok(Value::number((state >> 11) as f64 / (1u64 << 53) as f64))
-            }
-            Native::NumberToLocaleString => {
-                let number = self.number_receiver_value(p, this)?;
-                layer_hooks::intl_format_primitive(self, p, Value::number(number), args)
-            }
-            Native::NumberString => {
-                let number = self.number_receiver_value(p, this)?;
-                let radix = match args.first().copied() {
-                    Some(value) if !value.is_undefined() => self.to_number(p, value)? as u32,
-                    _ => 10,
-                };
-                if !(2..=36).contains(&radix) {
-                    return Err(self.range_error(p, "Invalid radix".into()));
-                }
-                if radix == 10 || !number.is_finite() {
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_number(number)));
-                }
-                Ok(self.heap.alloc_string(super::string_extra::number_to_radix_string(number, radix)))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }

@@ -215,6 +215,7 @@ pub mod method_cache;
 pub mod plain_equality;
 pub mod module;
 pub mod number;
+mod number_natives;
 pub mod number_parse;
 pub mod object_template;
 pub mod object;

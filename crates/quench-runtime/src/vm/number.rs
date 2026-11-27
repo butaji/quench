@@ -630,11 +630,6 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     concrete_math_call(call, &[Value::number(value)])?.as_number()
 }
 
-/// Whether `native` is a Math function of one Number, which `math_unary` computes.
-pub(super) fn is_math_unary(native: Native) -> bool {
-    math_call(native).is_some_and(MathCall::reads_one_number)
-}
-
 impl Vm {
     pub(super) fn math_hypot(
         &mut self,
