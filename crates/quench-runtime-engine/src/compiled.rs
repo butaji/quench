@@ -4182,7 +4182,7 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
             outcome: None,
         }

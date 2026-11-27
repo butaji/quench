@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use crate::bytecode::{Register, ResidualProgram, Traits};
-use crate::staged::effects::{call_form, tail_site, Signature};
-pub use crate::staged::effects::CallForm;
+use crate::staged::effects::{call_form, Signature};
+pub use crate::staged::effects::{tail_site, CallForm};
 use crate::staged::{Callee, DecodeContext, Invocation};
 use crate::typed_ir::{Cell, Classes, FactKey};
 

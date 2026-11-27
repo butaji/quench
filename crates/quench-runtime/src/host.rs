@@ -240,12 +240,6 @@ pub trait Host: core::any::Any {
     }
     fn clock_millis(&mut self) -> f64;
 
-    /// ECMAScript proper tail calls discard strict caller activations. Hosts
-    /// matching engines that retain those observable frames can disable them.
-    fn proper_tail_calls(&self) -> bool {
-        true
-    }
-
     /// V8's `--allow-natives-syntax`: eval code may carry its optimization directives
     /// (`%PrepareFunctionForOptimization(f)`), which then evaluate only their argument.
     fn allows_natives_syntax(&self) -> bool {

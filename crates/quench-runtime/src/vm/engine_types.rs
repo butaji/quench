@@ -2324,9 +2324,6 @@ pub struct JsStepDispatch {
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
     pub call_targets: usize,
-    /// Whether the host makes a strict function's terminal calls proper tail calls
-    /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
-    pub proper_tail_calls: u64,
     pub outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
