@@ -542,7 +542,7 @@ impl Vm {
     pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const crate::vm::engine_types::LaneView {
         let program = self.active_program;
         let runs_in_lane = (Self::FRAME_ENTRY_LANE_RUNS || self.programs.ahead_images(program, p).is_some())
-            && !self.tier_may_run(crate::jit_mode::Tier::ANY);
+            && !self.tier_may_run(crate::vm::tier_policy::Tier::ANY);
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(program, p)

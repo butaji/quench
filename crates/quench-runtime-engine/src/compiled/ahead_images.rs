@@ -536,7 +536,7 @@ impl Vm {
             unit, stable: lane_region::StableFacts { roots, slots, holders, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
             // An AOT program's predicted tier is Ultra for every function (`lane_facts::body_pick`).
-            tiers: self.programs.tiers(), tier: quench_runtime::jit_mode::Tier::Ultra, fault_poll, exits, summary: None,
+            tiers: self.programs.tiers(), tier: quench_runtime::vm::tier_policy::Tier::Ultra, fault_poll, exits, summary: None,
             // An image body dumps its linked code like a JIT body (`jit-dump`), for instruction-level profiles.
             clif: super::native_dump_directory().map(|_| String::new()),
             proven_calls: images.image.calls.iter().any(|site| site.function == function),

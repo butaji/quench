@@ -120,7 +120,7 @@ pub(crate) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, tak
 }
 
 /// Whether a loop `span` bytecodes long whose regions took `native` iterations compiles to a b-jit
-/// region (stencils) rather than a u-jit one: under `--b-jit` (or `QUENCH_DEV=bjit`) always, under
+/// region (stencils) rather than a u-jit one: under `--b-jit` always, under
 /// `--u-jit`/`--q-jit` never. In the default mode the b-jit region is the loop's first tier, by
 /// construction, so the default never costs more than b-jit: the loop takes u-jit only once its
 /// native iterations reach the point where the u-jit compile is repaid over the stencil region

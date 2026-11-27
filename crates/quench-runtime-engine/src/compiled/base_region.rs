@@ -1,5 +1,5 @@
 //! A Number loop region built from BaseJIT stencils (`quench-bjit`) instead of Cranelift IR,
-//! behind `QUENCH_DEV=bjit`, as the same stitched program of rows a function's body is
+//! as the same stitched program of rows a function's body is
 //! (`function`, `stitch`): the loop's span of its function, its small monomorphic calls inlined.
 //! The registers the region touches most live in pinned machine registers through the whole chain
 //! of stencils and the rest stay tagged `Value` words in the activation's register file; every exit

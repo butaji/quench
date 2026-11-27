@@ -7657,13 +7657,13 @@ impl Vm {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether any compiled tier may run (`admission::vm_may_run` of every tier), decided once per execution
+    /// Whether any compiled tier may run (`tier_policy::tiers_run` of every tier), decided once per execution
     /// mode and memory policy rather than at every lane entry.
     #[inline]
     pub(crate) fn tiers_run_in_lanes(&mut self) -> bool {
         match self.lane_tiers_run {
             Some(run) => run,
-            None => *self.lane_tiers_run.insert(admission::vm_may_run(self, admission::Tier::ANY)),
+            None => *self.lane_tiers_run.insert(quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)),
         }
     }
 
@@ -7683,8 +7683,8 @@ impl Vm {
         }
         // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
-            cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT),
-            base_lane_allowed: admission::lane_bodies_enrolled(self) && admission::vm_may_run(self, &[admission::Tier::Base]),
+            cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
+            base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
             wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
             return false;
         }
@@ -7905,7 +7905,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: admission::vm_may_run(self, admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -8040,7 +8040,7 @@ impl Vm {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !admission::vm_may_run(self, admission::Tier::ANY)
+            || !quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)
             || program_id != self.active_program
             || program.kind == quench_runtime::bytecode::ProgramKind::Wasm
         {
