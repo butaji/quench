@@ -157,13 +157,12 @@ pub(crate) fn derive_lane_view<'live>(
     sites: &[quench_runtime::bytecode::FieldSite],
     plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
-    proper_tail_calls: bool,
     tiers: &'static Tiers,
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
 ) -> LaneView {
     let loop_tier = plan.loop_sites;
-    // A returning call is admitted by its function and host (`returning_call_admitted`), both fixed here.
-    let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(proper_tail_calls, function.strict);
+    // A returning call is admitted by its function's strictness alone (`returning_call_admitted`), fixed here.
+    let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(function.strict);
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free

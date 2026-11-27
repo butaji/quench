@@ -137,12 +137,11 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     }
     let masks = unit.register_masks(code, function).map(|masks| std::rc::Rc::new(masks.into_owned()));
     let synthetic = body.with_unit_code(&unit.instructions, unit.registers)?;
-    let proper_tail_calls = vm.host.proper_tail_calls();
     let (heap, tiers) = (vm.heap_reads(), vm.programs.tiers());
     let view = vm.programs.store_extra_lane_view(program, function, |_, constants, kind, sites| {
         // The unit's pcs are not the function's, so the solve's cells at a pc do not describe these records.
         Some(super::derive_lane_view(function, &synthetic, constants, heap, kind, &|| masks.as_ref(), sites,
-            crate::compiled::admission::record_plan(false), false, proper_tail_calls, tiers, None))
+            crate::compiled::admission::record_plan(false), false, tiers, None))
     })?;
     // SAFETY: the program store keeps the view alive with its program.
     let derived = unsafe { &*view };

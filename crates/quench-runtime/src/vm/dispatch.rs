@@ -63,7 +63,7 @@ impl Vm {
     /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
     /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
     /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
-    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
+    /// call is a strict terminal one, which is a proper tail call (`call_forms`, `js_tail_call_allowed`).
     #[inline(always)]
     fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
         self.direct_eval
@@ -71,22 +71,19 @@ impl Vm {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
+            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
     }
 
-    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
-    /// permits them, and the call is a tail site of its caller (`staged::effects::tail_site`: it
-    /// returns from its frame and the caller's site permits it). The plan's `CallPlan::tail` takes the
-    /// same two facts without the host's permission.
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the call is a tail site of
+    /// its caller (`staged::effects::tail_site`: it returns from its frame and the caller's site permits it). This
+    /// is the whole decision, as `CallPlan::tail` takes it: stack depth is not observable (DESIGN.md decision
+    /// 4.4), so no host setting gates a tail call.
     #[inline(always)]
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
-        self.host.proper_tail_calls()
-            && crate::staged::effects::tail_site(
-                i.returns_from_frame(),
-                p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
-            )
+        crate::staged::effects::tail_site(
+            i.returns_from_frame(),
+            p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32),
+        )
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an

@@ -600,8 +600,8 @@ pub(super) fn activate_in_lane(
     let i = unsafe { &*ip };
     let argc = ImmediateLayout::argument_count(i.imm());
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane. A host permitting proper tail calls
-    // sends strict terminal calls to the general dispatch path instead.
+    // activation's return does in the lane. A strict caller's terminal calls are proper tail
+    // calls, which the general dispatch path takes as jumps instead.
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));

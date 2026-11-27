@@ -4939,9 +4939,11 @@ impl Vm {
             return Some(target);
         };
         let tier_may_claim = self.js_tier_may_claim(code, program, function);
-        // The call form of the callee is the one its composed signature gives (`frameless_call`), of the
-        // facts of its own program; the body's shape is taken within it.
-        let frameless = quench_runtime::vm::engine_types::frameless_call(self.programs.aot_facts(program).as_deref(), function);
+        // The callee's entry form is the one its composed signature gives (`call_plan::entry_form`), of the facts of
+        // its own program; a target is a callee's fact, so the form is the same at every site that calls it. The
+        // body's shape is taken within it.
+        let frameless = quench_runtime::compile::call_plan::entry_form(self.programs.aot_facts(program).as_deref(), function)
+            == quench_runtime::staged::effects::CallForm::Frameless;
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
@@ -5232,11 +5234,10 @@ impl Vm {
             for function in 0..residual.functions.len() as u32 {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
-                let proper_tail_calls = self.host.proper_tail_calls();
                 let facts = self.programs.aot_facts(id);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
-                        proper_tail_calls, self.programs.tiers(), facts.as_deref())
+                        self.programs.tiers(), facts.as_deref())
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -6646,7 +6647,7 @@ script_handler! {
                 resume!(cx, resumed)
             }
             // The frame's own construct: the general loop returns the receiver from it, unless
-            // proper tail calls send it to the activation below, which leaves for that loop.
+            // a strict caller's proper tail call sends it to the activation below, which leaves for that loop.
             if returning_call_admitted(cx) {
                 return frame_return(vm, ip, this);
             }
