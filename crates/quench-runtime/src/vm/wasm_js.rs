@@ -1126,8 +1126,8 @@ impl Vm {
         let Some(ty) = ty else { return Value::UNDEFINED };
         match self.decode_wasm_value_in(result, ty, None) {
             Ok(WasmValue::I32(value)) => Value::number(f64::from(value)),
-            Ok(WasmValue::F32(bits)) => Value::number(f64::from(f32::from_bits(bits))),
-            Ok(WasmValue::F64(bits)) => Value::number(f64::from_bits(bits)),
+            Ok(WasmValue::F32(bits)) => Value::from_f64_raw(f64::from(f32::from_bits(bits))),
+            Ok(WasmValue::F64(bits)) => Value::from_f64_raw(f64::from_bits(bits)),
             _ => unreachable!("a pushed export's result is a validated scalar"),
         }
     }
@@ -1660,8 +1660,8 @@ impl Vm {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
             WasmValue::I64(value) => self.heap.alloc(Cell::bigint(value.into())),
-            WasmValue::F32(bits) => Value::number(f64::from(f32::from_bits(bits))),
-            WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
+            WasmValue::F32(bits) => Value::from_f64_raw(f64::from(f32::from_bits(bits))),
+            WasmValue::F64(bits) => Value::from_f64_raw(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,
             WasmValue::ExternRef(value) => self.wasm_external_value(value),
             WasmValue::GcRef(value) if !ty.is_exception_reference() => {

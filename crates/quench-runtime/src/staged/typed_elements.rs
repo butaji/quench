@@ -212,8 +212,9 @@ fn read_element<S: NumericStage>(stage: &mut S, values: S::Word, index: S::Word,
 }
 
 /// The `Value` word of element `index` of `values` for `native`: an int32-ranged integer element
-/// int-tagged from its load (no float round trip), any other element's Number boxed as
-/// `Value::number` boxes it (`Stage::box_number`: 3.0 is the int32 3, NaN the canonical NaN).
+/// int-tagged from its load (no float round trip), an integer element's other Number boxed as
+/// `Value::number` boxes it (`Stage::box_number`), and a binary float element's Number stored as its
+/// raw double word (`Stage::box_raw_number`, decision 4.1).
 #[inline(always)]
 fn read_element_value<S: NumericStage>(stage: &mut S, values: S::Word, index: S::Word, native: NativeKind) -> Option<S::Word> {
     if let Element::Integer(integer) = native.element && native.is_int32() {
@@ -222,8 +223,11 @@ fn read_element_value<S: NumericStage>(stage: &mut S, values: S::Word, index: S:
         let payload = stage.uextend32(word);
         return Some(super::value::int_word(stage, payload));
     }
-    let number = read_element(stage, values, index, native)?;
-    Some(stage.box_number(super::Float64::of_row(number)))
+    let number = super::Float64::of_row(read_element(stage, values, index, native)?);
+    Some(match native.element {
+        Element::Integer(_) => stage.box_number(number),
+        Element::Float32 | Element::Float64 => stage.box_raw_number(number),
+    })
 }
 
 /// Stores `number` at element `index` of `values` for `native`.

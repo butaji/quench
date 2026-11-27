@@ -66,6 +66,17 @@ pub(crate) fn store_fact<S: Stage>(stage: &S, value: S::Word, proven: Type) -> T
     if known.is_subtype(proven) { known } else { proven }
 }
 
+/// The word a store writes into a slot of class `holds` (decision 4.1, R4-M1): a Number-class slot
+/// (`repr` Float64) holds raw double bits, so an int32 word converts to its double (`Stage::raw_number`);
+/// any other slot, and an untyped one (`None`), stores the word as it is.
+#[inline(always)]
+pub(crate) fn class_word<S: Stage>(stage: &mut S, value: S::Word, holds: Option<Type>) -> S::Word {
+    match holds {
+        Some(class) if crate::typed_ir::repr(class) == Representation::Float64 => stage.raw_number(value),
+        _ => value,
+    }
+}
+
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may
 /// proceed: its exact shape is `shape` (`admitted_word`), the store gate admits the write and
 /// its values are plain; `None` (leaving at `miss`) otherwise, changing nothing.

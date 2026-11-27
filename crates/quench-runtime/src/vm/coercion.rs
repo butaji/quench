@@ -146,7 +146,8 @@ impl Vm {
         // An array index's key, as a native's loop over a proxy or an array-like makes one per
         // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
         // that atom (`string_key_atom`) instead of parsing it.
-        if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
+        // The int32 arm, then (fallback only, before any string is made) a double-encoded integer (R4-M2).
+        if let Some(index) = primitive.as_int().or_else(|| primitive.numeric_key()).and_then(|index| usize::try_from(index).ok()) {
             let atom = self.index_key_atom(index);
             return Ok(self.atom_string(atom));
         }

@@ -430,7 +430,8 @@ impl Vm {
                     None => self.plain_proved_get(object, PropertyKey::symbol(key)),
                 }
             }
-            _ => None,
+            // Fallback only: a double-encoded integer key reads as its int32 index (decision 4.1, R4-M2).
+            _ => key.numeric_key().and_then(|index| self.plain_index_get(object, usize::try_from(index).ok()?)),
         }
     }
 

@@ -643,14 +643,14 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
 }
 
 /// The `Value` bits of the word `read_slot` read at `slot` of `layout` in `rep`: a raw double
-/// of an arena run boxed (`Stage::box_number`), any other word as it is.
+/// of an arena run boxed as a raw double word (`Stage::box_raw_number`), any other word as it is.
 #[inline(always)]
 pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Representation) -> S::Word {
     match (rep, layout.slots) {
-        (Representation::Float64, Slots::Flat(_)) => { let number = read_slot(stage, layout, slot, rep); stage.box_number(super::Float64::of_row(number)) }
+        (Representation::Float64, Slots::Flat(_)) => { let number = read_slot(stage, layout, slot, rep); stage.box_raw_number(super::Float64::of_row(number)) }
         (Representation::Float64, Slots::Either { packed, inline, flat }) => stage.choose(inline,
             #[inline(always)] |stage| packed_read(stage, packed, slot, Representation::Tagged),
-            #[inline(always)] |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_number(super::Float64::of_row(number)) }),
+            #[inline(always)] |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_raw_number(super::Float64::of_row(number)) }),
         _ => read_slot(stage, layout, slot, Representation::Tagged),
     }
 }

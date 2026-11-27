@@ -115,7 +115,7 @@ impl GcField {
     #[inline(always)]
     pub(crate) fn raw_of(self, value: Value) -> u64 {
         match self.value() {
-            GcFieldValue::Narrow => u64::from(value.as_int().expect("validated Wasm integer field") as u32),
+            GcFieldValue::Narrow => u64::from(value.numeric_key().expect("validated Wasm integer field") as u32),
             _ => value.to_bits(),
         }
     }

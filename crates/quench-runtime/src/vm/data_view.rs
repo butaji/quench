@@ -246,7 +246,8 @@ impl Vm {
             return None;
         };
         let bytes = bytes.owned().filter(|bytes| view_end <= bytes.len())?;
-        Some(Value::number(crate::staged::typed_view::data_view_get(&bytes[offset..view_end], index, kind, little_endian)?))
+        let number = crate::staged::typed_view::data_view_get(&bytes[offset..view_end], index, kind, little_endian)?;
+        Some(crate::vm::typed_array_access::element_value(kind, number))
     }
 
 
@@ -538,8 +539,9 @@ fn data_view_access(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Valu
             Ok(vm.heap.alloc(Cell::bigint(value)))
         }
         native if !data_view_setter(native) => {
-            let number = vm.data_view_read_number(buffer, offset + index, data_view_kind(native), little_endian)?;
-            Ok(Value::number(number))
+            let kind = data_view_kind(native);
+            let number = vm.data_view_read_number(buffer, offset + index, kind, little_endian)?;
+            Ok(crate::vm::typed_array_access::element_value(kind, number))
         }
         Native::DataViewSetUint8
         | Native::DataViewSetInt8

@@ -298,6 +298,26 @@ impl Value {
         Self(value.to_bits())
     }
 
+    /// A Number stored as its raw binary64 bits (decision 4.1): a Number-typed slot or element holds
+    /// its double word always, integral values included, so no integral check is made. NaN is the
+    /// canonical NaN, which keeps a double word out of the tag space (invariant I).
+    #[inline(always)] pub fn from_f64_raw(value: f64) -> Self {
+        Self::from_float_bits64(value.to_bits())
+    }
+
+    /// The int32 form of this Number, for consumers that need the canonical integer (an array
+    /// index, a property key, a switch case): an int32 as it is, a double-encoded integer in int32
+    /// range as that int32 (-0 as 0). `None` for a non-integral, out-of-range, NaN or infinite value,
+    /// and for a non-Number. Stores never canonicalize (`from_f64_raw`), so consumers normalize here.
+    #[inline(always)] pub fn numeric_key(self) -> Option<i32> {
+        if let Some(integer) = self.as_int() {
+            return Some(integer);
+        }
+        let number = self.as_number()?;
+        let integer = truncate_to_i32(number);
+        (f64::from(integer) == number).then_some(integer)
+    }
+
     /// `number` without branches, for loops over many values: the same encoding, chosen by
     /// selects so that a column of mixed integral and fractional doubles costs the same per value.
     #[inline(always)]
