@@ -3020,7 +3020,7 @@ impl Lowering<'_, '_> {
     /// stores (`FunctionFacts::access_classes`, of the function the unit's origin of `pc` is from). The
     /// one source of which class an access reads: the AOT loads (`ahead_images::fields`) read it too.
     fn solved_classes(&self, pc: usize) -> Option<quench_runtime::typed_ir::Classes> {
-        let facts = self.vm.closed?;
+        let facts = self.vm.facts?;
         let (function, pc) = match *self.unit.origins.get(pc)? {
             super::lane_unit::Origin::Caller(pc) => (self.function_id, pc),
             super::lane_unit::Origin::Inlined { frame, pc } => (self.unit.frames.get(frame)?.target.function, pc),
