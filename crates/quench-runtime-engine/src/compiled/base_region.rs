@@ -206,8 +206,6 @@ pub(crate) enum Event {
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
-    /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
-    BodyRecurrent,
     /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
     BodyPlanned,
     /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for

@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
-use super::tier_model::{Observed, Pick};
+use super::tier_model::Pick;
 use super::tier_policy::Tiers;
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
@@ -18,7 +18,7 @@ use quench_runtime::vm::Vm;
 /// this enum through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
-    /// The compile does not repay its entries (`tier_model::Pick::Interpreter`, `PlanNotAmortized`).
+    /// The static benefit declines the compile (`tier_model::Pick::Interpreter`, `PlanNotAmortized`).
     NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
@@ -187,14 +187,14 @@ pub(crate) enum UnitKind {
     /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
     /// root-only compile names its root.
     WasmModule,
-    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the pick the entries
-    /// price, the looped iterations' payment. Its unit is the proof every later lane gate needs.
+    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the pick the static benefit
+    /// makes, the looped iterations' payment. Its unit is the proof every later lane gate needs.
     LanePlan,
     /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
     /// of its entry, and the callers that want it anyway.
     LaneEntry(CompiledUnit),
     /// A lane body's install gate after planning (phase B, before the plan binds its callees): the plan's
-    /// unit, the callers of regions, the observed and looped entries, and the amortization of its entry.
+    /// unit, the callers of regions, the looped iterations, and the amortization of its entry.
     LaneInstall(CompiledUnit),
     /// A JavaScript function claimed by a tier at an entry: the Cranelift tiers, or lane bodies on the
     /// stencil tier, for a function that is not Wasm.
@@ -224,8 +224,7 @@ pub(crate) struct UnitFacts {
     pub(crate) root_ok: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
     pub(crate) compiles_left: bool,
-    /// Lane phase A: the pick the entries price (`pays_compile`), where the entries were observed and the
-    /// body is not optimizing.
+    /// Lane phase A: the pick the static benefit makes (`lane_facts::body_pick`).
     pub(crate) pick: Option<Pick>,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
@@ -235,8 +234,6 @@ pub(crate) struct UnitFacts {
     pub(crate) entry_none: bool,
     /// The function calls itself back through other functions (`recursive`).
     pub(crate) recursive: bool,
-    /// Lane phase B: the entry counts were not observed (`observed.is_none()`).
-    pub(crate) observed_none: bool,
     /// Lane phase B: no looped iterations were observed (`looped.is_none()`).
     pub(crate) looped_none: bool,
     /// The body's entry amortizes its work (`lane_facts::amortizes_entry`), or the gate does not ask.
@@ -360,7 +357,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         }
         // Phase B, after planning: the install gate.
         UnitKind::LaneInstall(_) => {
-            if facts.entry_none && !facts.called_by_regions && facts.observed_none && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
+            if facts.entry_none && !facts.called_by_regions && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
@@ -557,13 +554,11 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
     }
 }
 
-/// The compile level of `function`'s u-jit body, admitted at `entries` with `ir` planned
-/// instructions: `Quick` where the entries to come gain more from its cheaper compile than they
-/// lose to its slower code (`tier_model::compiles_quick`), else `Optimized`.
-pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &LaneView) -> CompileLevel {
-    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    let observed = Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir, recursive: false };
-    if super::tier_model::compiles_quick(tiers, &observed, true) { CompileLevel::Quick } else { CompileLevel::Optimized }
+/// The compile level of `function`'s u-jit body: `Quick` where its static residue takes the cheaper compile
+/// (`tier_model::compiles_quick`), else `Optimized`.
+pub(crate) fn compile_level(tiers: &Tiers, program: &ResidualProgram, function: u32) -> CompileLevel {
+    let residue = program.function_get(function as usize).map_or(0, super::lane_facts::static_residue);
+    if super::tier_model::compiles_quick(tiers.admits_all, residue) { CompileLevel::Quick } else { CompileLevel::Optimized }
 }
 
 impl From<super::osr_loop::RegionRejection> for Refusal {

@@ -982,13 +982,8 @@ pub struct LaneMethod {
 pub struct LaneTier {
     /// The frameless body the prologue runs once the JavaScript tier declined the function (`Vm::compile_lane_method`).
     pub tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
-    pub warm_since: std::cell::Cell<u32>,
     /// Counts specialization attempts (`specialize_lane_body`); a refused loop compile retries once it moves.
     pub body_epoch: std::cell::Cell<u32>,
-    /// (epoch, from, at): entries in `from..at` at that epoch skip the weighing (`counted_between_attempts`).
-    pub weigh_at: std::cell::Cell<(u32, u32, u32)>,
     /// Every body it published, kept until the view drops: a retired body's frame leaves through `Activation::body`.
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
@@ -1628,10 +1623,11 @@ pub const JS_IMPORT_ARGUMENTS: usize = 8;
 /// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
 /// moves a body that names shape IDs back to `Unspecialized`.
 pub enum LaneBody {
-    /// Counting its entries toward specialization; `recompiles` bodies before it left too
-    /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
-    /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
+    /// Waiting for its next entry to specialize (a function with no static benefit stays here at its
+    /// first entry, and runs in the interpreter); `recompiles` bodies before it left too often for
+    /// their feedback (`LaneView::note_lane_body_end`), the last of them, where `stuck`, at those few
+    /// leaves only.
+    Unspecialized { recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
@@ -1679,10 +1675,6 @@ pub struct LaneBodyHistory {
     pub demanded: bool,
     /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
     pub region_called: bool,
-    /// The runs its retired bodies made (`EntryCell::evidence` at each retirement): entries of the
-    /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
-    /// (Lindy: a function that ran this long runs on), rather than starting again from none.
-    pub runs: u32,
 }
 
 /// A view's lane-body counters, which only a diagnostics run keeps
@@ -4621,17 +4613,11 @@ impl LaneView {
         }
     }
 
-    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
-    /// is still warming, for the diagnostics report of a view that never compiled
-    /// (`QUENCH_LANE_STATE`).
+    /// Its body's state, and whether the tier claimed its prologue and is still warming, for the
+    /// diagnostics report of a view that never compiled (`QUENCH_LANE_STATE`).
     #[inline]
-    pub fn body_detail_in_lane(&self) -> (&'static str, Option<u32>, bool, bool) {
-        // SAFETY: as `lane_body`.
-        let entries = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized { entries, .. } => Some(*entries),
-            _ => None,
-        };
-        (self.body_state_in_lane(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
+    pub fn body_detail_in_lane(&self) -> (&'static str, bool, bool) {
+        (self.body_state_in_lane(), self.start.get() == self.prologue.get().cast_const(), self.warming())
     }
 
     /// Clears the global-object hints of its by-name loads and stores: a global
@@ -5520,7 +5506,6 @@ impl LaneView {
     pub fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
         let body_state = body.tier_state();
         let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
-        self.credit_runs();
         let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
@@ -5545,14 +5530,13 @@ impl LaneView {
     pub fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
         let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
-        self.credit_runs();
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
         super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
-        *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
+        *body = LaneBody::Unspecialized { recompiles, stuck };
     }
 }
 
@@ -5585,10 +5569,8 @@ pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDE
 impl Default for LaneTier {
     fn default() -> Self {
         Self {
-            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
-            warm_since: std::cell::Cell::new(0),
+            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { recompiles: 0, stuck: LaneLeaves::NONE }),
             body_epoch: std::cell::Cell::new(0),
-            weigh_at: std::cell::Cell::new((0, 0, 0)),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             body_stats: LaneBodyStats::default(),
@@ -5625,16 +5607,6 @@ impl LaneLeaves {
     }
 }
 
-impl LaneView {
-    /// Books its current body's runs to its history (`LaneBodyHistory::runs`) as the body goes.
-    #[inline]
-    pub fn credit_runs(&self) {
-        let (completions, leaves) = self.entry.evidence();
-        let history = self.tier().history.get();
-        let runs = u32::try_from(completions.saturating_add(leaves)).unwrap_or(u32::MAX);
-        self.tier().history.set(LaneBodyHistory { runs: history.runs.saturating_add(runs), ..history });
-    }
-}
 
 
 impl EntryCell {
