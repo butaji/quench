@@ -103,6 +103,46 @@ impl ClassSpace {
         debug_assert!(self.range.is_some() && (locate(g).0 as usize) < CAPACITY_CLASSES);
         (self.base + g as usize * CLASS_HEADER_BYTES) as *mut u64
     }
+
+    /// The record id of the ordinary object whose stub is granule `g` (`stub_record_at`). The
+    /// space must be reserved, and `g` must name a live stub.
+    #[inline(always)]
+    pub(super) fn record_of(&self, g: u32) -> u32 {
+        debug_assert!(self.range.is_some());
+        stub_record_at(self.base, g)
+    }
+
+    /// Frees region 0's stub `g` with its dead record (the record sweep's dispose). Region 0 is never
+    /// swept on its own: its stubs die only here.
+    pub(super) fn release_stub(&mut self, g: u32) {
+        let (region, local) = locate(g);
+        debug_assert_eq!(region, 0, "an object stub lies in region 0");
+        self.regions.0.release_live(local);
+    }
+
+    /// Withholds region 0's stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
+    /// as its record id is withheld: a Value naming the stub names no other object meanwhile.
+    pub(super) fn withhold_stub(&mut self, g: u32) {
+        let (region, local) = locate(g);
+        debug_assert_eq!(region, 0, "an object stub lies in region 0");
+        self.regions.0.withhold(local);
+    }
+
+    /// Makes every withheld region 0 stub reusable again (`RecordSpace::release_withheld`).
+    pub(super) fn release_withheld_stubs(&mut self) {
+        self.regions.0.release_withheld();
+    }
+}
+
+/// The record id of the ordinary object whose stub is granule `g` in the class space at `base`: the
+/// high half of the stub's header, which `departed_header` writes. Reading it is the one hop from a
+/// direct object `Value` to its record, so it needs only the base, not the heap.
+#[inline(always)]
+pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
+    // SAFETY: a direct object `Value` names a stub granule of the reserved class space, whose
+    // header is a readable u64 at `base + g * CLASS_HEADER_BYTES`.
+    let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
+    header_record(header)
 }
 
 /// Region `k`'s first address, as the record space of its cells.

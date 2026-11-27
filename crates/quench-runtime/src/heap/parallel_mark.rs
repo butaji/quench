@@ -22,10 +22,11 @@
 use super::records::{ParallelRecordMarks, RecordId};
 use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
-    CollectionRecord, IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
+    CollectionRecord, IteratorRecord, MarkBits, OrdinaryRecord, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
+use super::class_space::stub_record_at;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use crate::vm::wtf16::JsString;
@@ -63,6 +64,8 @@ macro_rules! parallel_mark_view {
             properties: &'heap ValueArena,
             sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
             marks: &'heap [AtomicU64],
+            /// The class space's base: a direct object's stub names its record (`stub_record_at`).
+            class_base: usize,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -84,6 +87,7 @@ macro_rules! parallel_mark_view {
                     properties: &heap.properties,
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
+                    class_base: heap.class_space.base,
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -269,16 +273,17 @@ impl<'heap> ParallelMarkView<'heap> {
             return;
         };
         let kind = match reference {
-            HeapReference::ObjectRecord(id) => {
+            HeapReference::ObjectRecord(granule) => {
+                let id = stub_record_at(self.class_base, granule);
                 if !self.objects.mark_if_new(id) {
                     return;
                 }
                 // SAFETY: this view just marked the occupied record.
-                let object = unsafe { self.objects.get(id) };
+                let record = unsafe { self.objects.get(id) };
                 let (strings, small_strings) = (self.strings, self.small_strings);
                 Heap::object_children_marking(
                     value,
-                    object,
+                    &record.object,
                     properties,
                     |child, work, last_proto| match child.heap_reference() {
                         Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
