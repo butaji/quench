@@ -44,7 +44,7 @@ pub struct Effects {
 }
 
 impl Effects {
-    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
+    pub const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
     pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
@@ -52,7 +52,7 @@ impl Effects {
     pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region. The top of every grade.
-    pub(crate) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 
     /// A row that touches every region and runs nothing: no guest code, throw, collection or allocation. The settled
@@ -61,9 +61,20 @@ impl Effects {
     pub(crate) const RUNS_NOTHING: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: false,
         may_collect: false, may_call_js: false, may_throw: false };
 
+    /// Whether the row may write `region`.
+    pub const fn writes_region(self, region: Region) -> bool {
+        self.writes.contains(region)
+    }
+
+    /// Whether the row may run guest code, allocate or collect: any of these may move records or change
+    /// what a call leaves behind, so a word read across it is not fixed.
+    pub const fn may_move_or_call(self) -> bool {
+        self.may_call_js || self.may_alloc || self.may_collect
+    }
+
     /// The union of two rows: a region is read or written if either row reads or writes it, and a
     /// flag holds if either does, so a sequence of steps keeps every effect any of them may have.
-    pub(crate) const fn join(self, other: Self) -> Self {
+    pub const fn join(self, other: Self) -> Self {
         Self { reads: RegionSet(self.reads.0 | other.reads.0), writes: RegionSet(self.writes.0 | other.writes.0),
             may_alloc: self.may_alloc || other.may_alloc, may_collect: self.may_collect || other.may_collect,
             may_call_js: self.may_call_js || other.may_call_js, may_throw: self.may_throw || other.may_throw }
@@ -271,7 +282,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The effect row of the operation, from its variant alone.
-    pub(crate) const fn effects(&self) -> Effects {
+    pub const fn effects(&self) -> Effects {
         match self.memory_effects() {
             Some(effects) => effects,
             None => self.control_effects(),

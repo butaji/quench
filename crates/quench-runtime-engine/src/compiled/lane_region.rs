@@ -4645,7 +4645,7 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variables.bits, bits);
             match array.views {
                 ElementViews::Dense => {
-                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
+                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, regions::backing_access(self.unit.effects()), exit);
                     if self.int32_loop(array) {
                         // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.

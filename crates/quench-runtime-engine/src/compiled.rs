@@ -482,12 +482,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
+    backing: quench_runtime::staged::elements::BackingAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
     let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
