@@ -4169,7 +4169,7 @@ impl JsStepDispatch {
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                stub_cursor: 0, object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+                empty_object_cursor: 0, empty_object_class: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
                 armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
@@ -4232,12 +4232,11 @@ impl JsStepDispatch {
     #[cold]
     #[inline(never)]
     fn reread_object_bases(&mut self, vm: &Vm) {
-        // The empty object's template is dropped with the bases: the next empty allocation's helper
-        // makes an object again, which captures the template anew (`capture_empty_object`).
+        // The empty object's captured class is dropped with the bases: the next empty allocation's helper
+        // makes an object again, which captures the class anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_layout, self.empty_object_payload) = (0, 0);
-        self.stub_cursor = vm.heap_reads().native_stub_cursor();
-        self.object_cursor = vm.heap_reads().native_object_cursor();
+        self.empty_object_class = 0;
+        self.empty_object_cursor = vm.heap_reads().native_cell_cursor(1);
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
@@ -4265,18 +4264,18 @@ impl JsStepDispatch {
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
 
-    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype,
-    /// as the template an inline empty allocation copies: its two record words and the prototype
-    /// they were made for. The words depend on the prototype only (`Object::new`). Nothing is
-    /// captured where allocation is profiled per record, which the inline path would skip.
+    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype, as the
+    /// class an inline empty allocation claims its cell with: the class cell's header word (the class names
+    /// the shape and prototype link, which depend on the prototype only) and the prototype it was made for.
+    /// Nothing is captured where the object is not a live class cell, or where allocation is profiled per
+    /// record, which the inline path would skip.
     fn capture_empty_object(&mut self, vm: &Vm, object: Value) {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.stored_words();
+        let Some(class) = vm.heap_reads().live_class_header(object) else { return };
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
+        self.empty_object_class = class;
     }
 
     /// Records `array`, the zero-length array `Vm::hole_array(0)` just made for the current realm's

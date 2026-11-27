@@ -34,9 +34,9 @@
 use crate::bytecode::Operand;
 // A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
 // rows build their writes `strict: false`.
-use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, JS_STEP_STUB_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_CLASS, JS_STEP_EMPTY_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
 use crate::layout::words::DIRECT_ARRAY_TAG;
-use crate::staged::bump::{EmptyObject, claim_empty_object};
+use crate::staged::bump::{ClassCell, claim_empty_object};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
@@ -316,24 +316,21 @@ fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
 }
 
 /// An empty ordinary object (`EMPTY_OBJECT_ROW`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
-/// cursors, bases and template, run on `StencilStage`. Its answer is the direct object word of the claimed stub granule,
-/// delivered into the destination (hole 0); where a cursor is spent or a template absent it leaves with nothing written, so
-/// the helper makes the object (`Heap::publish_object_record`). Nothing here can panic.
+/// region 1 cell cursor, class cell base and captured class, run on `StencilStage`. Its answer is the direct object word
+/// of the claimed class cell's granule, delivered into the destination (hole 0); where the cursor is spent or no class is
+/// captured it leaves with nothing written, so the helper makes the object. Nothing here can panic.
 #[inline(always)]
 fn empty_object_row<const D: u8>(s: S, payload: usize) -> Out {
     // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
     if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
         return Out::Exit(s);
     }
-    let object = EmptyObject {
-        object_cursor: word_at(payload, JS_STEP_OBJECT_CURSOR),
-        stub_cursor: word_at(payload, JS_STEP_STUB_CURSOR),
+    let cell = ClassCell {
+        cursor: word_at(payload, JS_STEP_EMPTY_OBJECT_CURSOR),
         cells: word_at(payload, JS_STEP_CLASS_BASE),
-        records: word_at(payload, JS_STEP_OBJECT_RECORD_BASE),
-        layout: word_at(payload, JS_STEP_EMPTY_OBJECT_LAYOUT),
-        words: word_at(payload, JS_STEP_EMPTY_OBJECT_PAYLOAD),
+        class: word_at(payload, JS_STEP_EMPTY_OBJECT_CLASS),
     };
-    match claim_empty_object(&mut StencilStage::from_hole(0), object, ()) {
+    match claim_empty_object(&mut StencilStage::from_hole(0), cell, ()) {
         Some(word) => deliver::<D>(s, word),
         None => Out::Exit(s),
     }

@@ -208,21 +208,19 @@ fn allocate_claimed(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destina
 }
 
 /// An empty ordinary object (`Allocation::Empty`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
-/// cursors, bases and captured template. Its answer is the object's direct word; a miss makes it by `LaneHelper::NewObject`.
+/// region 1 cell cursor, class cell base and captured class. Its answer is the object's direct word; a miss makes it by
+/// `LaneHelper::NewObject`.
 fn allocate_empty_object(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof)
     -> Option<ir::Value> {
-    use quench_runtime::staged::bump::{claim_empty_object, EmptyObject};
+    use quench_runtime::staged::bump::{claim_empty_object, ClassCell};
     let payload = frame.payload;
-    let object = EmptyObject {
-        object_cursor: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_cursor)),
-        stub_cursor: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.stub_cursor)),
+    let cell = ClassCell {
+        cursor: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_cursor)),
         cells: super::headers::class_table_base(stage.builder, payload),
-        records: emit_js_record_base(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)),
-        layout: emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_layout)),
-        words: emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_payload)),
+        class: emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.empty_object_class)),
     };
     allocate_claimed(frame, stage, destination, LaneHelper::NewObject, &[], proof,
-        |stage, miss| claim_empty_object(stage, object, miss))
+        |stage, miss| claim_empty_object(stage, cell, miss))
 }
 
 /// An empty allocation by the kind's cursor (`Template`). While the cursor's run has an id (`next < limit`) and the

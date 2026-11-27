@@ -323,11 +323,9 @@ pub(crate) const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
-/// The empty allocations' cursor and template words (`JsStepHead::stub_cursor`, `object_cursor` and after).
-pub(crate) const JS_STEP_STUB_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stub_cursor);
-pub(crate) const JS_STEP_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_cursor);
-pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_layout);
-pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_payload);
+/// The empty object's class cell cursor and captured words (`JsStepHead::empty_object_cursor`, `empty_object_class` and after).
+pub(crate) const JS_STEP_EMPTY_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_cursor);
+pub(crate) const JS_STEP_EMPTY_OBJECT_CLASS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_class);
 pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_proto);
 pub(crate) const JS_STEP_ARRAY_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_cursor);
 pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_layout);
