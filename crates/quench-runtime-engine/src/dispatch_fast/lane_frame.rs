@@ -5,10 +5,11 @@
 use crate::ext_traits::*;
 use super::*;
 use super::lane_reads::Reads;
+use super::completions::return_record_in_lane;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Form, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -318,16 +319,18 @@ impl FieldStores {
 /// header pushed or its leaf entered: the callee's registers and first record, the context already
 /// switched to them.
 pub(crate) type CallActivation =
-    unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> (Registers, Ip);
+    unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> Resumed;
 
 /// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
 /// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
-/// and whether its receiver is its function's `undefined` register (`script_call_miss`'s `PLAIN`).
+/// whether its receiver is its function's `undefined` register (`script_call_prove_miss`'s `PLAIN`), and
+/// whether it returns its callee's completion (`protocol_misses::script_call::RETURNS`).
 #[derive(Clone, Copy)]
 pub(crate) struct CallForm {
     leaf: LeafForm,
     argc: u16,
     plain: bool,
+    returns: bool,
 }
 
 /// The call record a call row runs (`protocol_row`), erased of its host so the frame names no `H`:
@@ -470,6 +473,9 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
+    /// The lane context and the leaf form of a `Return` record (`return_form`), where the row is one:
+    /// its completion in the lane is `Frame::ret`. `None` otherwise.
+    returns: Option<(*mut LaneContext, u8)>,
     /// The row's double result keeps its double bits, not an int32 canonical form: set for a fused
     /// record's raw producer (its `mode` raw mask: `raw_bit(0)` for `A`, or a last link with `MODE_RAW_OUT`),
     /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
@@ -655,10 +661,10 @@ pub(crate) struct RecordPlan {
     /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
     /// found inline, before any other family.
     functions: bool,
-    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout and slot,
-    /// the first from the record's hint and the second from its site's entry, and the base the
-    /// first reads (`PropertyFrame::nested_base`). `None` for every other plan.
-    nested: Option<([(u32, u16); 2], quench_runtime::bytecode::FieldBase)>,
+    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout, slot and the storage
+    /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
+    /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
+    nested: Option<([(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
     /// A read the frame's host answers (`FieldPlan::Geometry`, `FieldPlan::Length`), which addresses
     /// no record: the receiver's word is its operand. `None` for every other plan.
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
@@ -829,14 +835,31 @@ impl RecordPlan {
 
 impl RecordPlan {
     /// The nested read `a.b.c` of two own hops: `first` the record's hint (the layout and slot
-    /// of the first object), `second` the site's entry for the intermediate object, and `base`
-    /// the base the first hop reads. One layout compare and one slot load per hop.
+    /// of the first object), `second` the site's entry for the intermediate object, each with the
+    /// storage form its site fixed, and `base` the base the first hop reads. One shape compare and
+    /// one slot load per hop.
     #[inline(always)]
-    pub(crate) fn nested(first: (u32, u16), second: (u32, u16), base: quench_runtime::bytecode::FieldBase,
+    pub(crate) fn nested(first: (u32, u16, Form), second: (u32, u16, Form), base: quench_runtime::bytecode::FieldBase,
         records: u64) -> Self {
-        let none = quench_runtime::staged::ic::IcOp::GuardLayout(first.0);
+        use quench_runtime::staged::ic::IcOp;
+        let none = IcOp::GuardLayout(first.0);
+        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardShape(second.0), second.1, second.2)];
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some(([first, second], base)), host: None, entry: None, own: None }
+            nested: Some((hops, base)), host: None, entry: None, own: None }
+    }
+
+    /// `nested` whose second hop is the intermediate object's layout id `layout` in the fixed `form`
+    /// (`IcOp::GuardFormed`): one compare of the record's own word proves its shape and form, so the hop
+    /// reads its slot untested (`requicken_nested` stamped the id).
+    #[inline(always)]
+    pub(crate) fn nested_formed(first: (u32, u16, Form), (layout, slot, form): (u32, u16, Form),
+        base: quench_runtime::bytecode::FieldBase, records: u64) -> Self {
+        use quench_runtime::staged::ic::IcOp;
+        let none = IcOp::GuardLayout(first.0);
+        let bits = if matches!(form, Form::Packed) { quench_runtime::value_vec::INLINE_FORM } else { 0 };
+        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardFormed { id: layout, form: bits }, slot, form)];
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
+            nested: Some((hops, base)), host: None, entry: None, own: None }
     }
 
     /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
@@ -853,7 +876,7 @@ impl RecordPlan {
 pub(crate) struct LanePlans {
     read: Option<([quench_runtime::staged::ic::IcOp<'static>; 2], usize)>,
     store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    nested: Option<[(u32, u16); 2]>,
+    nested: Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]>,
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
     entry: Option<quench_runtime::staged::property::EntryKind>,
     own: Option<(u32, u16)>,
@@ -873,7 +896,7 @@ impl quench_runtime::staged::property::PlanSource for LanePlans {
     }
     /// A nested read's two own hops, as the record holds them.
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { self.nested }
+    fn nested_hops(&self) -> Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]> { self.nested }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<quench_runtime::staged::property::StorePlan<'_>> {
         // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
@@ -887,7 +910,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1569,6 +1592,23 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         Some(LaneControl::Resumed(resumed))
     }
 
+    /// A `Return` record's value completes its activation in the lane (`return_record_in_lane`) at the
+    /// record's leaf form; `None` for a record that is no `Return` of the family (`return_form`), or a
+    /// completion the lane's rules decline, which leaves the record to its miss.
+    #[inline(always)]
+    fn ret(&mut self, _stage: &mut Concrete, register: Register) -> Option<LaneControl> {
+        let (cx, leaf) = self.returns?;
+        let value = self.read_value(register);
+        let resumed = match leaf {
+            0 => return_record_in_lane::<0>(cx, self.registers, value),
+            1 => return_record_in_lane::<1>(cx, self.registers, value),
+            2 => return_record_in_lane::<2>(cx, self.registers, value),
+            3 => return_record_in_lane::<3>(cx, self.registers, value),
+            _ => return_record_in_lane::<4>(cx, self.registers, value),
+        }?;
+        Some(LaneControl::Resumed(resumed))
+    }
+
     /// The VM's load of the global bound in `binding`, where the frame holds the rules (`globals`).
     #[inline(always)]
     fn wasm_global_load(&mut self, _stage: &mut Concrete, binding: u64) -> Option<u64> {
@@ -2197,6 +2237,12 @@ impl<const OP: u16, const FLAG: u8> LaneFields<'_, OP, FLAG> {
     const RESULT_A: bool = matches!(Self::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A),
         quench_runtime::bytecode::FieldLayout::ResultRegister);
     const REGISTER_A: bool = Self::OPCODE.field_layout(quench_runtime::bytecode::InstructionField::A).is_register_field();
+    /// A call whose immediate carries eval flags: in a lane record those bits are the lane's own
+    /// result marks (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`, `_AWAITED_FLAG`), since no
+    /// eval call runs as a lane call (`call_fits_in_lane`).
+    const CALL_MARKS: bool = matches!(Self::OPCODE.immediate_layout(),
+        quench_runtime::bytecode::ImmediateLayout::CallWindowWithEvalFlags
+            | quench_runtime::bytecode::ImmediateLayout::SingleArgumentCallWindowWithEvalFlags);
 }
 
 impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneFields<'_, OP, FLAG> {
@@ -2234,6 +2280,9 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
             // The view proved the immediate's high half zero (`row_near`): a capture of the running
             // function's own scope, whose depth then folds.
             (false, FLAG_SET) => self.0.imm() & u32::from(u16::MAX),
+            // A lane call's result marks are no eval flags: the decode reads the window alone.
+            (false, _) if Self::CALL_MARKS => self.0.imm() & !(quench_runtime::bytecode::ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG
+                | quench_runtime::bytecode::ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG),
             (false, _) => self.0.imm(),
         };
         // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's, and a returning
@@ -2339,7 +2388,7 @@ pub(crate) const fn admits_row(op: Op) -> bool {
 
 /// Whether opcode `op` is a raw return's terminal row (`staged::raw_representation` on a `Terminal`
 /// flow): its `Return` completes the Wasm activation through `Frame::return_raw`, so the row runs in the
-/// lane with no hand handler. A JavaScript `Return` is not one: its completion stays `return_miss`.
+/// lane with no hand handler. A JavaScript `Return` is not one: its completion is `Frame::ret`, and its miss `return_general_in_lane`.
 pub(crate) const fn returns_raw_row(op: Op) -> bool {
     matches!(op.control_flow_layout(), quench_runtime::bytecode::ControlFlowLayout::Terminal)
         && quench_runtime::staged::raw_representation(op)
@@ -3060,17 +3109,34 @@ macro_rules! row_decode {
 }
 
 /// The first `FLAG` of a comparison jump whose operator its instance fixes (`compare_jump_row`):
-/// `FLAG_COMPARE + operator`, past every other flag.
+/// `FLAG_COMPARE + compare_slot(operator)`, past every other flag.
 const FLAG_COMPARE: u8 = 200;
-/// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
-const COMPARE_OPERATORS: u8 = 22;
+/// The operators a comparison jump's instance fixes: the comparison operator codes (`binary_operator`):
+/// the equalities and relations (0 to 7), then `in` and `instanceof`.
+const COMPARE_OPERATORS: u8 = 10;
+
+/// The slot of comparison `operator` among `COMPARE_OPERATORS`; `None` for an arithmetic operator,
+/// which no comparison jump tests.
+const fn compare_slot(operator: u32) -> Option<u8> {
+    use oxc_ast::ast::BinaryOperator as B;
+    if operator <= B::GreaterEqualThan as u32 { Some(operator as u8) }
+    else if operator == B::In as u32 { Some(8) }
+    else if operator == B::Instanceof as u32 { Some(9) }
+    else { None }
+}
+
+/// `compare_slot`'s inverse.
+const fn slot_operator(slot: u8) -> u32 {
+    use oxc_ast::ast::BinaryOperator as B;
+    match slot { 8 => B::In as u32, 9 => B::Instanceof as u32, slot => slot as u32 }
+}
 
 /// The comparisons whose jumps also have instances that fix their operand kinds (`FLAG_COMPARE_FORMED`):
-/// the relations and the strict equalities a loop or a recursion tests.
-const FORMED_COMPARISONS: [u32; 6] = {
+/// the relations and the equalities a loop, a recursion or a state test (`this.state == STATE_X`) makes.
+const FORMED_COMPARISONS: [u32; 8] = {
     use oxc_ast::ast::BinaryOperator as B;
     [B::LessThan as u32, B::LessEqualThan as u32, B::GreaterThan as u32, B::GreaterEqualThan as u32,
-        B::StrictEquality as u32, B::StrictInequality as u32]
+        B::StrictEquality as u32, B::StrictInequality as u32, B::Equality as u32, B::Inequality as u32]
 };
 /// The first `FLAG` of a comparison jump that fixes its operator, a `FORMED_COMPARISONS` entry, and its
 /// operand kinds: `FLAG_COMPARE_FORMED + 2 * entry + form`, where form 0 is two registers and 1 a register
@@ -3139,7 +3205,7 @@ fn boolean_jump_row<const BACKWARD: bool>(operator: u32, constant: Value) -> Opt
 
 /// The first `FLAG` of a comparison jump whose operands the view's int32 kinds prove int32s (`proven_compare_jump`):
 /// `FLAG_COMPARE_PROVEN + 2 * entry + form`, the operator and operand form of `FLAG_COMPARE_FORMED`. It ends the
-/// flag space: the last instance is 255.
+/// flag space: the last instance is 251.
 const FLAG_COMPARE_PROVEN: u8 = FLAG_COMPARE_BOOLEAN + BOOLEAN_TESTS.len() as u8;
 const _: () = assert!(FLAG_COMPARE_PROVEN as usize + 2 * FORMED_COMPARISONS.len() <= 256);
 
@@ -3158,7 +3224,7 @@ const fn operand_fixed_offset(flag: u8) -> Option<u8> {
 
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
-    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some(slot_operator(flag - FLAG_COMPARE)) }
     if let Some(offset) = operand_fixed_offset(flag) {
         return Some(FORMED_COMPARISONS[(offset / 2) as usize]);
     }
@@ -3183,7 +3249,7 @@ const fn proven_compare_flag(flag: u8) -> bool {
 fn proven_compare_row<const BACKWARD: bool>(offset: usize) -> Option<Handler> {
     macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! proven { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_PROVEN + $n)),+] } }
-    let table: [Handler; 2 * FORMED_COMPARISONS.len()] = proven!(0 1 2 3 4 5 6 7 8 9 10 11);
+    let table: [Handler; 2 * FORMED_COMPARISONS.len()] = proven!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
     table.get(offset).copied()
 }
 
@@ -3236,7 +3302,7 @@ fn proven_compare_of<const BACKWARD: bool>(record: &mut LaneInstruction, constan
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
 fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
     macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
-    guarded!(0 1 2 3 4 5)
+    guarded!(0 1 2 3 4 5 6 7)
 }
 
 /// The guarded instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) whose two operands are
@@ -3280,7 +3346,7 @@ script_handler! {
 fn compare_operands_of<const BACKWARD: bool>(handler: Handler) -> Option<bool> {
     macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
     macro_rules! constant_formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
-    let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11);
+    let constant: [Handler; FORMED_COMPARISONS.len()] = constant_formed!(1 3 5 7 9 11 13 15);
     Some(constant.iter().any(|row| *row as *const () == handler as *const ()))
 }
 
@@ -3297,12 +3363,12 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
         _ => None,
     };
     if let (Some(entry), Some(form)) = (FORMED_COMPARISONS.iter().position(|&formed| formed == operator), form) {
-        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11);
+        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
         return Some(table[2 * entry + form]);
     }
     macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
-    table.get(operator as usize).copied()
+    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9);
+    table.get(usize::from(compare_slot(operator)?)).copied()
 }
 
 /// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
@@ -3312,9 +3378,9 @@ pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
         macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
-        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55)
+        rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51)
     }
-    const _: () = assert!(COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 56);
+    const _: () = assert!(COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len() == 52);
     if instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
     if instances::<true>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(true)) }
     if compare_guarded_instances::<false>().iter().any(|row| *row as *const () == handler) { return Some(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(false)) }
@@ -3531,7 +3597,7 @@ view_handler! {
         if const { FLAG == crate::dispatch_fast::NUMBER_SITE } {
             sibling!(crate::dispatch_fast::row_get_field_number_refresh, r, ip, Carried::script_in(script, view))
         }
-        if const { FLAG == crate::dispatch_fast::NESTED_SITE } {
+        if const { crate::dispatch_fast::nested_site(FLAG) } {
             // A nested read whose hops the record does not hold (or whose steps miss): the hand
             // read that refreshes the hint from the steps' entries.
             sibling!(get_field_nested_miss, r, ip, Carried::script_in(script, view))
@@ -3766,7 +3832,7 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
                 }
                 Step::Control(LaneControl::Edge(Edge::Following)) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
                 // The frame activated the callee (`CallFrame::call_hand_over`): its first record, as the
-                // proved handlers continue (`script_call_miss`, `script_call_leaf_miss`).
+                // proved handlers continue (`script_call_prove_miss`, `script_call_leaf_prove_miss`).
                 Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
                 Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss(MISS) }, r, ip, view),
             }
@@ -3781,6 +3847,9 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        if let Some(leaf) = const { return_form(MISS) } {
+            frame.returns = Some((cx, leaf));
+        }
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 if const { !quench_runtime::staged::row_writes_result(LaneFields::<OP>::OPCODE) } {
@@ -3798,22 +3867,32 @@ sharded_handler! { view_handler, protocol_row_shards, protocol_row_handler, [OP]
     }
 }
 
+/// The leaf form of the `Return` record whose miss is `miss` (`returning_code(RETURN_KIND, leaf)`), which
+/// completes its activation in the lane (`Frame::ret`); `None` for any other miss, a constant return's among them.
+pub(crate) const fn return_form(miss: u16) -> Option<u8> {
+    use super::protocol_misses::returns::{returning_code, LEAF_FORMS, RETURN_KIND};
+    if protocol_family::of(miss) != protocol_family::RETURN { return None; }
+    let parameters = protocol_family::parameters(miss);
+    let leaf = parameters % LEAF_FORMS;
+    if parameters == returning_code(RETURN_KIND, leaf) { Some(leaf) } else { None }
+}
+
 /// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
-/// `script_call_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
-/// of a `script_call_leaf_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
+/// `script_call_prove_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
+/// of a `script_call_leaf_prove_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
 /// miss, whose record the lane frame does not answer.
 pub(crate) const fn call_form(miss: u16) -> Option<CallForm> {
     use super::protocol_misses::script_call as code;
     let parameters = protocol_family::parameters(miss);
     match protocol_family::of(miss) {
-        protocol_family::SCRIPT_CALL if parameters & !code::PLAIN <= code::ARGC_ANY => {
-            let argc = parameters & !code::PLAIN;
+        protocol_family::SCRIPT_CALL if parameters & !(code::PLAIN | code::RETURNS) <= code::ARGC_ANY => {
+            let argc = parameters & !(code::PLAIN | code::RETURNS);
             let argc = if argc == code::ARGC_ANY { ANY_ARGC } else { argc as u16 };
-            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0 })
+            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0, returns: parameters & code::RETURNS != 0 })
         }
         protocol_family::LEAF_CALL => match super::protocol_misses::leaf_call::leaf_of(parameters) {
             Some((leaf, argc)) if leaf >= PLAIN_LEAF && leaf <= THIS_LEAF && argc <= FIXED_ARGUMENT_COPIES =>
-                Some(CallForm { leaf, argc, plain: false }),
+                Some(CallForm { leaf, argc, plain: false, returns: false }),
             _ => None,
         },
         _ => None,
@@ -3853,10 +3932,11 @@ const fn call_activation(miss: u16) -> CallActivation {
 }
 
 /// The plain activation of `target` past the lane frame's admission of the call record `record` at
-/// `ip` (`CallActivation`): the proved arm of `lane_plain_activation!` from its window on, its
+/// `ip` (`CallActivation`): the proved arm of `plain_call_activation` from its window on, its
 /// window filled from the record's (`fill_window_in_lane`) and its header pushed straight below it at
-/// the admitted `depth` (`enter_plain_window`). `ARGC` is the record's argument count
-/// (`call_argument_count`).
+/// the admitted `depth` (`enter_plain_window`). A call that does not return its completion first runs
+/// an entry cell's body (`enter_cell_body_in_lane`), as the proved arm does; a declined body re-reads
+/// the depth, which it may have moved. `ARGC` is the record's argument count (`call_argument_count`).
 ///
 /// # Safety
 /// `context` is the running lane's context and `record` the call record at `ip` of the caller's
@@ -3865,7 +3945,7 @@ const fn call_activation(miss: u16) -> CallActivation {
 /// unpublished entry cell (its proof), and `this` the receiver it binds.
 #[inline(always)]
 unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers, ip: Ip, record: *const LaneInstruction,
-    target: *const ScriptCallTarget, depth: usize, this: Value) -> (Registers, Ip) {
+    target: *const ScriptCallTarget, depth: usize, this: Value) -> Resumed {
     let cx = context.cast::<LaneContext>();
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
@@ -3875,12 +3955,24 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    let mut depth = depth;
+    // A callee whose entry cell holds a body that pays its entry runs it before any activation exists;
+    // a returning call's completion is its caller's, which no body runs before.
+    if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 && unsafe { (*target.view).enters_cell_body() } {
+        if let Some(resumed) = super::enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
+            return resumed;
+        }
+        // A declined body may have made the plain activations records: the push writes over the depth it left.
+        depth = vm.lane_stack.plain.depth.get();
+        if depth == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
+    }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+    let (registers, base) = enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this);
+    Resumed::At(registers, base, Carried::script(cx))
 }
 
 /// The leaf call of `target` of form `LEAF` past the lane frame's admission of the call record
-/// `record` at `ip` (`CallActivation`): `script_call_leaf_miss`'s proved arm from its run on
+/// `record` at `ip` (`CallActivation`): `script_call_leaf_prove_miss`'s proved arm from its run on
 /// (`lane_run_leaf`). A leaf pushes no plain activation, so the depth is not read.
 ///
 /// # Safety
@@ -3888,9 +3980,10 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
 /// values.
 #[inline(always)]
 unsafe fn leaf_call_activation<const LEAF: u8, const ARGC: u16>(context: *mut (), r: Registers, ip: Ip,
-    record: *const LaneInstruction, target: *const ScriptCallTarget, _depth: usize, this: Value) -> (Registers, Ip) {
+    record: *const LaneInstruction, target: *const ScriptCallTarget, _depth: usize, this: Value) -> Resumed {
     // SAFETY: the function's contract.
-    unsafe { super::leaf_calls::lane_run_leaf::<LEAF, ARGC>(context.cast(), r, ip, &*record, &*target, this) }
+    let (registers, base) = unsafe { super::leaf_calls::lane_run_leaf::<LEAF, ARGC>(context.cast(), r, ip, &*record, &*target, this) };
+    Resumed::At(registers, base, Carried::script(context.cast()))
 }
 
 /// The frame a call row of `MISS` steps over (`protocol_row`): the register file and the carried view,
@@ -3927,7 +4020,7 @@ pub(crate) fn getter_frame(cx: *mut LaneContext, r: Registers, ip: Ip, target: &
     let vm = unsafe { vm(cx) };
     let mut frame = LaneFrame::<ACC_NONE>::new(r, Carried::script(cx));
     frame.call = Some(LaneCall { context: cx.cast(), stack: &raw const *vm.lane_stack, globals: &raw const vm.realm.globals,
-        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false }, target: std::cell::Cell::new(target),
+        record: ip, ip, form: CallForm { leaf: NOT_LEAF, argc: 0, plain: false, returns: false }, target: std::cell::Cell::new(target),
         depth: 0, activate, base });
     frame
 }
@@ -3983,9 +4076,17 @@ script_handler! {
             sibling!(const { protocol_miss(MISS) }, r, ip, view)
         }
         let destination = i.a & quench_runtime::bytecode::REGISTER_MASK;
-        let (left, right) = (Operand::register(i.b), Operand(i.c));
+        // The register's payload and the one constant the record holds (`Reads::of_jump`'s immediate),
+        // stated as such, so the step decodes neither operand's kind.
+        let left = Operand::register(i.b & Operand::PAYLOAD_MASK);
+        let right = Operand::constant(0).expect("constant index 0 fits an operand");
         let number = if INT32 {
-            quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right)
+            // A relation to an int32 constant compares int32s: any other left operand leaves at the miss.
+            match quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right) {
+                Some(NumberOperation::RelationValue { destination, left, right, relation, .. }) => Some(NumberOperation::RelationValue {
+                    destination, left, right, relation, domain: quench_runtime::staged::Domain::Int32 }),
+                other => other,
+            }
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, destination, left, right)
         };

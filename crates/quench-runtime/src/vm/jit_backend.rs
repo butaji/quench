@@ -273,10 +273,27 @@ impl NativeCompileRejection {
 /// Lower once, retaining relocations and their symbolic name table until the
 /// consumer has linked or published the artifact. This avoids an extra code copy.
 /// A missing size limit preserves the Wasm compiler's existing admission policy.
+/// The consumer reads the function's parameters only (its relocation names): its instructions
+/// are dropped once lowered (`Context::release_ir`).
 pub fn compile_function<T>(
+    function: cranelift_codegen::ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: Option<usize>,
+    consume: impl FnOnce(
+        &cranelift_codegen::CompiledCode,
+        &cranelift_codegen::ir::Function,
+    ) -> Result<T, NativeCompileRejection>,
+) -> Result<T, NativeCompileRejection> {
+    compile_function_reading(function, isa, max_code_bytes, true, consume)
+}
+
+/// `compile_function` for a consumer that reads the compiled function's instructions too
+/// (`release_ir` false).
+pub fn compile_function_reading<T>(
     mut function: cranelift_codegen::ir::Function,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     max_code_bytes: Option<usize>,
+    release_ir: bool,
     consume: impl FnOnce(
         &cranelift_codegen::CompiledCode,
         &cranelift_codegen::ir::Function,
@@ -293,6 +310,7 @@ pub fn compile_function<T>(
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
     context.clear();
     context.func = function;
+    context.release_ir = release_ir;
     let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).map(|compiled| compiled.code_buffer().len());
     let outcome = match compiled {
         Err(_error) => {

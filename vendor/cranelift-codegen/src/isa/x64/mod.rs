@@ -59,7 +59,8 @@ impl X64Backend {
 
     fn compile_vcode(
         &self,
-        func: &Function,
+        func: &mut Function,
+        release_ir: bool,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
         ctrl_plane: &mut ControlPlane,
@@ -71,6 +72,7 @@ impl X64Backend {
         let abi = abi::X64Callee::new(func, self, &self.x64_flags, &sigs)?;
         compile::compile::<Self>(
             func,
+            release_ir,
             domtree,
             regalloc_ctx,
             self,
@@ -85,13 +87,14 @@ impl X64Backend {
 impl TargetIsa for X64Backend {
     fn compile_function(
         &self,
-        func: &Function,
+        func: &mut Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
+        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
 
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;
         let value_labels_ranges = emit_result.value_labels_ranges;

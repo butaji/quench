@@ -64,5 +64,8 @@ profile_one() {
 export -f profile_one
 { (cd "$corpus" && ls -- *.js *.cjs); echo wasm-kernels; } | xargs -P "$(nproc)" -I{} bash -c 'profile_one {}'
 
-target/experiment/symbol-order "$binary" crates/quench/link/x86_64-linux.order --sets "$profiles"/*.out
+target/experiment/symbol-order "$binary" "$work/hashed.order" --sets "$profiles"/*.out
+# Crate hashes move with dependencies and features: the order names functions without them
+# (tools/ordered-ld/ld.lld resolves them in each link).
+sed -E 's/Cs[0-9A-Za-z]+_/Cs_/g; s/\.llvm\.[0-9]+$//' "$work/hashed.order" | awk '!seen[$0]++' >crates/quench/link/x86_64-linux.order
 tools/check-link-order.sh "$binary" crates/quench/link/x86_64-linux.order 0

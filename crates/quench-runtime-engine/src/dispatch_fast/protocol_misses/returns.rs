@@ -47,7 +47,7 @@ pub(crate) const fn return_miss_of(parameters: u8) -> Handler {
     let kind = parameters / LEAF_FORMS;
     let leaf = parameters % LEAF_FORMS;
     match kind {
-        RETURN_KIND => leaf_arms!(leaf, |L| return_miss::<L> as Handler),
+        RETURN_KIND => return_general_in_lane as Handler,
         CONSTANT_KIND => leaf_arms!(leaf, |L| return_constant_miss::<L> as Handler),
         RETURNING_FIELD => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD, L> as Handler),
         RETURNING_FIELD_OWN => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_OWN, L> as Handler),

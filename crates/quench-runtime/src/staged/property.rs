@@ -227,17 +227,19 @@ pub trait PlanSource {
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>>;
     /// The store plan of cache site `site`.
     fn store_plan(&self, site: u16) -> Option<StorePlan<'_>>;
-    /// The two own hops `(exact shape, slot)` of a nested read `a.b.c` the source holds as data (a
-    /// lane record's hint and its site's second entry); `None` where it holds none.
+    /// The two own hops `(guard, slot, form)` of a nested read `a.b.c` the source holds as data (a
+    /// lane record's hint and its site's second entry): the guard an exact shape's compare
+    /// (`IcOp::GuardShape`), or a layout id's that proves the form too (`IcOp::GuardFormed`); each form
+    /// the storage form its site fixed (`Form::Either` where it fixed none); `None` where it holds none.
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { None }
+    fn nested_hops(&self) -> Option<[(IcOp<'static>, u16, Form); 2]> { None }
 }
 
 impl<P: PlanSource> PlanSource for &P {
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>> { (**self).field_plan(lookup) }
     fn store_plan(&self, site: u16) -> Option<StorePlan<'_>> { (**self).store_plan(site) }
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { (**self).nested_hops() }
+    fn nested_hops(&self) -> Option<[(IcOp<'static>, u16, Form); 2]> { (**self).nested_hops() }
 }
 
 /// The plans of a frame that proved none.
@@ -641,6 +643,15 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
     Some(object)
 }
 
+/// One own hop of a nested read: `object`'s record, under `guard`, its `slot` in `form`.
+#[inline(always)]
+fn nested_hop<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+    (guard, slot, form): (IcOp<'static>, u16, Form), miss: S::Miss) -> Option<S::Word> {
+    let at = frame.receiver_record(stage, Owner::Temporary, object, false, miss)?;
+    let ops = [guard, IcOp::LoadSlot { slot, form, storage_len: usize::from(slot) + 1, rep: crate::typed_ir::Representation::Tagged }];
+    ic::run(stage, &ops, at, None, miss)
+}
+
 /// `GetField`: `base`'s value, as the loop's entry or the record of an OSR region already
 /// holds it, else read through `lookup`'s plan.
 #[inline(always)]
@@ -651,15 +662,11 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     if base.0 == FieldBase::NESTED {
         // A nested lookup's base is the site's, which the frame names; its links keep no proof.
         // Two own hops inline, each one exact-shape compare and one slot load, as the hand read.
-        let hops = frame.plans().nested_hops()?;
-        let mut object = frame.nested_base(stage, miss)?;
-        for (shape, slot) in hops {
-            let at = frame.receiver_record(stage, Owner::Temporary, object, false, miss)?;
-            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either,
-                storage_len: usize::from(slot) + 1, rep: crate::typed_ir::Representation::Tagged }];
-            object = ic::run(stage, &ops, at, None, miss)?;
-        }
-        return Some(object);
+        // The two hops written out, not looped, so each hop's guard folds to its own compare.
+        let [first, second] = frame.plans().nested_hops()?;
+        let base = frame.nested_base(stage, miss)?;
+        let middle = nested_hop(stage, frame, base, first, miss)?;
+        return nested_hop(stage, frame, middle, second, miss);
     }
     // A local base is read through the frame's local (`PropertyFrame::local_base`), which keeps no
     // proof of its object, as a temporary's.

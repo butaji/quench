@@ -98,7 +98,7 @@ impl<const ACC: u8> quench_runtime::staged::PrologueFrame<Concrete> for LaneFram
 /// The plan of `call`'s call to `target`, its `this` bound as `direct_call_this_in_lane` binds it: lexical
 /// (and plain) as the bound `this`, sloppy through `bind_this` with the global object, else as it is.
 #[inline(always)]
-fn direct_plan(call: &LaneCall, target: &ScriptCallTarget) -> quench_runtime::staged::CallEntry {
+fn direct_plan(call: &LaneCall, target: &ScriptCallTarget, identity: quench_runtime::staged::Identity) -> quench_runtime::staged::CallEntry {
     let lexical = || Some(quench_runtime::staged::plan::Bound { this: target.lexical_this.to_bits(),
         arguments: quench_runtime::staged::plan::WordList { start: 0, count: 0 } });
     let (sloppy, bound) = if call.form.plain {
@@ -114,7 +114,7 @@ fn direct_plan(call: &LaneCall, target: &ScriptCallTarget) -> quench_runtime::st
     };
     quench_runtime::staged::CallEntry::Direct(quench_runtime::staged::DirectPlan {
         kind: quench_runtime::staged::CalleeKind::Script,
-        identity: quench_runtime::staged::Identity::Guarded(target.callee.to_bits()),
+        identity,
         sloppy,
         registers: target.registers,
         returned: 0,
@@ -134,12 +134,12 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
         || target.program() != unsafe { (*cx).program } {
         return quench_runtime::staged::CallEntry::Helper;
     }
-    direct_plan(call, target)
+    direct_plan(call, target, quench_runtime::staged::Identity::Guarded(target.callee.to_bits()))
 }
 
 /// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
-/// (`script_call_miss`'s proven arm, `lane_plain_activation!`) and the proved leaf call
-/// (`script_call_leaf_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
+/// (`plain_call_activation`) and the proved leaf call
+/// (`script_call_leaf_prove_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
 ///
 /// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
 ///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
@@ -203,13 +203,13 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         if site.receiver == Receiver::Base {
             return getter_entry(call, site);
         }
-        // The form the proved calls make: a callee and a receiver register and a window, a
-        // result defined, not returned (a returning call's admission is the run's,
-        // `returning_call_admitted`, which the miss arm makes).
-        let (Callee::Register(_), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
+        // The form the proved calls make: a callee and a receiver register and a window. A returning
+        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // where `returning_call_admitted` holds for the function); a forwarding call is never.
+        let (Callee::Register(callee_register), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
         };
-        if site.returns || site.forwards {
+        if site.returns != call.form.returns || site.forwards {
             return quench_runtime::staged::CallEntry::Helper;
         }
         // SAFETY: the running lane's stack, which nothing below changes.
@@ -219,12 +219,29 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         let index = usize::from(unsafe { (*call.record).call_link.get() }) & (entries.len() - 1);
         // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the masked
         // index lies within it; nothing before the hand-off resolves a target or collects.
-        let target = unsafe { entries.get_unchecked(index) };
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_miss`'s `ARGC`.
+        let linked = unsafe { entries.get_unchecked(index) };
+        // A site meeting another callee than its link names (a polymorphic `this.task.run(p)`) finds the
+        // callee's own entry in its set's two ways (`Vm::script_call_index`), which the link names from then
+        // on: the row admits it as it would the linked one, and only a callee no set holds declines.
+        let callee = self.registers.get(callee_register);
+        let target = if linked.callee == callee { linked } else {
+            let Some(set) = stack.script_targets.set(callee) else { return quench_runtime::staged::CallEntry::Helper };
+            let Some((way, entry)) = [set, set | 1].into_iter()
+                .find_map(|way| entries.get(way).filter(|entry| entry.callee == callee).map(|entry| (way, entry))) else {
+                return quench_runtime::staged::CallEntry::Helper;
+            };
+            // SAFETY: the call record the row runs; the entry count stays below `PLAIN_LINK` (`SCRIPT_CALL_TARGETS`).
+            unsafe { (*call.record).call_link.set(way as u16 | crate::dispatch_fast::PLAIN_LINK) };
+            entry
+        };
+        // The callee and the entry's admission are checked here, once, at run time: the plan names the
+        // callee folded (`Identity::Folded`), so the staged call reads and compares neither again.
+        if target.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
+        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
-        if target.admission != stack.admission
-            || (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
+        // The target's admission is checked with its callee in the row's one guard (`call_admission`).
+        if (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
             || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
             || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
         {
@@ -232,7 +249,18 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         }
         debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
         call.target.set(std::ptr::from_ref(target));
-        direct_plan(call, target)
+        direct_plan(call, target, quench_runtime::staged::Identity::Folded(callee.to_bits()))
+    }
+
+    /// The admitted entry's admission word and the lane's (`call_entry`'s target), which the row's one guard
+    /// compares with the callee (`call::guard_bound_target`); a getter's entry is admitted by its own form.
+    #[inline(always)]
+    fn call_admission(&mut self, _stage: &mut Concrete) -> Option<(u64, u64)> {
+        let call = self.call.as_ref()?;
+        let target = call.target.get();
+        if target.is_null() || call.base != Value::UNDEFINED { return None; }
+        // SAFETY: `call_entry` admitted the entry of the running lane's cache, which nothing before the hand-off changes.
+        Some(unsafe { ((*target).admission.0, (*call.stack).admission.0) })
     }
 
     /// A getter's base (`Receiver::Base`).
@@ -298,10 +326,9 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.
-        let (registers, start) = unsafe {
+        let resumed = unsafe {
             (call.activate)(call.context, self.registers, call.ip, call.record, call.target.get(), call.depth, Value::from_bits(this))
         };
-        // The callee's view is the caller's script view: the same context, no accumulator.
-        Some(LaneControl::Resumed(Resumed::At(registers, start, Carried { acc: Slot::unset(), ..self.view })))
+        Some(LaneControl::Resumed(resumed))
     }
 }

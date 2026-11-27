@@ -53,9 +53,10 @@ view_handler! {
                     requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE));
                 }
             }
-            // A store instance missed: its hint may have moved, so the record retires to the plain row, which re-chooses.
+            // A store instance missed: the plain row stores it, with the VM's stores the instance does not
+            // carry (`frame.stores`), and re-chooses the instance from the hint it leaves (`requicken_store_form`).
             if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
+                sibling!(generated_row!(OP, ACC_NONE, FLAG_UNREAD), r, ip, Carried::script_in(script, view))
             }
             if this_store {
                 sibling!(crate::dispatch_fast::row_set_field_classify::<OP, true>, r, ip, Carried::script_in(script, view))
@@ -73,7 +74,10 @@ view_handler! {
                 }
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::THIS.0);
-                } else if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
+                } else if const { crate::dispatch_fast::nested_site(FLAG) } {
+                    // A nested record's lookup is its site (`set_field_lookup_site`): `b` names the nested base, `c` is zero.
+                    std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::NESTED && i.c == 0);
+                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
                     // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
                 }
@@ -190,8 +194,10 @@ view_handler! {
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
-            // its siblings), at every store row.
-            frame.stores = Some(FieldStores::of(script));
+            // its siblings), at every plain store row.
+            // A store instance (`store_formed_site`) carries none: what its plan refuses, the plain row
+            // completes (`store_miss!`), so the instance makes no call and keeps its values in registers.
+            if const { !crate::dispatch_fast::store_formed_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
             frame.plan = Some(if const { FLAG == crate::dispatch_fast::ADD_SITE } {
                 RecordPlan::own_add()
             } else if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
@@ -240,11 +246,21 @@ view_handler! {
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
-            } else if const { FLAG == crate::dispatch_fast::NESTED_SITE || crate::dispatch_fast::sink_site(FLAG) } {
+            } else if const { crate::dispatch_fast::nested_site(FLAG) || crate::dispatch_fast::sink_site(FLAG) } {
                 // A nested read's two own hops: the record's hint is the first step's layout and
                 // slot, the site's second entry the second, both primary own entries; the base is
                 // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
                 let machine = unsafe { vm(script) };
+                if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) } {
+                    // A formed instance's hops are its record's (`requicken_nested`): the hint the first,
+                    // `mode` the second and the base. Their guards are the check, so nothing is looked up.
+                    let hint = i.field_hint();
+                    let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
+                    if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
+                    let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
+                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
+                        machine.heap_reads().live_object_records() as u64));
+                } else {
                 let code = unsafe { &*(*script).code };
                 let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
                 let Some((_, cache)) = site.second else { property_miss!() };
@@ -265,8 +281,10 @@ view_handler! {
                     frame.stores = Some(FieldStores::of(script));
                 }
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot), (entry.receiver, entry.slot), site.base,
+                let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
+                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
                     machine.heap_reads().live_object_records() as u64));
+                }
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }

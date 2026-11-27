@@ -40,3 +40,8 @@ X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR = "/usr/include"
 # The system libcrypto archive includes zlib compression support. Declare its
 # archive dependency explicitly so static OpenSSL links resolve those symbols.
 X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS = "ssl:crypto:z"
+
+# The trained link order names functions without crate hashes; this driver resolves them in each
+# link (`tools/ordered-ld/cc`, `crates/link_layout.rs`).
+[target.x86_64-unknown-linux-gnu]
+linker = "tools/ordered-ld/cc"

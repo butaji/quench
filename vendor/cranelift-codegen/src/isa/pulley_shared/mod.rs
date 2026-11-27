@@ -120,7 +120,8 @@ where
     /// finalizes branches. The result is ready for binary emission.
     fn compile_vcode(
         &self,
-        func: &ir::Function,
+        func: &mut ir::Function,
+        release_ir: bool,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
         ctrl_plane: &mut ControlPlane,
@@ -134,6 +135,7 @@ where
         let abi = abi::PulleyCallee::new(func, self, &self.isa_flags, &sigs)?;
         machinst::compile::<Self>(
             func,
+            release_ir,
             domtree,
             regalloc_ctx,
             self,
@@ -180,13 +182,14 @@ where
 
     fn compile_function(
         &self,
-        func: &ir::Function,
+        func: &mut ir::Function,
         domtree: &DominatorTree,
         regalloc_ctx: &mut regalloc2::Ctx,
+        release_ir: bool,
         want_disasm: bool,
         ctrl_plane: &mut cranelift_control::ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
+        let vcode = self.compile_vcode(func, release_ir, domtree, regalloc_ctx, ctrl_plane)?;
 
         let want_disasm =
             want_disasm || (cfg!(feature = "trace-log") && log::log_enabled!(log::Level::Debug));
