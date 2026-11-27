@@ -63,6 +63,11 @@ impl ElementClasses {
         if from != to { self.parent.insert(from, to); }
     }
 
+    /// Every class a link names, each once: the classes that have a class of their own among the links.
+    pub(super) fn linked(&self) -> impl Iterator<Item = ElementClass> + '_ {
+        self.class_keys.values().flatten().copied()
+    }
+
     /// Every class of `key`'s class, `key` among them: the classes a store into any array of it writes, so the classes
     /// whose elements a read of its elements joins. A class no link names is its own class.
     pub(super) fn members(&self, key: ElementClass) -> impl Iterator<Item = ElementClass> + '_ {
