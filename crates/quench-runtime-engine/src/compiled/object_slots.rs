@@ -59,12 +59,17 @@ pub(crate) struct ObjectHeader {
     pub(crate) shape_fact: Option<ShapeFact>,
 }
 
-/// The record id a direct object's granule names: the high half of its class cell's header
-/// (`staged::object::object_record_id_of`, the Cranelift projection). `granule` is an `I64`.
-pub(crate) fn record_id_of_granule(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value) -> ir::Value {
-    let cell_offset = emit(builder).raw_binary_imm(Binary::Mul, granule, quench_runtime::staged::layout_offsets::CLASS_CELL_GRANULE_BYTES as i64);
+/// The record id of the departed object whose stub granule is `granule` (`staged::object::departed_record_id`,
+/// the Cranelift projection): the class guard, that the cell's class is `DEPARTED_CLASS`, branches a live cell to
+/// `miss`; then the high half of the cell's header is the record id. `granule` is an `I64`.
+pub(crate) fn departed_record_id(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value, miss: ir::Block) -> ir::Value {
+    use quench_runtime::staged::layout_offsets::{CLASS_CELL_GRANULE_BYTES, DEPARTED_CLASS, NATIVE_CLASS_CELL_LAYOUT};
+    let cell_offset = emit(builder).raw_binary_imm(Binary::Mul, granule, CLASS_CELL_GRANULE_BYTES as i64);
     let cell = emit(builder).raw_binary(Binary::Add, class_base, cell_offset);
-    let header = emit(builder).raw_load(Lane::I64, MemFlagsData::trusted(), cell, 0);
+    let class = emit(builder).raw_load(Lane::I32, MemFlagsData::trusted(), cell, NATIVE_CLASS_CELL_LAYOUT.class_offset as i32);
+    let departed = emit(builder).raw_compare_imm(Relation::Equal, class, i64::from(DEPARTED_CLASS as i32));
+    emit_js_guard(builder, departed, miss);
+    let header = emit(builder).raw_load(Lane::I64, MemFlagsData::trusted(), cell, NATIVE_CLASS_CELL_LAYOUT.header_offset as i32);
     emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, header, i64::from(u32::BITS))
 }
 
@@ -96,7 +101,7 @@ impl ObjectRecord {
             emit_js_guard(builder, object, miss);
         }
         let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
-        let id = record_id_of_granule(builder, class_base, granule);
+        let id = departed_record_id(builder, class_base, granule, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
     }
@@ -151,7 +156,7 @@ impl ObjectHeader {
         let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
         emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
         builder.switch_to_block(object_block);
-        let record = record_id_of_granule(builder, class_base, id);
+        let record = departed_record_id(builder, class_base, id, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, record, layout.record_size as i64);
         let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
         emit(builder).goto(join, &[object_record]);

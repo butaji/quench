@@ -70,8 +70,8 @@ fn loaded_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word) -> (
 }
 
 /// Element `index`, which the caller proved below the length, of the double backing
-/// (`heap::DOUBLE_LEN`) at `values`: the `Value` of the Number its word holds
-/// (`Stage::box_number`, canonical: 3.0's bits read as the int32 3); `None` (leaving at `miss`)
+/// (`heap::DOUBLE_LEN`) at `values`: the `Value` of the Number its word holds, as a raw double word
+/// (`Stage::box_raw_number`, decision 4.1: 3.0 stays a double); `None` (leaving at `miss`)
 /// at a hole, `Value::DELETED`'s word, which no box may canonicalize away. A double word is as
 /// wide as a `Value`, so the element's address is a wide element's.
 #[inline(always)]
@@ -80,7 +80,7 @@ fn double_element<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, miss
     let present = stage.ne_imm(word, crate::Value::DELETED.to_bits());
     stage.guard(present, miss)?;
     let number = stage.load_f64(Region::Elements.mutable(), address, 0);
-    Some(stage.box_number(super::Float64::of_row(number)))
+    Some(stage.box_raw_number(super::Float64::of_row(number)))
 }
 
 /// The guard of an `index` against `length` a view did not prove below it (`DenseView::within`).
@@ -725,7 +725,7 @@ pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject
 }
 
 /// Element `index` of the direct array `base` among the array records at `record_base`, of any
-/// backing: a wide one's value, a double backing's Number (`Stage::box_number`, canonical) or a
+/// backing: a wide one's value, a double backing's Number (`Stage::box_raw_number`) or a
 /// narrow backing's value decoded (`object::decode_narrow`); `None` (leaving at `miss`) for any
 /// other base, past the elements or at a hole.
 #[inline(always)]

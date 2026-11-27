@@ -970,7 +970,7 @@ impl Vm {
 
     pub(super) fn wasm_u32_operand(value: Value) -> Result<u32, JsError> {
         value
-            .as_int()
+            .numeric_key()
             .map(|value| value as u32)
             .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))
     }
@@ -1273,7 +1273,7 @@ impl Vm {
     pub(super) fn encode_raw_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         match value {
             crate::WasmValue::I64(word) => Value::from_bits(word as u64),
-            crate::WasmValue::F64(bits) => Value::from_bits(bits),
+            crate::WasmValue::F64(bits) => Value::from_float_bits64(bits),
             value => self.encode_wasm_value(value),
         }
     }
@@ -1448,7 +1448,7 @@ impl Vm {
                 _ => Err(JsError::validation("invalid Wasm scalar representation".into())),
             };
         }
-        let bits = if let Some(bits) = value.as_int() {
+        let bits = if let Some(bits) = value.numeric_key() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
             Some(crate::wasm::ScalarBits::Bits64(bits))

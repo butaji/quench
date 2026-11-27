@@ -348,6 +348,10 @@ pub(crate) const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_ste
 pub const CLASS_SPACE_GRANULES: u32 = (CAPACITY_CLASSES as u32) << REGION_SHIFT;
 /// A class cell's granule, in bytes: a direct object's cell is at the class base plus its granule times this.
 pub const CLASS_CELL_GRANULE_BYTES: usize = super::object_encoding::CLASS_HEADER_BYTES;
+
+/// The class id of a departed object's class cell (`object_encoding::DEPARTED_CLASS`): a cell whose class is this
+/// holds its record id in the header's high half, and a live cell's class id is never this.
+pub const DEPARTED_CLASS: u32 = super::object_encoding::DEPARTED_CLASS;
 pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
 /// count, and what watches a store (`store_watch`), which an unobserved store requires zero.

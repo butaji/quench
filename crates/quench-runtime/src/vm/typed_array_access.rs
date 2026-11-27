@@ -312,7 +312,7 @@ impl Vm {
         let field = &word[..kind.width()];
         Some(match element_integer(kind, field) {
             Some(integer) => Value::integer(integer),
-            None => Value::number(element_number(kind, field, NATIVE_LITTLE_ENDIAN)),
+            None => element_value(kind, element_number(kind, field, NATIVE_LITTLE_ENDIAN)),
         })
     }
 
@@ -431,13 +431,13 @@ impl Vm {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;
         if let Some(number) = self.staged_typed_number(object, kind, index) {
-            return Some(Value::number(number));
+            return Some(element_value(kind, number));
         }
         let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
         Some(if kind.is_bigint() {
             self.bigint_element(kind, bytes)
         } else {
-            Value::number(element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN))
+            element_value(kind, element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN))
         })
     }
 
@@ -994,6 +994,13 @@ impl TypedArrayView {
     }
 }
 
+/// The Value of the Number `number` read from an element of `kind` (decision 4.1): a binary float's
+/// raw double word (`Value::from_f64_raw`), any other element's Number as `Value::number` makes it.
+#[inline(always)]
+pub(crate) fn element_value(kind: TypedArrayKind, number: f64) -> Value {
+    if kind.is_float() { Value::from_f64_raw(number) } else { Value::number(number) }
+}
+
 /// Writes the first `width` bytes of `encoded` at `start` of `store`, as fixed-width moves:
 /// a slice copy of the element's runtime width is a `memcpy` call.
 #[inline(always)]
@@ -1133,8 +1140,8 @@ impl Vm {
                     Err(_) => Value::number(f64::from(element)),
                 }
             }
-            TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
-            TypedArrayKind::Float64 => Value::number(element!(f64)),
+            TypedArrayKind::Float32 => Value::from_f64_raw(f64::from(element!(f32))),
+            TypedArrayKind::Float64 => Value::from_f64_raw(element!(f64)),
             _ => return None,
         })
     }

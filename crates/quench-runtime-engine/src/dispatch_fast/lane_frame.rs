@@ -1932,7 +1932,7 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         }
         let Some(RecordPlan { records, other: Some(heap), functions, .. }) = self.plan else {
             if self.trust_this && object == self.this.to_bits() && let Some(records) = quench_runtime::staged::PropertyFrame::object_records(self, stage) {
-                return Some(quench_runtime::staged::ic::Reached::bare(quench_runtime::staged::object::object_record_of(stage, records, object)));
+                return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
             }
             return quench_runtime::staged::property::receiver(stage, self, object, miss);
         };
@@ -1941,7 +1941,7 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
             return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
         }
         if Value::from_bits(object).direct_object_index().is_some() {
-            return Some(quench_runtime::staged::ic::Reached::bare(quench_runtime::staged::object::object_record_of(stage, records, object)));
+            return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
         }
         // SAFETY: as above.
         let record = unsafe { &*heap }.heap_reads().held_other_receiver(Value::from_bits(object))?;

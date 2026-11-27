@@ -473,14 +473,14 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     fn index_get_host(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _miss: S::Miss) -> Option<S::Word> { None }
 }
 
-/// The record of the direct object `object`; anything else leaves at `miss`.
+/// The record of the direct object `object`; anything else, and a live object (which has no record), leaves at `miss`.
 #[inline(always)]
 pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
-    Some(Reached::bare(object_record_of(stage, records, object)))
+    Some(Reached::bare(object_record_of(stage, records, object, miss)?))
 }
 
 /// The base of a field access: the activation's bound `this`, or a register's tagged word;

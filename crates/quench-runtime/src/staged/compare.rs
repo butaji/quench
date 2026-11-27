@@ -295,7 +295,8 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let Some(target) = target else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
     let Some(records) = frame.object_records(stage) else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
     let call = decision_call(operands, INSTANCEOF_OPERATOR)?;
-    let (decided, holds) = instance_decision(stage, records, left?, target);
+    let miss = frame.miss();
+    let (decided, holds) = instance_decision(stage, records, left?, target, miss)?;
     let decision = stage.choose_leaving(decided, |stage| {
         let [yes, no] = [Value::TRUE, Value::FALSE].map(|each| stage.constant(each.to_bits()));
         Some(stage.select(holds, yes, no))
