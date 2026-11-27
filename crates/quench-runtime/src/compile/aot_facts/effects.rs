@@ -188,6 +188,17 @@ pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
     traits.has(Traits::GLOBAL_NAME_ACCESS) && traits.has(Traits::NAME_LOAD)
 }
 
+/// The fact of the root's `this`: the global object in a Script (sloppy top-level code), `undefined` in a Module, whose
+/// code is strict.
+pub(super) fn root_this(ctx: &Ctx<'_>) -> Word {
+    let cell = if ctx.scope.root_this_is_global() {
+        Cell::of(Type::language(crate::ValueType::Object)).maybe_global()
+    } else {
+        Cell::of(Type::language(crate::ValueType::Undefined))
+    };
+    Word::of_cell(cell)
+}
+
 /// The fact of a load from `key`: the closure the census proved there, else the binding.
 /// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Word {
@@ -319,8 +330,7 @@ fn value_of(
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Word::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
         Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
-        // The root's `this` is the global object of a Script (a Module's is undefined, which the flag over-approximates).
-        Some(Operation::LoadThis { .. }) => Word::of_cell(Cell::of(Type::language(crate::ValueType::Object)).maybe_global()),
+        Some(Operation::LoadThis { .. }) => root_this(ctx),
         // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
         Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
             state[usize::from(source)],
@@ -430,9 +440,13 @@ fn keyed_global(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<O
 }
 
 /// Whether the object a named access reads or stores through `base` may be the global object: its fact (`base_fact`) may
-/// be, or the fact is unknown (the root's `this`, which is the global object of a Script).
+/// be. The root's `this` has no fact (`base_fact`): it is the global object of a Script, and `undefined` in a Module; any
+/// other base with no fact may be the global object.
 fn named_base_global(ctx: &Ctx<'_>, base: FieldBase, state: &[Word]) -> bool {
-    base_fact(ctx, base, state).is_none_or(|word| word.cell.global)
+    match base_fact(ctx, base, state) {
+        Some(word) => word.cell.global,
+        None => base != FieldBase::THIS || ctx.scope.root_this_is_global(),
+    }
 }
 
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and
@@ -449,7 +463,7 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         events.wild_owner = true;
     }
     match operation {
-        Some(Operation::LoadThis { .. }) if ctx.is_root => {
+        Some(Operation::LoadThis { .. }) if ctx.is_root && ctx.scope.root_this_is_global() => {
             events.wild_global = true;
             events.global_source = true;
         }

@@ -15,9 +15,10 @@
 //!   - a declaration nothing calls or escapes is not reached: it runs only when read, and a read the solve follows is a call.
 //!   The host is not a caller: it runs no program closure except through an escape, as the solve already assumes.
 //! - The global object reaches no place that can name a global the call graph does not record. A value that may be the
-//!   global object (`Cell::global`) is produced only by a root's `this`, a global-object name (`globalThis`, `window`,
-//!   `self`, `global`, `frames`), and the `this` a plain call binds to a sloppy function (an escaped function's `this`
-//!   included). The host hands the program no other global object, as the premise of the closed world. From such a value,
+//!   global object (`Cell::global`) is produced only by a Script's root `this` (a Module's is `undefined`), a global-object
+//!   name (`globalThis`, `window`, `self`, `global`, `frames`), and the `this` a plain call binds to a sloppy function: one
+//!   a recorded plain call reaches, or one unknown code may call plainly (`escapes::Escapes::plain`). Strict code never
+//!   binds the global object. The host hands the program no other global object, as the premise of the closed world. From such a value,
 //!   a reached computed access (`g[k]`), a for-in or `in` over it, or a named access (`g.f`, whose result may be a global
 //!   function called later) would reach any global function by name: `effects::keyed_global` marks those. An escape that
 //!   holds it (`escapes::Escapes::sinks`) gives unseen code the global object, which may read every global function.
