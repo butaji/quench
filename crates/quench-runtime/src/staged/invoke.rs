@@ -25,52 +25,11 @@ use super::protocol::{bind_this_with, complete_call, fill_call, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
 #[cfg(not(stencil_build))]
-use crate::bytecode::{Op, WideInstruction};
+use super::CallRecord;
+#[cfg(not(stencil_build))]
+use crate::bytecode::WideInstruction;
 use crate::bytecode::{FieldBase, FieldLookup};
 use crate::Value;
-
-/// The general forms of the call-family records a frame may run where its staged row declines
-/// (`CallFrame::call_general`): the call's operands are the record's own.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CallForm {
-    /// A call through a callee register and a receiver register, over a window (`Call`, direct eval included).
-    Plain,
-    /// A call that passes the activation's `arguments` as its last argument (`CallForwardingArguments`).
-    Forwarding,
-    /// A call whose one argument register holds the array to apply (`CallArray`).
-    Array,
-    /// A call whose one argument register holds the iterable to spread (`CallSpread`).
-    Spread,
-    /// A call of a function the record names (`CallKnown`).
-    Known,
-    /// A method call through its receiver register (`CallMethod`).
-    Method,
-    /// A method call on the activation's `this` (`CallThisMethod`).
-    ThisMethod,
-    /// A construction, plain, applied or `super(...)` (`Construct`).
-    Construct,
-    /// A first-call stub's call of its chunk (`CallFirstChunk`).
-    FirstChunk,
-}
-
-#[cfg(not(stencil_build))]
-/// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
-/// (`vm::dispatch`'s `Runner::Call`).
-#[cfg(not(stencil_build))]
-pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
-    Some(match op {
-        Op::Call => CallForm::Plain,
-        Op::CallForwardingArguments => CallForm::Forwarding,
-        Op::CallArray => CallForm::Array,
-        Op::CallSpread => CallForm::Spread,
-        Op::CallKnown => CallForm::Known,
-        Op::CallMethod => CallForm::Method,
-        Op::CallThisMethod => CallForm::ThisMethod,
-        Op::Construct => CallForm::Construct,
-        Op::CallFirstChunk => CallForm::FirstChunk,
-        _ => return None,
-    })
-}
 
 /// The stacks a direct call is admitted to: the callee's entry cell, its window at `top` (its
 /// end at `next`), and the frame below at `shadow`.
@@ -303,7 +262,7 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     /// `Invocation` does not name every form). `None` where the frame runs no general calls.
     #[cfg(not(stencil_build))]
     #[inline(always)]
-    fn call_general(&mut self, _form: CallForm, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
+    fn call_general(&mut self, _form: CallRecord, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
         None
     }
 }
