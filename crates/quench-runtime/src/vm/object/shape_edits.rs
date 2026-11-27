@@ -85,7 +85,16 @@ impl Vm {
             .then_some(parent)
     }
 
+    /// A class cell's delete departs first, to a dictionary of its own (`DictionaryTrigger::ClassDeparture`,
+    /// R4-C4). A record is unchanged.
+    pub(in crate::vm) fn depart_class_cell_for_delete(&mut self, object: Value) {
+        if self.heap.live_class_cell(object).is_some() {
+            self.mark_object_dictionary(object, DictionaryTrigger::ClassDeparture);
+        }
+    }
+
     pub(in crate::vm) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
+        self.depart_class_cell_for_delete(object);
         let Some(shape) = self.object_data(object).map(Object::shape) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;

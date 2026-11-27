@@ -439,6 +439,7 @@ impl Heap {
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
+            self.depart_for_mutation(value);
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let object = &mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object;
@@ -473,6 +474,7 @@ impl Heap {
     #[inline(always)]
     pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
+            self.depart_for_mutation(value);
             let record_id = self.record_id(object_ref);
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             // A narrow run stays: the stores that borrow this way (`property_set`) take a
@@ -584,6 +586,7 @@ impl Heap {
         value: Value,
     ) -> Option<(ObjectMut<'_>, &mut ValueArena)> {
         let reference = value.heap_reference()?;
+        self.depart_for_mutation(value);
         if let HeapReference::LegacySlot(index) = reference {
             self.remember(index as usize);
         }
@@ -966,6 +969,7 @@ impl Heap {
     #[quench_macros::test_visible]
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
+        self.depart_for_mutation(value);
         let record_id = self.record_id(value.direct_object_index()?);
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(&mut unsafe { self.object_records.get_live_mut(record_id, &self.properties) }.object)

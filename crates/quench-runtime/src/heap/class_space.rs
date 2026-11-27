@@ -15,7 +15,7 @@
 use super::records::{AddressRange, RecordSpace};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
-    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, REGION_MASK, REGION_SHIFT, departed_header,
+    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
 };
 use crate::value::Value;
 use std::mem::{MaybeUninit, size_of};
@@ -142,25 +142,78 @@ impl ClassSpace {
         Some(granule(0, local))
     }
 
-    /// Frees region 0's stub `g` with its dead record (the record sweep's dispose). Region 0 is never
-    /// swept on its own: its stubs die only here.
+    /// Frees stub `g` with its dead record (the record sweep's dispose). A stub is a region 0 cell,
+    /// or a class cell that departed (`Heap::depart_class_object`) and is its own stub. Region 0's
+    /// stubs die only here, and a departed cell dies with its record.
     pub(super) fn release_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        debug_assert_eq!(region, 0, "an object stub lies in region 0");
-        self.regions.0.release_live(local);
+        match region {
+            0 => self.regions.0.release_live(local),
+            1 => self.regions.1.release_live(local),
+            2 => self.regions.2.release_live(local),
+            3 => self.regions.3.release_live(local),
+            4 => self.regions.4.release_live(local),
+            5 => self.regions.5.release_live(local),
+            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
+        }
     }
 
-    /// Withholds region 0's stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
+    /// Withholds stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
     /// as its record id is withheld: a Value naming the stub names no other object meanwhile.
     pub(super) fn withhold_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        debug_assert_eq!(region, 0, "an object stub lies in region 0");
-        self.regions.0.withhold(local);
+        match region {
+            0 => self.regions.0.withhold(local),
+            1 => self.regions.1.withhold(local),
+            2 => self.regions.2.withhold(local),
+            3 => self.regions.3.withhold(local),
+            4 => self.regions.4.withhold(local),
+            5 => self.regions.5.withhold(local),
+            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
+        };
     }
 
-    /// Makes every withheld region 0 stub reusable again (`RecordSpace::release_withheld`).
+    /// Makes every withheld stub reusable again, in every region (`RecordSpace::release_withheld`).
     pub(super) fn release_withheld_stubs(&mut self) {
         self.regions.0.release_withheld();
+        self.regions.1.release_withheld();
+        self.regions.2.release_withheld();
+        self.regions.3.release_withheld();
+        self.regions.4.release_withheld();
+        self.regions.5.release_withheld();
+    }
+
+    /// The header word of granule `g`'s cell: a live class cell's class id (`live_header`), or a
+    /// departed one's `departed_header`. The space must be reserved.
+    #[inline(always)]
+    pub(super) fn header(&self, g: u32) -> u64 {
+        // SAFETY: `g` names a cell of the reserved space (`cell_ptr`), whose header is a readable word.
+        unsafe { *self.cell_ptr(g) }
+    }
+
+    /// Writes granule `g`'s header word. Only the class edges write one (`CellViewMut::set_class`,
+    /// `Heap::depart_class_object`).
+    #[inline(always)]
+    pub(super) fn write_header(&mut self, g: u32, header: u64) {
+        // SAFETY: as `header`, and `&mut self` is exclusive.
+        unsafe { *self.cell_ptr(g) = header };
+    }
+
+    /// Field `slot` of the cell at granule `g`: the word at `8 + 8 * slot` past its header.
+    #[inline(always)]
+    pub(super) fn field(&self, g: u32, slot: usize) -> Value {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` is the `Value` word `slot + 1` of the cell, inside its span (the assert).
+        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
+    }
+
+    /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the
+    /// collector traces as any field and no object reads.
+    pub(super) fn delete_slack(&mut self, g: u32, from: usize) {
+        for slot in from..region_capacity(g) as usize {
+            // SAFETY: field `slot` lies inside the cell at `g` (`region_capacity`), and `&mut self` is exclusive.
+            unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(Value::DELETED) };
+        }
     }
 
     /// The address of region 0's allocation cursor (`RecordCursor`): its `next` is the granule an inline
@@ -185,6 +238,7 @@ pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
     // SAFETY: a direct object `Value` names a stub granule of the reserved class space, whose
     // header is a readable u64 at `base + g * CLASS_HEADER_BYTES`.
     let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
+    debug_assert_eq!(header_class(header), DEPARTED_CLASS, "a stub names its record only once its object departed");
     header_record(header)
 }
 
@@ -218,6 +272,12 @@ impl super::Heap {
     /// runs; a native entry rereads it with the other record bases.
     #[inline(always)]
     pub fn native_stub_cursor(&self) -> usize { self.class_space.stub_cursor_address() }
+}
+
+/// Whether granule `g` lies in a class cell's region (1 to 5), where an object is a cell until it departs.
+/// Region 0 holds the stubs of the record table's objects, which never hold a class.
+pub(super) const fn is_cell_granule(g: u32) -> bool {
+    g >> REGION_SHIFT != 0
 }
 
 /// The fields a cell at granule `granule` holds: its region's capacity, `2^k - 1` for region `k`. A

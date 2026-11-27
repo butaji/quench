@@ -586,6 +586,8 @@ impl Vm {
         entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
+        // A class cell departs first (R4-C4), so the record it becomes takes the dictionary class here.
+        self.heap.depart_class_object(object);
         let Some(shape) = self.object_data(object).map(Object::shape) else {
             return;
         };
@@ -2240,6 +2242,10 @@ impl Vm {
     /// leaves the add to `primary_field_add_hit`.
     #[inline(always)]
     pub fn proved_field_add_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
+        // A class cell's add takes the generic path, which departs it (`Heap::object_mut`).
+        if self.heap.live_class_cell(object).is_some() {
+            return false;
+        }
         let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return false;
         };
@@ -2288,8 +2294,8 @@ impl Vm {
             // SAFETY: as above.
             && unsafe { concrete_add_property_held(&mut self.heap, record_id, transition, value) }
         {
-            // The departure from the before-shape, which code holding that shape stable reads (`Object::set_shape`).
-            self.heap.note_shape_departure(transition.before, transition.after);
+            // The class edge from the before-shape, which code holding that shape stable reads (`Heap::set_class`).
+            self.heap.set_class(transition.before, transition.after);
             return;
         }
         let (slot, shape) = (usize::from(transition.slot), transition.after);
@@ -2315,6 +2321,10 @@ impl Vm {
     /// `define_field_cached`.
     #[inline(always)]
     pub fn proved_field_define_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
+        // A class cell's define takes the generic path, which departs it (`Heap::object_mut`).
+        if self.heap.live_class_cell(object).is_some() {
+            return false;
+        }
         let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
             return false;
         };
