@@ -1061,7 +1061,7 @@ impl Heap {
         self.memory_policy
     }
     fn pacing(&self) -> pacing::GenerationalPacing {
-        self.memory_policy.pacing().sized(&self.pacing_state)
+        self.memory_policy.pacing()
     }
     /// The minor collections a young cell or record survives before it is old: the policy's
     /// (`GenerationalPacing::promotion_age`). It may change between collections: every minor
@@ -2737,13 +2737,12 @@ impl Heap {
         self.allocated = self.allocated.saturating_sub(unspent);
     }
 
-    /// Notes a full collection's start for the old-generation sizing
-    /// (`GenerationalPacing::old_sizing`).
+    /// Notes a collection's start: the cursors and bump run retire first, so the occupancy a
+    /// full collection records is what it keeps.
     fn start_collection(&mut self, full: bool) -> bool {
         self.retire_record_cursors();
         self.retire_bump();
         if full {
-            self.pacing_state.old_generation.start_full();
             self.resident_at_full_start = self.occupied_resident_bytes();
         }
         full
