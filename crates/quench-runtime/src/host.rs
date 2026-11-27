@@ -711,6 +711,53 @@ pub fn begin_process() {
         }
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
+    adopt_main_stack_budget();
+}
+
+/// The calling thread's stack distance budget is its real stack's: the stack from its lowest
+/// address to here, less the headroom (`crate::stack::budget_for_stack`). So deep recursion
+/// raises a RangeError before the stack's end, not a fault. A bound the OS does not report, or
+/// one too small to leave a budget, keeps the worker's budget.
+#[cfg(unix)]
+fn adopt_main_stack_budget() {
+    let Some(low) = thread_stack_low() else { return };
+    let budget = crate::stack::budget_for_stack(crate::stack::current_stack_pointer().saturating_sub(low));
+    if budget > 0 {
+        crate::stack::set_thread_stack_budget(budget);
+    }
+}
+
+/// The lowest address of the calling thread's stack, as the OS reports it.
+#[cfg(target_os = "linux")]
+fn thread_stack_low() -> Option<usize> {
+    // SAFETY: the attribute is initialised by `pthread_getattr_np` and destroyed before return.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            return None;
+        }
+        let mut low: *mut libc::c_void = std::ptr::null_mut();
+        let mut size: libc::size_t = 0;
+        let found = libc::pthread_attr_getstack(&attr, &mut low, &mut size) == 0;
+        libc::pthread_attr_destroy(&mut attr);
+        found.then_some(low as usize)
+    }
+}
+
+/// The lowest address of the calling thread's stack: its top less its size.
+#[cfg(target_vendor = "apple")]
+fn thread_stack_low() -> Option<usize> {
+    // SAFETY: plain queries about the calling thread.
+    unsafe {
+        let thread = libc::pthread_self();
+        let top = libc::pthread_get_stackaddr_np(thread) as usize;
+        top.checked_sub(libc::pthread_get_stacksize_np(thread))
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
+fn thread_stack_low() -> Option<usize> {
+    None
 }
 
 #[cfg(not(unix))]

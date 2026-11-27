@@ -156,7 +156,7 @@ impl Heap {
         for prototype in prototypes {
             let watch = self.dependencies.watch();
             let subject = watch.subject().expect("a new watch names its subject");
-            self.prototype_object_mut(prototype).expect("a restored prototype").watch_as(watch);
+            self.prototype_object_mut(prototype).expect("a restored prototype").record().watch_as(watch);
             known.push((prototype, subject));
         }
         self.prototypes = known;
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(registered.len(), 2);
         assert!(registered.contains(&prototype) && registered.contains(&record_prototype) && !registered.contains(&plain));
         for value in [prototype, record_prototype] {
-            assert!(restored.object(value).and_then(Object::watched_subject).is_some());
+            assert!(restored.object_ref(value).and_then(|object| object.watched_subject()).is_some());
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");

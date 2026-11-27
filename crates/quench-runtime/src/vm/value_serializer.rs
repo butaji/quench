@@ -546,9 +546,9 @@ impl Vm {
         // types (arrays, buffers, maps) retain their own clone protocol.
         if self.heap.object_record(source).is_some() {
             self.heap
-                .object_mut(source)
+                .object_mut_ref(source)
                 .expect("ordinary object remains live")
-                .set_structured_serialization(crate::heap::StructuredSerialization::Forbidden);
+                .record().set_structured_serialization(crate::heap::StructuredSerialization::Forbidden);
         }
         Ok(())
     }
@@ -556,8 +556,8 @@ impl Vm {
     /// Mark a host object serializable only by transfer (a MessagePort).
     pub(crate) fn embedding_require_transfer(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
-        if let Some(object) = self.heap.object_mut(source) {
-            object.set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
+        if let Some(mut object) = self.heap.object_mut_ref(source) {
+            object.record().set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
         }
         Ok(())
     }

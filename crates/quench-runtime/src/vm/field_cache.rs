@@ -145,7 +145,7 @@ impl Vm {
         // virtual `size`, as a cell's does (`shape_property_lookup_cell`). Without this arm a
         // collection record's reads (`m.get`, `s.has`) were never cached.
         if value.direct_collection_index().is_some() {
-            return self.shape_answers(self.heap.object(value)?, class, ReceiverKind::Exotic);
+            return self.shape_answers(self.heap.object_ref(value)?.record(), class, ReceiverKind::Exotic);
         }
         // A promise's internal slots change no object operation, as for its cell form below.
         if let Some(promise) = self.heap.promise(value) {
@@ -241,10 +241,10 @@ impl Vm {
     /// holder tier `polymorphic_field_hit` probes for a record receiver. Every function named
     /// differently has a shape of its own, so such a site records one entry per name.
     pub fn cell_polymorphic_holder_hit(&self, object: Value, site: u16) -> Option<Value> {
-        let receiver = self.heap.object(object)?;
-        let holder = self.heap.object(receiver.proto())?;
+        let receiver = self.heap.object_ref(object)?;
+        let holder = self.heap.object_ref(receiver.proto())?;
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
-        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get(holder, usize::from(entry.slot)))?
+        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get_ref(holder, usize::from(entry.slot)))?
     }
 
     /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a

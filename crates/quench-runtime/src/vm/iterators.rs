@@ -173,11 +173,11 @@ impl Vm {
         // or another realm's (a script loaded as its own realm makes its collections there),
         // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
         // share one prototype, the realm's `next` fuse.
-        let (kind, holder, iterator, next) = match self.heap.object(source) {
-            Some(object) if self.heap.is_set(source) && !object.has_side_descriptors() => {
+        let (kind, holder, iterator, next) = match self.heap.object_ref(source) {
+            Some(object) if self.heap.is_set(source) && !object.record().has_side_descriptors() => {
                 (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Some(object) if self.heap.is_map(source) && !object.has_side_descriptors() => {
+            Some(object) if self.heap.is_map(source) && !object.record().has_side_descriptors() => {
                 (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
@@ -192,7 +192,7 @@ impl Vm {
                 self.collection_iteration_shape = Some(shape);
             }
         }
-        (self.heap.object(holder).is_some() && self.fuse_intact_at(iterator, holder) && self.fuse_intact(next)).then_some(kind)
+        (self.heap.object_ref(holder).is_some() && self.fuse_intact_at(iterator, holder) && self.fuse_intact(next)).then_some(kind)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes

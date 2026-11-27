@@ -80,7 +80,7 @@ impl Vm {
             link,
             shape: object.exact_shape(),
             slot: u16::try_from(slot).ok()?,
-            holder: self.heap.object(object.proto())?.exact_shape(),
+            holder: self.heap.object_ref(object.proto())?.exact_shape(),
             chain: self.has_instance_chain(constructor)?,
         })
     }
@@ -92,7 +92,7 @@ impl Vm {
         let mut current = constructor;
         let mut depth = 1u8;
         while current != self.instanceof_has_instance_holder {
-            current = self.heap.object(current)?.proto();
+            current = self.heap.object_ref(current)?.proto();
             depth = depth.checked_add(1)?;
         }
         Some(crate::code_dependencies::PrototypeChain { link: ProtoLink::of(constructor).bits(), depth })

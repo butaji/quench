@@ -209,7 +209,7 @@ mod tests {
         let object = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(object, Value::integer(1), 1);
         heap.property_add(object, Value::integer(2), 2);
-        let shape = heap.object(object).expect("an object").exact_shape();
+        let shape = heap.object_ref(object).expect("an object").exact_shape();
         let snapshot = ArrayElements::from_slice(&[Value::integer(10), Value::integer(20)]);
         let keys = heap.alloc_array(ArrayObject::fresh(Value::NULL, snapshot));
         (heap, object, keys, shape)
@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(step(&heap, unmemoed, epoch), None, "the keys came from the general walk");
         let other_shape = state(&mut heap, held, [u64::from(shape) + 1, epoch]);
         assert_eq!(step(&heap, other_shape, epoch), None, "the object is not of the listed shape");
-        heap.object_mut(object).expect("an object").mark_as_prototype();
+        heap.object_mut_ref(object).expect("an object").mark_as_prototype();
         let prototype = state(&mut heap, held, [u64::from(shape), epoch]);
         assert_eq!(step(&heap, prototype, epoch), None, "an object with extras keeps keys outside its shape");
         for state in [stale, unmemoed, other_shape, prototype] {

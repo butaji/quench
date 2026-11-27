@@ -13,7 +13,7 @@ const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
     "specialize_function_constructor",
 ];
 const SYNTAX_FRONTEND_SYMBOLS: &[&str] = &["oxc_parser::", "oxc_semantic::"];
-const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
+pub(in crate::native_link) const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
     "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
     "::step_wasm", "::js_tier_frame_entry",
 ];
@@ -28,7 +28,7 @@ pub(super) fn is_compiler_symbol(symbol: &str) -> bool {
     compiler_symbol_patterns(symbol).next().is_some()
 }
 
-fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
+pub(in crate::native_link) fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
     BACKEND_COMPILER_SYMBOLS.iter().chain(SYNTAX_FRONTEND_SYMBOLS).copied()
         .chain(JS_SOURCE_COMPILER_SYMBOLS.iter().copied().filter(|_| symbol.contains("quench_runtime")))
         .filter(|name| symbol.contains(name))

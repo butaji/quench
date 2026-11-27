@@ -2,7 +2,8 @@ use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
 use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime};
-use quench_layers::engine::{emit_native_module_for, lower_native_js_module_for};
+use quench_layers::engine::{Demand, emit_native_module_for, lower_native_js_module_for};
+use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -83,7 +84,8 @@ impl CompiledSources {
         super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
     }
 
-    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<NativeImageInputs, String> {
+    /// The link inputs of every program, and the demand their images reach in aggregate.
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand), String> {
         let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
@@ -107,11 +109,13 @@ impl CompiledSources {
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
         let mut required_exports = BTreeSet::new();
         let mut objects = Vec::new();
+        let mut demand = Demand::default();
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             program.freeze_native_diagnostics();
             let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
             let symbol = module.entry_table_symbol().to_owned();
+            demand.absorb(&module.demand);
             for function in &module.functions {
                 if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
                     required_exports.insert(name.clone());
@@ -148,6 +152,8 @@ impl CompiledSources {
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, [{parts}], source {source}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name())
                 .map_err(|error| error.to_string())?;
         }
+        // A comment, so the closed world's demand is auditable in the catalog and costs the image no bytes.
+        writeln!(catalog, "// closed-world demand: {}", demand.to_string().replace('\n', " ")).map_err(|error| error.to_string())?;
         writeln!(catalog, "}} errors {{").map_err(|error| error.to_string())?;
         for error in &self.syntax_errors {
             let parts = error.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
@@ -175,8 +181,31 @@ impl CompiledSources {
                 .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
             ImageHost::Core => std::collections::BTreeSet::new(),
         };
-        Ok(NativeImageInputs::new(directory, objects, host_exports))
+        Ok((NativeImageInputs::new(directory, objects, host_exports), demand))
     }
+}
+
+/// The compile report's view of an image's demand (`Demand`): what the closed world reaches, and the
+/// execution table entries it needs.
+pub fn demand_report(demand: &Demand) -> Value {
+    let table = demand.execution_table();
+    json!({
+        "helpers": demand.helpers.iter().collect::<Vec<_>>(),
+        "natives": demand.natives.iter().map(|native| format!("{native:?}")).collect::<Vec<_>>(),
+        "globals": demand.globals.iter().map(|name| &**name).collect::<Vec<_>>(),
+        "regexps": demand.regexps.len(),
+        "generic_records": demand.generic_records,
+        "wasm": demand.wasm,
+        "needs_interpreter": demand.needs_interpreter(),
+        "needs_live_link": demand.needs_live_link,
+        "needs_exits": demand.needs_exits,
+        "needs_source_text": demand.needs_source_text,
+        "needs_stack_positions": demand.needs_stack_positions,
+        "execution_table": {
+            "interpret": table.interpret, "tier_up": table.tier_up, "compile_source": table.compile_source,
+            "link_live": table.link_live, "wasm": table.wasm,
+        },
+    })
 }
 
 /// The realm's intrinsic table: a family the program reaches names its installer, and one

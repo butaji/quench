@@ -63,7 +63,7 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
     let objects = objects_of_every_form(&mut heap);
     let mut forms = std::collections::HashSet::new();
     for (object, values) in objects {
-        let data = heap.object(object).unwrap();
+        let data = heap.object_ref(object).unwrap().record();
         forms.insert(observed(data));
         for (slot, expected) in values.iter().enumerate() {
             // SAFETY: the object's exact shape holds every slot it was given.

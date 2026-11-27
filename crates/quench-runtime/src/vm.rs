@@ -258,6 +258,7 @@ pub use property_key::PropertyKey;
 use root_bindings::RootBinding;
 use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
+mod native_table;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;
@@ -2343,8 +2344,8 @@ pub struct Vm {
     /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
     /// as the atoms.
     pub intrinsic_natives: Vec<Option<Native>>,
-    /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
-    native_families: Vec<operations::NativeFamily>,
+    /// The entry that runs each native's call, by discriminant (`Vm::call_native_dispatch`).
+    native_table: &'static native_table::NativeTable,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
     first_chunks: first_call_chunk::FirstChunks,
     streamed_stubs: first_call_chunk::StreamedStubs,
