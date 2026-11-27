@@ -187,20 +187,22 @@ pub fn scan_dense<S: NumericStage>(stage: &mut S, base: S::Word, from: S::Word, 
 fn scan_forward(elements: &ArrayElements, range: Range<usize>, needle: &Needle) -> Option<usize> {
     let mut stage = Concrete::new(std::ptr::null());
     let key = needle.narrow.map(|key| [u64::from(key)]);
+    // A backing with no hole (`holds_no_hole`) has no hole word for the walk to stop on.
+    let holed = !elements.holds_no_hole();
     let (base, step, words, hole) = match elements.narrow_words() {
         Some(narrow) => {
             let words: &[u64] = match &key {
                 Some(key) => &key[..],
                 None => &[],
             };
-            (narrow.as_ptr() as u64, 4, words, Value::DELETED.to_narrow().map(u64::from))
+            (narrow.as_ptr() as u64, 4, words, Value::DELETED.to_narrow().filter(|_| holed).map(u64::from))
         }
         None => {
             let base = match elements.wide_values() {
                 Some(values) => values.as_ptr() as u64,
                 None => elements.double_values().map_or(0, |doubles| doubles.as_ptr() as u64),
             };
-            (base, 8, needle.words(), Some(Value::DELETED.to_bits()))
+            (base, 8, needle.words(), holed.then(|| Value::DELETED.to_bits()))
         }
     };
     let found = scan_dense(&mut stage, base, range.start as u64, range.end as u64,
