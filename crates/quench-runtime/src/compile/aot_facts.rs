@@ -54,6 +54,11 @@ pub struct AotFacts {
     /// Per field name, the type of the values every store of it writes (`types`): what a slot of
     /// that name holds, which a tier keeps only under the slot's dependency.
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
+    /// `(function, pc)` of a named field read or store → the class (constructed function) of every object it
+    /// reads or stores, from the settled types (`value::Class`): a guess, as the types are.
+    pub(crate) field_owners: BTreeMap<(u32, u32), u32>,
+    /// Per function, the class of every `this` its recorded calls pass, from the settled types: a guess.
+    pub(crate) this_classes: BTreeMap<u32, u32>,
 }
 
 impl AotFacts {
@@ -118,6 +123,17 @@ impl<'a> FunctionFacts<'a> {
     /// The function the plain call at `pc` always calls, proven: a row may drop its callee guard for it.
     pub fn proven_call_target(&self, pc: u32) -> Option<u32> {
         self.call_target(pc).filter(|_| !self.facts.guessed_calls.contains(&(self.function, pc)))
+    }
+
+    /// The class (constructed function) of every object the named field read or store at `pc` reads or stores,
+    /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
+    pub fn field_owner(&self, pc: u32) -> Option<u32> {
+        self.facts.field_owners.get(&(self.function, pc)).copied()
+    }
+
+    /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
+    pub fn this_class(&self) -> Option<u32> {
+        self.facts.this_classes.get(&self.function).copied()
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -220,6 +236,10 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
     if settled {
         for (id, flow) in analyze_typed(&resolved, Some(&found)).iter().enumerate() {
             let id = id as u32;
+            for (&pc, &class) in &flow.field_owners {
+                if let value::Class::One { class, .. } = class { facts.field_owners.insert((id, pc), class); }
+            }
+            if let value::Class::One { class, .. } = found.this_class(id) { facts.this_classes.insert(id, class); }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
                 let Some(target) = census.target(call.callee) else { continue };
@@ -236,7 +256,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());
         let (any, total) = facts.any_fields();
         eprintln!("aot-lanes: any fields {any} of {total}");
-        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len());
+        eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} field owners, {} this classes", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.field_owners.len(), facts.this_classes.len());
     }
     facts
 }
