@@ -104,6 +104,11 @@ impl<H: Host> Runtime<H> {
     /// it never installs its host, compiles source or runs the JIT, so a binary that makes
     /// only such runtimes links none of them.
     pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
+    /// `new_restored` for an image with a closed world (`new_static_with_builtins`): the startup
+    /// snapshot it restores holds only the realm that world reaches.
+    pub fn new_restored_with_builtins(host: H, builtins: &'static crate::BuiltinTable, execution: &'static crate::ExecutionTable) -> Self {
+        Self { vm: Vm::new_restored_with_builtins(host, builtins, execution), host: std::marker::PhantomData }
+    }
     /// What this runtime's tiers did, counted whatever diagnostics are on.
     pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
