@@ -147,7 +147,7 @@ pub fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| 
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {
     let plans = Plans { read: plan, store: NO_STORE };
     let mut frame = Host::new(records(heap), &plans, vec![0]);
-    let mut stage = Concrete::new(heap.property_values_base());
+    let mut stage = Concrete::over(heap);
     read_with(&mut stage, &mut frame, (Owner::Temporary, false), object.to_bits(), plan, ()).map(Value::from_bits)
 }
 
@@ -194,7 +194,7 @@ fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'stat
     let plans = Plans { read: FieldPlan::Host { atom: 1, site: 2 }, store: StorePlan::Add };
     let mut frame = Host::new(0, &plans, vec![Value::integer(1).to_bits(); 4]);
     frame.answers = answers;
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(word),
         Step::Unresolved => None,
@@ -229,7 +229,7 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
         let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
         let value = Value::integer(4).to_bits();
         let mut frame = Host::new(0, &plans, vec![0, Value::integer(1).to_bits(), value]);
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false });
         assert!(matches!(stored, Step::Value(word) if word == value));
         assert_eq!(frame.log, [name]);
@@ -259,7 +259,7 @@ fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: O
     let plans = Plans { read: plan, store: NO_STORE };
     let mut frame = Host::new(records(heap), &plans, vec![0]);
     frame.proven = proven;
-    let mut stage = Concrete::new(heap.property_values_base());
+    let mut stage = Concrete::over(heap);
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
     frame.registers = vec![0, object.to_bits()];
     let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }) {
@@ -289,7 +289,7 @@ fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, op
     -> (Option<Value>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
     let mut frame = Host::new(records(heap), &plans, registers);
-    let mut stage = Concrete::storing(&*heap);
+    let mut stage = Concrete::over(&*heap);
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
         _ => None,
@@ -408,7 +408,7 @@ fn an_immediate_store_into_a_marked_record_logs_under_counts_and_passes_without(
         let number = Value::integer(5).to_bits();
         let watch = heap.store_watch_word() as u64;
         assert_eq!(watch & crate::staged::layout_offsets::STORE_WATCH_COUNTS != 0, counts, "the gate word names counts");
-        let mut stage = Concrete::storing(&heap);
+        let mut stage = Concrete::over(&heap);
         assert_eq!(stage.immediate_store_open(), !counts, "counts: {counts}");
         assert_eq!(stage.store_gate(StagedRecordSpace::Object, u64::from(record_id), number), !counts, "counts: {counts}");
         let open = super::slot_store::gate_open(&mut stage, record_id as u64, (number, Type::INT32), ());

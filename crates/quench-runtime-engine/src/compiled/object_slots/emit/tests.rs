@@ -143,7 +143,7 @@ fn emitted_string_reads_agree_with_the_interpreter_or_leave() {
     let records = heap.string_record_base().map_or(0, |base| base as u64);
     for string in strings_of_every_form {
         for index in [Value::integer(0), Value::integer(1), Value::integer(2), Value::integer(-1), Value::number(0.5), Value::UNDEFINED] {
-            let mut stage = Concrete::new(std::ptr::null());
+            let mut stage = Concrete::pure();
             let expected = strings::flat_string(&mut stage, records, string.to_bits(), ())
                 .and_then(|flat| strings::string_char_code_at(&mut stage, flat, index.to_bits(), ()))
                 .map_or(Value::DELETED, Value::from_bits);

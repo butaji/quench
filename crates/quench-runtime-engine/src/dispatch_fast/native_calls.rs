@@ -661,7 +661,7 @@ fn in_place_call<B: quench_runtime::staged::call_native::InPlaceBody<Concrete>>(
     // A callee the slot does not hold yet is proved first, out of line, as `native_admitted` does.
     let (callee, held) = (r.get(i.b), vm.lane_stack.native_identities.0[slot]);
     let identity = if callee.to_bits() == held { held } else if prove_native_identity(vm, callee, slot, native) { callee.to_bits() } else { return None };
-    quench_runtime::staged::call_native::step_in_place_call_of(&mut Concrete::new(std::ptr::null()), body, r.0.expose_provenance() as u64, identity, call, ())
+    quench_runtime::staged::call_native::step_in_place_call_of(&mut Concrete::pure(), body, r.0.expose_provenance() as u64, identity, call, ())
 }
 
 /// The window of `count` values at the address `arguments`.

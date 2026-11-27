@@ -7,17 +7,35 @@ use super::region::Access;
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
 pub struct Concrete {
-    /// The property arena's values (`Table::PropertyValues`) and the class space's base (`Table::ClassSpace`).
+    /// The heap's table bases, read once by `over`: the property arena's values (`Table::PropertyValues`)
+    /// and the class space's base (`Table::ClassSpace`). Zero in a `pure` stage.
     tables: [u64; 2],
-    /// The heap whose store barrier `store_gate` reads; null where no store runs.
+    /// The heap whose tables and store barrier the stage reads; null in a `pure` stage.
     heap: *const crate::heap::Heap,
 }
 
 impl Concrete {
+    /// The stage over `heap`: the one heap-bearing constructor. Every table base a stage reads is taken
+    /// from `heap` here, so no stage holds a base of its own. A stage that reads an object record, a
+    /// property run, a slot owner table or the store barrier is over its heap.
     #[inline(always)]
-    pub fn new(property_values: *const crate::Value) -> Self {
-        Self { tables: [property_values as u64, 0], heap: std::ptr::null() }
+    pub(crate) fn over(heap: *const crate::heap::Heap) -> Self {
+        // SAFETY: the caller's heap is live.
+        Self { tables: [unsafe { (*heap).arena_values_base() } as u64, unsafe { (*heap).class_space_base() } as u64], heap }
     }
+
+    /// A stage over one property arena, for a read of a record the caller holds, inside a heap operation
+    /// that has split the heap's borrow (so no `&Heap` exists). It reads `Table::PropertyValues` only; the
+    /// class space and the store barrier are the heap's, and reading either asserts (`table`).
+    #[inline(always)]
+    pub(crate) fn over_arena(arena: &crate::value_vec::ValueArena) -> Self {
+        Self { tables: [arena.values_base() as u64, 0], heap: std::ptr::null() }
+    }
+
+    /// A stage with no heap, for a row set that reads only the words it is given (numbers, units, bytes,
+    /// tags, frame words) and never a heap table: `table` asserts that no heap table is read.
+    #[inline(always)]
+    pub fn pure() -> Self { Self { tables: [0; 2], heap: std::ptr::null() } }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
     #[inline(always)]
@@ -33,17 +51,10 @@ impl Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut T).write_unaligned(value) }
     }
 
-    /// `storing` over the running VM's heap.
+    /// `over` for the running VM's heap.
     #[cfg(not(stencil_build))]
     #[inline(always)]
-    pub fn storing_in(vm: &crate::vm::Vm) -> Self { Self::storing(&raw const vm.heap) }
-
-    /// The stage of stores into `heap`'s objects.
-    #[inline(always)]
-    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
-        // SAFETY: the caller's heap is live.
-        Self { tables: [unsafe { (*heap).arena_values_base() } as u64, unsafe { (*heap).class_space_base() } as u64], heap }
-    }
+    pub fn over_vm(vm: &crate::vm::Vm) -> Self { Self::over(&raw const vm.heap) }
 }
 
 crate::projection!(Concrete => Concrete);
@@ -198,11 +209,18 @@ impl Stage for Concrete {
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {
         match table {
-            Table::PropertyValues => self.tables[0],
             // A static's address: no field to load.
             Table::Layouts => crate::heap::layouts::table_base() as u64,
-            // The class space's base is the heap's, which a stage without a heap holds as zero (`new`).
-            Table::ClassSpace => self.tables[1],
+            // The heap's bases, taken once by `over` (or `over_arena`): a pure stage holds none of them, and an
+            // arena's base is never null (a `Vec`'s pointer, dangling when empty, is not).
+            Table::PropertyValues => {
+                debug_assert!(self.tables[0] != 0, "the property arena is read by a stage over an arena or a heap");
+                self.tables[0]
+            }
+            Table::ClassSpace => {
+                debug_assert!(!self.heap.is_null(), "the class space is read by a stage over its heap");
+                self.tables[1]
+            }
             // The owner tables are the heap's: a stage that reads them is a store's (`storing`).
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => {
                 debug_assert!(!self.heap.is_null(), "a slot owner table is read by a stage that holds its heap");

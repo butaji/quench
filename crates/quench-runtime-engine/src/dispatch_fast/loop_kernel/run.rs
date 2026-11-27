@@ -172,7 +172,7 @@ fn bits_column(operation: NumberBitwise, out: &mut [f64], a: Column, b: Column) 
 /// (`Concrete`) runs `NumericStage::float_arithmetic` on the binary64 words.
 #[inline(always)]
 pub(crate) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
-    let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+    let mut stage = quench_runtime::staged::Concrete::pure();
     f64::from_bits(quench_runtime::staged::NumericStage::float_arithmetic(&mut stage, operation, a.to_bits(), b.to_bits()))
 }
 
@@ -188,7 +188,7 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
         // A zero-fill shift's Number is its unsigned bits.
         return if operation == NumberBitwise::ShiftRightUnsigned { f64::from(word as u32) } else { f64::from(word) };
     }
-    let mut stage = quench_runtime::staged::Concrete::new(std::ptr::null());
+    let mut stage = quench_runtime::staged::Concrete::pure();
     let left = NumericStage::to_int32(&mut stage, a.to_bits(), ()).expect("the interpreter stage converts every Number");
     let right = NumericStage::to_int32(&mut stage, b.to_bits(), ()).expect("the interpreter stage converts every Number");
     let word = NumericStage::int_bitwise(&mut stage, operation, left, right);

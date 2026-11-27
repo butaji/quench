@@ -42,7 +42,7 @@ impl AccessorCall {
             quench_runtime::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Site(site) };
-        Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, object))
+        Some(step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, object))
     }
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: the interpreter's getter
@@ -67,7 +67,7 @@ impl AccessorCall {
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
-        let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, base)?;
+        let value = step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, base)?;
         let slot = self
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));

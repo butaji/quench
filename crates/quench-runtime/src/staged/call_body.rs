@@ -20,7 +20,7 @@ pub(crate) fn body_this<S: Stage>(stage: &mut S, receiver: S::Word, lexical: S::
 /// `body_this` on machine words, for the interpreter's body calls.
 #[inline(always)]
 pub fn concrete_body_this(receiver: u64, lexical: bool) -> u64 {
-    body_this(&mut super::Concrete::new(std::ptr::null()), receiver, lexical)
+    body_this(&mut super::Concrete::pure(), receiver, lexical)
 }
 
 /// Which activation a lane body's call makes of its target, as three exclusive conditions (`none`
@@ -53,7 +53,7 @@ pub(crate) fn activation<S: Stage>(stage: &mut S, activates: S::Cond, forwards: 
 /// `activation` on machine words, for the interpreter's body calls.
 #[inline(always)]
 pub fn concrete_activation(activates: bool, forwards: bool, fixed: bool, environment: bool) -> CallActivation<bool> {
-    activation(&mut super::Concrete::new(std::ptr::null()), activates, forwards, fixed, environment)
+    activation(&mut super::Concrete::pure(), activates, forwards, fixed, environment)
 }
 
 /// Whether a lane body's call admits a target the VM resolved (`resolve_script_call_target`):
@@ -68,7 +68,7 @@ pub(crate) fn admits_target_program<S: Stage>(stage: &mut S, target_program: S::
 /// `admits_target_program` on machine words.
 #[inline(always)]
 pub fn concrete_admits_target_program(target_program: u32, running_program: u32) -> bool {
-    admits_target_program(&mut super::Concrete::new(std::ptr::null()), u64::from(target_program), u64::from(running_program))
+    admits_target_program(&mut super::Concrete::pure(), u64::from(target_program), u64::from(running_program))
 }
 
 #[cfg(test)]

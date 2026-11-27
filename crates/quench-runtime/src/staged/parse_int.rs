@@ -93,7 +93,7 @@ pub fn decimal_int32_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, le
 /// `decimal_int32_row` on `Concrete` over the units at `units`, `length` of them, as an int32.
 #[cfg(not(stencil_build))]
 pub(crate) fn decimal_int32_at(wide: bool, units: u64, length: u64) -> Option<i32> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     let (ok, value) = decimal_int32_row(&mut stage, wide, units, length);
     ok.then_some(value as i32)
 }

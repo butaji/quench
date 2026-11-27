@@ -35,7 +35,7 @@ pub(crate) fn string_holder_read<S: Stage>(stage: &mut S, receiver: S::Word, wat
 #[inline(always)]
 pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u64,
     watch: *const crate::code_dependencies::PublishedCode<()>, value: crate::Value) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     holder_read(&mut stage, record as *const crate::heap::Object as u64, guard, watch as u64, value.to_bits(), ())
         .map(crate::Value::from_bits)
 }
@@ -48,7 +48,7 @@ pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u
 #[inline(always)]
 pub(crate) unsafe fn concrete_own_constant_read(record: &crate::heap::Object, expected: u64,
     watch: *const crate::code_dependencies::PublishedCode<()>, value: crate::Value) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(std::ptr::null());
+    let mut stage = super::Concrete::pure();
     super::ic::own_constant_read(&mut stage, record as *const crate::heap::Object as u64, expected, watch as u64, value.to_bits(), ())
         .map(crate::Value::from_bits)
 }
