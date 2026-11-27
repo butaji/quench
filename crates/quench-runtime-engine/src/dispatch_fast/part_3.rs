@@ -600,9 +600,14 @@ pub(super) fn activate_in_lane(
     let i = unsafe { &*ip };
     let argc = ImmediateLayout::argument_count(i.imm());
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane. A strict caller's terminal calls are proper tail
-    // calls, which the general dispatch path takes as jumps instead.
+    // activation's return does in the lane. A proper tail call of an ordinary callee reuses the
+    // running frame (`tail_reuse_admitted_in_lane`); any other strict caller's terminal call exits
+    // to the general dispatch path, which takes it as a jump.
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
+    if returns && tail_reuse_admitted_in_lane(cx, r, ip, target, argc, constructs) {
+        let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+        return Ok(reuse_frame_in_lane(cx, r, target, passed, argc, this));
+    }
     if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));
     }
@@ -649,6 +654,71 @@ pub(super) fn activation_room_in_lane(vm: &Vm, target: &ScriptCallTarget) -> boo
 #[inline(always)]
 pub(super) fn admits_window_in_lane(vm: &Vm, target: &ScriptCallTarget, argc: u16) -> bool {
     quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && activation_room_in_lane(vm, target)
+}
+
+/// Whether the returning call at `ip` of `target`, passing `argc` arguments from the window `r`, reuses the running frame
+/// (`reuse_frame_in_lane`). It is a proper tail call (DESIGN.md 4.4): a tail site of the running body
+/// (`Function::tail_site_permitted`, the bit the general dispatch path reads) whose callee is an ordinary body
+/// (`CallPlan::tail_callee`) of the running program, passed no more than its parameters, which the running frame's
+/// plain header holds over `r`. A leaf's window is not the frame's, so a leaf running in `r` takes the call's own path.
+/// A callee that needs more room than the lane stack holds takes it too. Reads facts only; writes nothing.
+#[inline(always)]
+pub(super) fn tail_reuse_admitted_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, argc: u16, constructs: bool) -> bool {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the running lane's code; `ip` is a record of the running view, whose PC `record_pc` reads.
+    let code = unsafe { &*(*cx).code };
+    let caller_pc = unsafe { record_pc(cx, ip) } as u32;
+    !constructs
+        && !vm.with_scope_entered
+        && unsafe { (*cx).leaf.call }.is_null()
+        && target.program() == unsafe { (*cx).program }
+        && argc <= target.params
+        && argc <= FIXED_ARGUMENT_COPIES
+        && target.entry != CallEntry::framed(Framed::Gathers)
+        && !target.settles()
+        && code.function(target.function as usize).call_plan(code).tail_callee
+        && code.function(running_function_in_lane(cx) as usize).tail_site_permitted(caller_pc)
+        && vm.lane_stack.plain.registers.get() == r.0
+        && vm.lane_stack.top_frame().and_then(|frame| frame.completion()) == Some(Completion::Plain)
+        && activation_room_in_lane(vm, target)
+}
+
+/// The running frame's reuse by a returning call `tail_reuse_admitted_in_lane` admits: the running frame's header is
+/// replaced over the same window `r` by the callee's, built as `enter_window_of_in_lane` builds one. The call record,
+/// caller window, caller base and caller program stay the running frame's, so the callee's return completes the
+/// running frame's caller. The `argc` arguments move into the parameter registers through copies, since the window
+/// overlaps them. Returns the callee's registers and first record, as a push does.
+#[inline(always)]
+pub(super) fn reuse_frame_in_lane(cx: *mut LaneContext, r: Registers, target: &ScriptCallTarget, passed: *const Value, argc: u16, this: Value) -> (Registers, Ip) {
+    let vm = unsafe { vm(cx) };
+    let mut arguments = [Value::UNDEFINED; FIXED_ARGUMENT_COPIES as usize];
+    // SAFETY: the call's window of `r` holds `argc` values, which are copied before the window is written.
+    unsafe { std::ptr::copy_nonoverlapping(passed, arguments.as_mut_ptr(), usize::from(argc)) };
+    let running = vm.lane_stack.pop_activation().expect("a reused frame is the running plain frame");
+    let record = quench_runtime::staged::call_keeping::KeepingRecord::of_kept(argc, None);
+    let activation = Activation::of_parts(
+        target.function, running.call(), running.caller_base(), running.caller_registers, running.caller_program,
+        ActivationKind::Script(ScriptActivation {
+            callee: target.callee, argc: record.argc, completion: Completion::Plain, forwards: record.forwards,
+            kept: record.kept, environment: false, record: std::ptr::null_mut(),
+        }),
+    );
+    // SAFETY: the pop freed the header's slot, so the push has its capacity; the header goes below `r`, over the popped one.
+    unsafe { vm.lane_stack.push_activation(activation, r.0) };
+    let count = usize::from(target.registers);
+    // SAFETY: the window `r` is the stack's, with room for the callee's registers and context (`activation_room_in_lane`);
+    // its registers are written before the stack's top covers them.
+    unsafe {
+        fill_admitted_window(r.0, usize::from(target.fill), count);
+        copy_arguments(r.0, arguments.as_ptr(), argc);
+        vm.lane_stack.values.set_top(r.0.add(count + lane_values::CONTEXT));
+        ((*cx).registers, (*cx).base) = (r, (*target.view).records());
+    }
+    r.set_this(this);
+    r.set_env(target.env);
+    r.set_capture(target.capture);
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    (r, unsafe { (*target.view).start() })
 }
 
 /// Where the lane continues after a frameless activation's tier prologue (`tier_prologue_in_lane`): at the record
