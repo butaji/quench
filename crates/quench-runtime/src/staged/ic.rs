@@ -24,6 +24,12 @@ pub enum IcOp<'a> {
     /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
     /// fact): the form is a constant of the row, so the load after it reads no table entry.
     GuardFormed { id: u32, form: u32 },
+    /// The record's whole auxiliary word, its exact shape and its storage-form bits, is this shape's with no
+    /// form bit set, else the read misses: one compare proves the shape and that the values are a plain arena
+    /// run (no extras, not inline, not narrow), so the `LoadSlot` after it reads the run with no form test. A
+    /// site whose observed form is that run (`Form::Arena`) guards this way: a record in another form missed
+    /// the run's form tests anyway (`object::plain_slots`), so only the tests go.
+    GuardShapeFormed(u32),
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
@@ -146,6 +152,10 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         IcOp::GuardLayout(id) => {
             at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             at.formed = Some(layout_form(id));
+        }
+        IcOp::GuardShapeFormed(shape) => {
+            at.shaped = Some(guarded!(guard_shape_formed(stage, at, shape, miss)));
+            at.formed = Some(0);
         }
         IcOp::GuardFormed { id, form } => {
             at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));

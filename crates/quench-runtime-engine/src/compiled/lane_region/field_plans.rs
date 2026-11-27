@@ -163,9 +163,12 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
     let lists = loads.iter().zip(pairs).map(|(load, pairs)| load_ops(load, pairs, if single { formed_id(load) } else { None }));
     match fast {
         Fast::Single(load) => {
-            // An own read whose receivers' storage form the site observed guards the whole word.
+            // An own read whose receivers' layout the site observed guards the whole layout word; one whose
+            // receivers keep a plain arena run guards the whole auxiliary word, so the form is proved once
+            // and the slot read tests none of it (`IcOp::GuardShapeFormed`).
             let guard = match formed_id(load) {
                 Some(id) => IcOp::GuardLayout(id),
+                None if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
                 None => IcOp::GuardShape(load.shape),
             };
             lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()

@@ -118,6 +118,16 @@ pub fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shap
     Some(Shaped::of_guard(at.record))
 }
 
+/// `IcOp::GuardShapeFormed`: continues where the reached record's whole auxiliary word is `shape` with no
+/// storage-form bit, the plain arena run (`object::proved_own_layout` of form bits 0).
+#[inline(always)]
+pub(super) fn guard_shape_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+    let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::object::aux_word(stage, at.record));
+    let same = { let shape = stage.shape_site(shape); stage.eq_imm(word, shape) };
+    stage.guard(same, miss)?;
+    Some(Shaped::of_guard(at.record))
+}
+
 /// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
 pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
