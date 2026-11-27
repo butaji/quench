@@ -12,6 +12,9 @@ pub(super) enum Key {
     Member(u32),
     /// A method `atom` stored on class `class`'s static object (`instance: false`) or its prototype.
     MemberOn { class: u32, instance: bool, atom: u32 },
+    /// The named property `atom` of an object of no one class the solve names (`Class::Many`): a store a
+    /// read off an instance of any class may see, so a class's own field (`MemberOn`) joins it.
+    MemberAny(u32),
     /// The value function `0` returns: every return it makes (`types`).
     Return(u32),
     /// The elements of the arrays field `0` holds: every indexed store through a read of that field (`types`).
@@ -58,10 +61,10 @@ impl Class {
         }
     }
 
-    /// The class of a value of type `ty` the analysis knows no construction of: none for a nullish value
-    /// (or none yet), any otherwise.
+    /// The class of a value of type `ty` the analysis knows no construction of: none for a value that holds
+    /// no object (a Number, a Boolean, `null`, `undefined`, or none yet: `Type::IMMEDIATE`), any otherwise.
     pub(super) fn of_type(ty: Type) -> Self {
-        if ty.is_subtype(Type::NULLISH) { Self::Never } else { Self::Many }
+        if ty.is_subtype(Type::IMMEDIATE) { Self::Never } else { Self::Many }
     }
 
     /// The class as read back from where the solve stored it: a guess.
@@ -70,6 +73,31 @@ impl Class {
             Self::One { class, .. } => Self::One { class, proven: false },
             other => other,
         }
+    }
+}
+
+/// One cell of the fact lattice: the type of a value and the class of the objects it may hold, the
+/// product of the two lattices, joined together. Every field, return, binding, parameter, receiver and
+/// call result of the solve is one cell (`types::Types`), so no fact has a twin kept beside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Cell {
+    pub(super) ty: Type,
+    pub(super) class: Class,
+}
+
+impl Cell {
+    /// No value yet: the solve's bottom.
+    pub(super) const NEVER: Self = Self { ty: Type::NEVER, class: Class::Never };
+    /// Any value.
+    pub(super) const ANY: Self = Self { ty: Type::ANY, class: Class::Many };
+
+    pub(super) fn join(self, other: Self) -> Self {
+        Self { ty: self.ty.join(other.ty), class: self.class.join(other.class) }
+    }
+
+    /// The cell as read back from where the solve stored it: its class a guess (`Class::guessed`).
+    pub(super) fn guessed(self) -> Self {
+        Self { class: self.class.guessed(), ..self }
     }
 }
 
@@ -103,6 +131,16 @@ impl Fact {
     /// A value of type `ty` holding objects of class `class` (`Class`).
     pub(super) fn of_class(ty: Type, class: Class) -> Self {
         Self { class, ..Self::of(ty) }
+    }
+
+    /// A value of cell `cell`, from nowhere the census follows.
+    pub(super) fn of_cell(cell: Cell) -> Self {
+        Self::of_class(cell.ty, cell.class)
+    }
+
+    /// The lattice cell of the value (`Cell`): its type and class, without where it was read from.
+    pub(super) fn cell(self) -> Cell {
+        Cell { ty: self.ty, class: self.class }
     }
 
     /// Any value, read from `origin`.

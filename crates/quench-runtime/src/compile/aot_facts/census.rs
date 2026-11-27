@@ -85,7 +85,7 @@ impl Census {
             Key::Global(_) => self.global_wild,
             Key::Slot { owner, .. } => self.wild_owner.get(owner as usize).copied().unwrap_or(true),
             Key::Member(_) => self.member_wild,
-            Key::MemberOn { .. } | Key::Return(_) | Key::Element(_) => return None,
+            Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_) => return None,
         };
         match self.writes.get(&key) {
             Some(&(1, fact)) if !wild => fact.ty.body_index(),

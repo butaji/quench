@@ -140,7 +140,7 @@ impl Solver<'_> {
         if let Some(types) = self.ctx.types {
             for index in 0..self.function.params {
                 if let Some(register) = self.function.promoted_register(index) {
-                    state[usize::from(register)] = Fact::of_class(types.param(self.ctx.id, index), types.param_class(self.ctx.id, index));
+                    state[usize::from(register)] = Fact::of_cell(types.param(self.ctx.id, index));
                 }
             }
         }
@@ -210,13 +210,14 @@ impl Record {
                 crate::staged::Callee::Method { atom, .. } => (Target::Method(atom), Fact::UNKNOWN),
             };
             let arguments = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
-            let this = || ctx.types.map_or(Type::ANY, |types| types.this(ctx.id));
             let receiver = match invocation.receiver {
                 crate::staged::Receiver::Register(register) => state[usize::from(register)],
                 crate::staged::Receiver::This { path: None } if !ctx.is_root =>
-                    Fact::of_class(this(), ctx.types.map_or(super::value::Class::Many, |types| types.this_class(ctx.id))),
-                crate::staged::Receiver::This { path: Some((atom, _)) } => ctx.types.map_or(Fact::UNKNOWN,
-                    |types| Fact::of_class(types.field(atom), types.class(super::value::Key::Member(atom)))),
+                    ctx.types.map_or(Fact::UNKNOWN, |types| Fact::of_cell(types.this(ctx.id))),
+                crate::staged::Receiver::This { path: Some((atom, _)) } => match ctx.types {
+                    Some(_) => super::effects::this_member(ctx, atom),
+                    None => Fact::UNKNOWN,
+                },
                 // A construction's receiver is the object it allocates: an instance of the class it constructs.
                 crate::staged::Receiver::Allocated => match callee.ty.body_index() {
                     Some(class) if construct => Fact::instance(class),

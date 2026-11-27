@@ -18,7 +18,7 @@
 
 use super::census::Census;
 use super::flow::FunctionFlow;
-use super::value::{Class, Key, Origin};
+use super::value::{Cell, Class, Key, Origin};
 use super::AotFacts;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -29,63 +29,35 @@ use std::collections::BTreeMap;
 /// that feed one another (richards' task queue: `blocks` → `currentTcb` → `link` → `queue`) climbs one link a pass.
 pub(super) const TYPE_PASSES: usize = 64;
 
-/// The types one pass found, which the next pass reads.
+/// The cells one pass found, which the next pass reads: every field, return, element and binding, call
+/// result, parameter and receiver of the program as one cell of the fact lattice (`Cell`: a type and a
+/// class, joined together).
 #[derive(PartialEq, Eq)]
 pub(crate) struct Types {
-    /// Per field name, the join of the values every store of it writes.
-    pub(crate) fields: BTreeMap<u32, Type>,
-    /// Per function, the join of the values its returns return.
-    returns: BTreeMap<u32, Type>,
+    /// Per key (a field name, a class's own field, a return, an element, a global or slot binding), the
+    /// join of the values every write of it stores. A write the analysis does not see (sloppy-mode global
+    /// code, a builtin writing through the global object) may store anything: the cells only feed the field
+    /// types, a guess held under the fields' slot dependencies.
+    cells: BTreeMap<Key, Cell>,
     /// Per call `(function, pc)`, the join of the returns of every function it may call.
-    calls: BTreeMap<(u32, u32), Type>,
+    calls: BTreeMap<(u32, u32), Cell>,
     /// Per function, the join of the arguments each parameter takes (`parameters`).
-    params: BTreeMap<u32, Vec<Type>>,
+    params: BTreeMap<u32, Vec<Cell>>,
     /// Per function, the join of the `this` its calls pass (`Call::receiver`).
-    receivers: BTreeMap<u32, Type>,
-    /// Per global or slot binding, the join of the values its writes store. A write the analysis does
-    /// not see (sloppy-mode global code, a builtin writing through the global object) may store anything:
-    /// the binding types only feed the field types, a guess held under the fields' slot dependencies.
-    bindings: BTreeMap<Key, Type>,
-    /// The type of a field, binding or return no write of has been seen yet: none (`Type::NEVER`) in the
-    /// solve's first pass (`bottom`), any value once the passes stop.
-    unseen: Type,
-    /// Per field, return, element or binding, the class of the objects its writes store (`Class`), joined
-    /// beside its type: what a read of it holds, as a guess (`Class::guessed`).
-    classes: BTreeMap<Key, Class>,
-    /// Per call `(function, pc)`, the join of the classes of every function it may call's returns.
-    call_classes: BTreeMap<(u32, u32), Class>,
-    /// The class of a key no write of has been seen yet, as `unseen` is its type.
-    unseen_class: Class,
-    /// Per function, the join of the classes of the `this` its calls pass, beside `receivers`.
-    receiver_classes: BTreeMap<u32, Class>,
-    /// Per function, the join of the classes of each parameter's arguments, beside `params`.
-    param_classes: BTreeMap<u32, Vec<Class>>,
+    receivers: BTreeMap<u32, Cell>,
+    /// The cell of a key no write of has been seen yet: none (`Cell::NEVER`) in the solve's first pass
+    /// (`bottom`), any value once the passes stop.
+    unseen: Cell,
 }
 
 impl Types {
-    /// The types `flows` store and return, with each call typed by the callees `facts` prove or
+    /// The cells `flows` store and return, with each call typed by the callees `facts` prove or
     /// guess for it, the parameters of each function, and the bindings.
     pub(super) fn of(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> Self {
-        let mut types = Self { fields: BTreeMap::new(), returns: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(),
-            bindings: BTreeMap::new(), unseen: Type::ANY, classes: BTreeMap::new(), call_classes: BTreeMap::new(), unseen_class: Class::Many,
-            receiver_classes: BTreeMap::new(), param_classes: BTreeMap::new() };
-        static PASS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let pass = PASS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        for (fid, flow) in flows.iter().enumerate() {
-            for &(key, fact) in &flow.writes {
-                if matches!(key, Key::Member(_) | Key::MemberOn { .. } | Key::Return(_) | Key::Global(_) | Key::Slot { .. } | Key::Element(_)) {
-                    let class = types.classes.entry(key).or_insert(Class::Never);
-                    if std::env::var_os("QUENCH_CLASS_DEBUG").is_some() && *class != Class::Many && class.join(fact.class) == Class::Many { eprintln!("CLASSDBG pass {pass} f{fid} {key:?} {:?} <- {fact:?}", *class); }
-                    *class = class.join(fact.class);
-                }
-                let joined = match key {
-                    Key::Member(atom) => types.fields.entry(atom).or_insert(Type::NEVER),
-                    Key::Return(function) => types.returns.entry(function).or_insert(Type::NEVER),
-                    Key::Global(_) | Key::Slot { .. } | Key::Element(_) => types.bindings.entry(key).or_insert(Type::NEVER),
-                    _ => continue,
-                };
-                *joined = joined.join(fact.ty);
-            }
+        let mut types = Self { cells: BTreeMap::new(), calls: BTreeMap::new(), params: BTreeMap::new(), receivers: BTreeMap::new(), unseen: Cell::ANY };
+        for &(key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
+            let joined = types.cells.entry(key).or_insert(Cell::NEVER);
+            *joined = joined.join(fact.cell());
         }
         for (id, flow) in flows.iter().enumerate() {
             let id = id as u32;
@@ -93,113 +65,109 @@ impl Types {
                 let callees = targets(id, call, facts, census);
                 if callees.is_empty() { continue; }
                 // A callee no return of reaches never returns: it adds nothing to the join.
-                let ty = callees.iter().fold(Type::NEVER, |ty, callee| ty.join(types.returns.get(callee).copied().unwrap_or(Type::NEVER)));
-                types.calls.insert((id, call.pc), ty);
-                let class = callees.iter().fold(Class::Never, |class, callee| class.join(types.classes.get(&Key::Return(*callee)).copied().unwrap_or(Class::Never)));
-                types.call_classes.insert((id, call.pc), class);
+                let cell = callees.iter().fold(Cell::NEVER, |cell, callee| cell.join(types.cells.get(&Key::Return(*callee)).copied().unwrap_or(Cell::NEVER)));
+                types.calls.insert((id, call.pc), cell);
             }
         }
-        (types.params, types.param_classes) = parameters(flows, facts, census);
+        types.params = parameters(flows, facts, census);
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let receiver = receiver_type(call);
+                let receiver = Cell { ty: receiver_type(call), class: call.receiver.class };
                 for target in targets(id as u32, call, facts, census) {
-                    let joined = types.receivers.entry(target).or_insert(Type::NEVER);
+                    let joined = types.receivers.entry(target).or_insert(Cell::NEVER);
                     *joined = joined.join(receiver);
-                    let class = types.receiver_classes.entry(target).or_insert(Class::Never);
-                    *class = class.join(call.receiver.class);
                 }
             }
+        }
+        // A method one class holds (`Key::MemberOn`: its prototype's, or its instances' own) is called on an
+        // object of that class: its `this` is an instance of the class, a guess, whatever the calls' receivers'
+        // join is (`this.task.run()` reaches four classes' `run`, each with its own class's `this`).
+        for (function, class) in holders(&types.cells) {
+            types.receivers.entry(function).or_insert(Cell::ANY).class = Class::One { class, proven: false };
         }
         types
     }
 
-    /// The solve's first guess (`aot_facts::analyze_as`): every type these types name, none of it yet.
+    /// The solve's first guess (`aot_facts::analyze_as`): every cell these types name, none of it yet.
     /// The passes from it climb to the least solution, which a self-dependent field (`this.n = this.n | 1`)
     /// reaches where passes from the top stay at any value; a solve that stops short of a fixpoint keeps
     /// no type.
     pub(super) fn bottom(mut self) -> Self {
-        let never = |ty: &mut Type| *ty = Type::NEVER;
-        self.fields.values_mut().for_each(never);
-        self.returns.values_mut().for_each(never);
+        let never = |cell: &mut Cell| *cell = Cell::NEVER;
+        self.cells.values_mut().for_each(never);
         self.calls.values_mut().for_each(never);
-        self.bindings.values_mut().for_each(never);
         self.receivers.values_mut().for_each(never);
-        self.params.values_mut().flatten().for_each(|ty| *ty = Type::NEVER);
-        self.unseen = Type::NEVER;
-        self.classes.values_mut().for_each(|class| *class = Class::Never);
-        self.call_classes.values_mut().for_each(|class| *class = Class::Never);
-        self.unseen_class = Class::Never;
-        self.receiver_classes.values_mut().for_each(|class| *class = Class::Never);
-        self.param_classes.values_mut().flatten().for_each(|class| *class = Class::Never);
+        self.params.values_mut().flatten().for_each(never);
+        self.unseen = Cell::NEVER;
         self
     }
 
-    /// The class of `this` in `function`, a guess: the join of its receivers' (`this`), any where no
-    /// recorded call reaches it.
-    pub(super) fn this_class(&self, function: u32) -> Class {
-        self.receiver_classes.get(&function).copied().unwrap_or(Class::Many).guessed()
+    /// The cell a read of `key` holds: the join of its writes', its class a guess; `unseen` where none is seen.
+    pub(super) fn cell(&self, key: Key) -> Cell {
+        self.cells.get(&key).copied().unwrap_or(self.unseen).guessed()
     }
 
-    /// The class parameter `index` of `function` takes at entry, a guess (`param`).
-    pub(super) fn param_class(&self, function: u32, index: u16) -> Class {
-        self.param_classes.get(&function).and_then(|classes| classes.get(usize::from(index))).copied().unwrap_or(Class::Many).guessed()
+    /// The cell a read of field `atom` off class `class`'s instances (`instance`) or static object holds: the
+    /// join of that class's own stores of it (`Key::MemberOn`) and the stores into objects of no one class
+    /// (`Key::MemberAny`), either of which may land in such an object. None where the class stores no `atom`.
+    pub(super) fn cell_on(&self, class: u32, instance: bool, atom: u32) -> Option<Cell> {
+        let own = self.cells.get(&Key::MemberOn { class, instance, atom })?;
+        Some(own.join(self.cells.get(&Key::MemberAny(atom)).copied().unwrap_or(Cell::NEVER)).guessed())
     }
 
-    /// The class a read of `key` holds (a field, return, element or binding): the join of its writes', a
-    /// guess; `unseen_class` where none is seen.
-    pub(super) fn class(&self, key: Key) -> Class {
-        self.classes.get(&key).copied().unwrap_or(self.unseen_class).guessed()
+    /// The type of every class's own field `atom` (`cell_on`), per class, for the lowering: a class's
+    /// instances hold the type its stores write, sharper than the name's (`field`) where two classes store
+    /// the name with different types (richards' `v1`: an int32 on an idle task, a packet on a device task).
+    pub(super) fn class_fields(&self) -> impl Iterator<Item = ((u32, u32), Type)> + '_ {
+        self.cells.keys().filter_map(|key| match *key {
+            Key::MemberOn { class, instance: true, atom } => Some(((class, atom), self.cell_on(class, true, atom)?.ty)),
+            _ => None,
+        })
+    }
+
+    /// The type of every field name the program stores (`Key::Member`), for the lowering.
+    pub(super) fn fields(&self) -> impl Iterator<Item = (u32, Type)> + '_ {
+        self.cells.iter().filter_map(|(key, cell)| match *key { Key::Member(atom) => Some((atom, cell.ty)), _ => None })
     }
 
     /// The classes the solve found, for the trace.
     pub(super) fn class_trace(&self) -> Vec<(Key, Class)> {
-        self.classes.iter().filter(|(_, class)| **class != Class::Many).map(|(key, class)| (*key, *class))
-            .chain(self.receiver_classes.iter().map(|(function, class)| (Key::Slot { owner: *function, slot: u16::MAX }, *class))).collect()
+        self.cells.iter().filter(|(_, cell)| cell.class != Class::Many).map(|(key, cell)| (*key, cell.class))
+            .chain(self.receivers.iter().map(|(function, cell)| (Key::Slot { owner: *function, slot: u16::MAX }, cell.class))).collect()
     }
 
-    /// The class a read of field `atom` off class `class`'s instances (`instance`) or static object holds, a
-    /// guess: the join of that class's stores of it (`Key::MemberOn`), none where none is seen.
-    pub(super) fn class_on(&self, class: u32, instance: bool, atom: u32) -> Option<Class> {
-        self.classes.get(&Key::MemberOn { class, instance, atom }).map(|class| class.guessed())
+    /// The cell the call at `pc` of `function` returns: none where its callees are not known.
+    pub(super) fn call(&self, function: u32, pc: u32) -> Option<Cell> {
+        self.calls.get(&(function, pc)).map(|cell| cell.guessed())
     }
 
-    /// The class the call at `pc` of `function` returns, a guess: any where its callees are not known.
-    pub(super) fn call_class(&self, function: u32, pc: u32) -> Class {
-        self.call_classes.get(&(function, pc)).copied().unwrap_or(Class::Many).guessed()
-    }
-
-    /// The type a read of field `atom` takes: the join of its stores, `unseen` where none is seen.
-    pub(super) fn field(&self, atom: u32) -> Type {
-        self.fields.get(&atom).copied().unwrap_or(self.unseen)
-    }
-
-    /// The type the call at `pc` of `function` returns: any value where its callees are not known.
-    pub(super) fn call(&self, function: u32, pc: u32) -> Option<Type> {
-        self.calls.get(&(function, pc)).copied()
-    }
-
-    /// The type a load of binding `key` takes: the join of its writes, `unseen` where none is seen.
-    pub(super) fn binding(&self, key: Key) -> Type {
-        self.bindings.get(&key).copied().unwrap_or(self.unseen)
-    }
-
-    /// The type of `this` in `function`: the join of the receivers its calls pass, any value where no
+    /// The cell of `this` in `function`: the join of the receivers its calls pass, any value where no
     /// recorded call reaches it.
-    pub(super) fn this(&self, function: u32) -> Type {
-        self.receivers.get(&function).copied().unwrap_or(Type::ANY)
+    pub(super) fn this(&self, function: u32) -> Cell {
+        self.receivers.get(&function).copied().unwrap_or(Cell::ANY).guessed()
     }
 
     /// The parameter types of every function they type, for the solve's trace.
-    pub(super) fn parameter_types(&self) -> &BTreeMap<u32, Vec<Type>> {
-        &self.params
+    pub(super) fn parameter_types(&self) -> BTreeMap<u32, Vec<Type>> {
+        self.params.iter().map(|(function, cells)| (*function, cells.iter().map(|cell| cell.ty).collect())).collect()
     }
 
-    /// The type parameter `index` of `function` takes at entry: the join of the arguments its calls
+    /// The cell parameter `index` of `function` takes at entry: the join of the arguments its calls
     /// pass (`parameters`); any value where the function's parameters are not typed.
-    pub(super) fn param(&self, function: u32, index: u16) -> Type {
-        self.params.get(&function).and_then(|types| types.get(usize::from(index))).copied().unwrap_or(Type::ANY)
+    pub(super) fn param(&self, function: u32, index: u16) -> Cell {
+        self.params.get(&function).and_then(|cells| cells.get(usize::from(index))).copied().unwrap_or(Cell::ANY).guessed()
     }
+}
+
+/// The functions one class alone holds as a method or an own field (`Key::MemberOn`), with that class.
+fn holders(cells: &BTreeMap<Key, Cell>) -> BTreeMap<u32, u32> {
+    let mut holders: BTreeMap<u32, Option<u32>> = BTreeMap::new();
+    for (key, cell) in cells {
+        let (Key::MemberOn { class, instance: true, .. }, Some(function)) = (*key, cell.ty.body_index()) else { continue };
+        let holder = holders.entry(function).or_insert(Some(class));
+        if *holder != Some(class) { *holder = None; }
+    }
+    holders.into_iter().filter_map(|(function, class)| Some((function, class?))).collect()
 }
 
 /// The `this` call `call` passes. A method call (`o.m()`, its callee read off its receiver) passes an object:
@@ -247,12 +215,11 @@ fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts, census: &C
 /// builtin makes, a call through a computed callee) may pass anything: the types are a guess, as the
 /// field types they feed are, which a tier holds only under the fields' slot dependencies, so such a call
 /// that stores what it was passed widens the slot and retires the code.
-fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> (BTreeMap<u32, Vec<Type>>, BTreeMap<u32, Vec<Class>>) {
-    let undefined = Type::language(ValueType::Undefined);
-    let mut params: BTreeMap<u32, Vec<Type>> = flows.iter().enumerate()
-        .filter_map(|(id, flow)| Some((id as u32, vec![Type::NEVER; usize::from(flow.arity?)])))
+fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> BTreeMap<u32, Vec<Cell>> {
+    let undefined = Cell { ty: Type::language(ValueType::Undefined), class: Class::Never };
+    let mut params: BTreeMap<u32, Vec<Cell>> = flows.iter().enumerate()
+        .filter_map(|(id, flow)| Some((id as u32, vec![Cell::NEVER; usize::from(flow.arity?)])))
         .collect();
-    let mut classes: BTreeMap<u32, Vec<Class>> = params.iter().map(|(id, slots)| (*id, vec![Class::Never; slots.len()])).collect();
     let mut reached = std::collections::BTreeSet::new();
     for (id, flow) in flows.iter().enumerate() {
         for call in &flow.calls {
@@ -260,12 +227,7 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> (BTr
                 let Some(slots) = params.get_mut(&target) else { continue };
                 reached.insert(target);
                 for (index, slot) in slots.iter_mut().enumerate() {
-                    *slot = slot.join(call.arguments.get(index).map_or(undefined, |argument| argument.ty));
-                }
-                if let Some(slots) = classes.get_mut(&target) {
-                    for (index, slot) in slots.iter_mut().enumerate() {
-                        *slot = slot.join(call.arguments.get(index).map_or(Class::Never, |argument| argument.class));
-                    }
+                    *slot = slot.join(call.arguments.get(index).map_or(undefined, |argument| argument.cell()));
                 }
             }
         }
@@ -273,10 +235,7 @@ fn parameters(flows: &[FunctionFlow], facts: &AotFacts, census: &Census) -> (BTr
     // The parameters of a function no recorded call reaches are ones the closed world does not see bound: any
     // value. One a call reaches keeps `NEVER` while no value reaches its arguments yet (the solve's bottom).
     for (function, slots) in &mut params {
-        if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Type::ANY); }
+        if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
     }
-    for (function, slots) in &mut classes {
-        if !reached.contains(function) { slots.iter_mut().for_each(|slot| *slot = Class::Many); }
-    }
-    (params, classes)
+    params
 }

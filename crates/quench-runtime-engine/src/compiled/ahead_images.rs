@@ -163,7 +163,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, frozen): 
     let proven = proven_calls(program, unit, function, &sites, symbols);
     let plans = constructions::construct_plans(program, unit, function, facts, symbols);
     let strings = string_constants(program, unit, symbols);
-    let fields = fields::guessed_fields(program, unit, facts, symbols);
+    let fields = fields::guessed_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), closed: Some(facts),

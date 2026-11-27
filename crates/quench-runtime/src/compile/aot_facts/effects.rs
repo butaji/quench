@@ -1,7 +1,7 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
 use super::scope::Scope;
-use super::value::{Class, Fact, Key, Origin, PrototypeBase};
+use super::value::{Cell, Class, Fact, Key, Origin, PrototypeBase};
 use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
@@ -60,8 +60,8 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     };
     let mut value = value_of(ctx, instruction, typed_operation, state, &mut events);
     // A call whose callees the solve knows returns the join of their returns (`types::Types::call`).
-    if let Some(types) = ctx.types && let Some(ty) = types.call(ctx.id, pc as u32) {
-        value = Fact::of_class(ty, types.call_class(ctx.id, pc as u32));
+    if let Some(types) = ctx.types && let Some(cell) = types.call(ctx.id, pc as u32) {
+        value = Fact::of_cell(cell);
     }
     // A return, or an operation whose result completes the frame, writes the function's result.
     if instruction.op().is_return() {
@@ -91,8 +91,7 @@ fn is_global_load(instruction: WideInstruction) -> bool {
 /// In a typed pass a binding's load takes the join of its writes (`types::Types::binding`).
 fn resolved(ctx: &Ctx<'_>, key: Key) -> Fact {
     ctx.resolved.get(&key).copied().map_or_else(
-        || Fact { ty: ctx.types.map_or(Type::ANY, |types| types.binding(key)), origin: Some(Origin::Binding(key)),
-            class: ctx.types.map_or(Class::Many, |types| types.class(key)) },
+        || Fact { origin: Some(Origin::Binding(key)), ..Fact::of_cell(ctx.types.map_or(Cell::ANY, |types| types.cell(key))) },
         Fact::closure)
 }
 
@@ -190,7 +189,7 @@ fn value_of(
         _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex => element_value(ctx, state[usize::from(instruction.register_b())]),
         Some(Operation::ElementRead { base, .. }) => match (state[usize::from(base)].origin, ctx.types) {
             (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-                Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
+                Fact::of_cell(types.cell(Key::Element(atom)).join(Cell { ty: Type::language(crate::ValueType::Undefined), class: Class::Never })),
             _ => Fact::UNKNOWN,
         },
         Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
@@ -203,10 +202,11 @@ fn value_of(
 /// (`Key::Member`); any value in the passes that find call targets.
 fn member_type(ctx: &Ctx<'_>, owner: Option<Fact>, atom: u32) -> (Type, Class) {
     let Some(types) = ctx.types else { return (Type::ANY, Class::Many) };
+    let named = types.cell(Key::Member(atom));
     // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its class comes with a later pass.
-    if owner.is_some_and(|owner| owner.class == Class::Never) { return (types.field(atom), Class::Never); }
-    let on = owner.and_then(Fact::class_site).and_then(|(class, instance, _)| types.class_on(class, instance, atom));
-    (types.field(atom), on.unwrap_or_else(|| types.class(Key::Member(atom))))
+    if owner.is_some_and(|owner| owner.class == Class::Never) { return (named.ty, Class::Never); }
+    let cell = owner.and_then(Fact::class_site).and_then(|(class, instance, _)| types.cell_on(class, instance, atom)).unwrap_or(named);
+    (cell.ty, cell.class)
 }
 
 /// The object a named field read or store at `instruction` reads or stores: a `GetField`'s base (a nested
@@ -240,9 +240,17 @@ fn base_fact(ctx: &Ctx<'_>, base: crate::bytecode::FieldBase, state: &[Fact]) ->
     }
 }
 
+/// The fact of a read of field `atom` off the function's own `this` (a receiver `this.task` of a method call):
+/// its class's own field where the solve names `this`'s class (`member_type`).
+pub(super) fn this_member(ctx: &Ctx<'_>, atom: u32) -> Fact {
+    let this = (!ctx.is_root).then(|| this_fact(ctx));
+    let (ty, class) = member_type(ctx, this, atom);
+    Fact::of_class(ty, class)
+}
+
 /// The fact of the function's `this`: the join of its receivers' types and classes (`types::Types::this`).
 fn this_fact(ctx: &Ctx<'_>) -> Fact {
-    ctx.types.map_or(Fact::UNKNOWN, |types| Fact::of_class(types.this(ctx.id), types.this_class(ctx.id)))
+    ctx.types.map_or(Fact::UNKNOWN, |types| Fact::of_cell(types.this(ctx.id)))
 }
 
 /// What a register of fact `base` names whose `prototype` a read takes: a closure, or a binding.
@@ -310,7 +318,7 @@ fn number_value(scope: &Scope, state: &[Fact], number: NumberOperation) -> Fact 
 fn element_value(ctx: &Ctx<'_>, base: Fact) -> Fact {
     match (base.origin, ctx.types) {
         (Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }), Some(types)) =>
-            Fact::of_class(types.binding(Key::Element(atom)).join(Type::language(crate::ValueType::Undefined)), types.class(Key::Element(atom))),
+            Fact::of_cell(types.cell(Key::Element(atom)).join(Cell { ty: Type::language(crate::ValueType::Undefined), class: Class::Never })),
         _ => Fact::UNKNOWN,
     }
 }
@@ -381,17 +389,19 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
             // A store into an object of a known class (`Fact::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
-            if let Some((class, true, _)) = owner.class_site() {
-                events.writes.push((Key::MemberOn { class, instance: true, atom }, state[usize::from(value)]));
-            }
+            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`).
+            let key = match owner.class_site() { Some((class, true, _)) => Key::MemberOn { class, instance: true, atom }, _ => Key::MemberAny(atom) };
+            events.writes.push((key, state[usize::from(value)]));
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
             events.writes.push((Key::Member(atom), Fact::UNKNOWN));
+            events.writes.push((Key::MemberAny(atom), Fact::UNKNOWN));
         }
         Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
         Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
         _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
             events.writes.push((Key::Member(instruction.atom_index()), Fact::UNKNOWN));
+            events.writes.push((Key::MemberAny(instruction.atom_index()), Fact::UNKNOWN));
         }
         _ => {}
     }

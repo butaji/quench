@@ -21,23 +21,43 @@ use crate::aot_image::symbols::{GuardAccess, HeapValueRecipe, ShapeRecipe};
 use super::constructions::ADDED_FIELD;
 
 /// The guessed loads of `unit`'s named field reads, by field-cache site (`lane_region::FieldSites`).
-pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, facts: &AotFacts, symbols: &mut SymbolTable)
+pub(crate) fn guessed_fields(program: &ResidualProgram, (unit, function): (&lane_unit::Unit, u32), facts: &AotFacts, symbols: &mut SymbolTable)
     -> Vec<Option<Vec<NativeFieldLoad>>> {
     let owners = field_owners(program, facts);
     let inherited = prototype_owners(facts, &owners);
     if owners.is_empty() && inherited.is_empty() { return Vec::new(); }
-    let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().flat_map(|instruction| accessed(program, *instruction)).filter_map(|(atom, site, store)| {
+    let sites: Vec<(usize, Vec<NativeFieldLoad>)> = unit.instructions.iter().zip(&unit.origins).flat_map(|(instruction, origin)| {
+            // The class the solve names for the one object the access reads or stores (`FunctionFacts::field_owner`):
+            // a nested lookup's reads have more than one object, so only a single access takes it.
+            let accesses = accessed(program, *instruction);
+            let class = if accesses.len() == 1 { field_class((unit, function), facts, *origin) } else { None };
+            accesses.into_iter().map(move |access| (access, class))
+        }).filter_map(|((atom, site, store), class)| {
             // A name both constructions store and prototypes hold (a task's `queue` field, the
             // scheduler's `queue` method) guesses both: a read of either receiver finds its arm.
-            let (read, stored) = GuardAccess::of_field(facts.field_type(atom));
-            let access = if store { stored } else { read };
-            let own = owners.get(&atom).map(|owners| owners.iter()
-                .map(|&owner| guessed_load(program, owner, access, &mut *symbols)).collect::<Option<Vec<_>>>());
-            let held = inherited.get(&atom).filter(|_| !store).map(|holders| holders.iter()
-                .map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, &mut *symbols)).collect::<Option<Vec<_>>>());
-            let loads: Vec<NativeFieldLoad> = match (own, held) {
-                (None, None) => return None,
-                (own, held) => own.unwrap_or(Some(Vec::new()))?.into_iter().chain(held.unwrap_or(Some(Vec::new()))?).collect(),
+            // Each construction's arm reads or stores its own class's field, typed by the stores into that
+            // class's instances (`AotFacts::field_type_on`: richards' `v1`, an int32 on an idle task and a
+            // packet on a device task), and an access whose object the solve names a class of guesses that
+            // class's shape alone, so its value takes that class's type.
+            let access_of = |owner: u32| {
+                let (read, stored) = GuardAccess::of_field(facts.field_type_on(owner, atom));
+                if store { stored } else { read }
+            };
+            let mut loads_of = |class: Option<u32>| -> Option<Vec<NativeFieldLoad>> {
+                let of_class = |function: u32| class.is_none_or(|class| class == function);
+                let own = owners.get(&atom).map(|owners| owners.iter().filter(|(owner, _)| of_class(*owner))
+                    .map(|&owner| guessed_load(program, owner, access_of(owner.0), &mut *symbols)).collect::<Option<Vec<_>>>());
+                let held = inherited.get(&atom).filter(|_| !store).map(|holders| holders.iter().filter(|(function, _, _)| of_class(*function))
+                    .map(|&(function, slot, len)| guessed_holder_load(program, (function, slot, len), atom, &mut *symbols)).collect::<Option<Vec<_>>>());
+                match (own, held) {
+                    (None, None) => None,
+                    (own, held) => Some(own.unwrap_or(Some(Vec::new()))?.into_iter().chain(held.unwrap_or(Some(Vec::new()))?).collect()),
+                }
+            };
+            // A class the solve names that no guessed shape is of (a guess off the mark) guesses every shape, as before.
+            let loads = match class.and_then(|class| loads_of(Some(class)).filter(|loads| !loads.is_empty())) {
+                Some(loads) => loads,
+                None => loads_of(None)?,
             };
             if loads.len() > GUESSED_SHAPES { return None; }
             if loads.is_empty() { return None; }
@@ -49,6 +69,16 @@ pub(crate) fn guessed_fields(program: &ResidualProgram, unit: &lane_unit::Unit, 
         eprintln!("aot-lanes: guesses {} field reads ({} own names, {} prototype names), not {unguessed:?}", sites.len(), owners.len(), inherited.len());
     }
     lane_region::flat_table(sites)
+}
+
+/// The class the solve names for the object the named field access at `origin` of `unit` reads or stores
+/// (`FunctionFacts::field_owner`), in the function the instruction is from.
+fn field_class((unit, function): (&lane_unit::Unit, u32), facts: &AotFacts, origin: lane_unit::Origin) -> Option<u32> {
+    let (function, pc) = match origin {
+        lane_unit::Origin::Caller(pc) => (function, pc),
+        lane_unit::Origin::Inlined { frame, pc } => (unit.frames.get(frame)?.target.function, pc),
+    };
+    facts.function_facts(function).field_owner(pc)
 }
 
 /// The name, field-cache site and kind (a store) of each named field access of `instruction`: a

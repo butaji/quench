@@ -54,6 +54,9 @@ pub struct AotFacts {
     /// Per field name, the type of the values every store of it writes (`types`): what a slot of
     /// that name holds, which a tier keeps only under the slot's dependency.
     pub(crate) field_types: BTreeMap<u32, crate::typed_ir::Type>,
+    /// Per `(class, field name)`, the type of the values the stores into that class's instances write
+    /// (`types::Types::cell_on`): one cell of the lattice per field per class, sharper than the name's.
+    pub(crate) class_field_types: BTreeMap<(u32, u32), crate::typed_ir::Type>,
     /// `(function, pc)` of a named field read or store → the class (constructed function) of every object it
     /// reads or stores, from the settled types (`value::Class`): a guess, as the types are.
     pub(crate) field_owners: BTreeMap<(u32, u32), u32>,
@@ -78,6 +81,12 @@ impl AotFacts {
     /// anything else retires the code. Any value where a store may write the name unseen.
     pub fn field_type(&self, atom: u32) -> crate::typed_ir::Type {
         self.field_types.get(&atom).copied().unwrap_or(crate::typed_ir::Type::ANY)
+    }
+
+    /// The type of field `atom` of class `class`'s instances (`class_field_types`), else the name's (`field_type`):
+    /// a guess held as the slot's type under the slot's dependency, as `field_type` is.
+    pub fn field_type_on(&self, class: u32, atom: u32) -> crate::typed_ir::Type {
+        self.class_field_types.get(&(class, atom)).copied().unwrap_or_else(|| self.field_type(atom))
     }
 
     /// The Any ratchet: how many field names the program stores whose type is `any`, and how many
@@ -239,7 +248,7 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
             for (&pc, &class) in &flow.field_owners {
                 if let value::Class::One { class, .. } = class { facts.field_owners.insert((id, pc), class); }
             }
-            if let value::Class::One { class, .. } = found.this_class(id) { facts.this_classes.insert(id, class); }
+            if let value::Class::One { class, .. } = found.this(id).class { facts.this_classes.insert(id, class); }
             for call in flow.calls.iter().filter(|call| call.target == flow::Target::Register && !call.construct) {
                 if facts.call_targets.contains_key(&(id, call.pc)) { continue; }
                 let Some(target) = census.target(call.callee) else { continue };
@@ -250,10 +259,15 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
         }
     }
     // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
-    if settled { facts.field_types = found.fields.into_iter().map(|(atom, ty)| (atom, if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty })).collect(); }
+    let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
+    if settled {
+        facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
+        facts.class_field_types = found.class_fields().map(|(key, ty)| (key, seen(ty))).collect();
+    }
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
         eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());
+        eprintln!("aot-lanes: class field types {:?}", facts.class_field_types.iter().filter(|((_, atom), ty)| facts.field_types.get(atom) != Some(*ty)).map(|((class, atom), ty)| (*class, named(atom), *ty)).collect::<Vec<_>>());
         let (any, total) = facts.any_fields();
         eprintln!("aot-lanes: any fields {any} of {total}");
         eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} field owners, {} this classes", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.field_owners.len(), facts.this_classes.len());
