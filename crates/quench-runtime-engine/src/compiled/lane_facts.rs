@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::jit_mode::Tier;
+use quench_runtime::vm::tier_policy::Tier;
 use quench_runtime::vm::tier_policy::PredictedTier;
 use std::collections::BTreeMap;
 

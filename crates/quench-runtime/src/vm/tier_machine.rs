@@ -26,7 +26,7 @@ use super::engine_types::EntryCell;
 use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
 use super::tier_policy;
-use crate::jit_mode::Tier;
+use crate::vm::tier_policy::Tier;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TierState {

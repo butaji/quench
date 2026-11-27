@@ -10,8 +10,7 @@ impl Vm {
     /// Programs may share `code` (`ProgramStore::insert_shared`): a frame of any of them counts.
     #[inline(always)]
     pub(super) fn promote_tier0_if_due(&self, code: &ResidualProgram, id: u32) {
-        // Under `tier0-always` an unlowered function never lowers: the differential's run.
-        if code.tier0_due(id as usize, crate::vm::tier_policy::TIER0_RUNS) && !crate::trace::Dev::Tier0Always.on() {
+        if code.tier0_due(id as usize, crate::vm::tier_policy::TIER0_RUNS) {
             self.promote_tier0_unless_running(code, id);
         }
     }
@@ -55,7 +54,7 @@ impl Vm {
     /// `code` where it runs unlowered, unpinned, with no frame of it live.
     fn promote_tier0_now(&self, code: &ResidualProgram, id: u32) {
         // No runs are counted: an unlowered, unpinned function is due at once.
-        if code.tier0_due(id as usize, 0) && !crate::trace::Dev::Tier0Always.on() {
+        if code.tier0_due(id as usize, 0) {
             self.promote_tier0_unless_running(code, id);
         }
     }

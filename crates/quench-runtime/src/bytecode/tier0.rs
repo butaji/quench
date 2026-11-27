@@ -89,11 +89,10 @@ impl FunctionSlot {
     }
 }
 
-/// Whether function `index`, unlowered, may run as it is: not under `tier0-off`.
+/// Whether function `index`, unlowered, may run as it is.
 fn runs_unlowered(program: &ResidualProgram, index: usize, function: &Function) -> bool {
     index != crate::vm::ROOT_FUNCTION_ID as usize
         && program.kind != ProgramKind::Wasm
-        && !crate::trace::Dev::Tier0Off.on()
         && !function.loops()
         && !function.suspends()
         // A program running from its kept form lowers every record on first read, as its

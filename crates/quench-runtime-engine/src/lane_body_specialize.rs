@@ -30,7 +30,7 @@ impl LaneView {
     /// (`tier_policy::lane_body_tier`), or none where the interpreter runs the function (`None`). Whether the body is
     /// still compiling or specialized, so its prologue stays. A specialized body is a fact of the view from then on:
     /// its prologue record enters it with `entry`, which tests nothing the specialization proved (`lane_body_entry`).
-    pub(crate) fn specialize_lane_body(&self, entry: Handler, tier: Option<quench_runtime::jit_mode::Tier>, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
+    pub(crate) fn specialize_lane_body(&self, entry: Handler, tier: Option<quench_runtime::vm::tier_policy::Tier>, work: impl FnOnce(crate::compiled::LaneBodyWork) -> crate::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
@@ -71,7 +71,7 @@ impl LaneView {
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { recompiles, stuck, .. } => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                *body = self.body_after(outcome, Some(quench_runtime::jit_mode::Tier::Ahead), entry, recompiles, stuck, 0);
+                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry, recompiles, stuck, 0);
                 let epochs = &self.tier().body_epoch;
                 epochs.set(epochs.get().wrapping_add(1));
             }
@@ -82,7 +82,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight is what it waits on.
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::jit_mode::Tier>, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {

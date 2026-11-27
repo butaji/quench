@@ -7,7 +7,7 @@
 
 use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
 use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
-use crate::jit_mode::Tier;
+pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
 
@@ -244,12 +244,10 @@ impl TierRows {
     /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
     pub(crate) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
 
-    /// The rows a VM made now holds: `PROCESS`, or the floor rows under `QUENCH_DEV=floor-rows`,
-    /// admitting every compile where a test forced it.
+    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
     pub(crate) fn made() -> &'static Tiers {
         #[cfg(any(test, feature = "test-support"))]
         if FORCED_ADMISSION.get() { return &ADMITTING; }
-        if crate::trace::Dev::FloorRows.on() { return &FLOOR; }
         Self::PROCESS.table()
     }
 
@@ -418,6 +416,36 @@ pub fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }
 
+/// Whether any of `tiers` runs in a VM in execution `mode` under `policy`: compiled execution, a
+/// memory policy that compiles them (`tier_may_run`), and a JIT mode that allows one. A build whose
+/// profiles count interpreted work exactly runs none. The one question every VM-level tier check asks.
+#[inline]
+pub fn tiers_run(mode: crate::ExecutionMode, policy: crate::MemoryPolicy, tiers: &[Tier]) -> bool {
+    !cfg!(quench_profiled) && mode == crate::ExecutionMode::Compiled && tier_may_run(policy, tiers)
+}
+
+/// Operators up to which a Wasm module lowered for compiled code inlines its leaves as the
+/// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
+/// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
+/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
+/// runs or not; past this size the copies' compile time outweighs them on a module's first
+/// runs, and larger modules keep every call.
+pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
+
+/// Whether a Wasm module lowered for `mode` inlines its leaf calls (`wasm::inline::leaf_budget`).
+/// The interpreter inlines them; compiled code inlines them up to `WASM_COMPILED_INLINING_MAX_OPERATORS`
+/// operators; native-only execution keeps every call for the native backend to resolve.
+pub fn wasm_module_inlines_leaves(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> bool {
+    match mode {
+        crate::ExecutionMode::Interpreted => true,
+        #[cfg(test)]
+        crate::ExecutionMode::Compiled if crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => false,
+        crate::ExecutionMode::Compiled => module_operators() <= WASM_COMPILED_INLINING_MAX_OPERATORS,
+        #[cfg(feature = "native-execution")]
+        crate::ExecutionMode::NativeOnly => false,
+    }
+}
+
 /// Whether a compile may start at all: some compiling tier is allowed.
 pub fn may_compile() -> bool {
     crate::jit_mode::tiers_allowed(Tier::ANY)
@@ -450,7 +478,7 @@ pub fn cranelift_runs() -> bool {
 /// Whether loop regions take the stencil tier in place of Cranelift: every region is a stencil region, and none
 /// is promoted to UltraJIT.
 pub fn loop_regions_are_stencils() -> bool {
-    crate::jit_mode::base_regions()
+    crate::jit_mode::base_only()
 }
 
 /// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.

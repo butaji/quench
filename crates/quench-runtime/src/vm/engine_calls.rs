@@ -32,7 +32,7 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_entry_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
     pub(super) safe fn quench_engine_vm_hot_loop_lane_view(this: &Vm, program: ProgramId, function: u32) -> *const LaneView;
     safe fn quench_engine_vm_runs_call_in_lane(view: *const LaneView) -> bool;
-    pub(super) safe fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::jit_mode::Tier]) -> bool;
+    pub(super) safe fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::vm::tier_policy::Tier]) -> bool;
     safe fn quench_engine_vm_view_any_in_lane(this: &Vm, program: ProgramId, function: u32) -> Option<*const LaneView>;
     safe fn quench_engine_vm_runs_in_lane(view: *const LaneView, pc: usize) -> bool;
     pub(super) safe fn quench_engine_vm_run_fast_lane(this: &mut Vm, code: &ResidualProgram, program: ProgramId, view: *const LaneView, frame: &mut usize, pc: usize, pending: &mut Vec<PendingGeneralCall>, executing: &mut crate::vm::dispatch_frame::ExecutingProgram, inline_calls: bool) -> usize;
@@ -110,7 +110,7 @@ pub trait EngineVm {
     fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView;
     fn hot_loop_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView;
     fn runs_call_in_lane(view: *const LaneView) -> bool;
-    fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool;
+    fn tier_may_run(&self, tiers: &[crate::vm::tier_policy::Tier]) -> bool;
     fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView>;
     fn runs_in_lane(view: *const LaneView, pc: usize) -> bool;
     fn run_fast_lane(&mut self, code: &ResidualProgram, program: ProgramId, view: *const LaneView, frame: &mut usize, pc: usize, pending: &mut Vec<PendingGeneralCall>, executing: &mut crate::vm::dispatch_frame::ExecutingProgram, inline_calls: bool) -> usize;
@@ -199,7 +199,7 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn runs_call_in_lane(view: *const LaneView) -> bool { quench_engine_vm_runs_call_in_lane(view) }
     #[inline(always)]
-    fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool { self.execution.tier_may_run.is_some_and(|may_run| may_run(self, tiers)) }
+    fn tier_may_run(&self, tiers: &[crate::vm::tier_policy::Tier]) -> bool { self.execution.tier_may_run.is_some_and(|may_run| may_run(self, tiers)) }
     #[inline(always)]
     fn view_any_in_lane(&self, program: ProgramId, function: u32) -> Option<*const LaneView> { quench_engine_vm_view_any_in_lane(self, program, function) }
     #[inline(always)]
@@ -404,7 +404,7 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_entry_lane_view = fn(&Vm, ProgramId, u32) -> *const LaneView;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_hot_loop_lane_view = fn(&Vm, ProgramId, u32) -> *const LaneView;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_runs_call_in_lane = fn(*const LaneView) -> bool;
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_tier_may_run = fn(&Vm, &[crate::jit_mode::Tier]) -> bool;
+    #[allow(non_camel_case_types)] pub type quench_engine_vm_tier_may_run = fn(&Vm, &[crate::vm::tier_policy::Tier]) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_view_any_in_lane = fn(&Vm, ProgramId, u32) -> Option<*const LaneView>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_runs_in_lane = fn(*const LaneView, usize) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_run_fast_lane = fn(&mut Vm, &ResidualProgram, ProgramId, *const LaneView, &mut usize, usize, &mut Vec<PendingGeneralCall>, &mut crate::vm::dispatch_frame::ExecutingProgram, bool) -> usize;

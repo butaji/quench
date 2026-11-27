@@ -26,7 +26,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
     let facts = vm.programs.aot_facts(program);
     let planned = vm.programs.planned_call_sites(program, function, crate::dispatch_fast::planned_calls::planned_arm_admits);
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
-        crate::compiled::admission::record_plan(crate::compiled::admission::vm_may_run(vm, crate::compiled::admission::Tier::ANY)),
+        crate::compiled::admission::record_plan(quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
         vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }

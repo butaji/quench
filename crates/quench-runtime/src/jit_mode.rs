@@ -90,12 +90,12 @@ impl JitMode {
     }
 
     /// The execution mode the runtime is set to: `--b-jit` runs the compiled lane with its loop
-    /// regions built from BaseJIT stencils only (`base_only`).
+    /// regions built from BaseJIT stencils only (`tier_policy::loop_regions_are_stencils`).
     pub fn execution_mode(self) -> ExecutionMode {
         if self.allows_any(Tier::ANY) { ExecutionMode::Compiled } else { ExecutionMode::Interpreted }
     }
 
-    /// Makes this the process's mode, which `base_only` and `base_regions` report.
+    /// Makes this the process's mode, which `base_only` and `tiers_allowed` report.
     pub fn set_process_mode(self) {
         PROCESS_MODE.store(self as u8, std::sync::atomic::Ordering::Relaxed);
     }
@@ -189,12 +189,6 @@ pub fn base_only() -> bool {
 /// Whether every Cranelift compile is `CompileLevel::Quick`: only QuickJIT is allowed there.
 pub fn quick_only() -> bool {
     tiers_allowed(&[Tier::Quick]) && !tiers_allowed(&[Tier::Ultra])
-}
-
-/// Whether loop regions are built from BaseJIT stencils: `--b-jit`, or `QUENCH_DEV=bjit`
-/// while the tier is an experiment in the default mode.
-pub fn base_regions() -> bool {
-    base_only() || crate::trace::Dev::Bjit.on()
 }
 
 #[cfg(test)]

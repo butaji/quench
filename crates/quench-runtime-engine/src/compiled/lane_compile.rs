@@ -7,7 +7,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
-use quench_runtime::jit_mode::Tier;
+use quench_runtime::vm::tier_policy::Tier;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
 pub(crate) use super::lane_method::{finish_lane_method, LaneMethodFacts};

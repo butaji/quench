@@ -207,7 +207,7 @@ pub(crate) struct UnitFacts {
     pub(crate) called_by_bodies: bool,
     /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
     pub(crate) indexes_typed: bool,
-    /// The Cranelift function tiers run in this VM (`vm_may_run`), for `UnitKind::Entry`.
+    /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
     /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
     pub(crate) wasm_first_entry: bool,
@@ -368,17 +368,7 @@ fn bisected_out() -> bool {
 }
 
 /// The tiers of the JIT mode, as the specializer names them.
-pub(crate) use quench_runtime::jit_mode::Tier;
-
-/// Whether any of `tiers` runs in this VM: compiled execution, a memory policy that compiles them
-/// (`tier_policy::tier_may_run`), and a JIT mode that allows one. A build whose profiles count
-/// interpreted work exactly runs none.
-#[inline]
-pub(crate) fn vm_may_run(vm: &Vm, tiers: &[Tier]) -> bool {
-    !cfg!(quench_profiled)
-        && vm.execution_mode == quench_runtime::ExecutionMode::Compiled
-        && quench_runtime::vm::tier_policy::tier_may_run(vm.memory_policy(), tiers)
-}
+pub(crate) use quench_runtime::vm::tier_policy::Tier;
 
 /// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
 #[inline]
@@ -409,7 +399,7 @@ pub(crate) struct RecordPlan {
     pub(crate) loop_sites: bool,
 }
 
-/// The record plan of a function whose tiers may run (`tiers_run`: `vm_may_run`, any tier).
+/// The record plan of a function whose tiers may run (`tier_policy::tiers_run`, any tier).
 pub(crate) fn record_plan(tiers_run: bool) -> RecordPlan {
     RecordPlan { loop_sites: tiers_run }
 }

@@ -5,7 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::lane_compile::LaneDependencies;
 use super::lane_facts::amortizes_entry;
-use quench_runtime::jit_mode::Tier;
+use quench_runtime::vm::tier_policy::Tier;
 
 /// What a lane body's plan and lowering established: everything `finish_lane_method` holds but
 /// its code. An image body linked at its run address has the same facts without a lowering.
