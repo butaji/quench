@@ -10,7 +10,7 @@ use crate::ext_traits::*;
 use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, RelocatableCode, Relocation};
+use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
 
 const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.
@@ -217,8 +217,8 @@ fn put_code(out: &mut Vec<u8>, code: &RelocatableCode) {
     }
 }
 
-fn reloc_of(tag: u8) -> Result<RelocKind, String> {
-    RelocKind::ALL.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
+fn reloc_of(tag: u8) -> Result<PatchKind, String> {
+    PatchKind::ALL.get(usize::from(tag)).copied().ok_or_else(|| "an AOT image relocation has an unknown kind".into())
 }
 
 type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);

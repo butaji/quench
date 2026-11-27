@@ -29,7 +29,7 @@ const ARM64_ADD_OPCODE: u32 = 0x1100_0000;
 /// is the kind's tag in an image file (`aot_image::file`), so a new kind is appended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum RelocKind {
+pub enum PatchKind {
     Abs8,
     X86PCRel4,
     X86CallPCRel4,
@@ -40,7 +40,7 @@ pub enum RelocKind {
     Abs4,
 }
 
-impl RelocKind {
+impl PatchKind {
     /// Every kind, in discriminant order: an image file's tag indexes it.
     pub const ALL: [Self; 8] = [
         Self::Abs8, Self::X86PCRel4, Self::X86CallPCRel4, Self::X86CallPLTRel4, Self::Arm64Call,
@@ -82,7 +82,7 @@ impl RelocKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Relocation {
     pub offset: usize,
-    pub kind: RelocKind,
+    pub kind: PatchKind,
     pub namespace: u32,
     pub key: u32,
     pub addend: i64,
@@ -112,7 +112,7 @@ impl RelocatableCode {
                 return Err(format!("relocation {:#x} targets no user symbol ({:?})", relocation.offset, relocation.target));
             };
             let name = names.get(*name).ok_or_else(|| format!("relocation {:#x} names a symbol the function does not hold", relocation.offset))?;
-            let kind = RelocKind::of_cranelift(relocation.kind)
+            let kind = PatchKind::of_cranelift(relocation.kind)
                 .ok_or_else(|| format!("relocation {:#x} names {:?}, which an image cannot patch", relocation.offset, relocation.kind))?;
             relocations.push(Relocation {
                 offset: usize::try_from(relocation.offset).map_err(|_| format!("relocation {:#x} is out of range", relocation.offset))?,
@@ -142,7 +142,7 @@ impl RelocatableCode {
                 .ok_or_else(|| format!("unresolved symbol ({}, {})", relocation.namespace, relocation.key))?;
             // A branch into a code heap the loader placed away from the target takes its stub.
             let target = value.wrapping_add(relocation.addend as u64);
-            if relocation.kind == RelocKind::Arm64Call && !arm64_call_reaches(address + relocation.offset as u64, target) {
+            if relocation.kind == PatchKind::Arm64Call && !arm64_call_reaches(address + relocation.offset as u64, target) {
                 value = veneer(target).wrapping_sub(relocation.addend as u64);
             }
             apply_relocation(&mut linked, address, (relocation.offset, relocation.kind, relocation.addend), value)
@@ -164,7 +164,7 @@ pub(crate) fn arm64_call_reaches(from: u64, to: u64) -> bool {
 
 /// Fills the field at `offset` of `code`, which will run at `address`, with `value` as
 /// relocation `kind` with `addend` says.
-pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, kind, addend): (usize, RelocKind, i64), value: u64) -> Result<(), String> {
+pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, kind, addend): (usize, PatchKind, i64), value: u64) -> Result<(), String> {
     let site = address.checked_add(offset as u64).ok_or("relocation address overflow")?;
     let relative = || -> Result<i64, String> {
         (value as i64)
@@ -174,26 +174,26 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
     };
     let bytes = code.get_mut(offset..).ok_or("relocation is outside its code")?;
     match kind {
-        RelocKind::Abs8 => {
+        PatchKind::Abs8 => {
             let word = value.wrapping_add(addend as u64).to_le_bytes();
             bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
         }
-        RelocKind::Abs4 => {
+        PatchKind::Abs4 => {
             let word = u32::try_from(value.wrapping_add(addend as u64)).map_err(|_| "relocation is out of 32-bit range")?.to_le_bytes();
             bytes.get_mut(..word.len()).ok_or("relocation is outside its code")?.copy_from_slice(&word);
         }
-        RelocKind::X86PCRel4 | RelocKind::X86CallPCRel4 | RelocKind::X86CallPLTRel4 => {
+        PatchKind::X86PCRel4 | PatchKind::X86CallPCRel4 | PatchKind::X86CallPLTRel4 => {
             let displacement = i32::try_from(relative()?).map_err(|_| "relocation is out of rel32 range")?.to_le_bytes();
             bytes.get_mut(..displacement.len()).ok_or("relocation is outside its code")?.copy_from_slice(&displacement);
         }
-        RelocKind::Arm64Call => {
+        PatchKind::Arm64Call => {
             // A `bl imm26`, patched as the stencils' branches are (`quench_bjit::patch_branch`).
             let field = bytes.get_mut(..quench_bjit::patch::INSN_BYTES).ok_or("relocation is outside its code")?;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));
             let patched = quench_bjit::patch::patch_branch(word, quench_bjit::BRANCH26, relative()?).map_err(|_| "relocation is out of branch range")?;
             field.copy_from_slice(&patched.to_le_bytes());
         }
-        RelocKind::Arm64Page21 => {
+        PatchKind::Arm64Page21 => {
             let target = value.wrapping_add(addend as u64);
             let page = |address: u64| (address >> ARM64_PAGE_BITS) as i64;
             let imm = page(target).wrapping_sub(page(site));
@@ -207,7 +207,7 @@ pub(in crate::vm) fn apply_relocation(code: &mut [u8], address: u64, (offset, ki
             let immhi = ((imm as u32 >> 2) & ((1 << ARM64_ADRP_IMMHI_BITS) - 1)) << ARM64_ADRP_IMMHI_SHIFT;
             field.copy_from_slice(&((word & ARM64_ADRP_FIXED_MASK) | immlo | immhi).to_le_bytes());
         }
-        RelocKind::Arm64PageOff12 => {
+        PatchKind::Arm64PageOff12 => {
             let target = value.wrapping_add(addend as u64);
             let field = bytes.get_mut(..ARM64_INSTRUCTION_BYTES).ok_or("relocation is outside its code")?;
             let word = u32::from_le_bytes((&*field).try_into().expect("four-byte instruction"));

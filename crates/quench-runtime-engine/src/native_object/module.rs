@@ -7,7 +7,7 @@ use super::{NativeData, NativeFunction};
 use crate::aot_image::demand::Demand;
 use quench_runtime::bytecode::{ProgramKind, ResidualProgram};
 use cranelift_codegen::ir;
-use quench_runtime::vm::jit_backend::relocatable_code::RelocKind;
+use quench_runtime::vm::jit_backend::relocatable_code::PatchKind;
 use cranelift_module::{FuncId, Module, ModuleReloc, ModuleRelocTarget};
 use cranelift_object::ObjectModule;
 
@@ -24,7 +24,7 @@ pub struct NativeCode {
 /// `index` in `namespace` (`NATIVE_FUNCTION_NAMESPACE` or `NATIVE_DATA_NAMESPACE`) plus `addend`.
 pub struct NativeReloc {
     pub offset: u32,
-    pub kind: RelocKind,
+    pub kind: PatchKind,
     pub namespace: u32,
     pub index: u32,
     pub addend: i64,

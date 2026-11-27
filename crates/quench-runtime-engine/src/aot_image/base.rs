@@ -11,7 +11,7 @@
 use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, RelocatableCode, Relocation};
+use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
 
 pub(crate) use quench_runtime::vm::engine_types::BaseImage;
 
@@ -24,7 +24,7 @@ impl BaseImage {
 }
 
 /// The base body of function `id`: the BaseJIT body over the program alone (no profile), its calls
-/// direct where `facts` prove their callee, its helper and call record addresses as `RelocKind::Abs8`
+/// direct where `facts` prove their callee, its helper and call record addresses as `PatchKind::Abs8`
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
@@ -39,10 +39,10 @@ pub(crate) fn lower(
         // Apple AArch64 names a helper call as a branch hole; a guard's shape is a 32-bit immediate; a
         // PC-relative field keeps its addend; every other site is a 64-bit word.
         let (kind, addend) = match site.class {
-            quench_bjit::BRANCH26 => (RelocKind::Arm64Call, 0),
-            quench_bjit::ABS32 => (RelocKind::Abs4, 0),
-            quench_bjit::REL32 => (RelocKind::X86PCRel4, site.addend),
-            _ => (RelocKind::Abs8, 0),
+            quench_bjit::BRANCH26 => (PatchKind::Arm64Call, 0),
+            quench_bjit::ABS32 => (PatchKind::Abs4, 0),
+            quench_bjit::REL32 => (PatchKind::X86PCRel4, site.addend),
+            _ => (PatchKind::Abs8, 0),
         };
         Relocation { offset: site.offset, kind, namespace, key, addend }
     }).collect();

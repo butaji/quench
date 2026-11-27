@@ -18,7 +18,7 @@ use super::bound::BoundCalls;
 use crate::compiled::{CodeMemory, LaneHelper};
 use quench_bjit::call_record::CallRecord;
 use std::cell::UnsafeCell;
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocKind, RelocatableCode};
+use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode};
 
 /// Every body starts at this alignment in the block.
 const CODE_ALIGNMENT: usize = 16;
@@ -55,14 +55,14 @@ impl Veneers<'_> {
 
 /// The stub space one lane body's placement may need (`link_lane_at`).
 pub(crate) fn stub_bytes_in_lane(code: &RelocatableCode) -> usize {
-    code.relocations.iter().filter(|relocation| relocation.kind == RelocKind::Arm64Call).count() * VENEER_BYTES
+    code.relocations.iter().filter(|relocation| relocation.kind == PatchKind::Arm64Call).count() * VENEER_BYTES
 }
 
 /// The stub space a block of `image` may need: one per `Arm64Call`, the costliest case.
 fn veneer_bytes(image: &AotImage) -> usize {
     image.functions.iter().map(|function| {
         std::iter::once(&function.base.code).chain(function.lane.as_ref().map(|lane| &lane.code))
-            .map(|code| code.relocations.iter().filter(|relocation| relocation.kind == RelocKind::Arm64Call).count())
+            .map(|code| code.relocations.iter().filter(|relocation| relocation.kind == PatchKind::Arm64Call).count())
             .sum::<usize>()
     }).sum::<usize>() * VENEER_BYTES
 }
@@ -199,7 +199,7 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
         .ok_or_else(|| "no lane body".to_owned())?;
     let code_len = lane.code.code.len();
     let value_bytes = value_words(image) * std::mem::size_of::<u64>();
-    let stubs = lane.code.relocations.iter().filter(|relocation| relocation.kind == RelocKind::Arm64Call).count() * VENEER_BYTES;
+    let stubs = lane.code.relocations.iter().filter(|relocation| relocation.kind == PatchKind::Arm64Call).count() * VENEER_BYTES;
     if out.len() < code_len + value_bytes + stubs { return Err("lane body is larger than its placement".to_owned()) }
     let (code_out, veneer_out) = out.split_at_mut(code_len + value_bytes);
     // The value table follows the code in the same block, so its `adrp` is in range.
