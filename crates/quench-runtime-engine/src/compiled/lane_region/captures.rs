@@ -62,7 +62,7 @@ pub(crate) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
     let value = builder.append_block_param(join, types::I64);
     match dense {
         Some((values, len)) => {
-            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None , payload: None, facts: Default::default() };
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None , payload: None, facts: Default::default(), fresh: false };
             let read = quench_runtime::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                 .expect("the emit stage continues past its guards");
             emit(builder).goto(join, &[read]);
@@ -125,7 +125,7 @@ pub(crate) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, sit
     builder.set_cold_block(slow);
     match site.dense {
         Dense::Held(values, len, stores) if at.0 == 0 => {
-            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None, payload: None, facts: Default::default() };
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
             quench_runtime::staged::environment::dense_immediate_capture_store(&mut stage, (values, len, stores), at.1, value, slow)
                 .expect("the emit stage continues past its guards");
             emit(builder).goto(join, &[]);

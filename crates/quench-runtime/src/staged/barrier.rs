@@ -87,14 +87,23 @@ pub fn counted_store_unlogged<S: Stage>(stage: &mut S, payload: S::Word, (watch,
     }, #[inline(always)] |_| Some(zero)).map(drop)
 }
 
+/// The observation half of the store gate: the dispatch `payload`'s store-watch word (at byte `watch`)
+/// is clear, so nothing observes the store (slot types tracked, reference counts kept). Otherwise leaves at `miss`.
+/// A store into a holder the code proved fresh (`LocalProofs::fresh`) needs this half alone, since the barrier's
+/// log is elided for it.
+#[inline(always)]
+pub fn store_untracked<S: Stage>(stage: &mut S, payload: S::Word, watch: usize, miss: S::Miss) -> Option<()> {
+    let tracked = stage.load_u64(Region::Dispatch.mutable(), payload, watch as i32);
+    let untracked = stage.eq_imm(tracked, 0_u64);
+    stage.guard(untracked, miss)
+}
+
 /// The store gate every tier shares: the dispatch `payload`'s store-watch word (at byte `watch`)
 /// is clear, so nothing observes the store, and `value_unlogged` holds. Otherwise leaves at `miss`.
 #[inline(always)]
 pub fn store_unlogged<S: Stage>(stage: &mut S, payload: S::Word, watch: usize, list: MarkList, record_id: S::Word,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let tracked = stage.load_u64(Region::Dispatch.mutable(), payload, watch as i32);
-    let untracked = stage.eq_imm(tracked, 0_u64);
-    stage.guard(untracked, miss)?;
+    store_untracked(stage, payload, watch, miss)?;
     value_unlogged(stage, payload, list, record_id, value, miss)
 }
 
