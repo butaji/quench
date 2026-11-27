@@ -206,6 +206,11 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize(pc, array))
     }
 
+    /// Whether the step at `pc` may resize an array of any element class (`may_resize_length` over every class).
+    pub fn may_resize_any(&self, pc: u32) -> bool {
+        self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize_any(pc))
+    }
+
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
     pub(super) fn index_accessors_absent(&self) -> bool {
         self.facts.index_accessors_absent

@@ -139,6 +139,11 @@ impl Settled {
     pub(crate) fn may_resize(&self, pc: u32, class: ElementClass) -> bool {
         self.resizing.contains(&(pc, class))
     }
+
+    /// Whether the step at `pc` may resize an array of any class.
+    pub(crate) fn may_resize_any(&self, pc: u32) -> bool {
+        self.resizing.iter().any(|&(at, _)| at == pc)
+    }
 }
 
 

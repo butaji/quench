@@ -2705,7 +2705,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Whether the unit instruction at `unit_pc` may resize an array of any class, as the solve reads its step
-    /// (`FunctionFacts::may_resize_length`). An instruction the solve has no origin for may resize.
+    /// (`FunctionFacts::may_resize_any`). An instruction the solve has no origin for may resize.
     pub(crate) fn may_resize(&self, unit_pc: usize) -> bool {
         let Some(facts) = self.vm.facts else { return true };
         let (function, pc) = match self.unit.origins.get(unit_pc) {
@@ -2713,7 +2713,7 @@ impl Lowering<'_, '_> {
             Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames[*frame].target.function, *pc),
             None => return true,
         };
-        facts.function_facts(function).may_resize_length(pc)
+        facts.function_facts(function).may_resize_any(pc)
     }
 
     fn solved_cell(&self, unit_pc: usize, register: Register, after: bool) -> quench_runtime::typed_ir::Cell {
