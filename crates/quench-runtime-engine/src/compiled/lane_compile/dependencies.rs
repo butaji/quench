@@ -50,4 +50,5 @@ fn subscribe_heap_facts(stable: &lane_region::StableFacts, code: &Rc<dyn quench_
         && stable.layouts.iter().all(|fact| quench_runtime::tier_surface::subscribe_global_layout(*fact, code))
         && stable.slots.iter().all(|dependency| facts.subscribe_slot_observation(*dependency, code))
         && (!stable.views || quench_runtime::tier_surface::subscribe_typed_views(code))
+        && (!stable.this_trust || quench_runtime::tier_surface::subscribe_this_trust(code))
 }

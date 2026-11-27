@@ -2758,7 +2758,10 @@ impl Lowering<'_, '_> {
             _ => self.entry_receiver_bits(),
         };
         let accesses_fields = self.accesses_fields(instructions);
-        let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
+        // Code that holds the lane's `this` trust takes the receiver as a direct object (`StableFacts::this_trust`).
+        let trusted = accesses_fields && self.vm.this_trusted && self.vm.online.is_some() && self.completion == Completion::Body;
+        self.stable.this_trust |= trusted;
+        let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits, trusted) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let receiver_shapes = self.entry_receiver_shapes(&receiver);
