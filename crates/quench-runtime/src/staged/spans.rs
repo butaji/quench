@@ -123,31 +123,7 @@ pub fn rfind_by_rows<S: Stage>(stage: &mut S, text: UnitSpan<S::Word>, needle: U
     (stage.ne_imm(searched, u64::MAX), searched)
 }
 
-/// The units of a span on `Concrete`, as the tuned searches take them.
-#[cfg(not(stencil_build))]
-pub(crate) fn concrete_units<'a>(span: UnitSpan<u64>) -> crate::vm::wtf16::Units<'a> {
-    use crate::vm::wtf16::Units;
-    let length = span.length as usize;
-    // SAFETY: a Concrete span names the live units of a string the caller holds for the call.
-    unsafe {
-        match span.form {
-            SpanForm::Ascii => Units::Ascii(std::slice::from_raw_parts(span.units as *const u8, length)),
-            SpanForm::Latin1 => Units::Latin1(std::slice::from_raw_parts(span.units as *const u8, length)),
-            SpanForm::Wide => Units::Wide(std::slice::from_raw_parts(span.units as *const u16, length)),
-        }
-    }
-}
 
-/// The span of `units` on `Concrete`: its form, address and length.
-#[cfg(not(stencil_build))]
-pub(crate) fn concrete_span(units: crate::vm::wtf16::Units<'_>) -> UnitSpan<u64> {
-    use crate::vm::wtf16::Units;
-    match units {
-        Units::Ascii(bytes) => UnitSpan { form: SpanForm::Ascii, units: bytes.as_ptr() as u64, length: bytes.len() as u64 },
-        Units::Latin1(bytes) => UnitSpan { form: SpanForm::Latin1, units: bytes.as_ptr() as u64, length: bytes.len() as u64 },
-        Units::Wide(wide) => UnitSpan { form: SpanForm::Wide, units: wide.as_ptr() as u64, length: wide.len() as u64 },
-    }
-}
 
 /// The span primitives the text rows write with: copying a run of units (`Stage::copy_span`),
 /// filling a run with one unit (`Stage::fill_span`) and the ASCII case map of a run of bytes
@@ -243,3 +219,7 @@ pub fn case_changes_by_rows<S: Stage>(stage: &mut S, source: S::Word, length: S:
     }, #[inline(always)] |stage| stage.constant(0));
     stage.ne_imm(changed, 0u64)
 }
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

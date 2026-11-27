@@ -3,6 +3,7 @@
 use super::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStorage, MemoryStore};
 use super::{WasmTrap, WasmType, WasmValue};
 use crate::shared_backing::memory_order;
+use crate::staged::wasm_memory_bytes::MemoryStoreWasmMemoryBytesExt;
 use crate::staged::wasm_emit;
 
 pub(crate) fn fence() {

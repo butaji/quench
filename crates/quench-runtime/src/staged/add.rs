@@ -37,7 +37,7 @@ pub struct Edge<W> {
 /// shape reader or method cache can name it) and an open store gate (no slot representation
 /// observes the write, no barrier log is due). Answers the payload word the storage reads from.
 #[inline(always)]
-pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+pub fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     admitted_gated::<S, false>(stage, space, record, record_id, before, value, miss)
 }
@@ -66,7 +66,7 @@ fn admitted_gated<S: Stage, const HELD: bool>(stage: &mut S, space: StagedRecord
 /// slot; the transition retires no shape reader because only an object with extras, which a
 /// prototype or holder has, is read through one.
 #[inline(always)]
-pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
+pub fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
     store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
@@ -77,7 +77,7 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
 /// `add_property` of a value the after-shape's slot observation already holds
 /// (`Heap::add_observation_holds`): the barrier's log alone gates the write (`admitted_gated`).
 #[inline(always)]
-pub(crate) fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
+pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted_gated::<S, true>(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
     store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
@@ -92,7 +92,7 @@ pub(crate) fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record
 /// shapes are not read: a change to the layout of a prototype on it retires the code
 /// (`Heap::subscribe_prototype_chain`), so only what varies per receiver, its link, is tested.
 #[inline(always)]
-pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
+pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;

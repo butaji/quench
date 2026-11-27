@@ -8,21 +8,29 @@ use super::wasm_memory_vector::{lane, load_lane, load_vector, store_vector};
 use crate::wasm::memory::{MemoryLoad, MemoryLoadMemoryOpsExt, MemoryStore};
 use crate::{WasmTrap, WasmType, WasmValue};
 
-impl MemoryLoad {
+/// The byte-memory accesses of `MemoryLoad`. `MemoryLoad` moves to quench-staged, so its inherent
+/// impl becomes this extension trait (spec 4.5).
+pub trait MemoryLoadWasmMemoryBytesExt: Sized {
     /// The value at `address` of `bytes`: out of bounds traps. A scalar load is the staged access
     /// (`Access::read`); a v128 load is `load_vector`; the other vector loads widen, splat or zero
     /// the staged lane (`load_lane`).
-    #[inline(always)]
-    pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-        read_memory(bytes, self, address)
-    }
+    fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap>;
 
     /// The value at `at`, unchecked.
     ///
     /// # Safety
     /// `width` bytes from `at` must be readable.
+    unsafe fn read_at(self, at: *const u8) -> WasmValue;
+}
+
+impl MemoryLoadWasmMemoryBytesExt for MemoryLoad {
     #[inline(always)]
-    pub(crate) unsafe fn read_at(self, at: *const u8) -> WasmValue {
+    fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
+        read_memory(bytes, self, address)
+    }
+
+    #[inline(always)]
+    unsafe fn read_at(self, at: *const u8) -> WasmValue {
         // SAFETY: the caller keeps `width` bytes readable.
         let memory = unsafe { std::slice::from_raw_parts(at, self.width()) };
         let mut stage = ConcreteBytes { memory };
@@ -62,20 +70,27 @@ pub fn write_memory(bytes: &mut [u8], operator: MemoryStore, address: u64, value
     access_of_store(operator).write(bytes, address, value)
 }
 
-impl MemoryStore {
+/// The byte-memory accesses of `MemoryStore` (spec 4.5: `MemoryStore` moves to quench-staged).
+pub trait MemoryStoreWasmMemoryBytesExt: Sized {
     /// Write `value` at `address` of `bytes`: out of bounds traps before any byte changes. A scalar
     /// store is the staged access (`Access::write`); a v128 store is `store_vector`.
-    #[inline(always)]
-    pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
-        write_memory(bytes, self, address, value)
-    }
+    fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap>;
 
     /// Write `value` at `at`, unchecked.
     ///
     /// # Safety
     /// `width` bytes from `at` must be writable.
+    unsafe fn write_at(self, at: *mut u8, value: WasmValue);
+}
+
+impl MemoryStoreWasmMemoryBytesExt for MemoryStore {
     #[inline(always)]
-    pub(crate) unsafe fn write_at(self, at: *mut u8, value: WasmValue) {
+    fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+        write_memory(bytes, self, address, value)
+    }
+
+    #[inline(always)]
+    unsafe fn write_at(self, at: *mut u8, value: WasmValue) {
         if self.value_type() == WasmType::V128 {
             let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
             // SAFETY: the caller keeps `width` bytes writable.

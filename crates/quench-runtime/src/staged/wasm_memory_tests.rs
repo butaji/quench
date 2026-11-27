@@ -8,6 +8,7 @@ use super::wasm_memory::{
     access_of_load, access_of_store, copy, fill, load, memory_load_direct_op, memory_of,
     memory_store_direct_op, size, store,
 };
+use super::wasm_memory_bytes::{MemoryLoadWasmMemoryBytesExt, MemoryStoreWasmMemoryBytesExt};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::{Op, WideInstruction};
