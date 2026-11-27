@@ -1466,6 +1466,21 @@ impl Vm {
             _ => None,
         }
     }
+    /// The record of `value` for a record-only edit: a live class cell departs first (`Heap::object_record_mut`).
+    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
+        self.heap.object_record_mut(value)
+    }
+
+    /// The record id of the ordinary object `value` names, for a fast path that reads or writes its record.
+    /// `None` for a live class cell (it has no record until it departs) and for any other value, so the
+    /// fast path declines and the generic path, which takes the cell's view, applies.
+    #[inline(always)]
+    pub(super) fn fast_record_id(&self, value: Value) -> Option<u32> {
+        if self.heap.live_class_cell(value).is_some() {
+            return None;
+        }
+        value.direct_object_index().map(|r| self.heap.record_id(r))
+    }
     #[inline] pub fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))
@@ -2024,7 +2039,7 @@ impl Vm {
         if self.method_caches_may_name(atom) {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = self.fast_record_id(object) else {
             // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
             return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
@@ -2097,7 +2112,7 @@ impl Vm {
         if self.method_caches_may_name(atom) {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = self.fast_record_id(object) else {
             return false;
         };
         if hint.holder != NO_FIELD_HOLDER {
@@ -2127,7 +2142,7 @@ impl Vm {
         if self.method_caches_may_name(atom) || hint.holder != NO_FIELD_HOLDER {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = self.fast_record_id(object) else {
             return false;
         };
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
@@ -2165,7 +2180,7 @@ impl Vm {
         if self.method_caches_may_name(atom) {
             return None;
         }
-        let record_id = self.heap.record_id(object.direct_object_index()?);
+        let record_id = self.fast_record_id(object)?;
         let receiver = self.heap.object_record_by_id(record_id);
         let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
         let slot = self
@@ -2190,7 +2205,7 @@ impl Vm {
         if self.method_caches_may_name(atom) {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(record_id) = self.fast_record_id(object) else {
             return false;
         };
         if !self.store_record_field_entry::<true>(record_id, hint, value, crate::heap::PropertyStoreLayout::MayWiden) {
@@ -2235,14 +2250,14 @@ impl Vm {
     /// leaves the add to `primary_field_add_hit`.
     #[inline(always)]
     pub fn proved_field_add_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
-        // A class cell's add takes the generic path, which departs it (`Heap::object_mut`).
-        if self.heap.live_class_cell(object).is_some() {
+        if object.direct_object_index().is_none() {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        // The receiver's view: a record, or a live class cell whose class word gives the same facts
+        // (`Heap::object`). A cell's add is in place where it fits (`add_by_transition`).
+        let Some(receiver) = self.heap.object(object) else {
             return false;
         };
-        let receiver = self.heap.object_record_by_id(record_id);
         // The exact shape matches an entry's source, which is never a dictionary's, only
         // outside dictionary storage (`Object::exact_shape`).
         let Some((_, cache)) =
@@ -2262,7 +2277,7 @@ impl Vm {
             let (shape, link) = (receiver.exact_shape(), receiver.proto_link());
             self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, Some(link), layout);
         }
-        self.add_by_transition(object, record_id, transition, value);
+        self.add_by_transition(object, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -2276,7 +2291,17 @@ impl Vm {
     /// `preshaped_receiver`), else the add that moves storage or allocates
     /// (`Heap::record_property_add_moving`).
     #[inline(always)]
-    fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
+    fn add_by_transition(&mut self, object: Value, transition: Transition, value: Value) {
+        // A live class cell adds in place where the field fits its capacity (R4-C4: the class edge
+        // from the before-shape to the after-shape). Beyond capacity the cell departs first, and the
+        // record takes the add below.
+        if let Some(granule) = self.heap.live_class_cell(object) {
+            if self.heap.class_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value) {
+                return;
+            }
+            self.heap.depart_class_object(object);
+        }
+        let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object"));
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
         if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
             return;
@@ -2314,19 +2339,15 @@ impl Vm {
     /// `define_field_cached`.
     #[inline(always)]
     pub fn proved_field_define_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
-        // A class cell's define takes the generic path, which departs it (`Heap::object_mut`).
-        if self.heap.live_class_cell(object).is_some() {
+        if object.direct_object_index().is_none() {
             return false;
         }
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)) else {
+        let Some(receiver) = self.heap.object(object) else {
             return false;
         };
-        let receiver = self.heap.object_record_by_id(record_id);
-        // Boxed primitive, stack and error data live in the extras, which most receivers lack.
-        if !receiver.admits_cached_add()
-            || (receiver.has_extras()
-                && (receiver.boxed_primitive().is_some() || receiver.stack_data().is_some() || receiver.has_error_data()))
-        {
+        // Boxed primitive, stack and error data live in the extras, which most receivers lack
+        // (a live class cell has none).
+        if !receiver.admits_cached_add() || receiver.holds_define_extras() {
             return false;
         }
         // A define of a name the receiver's shape already holds as a default data property
@@ -2350,7 +2371,7 @@ impl Vm {
             let shape = receiver.exact_shape();
             self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, None, layout);
         }
-        self.add_by_transition(object, record_id, transition, value);
+        self.add_by_transition(object, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -4980,12 +5001,14 @@ impl Vm {
         // (`proved_field_add_hit`), takes the add as the proved hit does (`add_by_transition`):
         // the staged row, the plain or reserved append, else the moving add
         // `apply_cached_field_add` makes.
-        let Some(record_id) = object.direct_object_index().map(|r| self.heap.record_id(r)).filter(|&id| self.heap.object_record_by_id(id).exact_shape() == shape) else {
+        let in_entry_shape = object.direct_object_index().is_some()
+            && self.heap.object(object).is_some_and(|receiver| receiver.exact_shape() == shape);
+        if !in_entry_shape {
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
             return true;
-        };
+        }
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        self.add_by_transition(object, record_id, transition, value);
+        self.add_by_transition(object, transition, value);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }

@@ -481,7 +481,7 @@ impl Vm {
     /// become unreachable, so a closed collection frees them.
     fn unlink_unreached_globals(&mut self, closure: &super::reachable_realm::Closure, kept: &rustc_hash::FxHashSet<Atom>) {
         let globals = self.realm.globals;
-        let Some(shape) = self.object_data(globals).map(|data| data.shape()) else {
+        let Some(shape) = self.heap.object(globals).map(|object| object.shape()) else {
             return;
         };
         for key in self.shape_keys(shape) {

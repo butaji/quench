@@ -365,6 +365,33 @@ impl ClassSpace {
         unsafe { cell_fields_at(self.base, g) }
     }
 
+    /// The header word of granule `g`'s cell, by reference (`CellView`). The space must be reserved.
+    #[inline(always)]
+    pub(super) fn cell_header(&self, g: u32) -> &u64 {
+        debug_assert!(self.range.is_some());
+        // SAFETY: `g` names a cell of the reserved space; its header is a readable word that nothing writes
+        // while `self` is borrowed.
+        unsafe { &*self.cell_ptr(g) }
+    }
+
+    /// The header and the fields of granule `g`'s cell, exclusively (`CellViewMut`). The space must be reserved.
+    #[inline(always)]
+    pub(super) fn cell_parts_mut(&mut self, g: u32) -> (&mut u64, &mut [Value]) {
+        debug_assert!(self.range.is_some());
+        let cell = self.cell_ptr(g);
+        // SAFETY: the header and the `region_capacity(g)` fields after it lie inside the cell at `g`; they
+        // are disjoint, and `&mut self` is exclusive, so no other reference to them exists.
+        unsafe { (&mut *cell, std::slice::from_raw_parts_mut(cell.cast::<Value>().add(1), region_capacity(g) as usize)) }
+    }
+
+    /// Writes field `slot` of granule `g`'s cell as a `Value`. The caller passed the store's barrier.
+    #[inline(always)]
+    pub(super) fn set_field(&mut self, g: u32, slot: usize, value: Value) {
+        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
+        // SAFETY: field `slot` lies inside the cell (the assert), and `&mut self` is exclusive.
+        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(value) };
+    }
+
     /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
     /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A departed cell
     /// in a cell region is marked with its Value: its granule stays live while the Value does.

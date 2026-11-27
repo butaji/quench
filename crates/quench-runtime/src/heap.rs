@@ -1370,6 +1370,8 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        // A prototype is a record: a class cell departs before it is read or marked (R4-C4).
+        self.depart_for_mutation(prototype);
         // A prototype marked and watched before, as most allocations' prototypes are, only
         // takes the recent entry when its run is still wide: no exclusive access, which
         // widens and barriers.
@@ -4512,7 +4514,7 @@ impl Heap {
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         self.note_prototype_elements(array);
         self.write_barrier(array);
-        if let Some(mut object) = self.object_mut(array) {
+        if let Some(mut object) = self.object_mut_departing(array) {
             object.record().mark_sparse_elements();
         }
         let arrays = self
@@ -4550,7 +4552,7 @@ impl Heap {
             self.materialize_sparse_array(array, length);
             return;
         }
-        if let Some(mut object) = self.object_mut(array) {
+        if let Some(mut object) = self.object_mut_departing(array) {
             object.record().mark_sparse_elements();
         }
         let arrays = self
@@ -4705,6 +4707,12 @@ impl Heap {
         for (slot, value) in values.into_iter().enumerate() {
             self.note_value_slot(object, slot, value);
         }
+        if let Some(granule) = self.live_class_cell(object) {
+            for (slot, value) in values.into_iter().enumerate() {
+                self.class_cell_store(granule, slot, value);
+            }
+            return;
+        }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let mut data = self.object_store_mut(object, stored).expect("property owner is an object");
@@ -4774,6 +4782,10 @@ impl Heap {
 
     pub fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
+        if let Some(granule) = self.live_class_cell(object) {
+            self.class_cell_store(granule, slot, value);
+            return;
+        }
         let vector = {
             let mut data = self
                 .object_store_mut(object, value)
@@ -4807,7 +4819,7 @@ impl Heap {
             return;
         }
         self.properties.keep_shape_wide(vector);
-        let vector = self.object_mut(object).expect("property owner is an object").record().properties();
+        let vector = self.object_record_mut(object).expect("property owner is an object").properties();
         self.properties.set(vector, slot, value);
     }
 
@@ -4821,6 +4833,10 @@ impl Heap {
         value: Value,
     ) {
         self.note_value_slot(object, slot, value);
+        if let Some(granule) = self.live_class_cell(object) {
+            self.class_cell_store(granule, slot, value);
+            return;
+        }
         let vector = {
             let mut data = self
                 .object_store_mut(object, value)
