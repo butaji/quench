@@ -3467,7 +3467,7 @@ impl Lowering<'_, '_> {
             held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default(),
             this_trust: (self.vm.this_trusted && self.vm.online.is_some()).then_some(&mut self.stable.this_trust) };
         super::record_boxed_numbers();
-        let step = quench_runtime::staged::step(&mut stage, &mut frame, operation);
+        let step = quench_runtime::staged::step_apart(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
         for (bits, number) in super::take_boxed_numbers() {
             let bits = self.builder.func.dfg.resolve_aliases(bits);

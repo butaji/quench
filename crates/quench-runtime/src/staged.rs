@@ -217,6 +217,8 @@ pub mod poll;
 pub mod bump;
 mod guard;
 mod steps;
+mod apart;
+pub use apart::step_apart;
 mod control;
 mod generic;
 #[allow(unused_imports)]
