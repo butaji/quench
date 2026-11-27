@@ -1,6 +1,6 @@
 //! TypeScript declared types as u-jit facts. An annotation is a seed, never erased: where a value
 //! enters a register the tier checks it once (`conform_declared`) and then trusts the register's
-//! narrowed fact, as a declared parameter is checked at entry (`scalar::declared_entry_types`).
+//! narrowed fact, as a declared parameter is checked at entry (the solve's entry cell).
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -78,7 +78,7 @@ pub(crate) fn declared_member_type(program: &ResidualProgram, function_start: u3
 
 /// The annotated locals of `function` (`Function::local_registers`, named by `local_atoms`) that
 /// `DeclaredTypes::declared_local` types checkably, as the register each lives in and its type.
-/// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
+/// Parameters are checked at entry instead (the solve's entry cell). The top level keys
 /// as `u32::MAX`, a nested function by its source span start (`compile::typescript::signatures`).
 /// A captured local (`Function::local_slot_captured`) is left out.
 pub(crate) fn declared_local_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Vec<(Register, Type)> {

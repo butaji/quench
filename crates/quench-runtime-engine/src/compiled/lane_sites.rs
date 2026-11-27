@@ -1,4 +1,5 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -320,7 +321,7 @@ impl Vm {
     /// made a watched prototype so that a write to one of its values retires that code.
     fn native_holder(&mut self, holder: Value) -> Option<u32> {
         self.mark_prototype(holder);
-        Some(self.object_data(holder)?.shape())
+        Some(self.heap_reads().object(holder)?.shape())
     }
 }
 

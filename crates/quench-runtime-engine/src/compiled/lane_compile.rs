@@ -197,7 +197,7 @@ pub(crate) struct LoweringJob<'p> {
     constants: Vec<Value>,
     tables: FactTables,
     leaves: Vec<usize>,
-    number_reads: Vec<super::facts::ObservedRead>,
+    kinds: Vec<super::body_views::ObservedKind>,
     entry: Option<usize>,
     views: quench_runtime::vm::engine_types::ElementViews, // Its loop arrays' view (`body_views`).
 }
@@ -217,7 +217,7 @@ impl LoweringJob<'_> {
             facts: self.aot.as_deref(), ..self.facts };
         let admitted = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Body, facts: Default::default() }).compiled()?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
-            &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads, self.views, admitted)
+            &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.kinds, self.views, admitted)
     }
 }
 
@@ -317,8 +317,7 @@ pub(crate) enum LaneBodyWork<'a> {
         /// A loop's body: the loop's span and the iterations it has taken, which weigh its
         /// compile (`loop_model::body_taken`).
         looped: Option<(u64, u64)>,
-        /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
-        arrays: &'a [(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)] },
+    },
     /// Look for the code of the body compiling, for the view that started it (a plan again
     /// after its code was too large starts from it).
     Poll(Box<dyn std::any::Any>, &'a crate::dispatch_fast::LaneView),
@@ -401,7 +400,7 @@ impl Vm {
     }
 
     /// The AOT facts of `program`, where it is the running program: facts of another program name no call of it.
-    fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
+    pub(crate) fn aot_facts_of(&self, program: &ResidualProgram) -> Option<std::sync::Arc<quench_runtime::compile::aot_facts::AotFacts>> {
         self.programs.residual(self.active_program).filter(|running| std::ptr::eq(*running, program))
             .and_then(|_| self.programs.aot_facts(self.active_program))
     }
@@ -441,7 +440,7 @@ impl Vm {
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
-        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)], gate: &PlanGate<'_>) -> Option<(LanePlan, ir::Function)> {
+        gate: &PlanGate<'_>) -> Option<(LanePlan, ir::Function)> {
         let LanePrepared { unit, fields, global_reads, direct, direct_sites, closed, entry, entry_left, left_at } =
             self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, None, gate)?;
         // The body folds Stable facts under its own invalidation word, which its publication
@@ -449,7 +448,7 @@ impl Vm {
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
         let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Running(program), function, &unit, &fields, global_reads, direct_sites,
-            captures, invalidation.address(), (entry, entry_left, &left_at), arrays, &construct);
+            captures, invalidation.address(), (entry, entry_left, &left_at), &construct);
         let mut lowered = job.run().or_else(|| { refuse(self, Refusal::NothingNative); None })?;
         if lowered.region.native == 0 { refuse(self, Refusal::NothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
@@ -480,12 +479,12 @@ impl Vm {
 
     /// Everything the lowering of `unit` reads (`LoweringJob`), taken from the VM now: the
     /// captures of its inlined frames, the VM's facts it may ask (`FactTables`), the names
-    /// method caches hold, the running program's constants, its leaves and observed reads.
+    /// method caches hold, the running program's constants, its leaves and the typed kinds of its element records.
     #[allow(clippy::too_many_arguments)]
     fn lowering_job<'p>(&self, program: LoweringProgram<'p>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
         global_reads: quench_runtime::vm::global_facts::GlobalReads, direct_sites: lane_region::DirectSites, captures: &dyn Fn(Value) -> (usize, usize),
         invalidation: usize, (entry, entry_left, left_at): (Option<usize>, bool, &[usize]),
-        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)], construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> LoweringJob<'p> {
+        construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> LoweringJob<'p> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let active = self.active_program;
@@ -494,17 +493,11 @@ impl Vm {
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
-        // The element reads observed, and the direct calls whose results their callees' summaries type.
-        let mut number_reads = observed_reads(&program, unit, arrays, &[], left_at);
-        number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
-        // A typed element read the interpreter's record observed types its result by the kind (`body_views::typed_reads`).
-        let typed = super::body_views::typed_reads(self, function, unit);
-        let typed: Vec<_> = typed.into_iter().filter(|read| number_reads.iter().all(|seen| seen.pc != read.pc)).collect();
-        number_reads.extend(typed);
-        number_reads.sort_by_key(|read| read.pc);
+        // A typed element read the interpreter's record observed takes its kind (`body_views::typed_reads`).
+        let kinds = super::body_views::typed_reads(self, function, unit);
         LoweringJob { views: super::body_views::body_views(self, function, unit), function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
             helpers: Self::process_helpers(), facts: self.vm_facts(), aot, method_cache_atoms: self.method_cache_atoms.bits().clone(),
-            invalidation, constants, tables, leaves, number_reads, entry, program }
+            invalidation, constants, tables, leaves, kinds, entry, program }
     }
 
     /// The lane helpers of this process, noted for the coverage census.
@@ -547,13 +540,12 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView,
-        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         #[cfg(feature = "jit")]
-        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller, arrays) }
+        { self.start_lane_method_compiled(program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller) }
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller, arrays);
+            let _ = (program, function, targets, trips, captures, direct, generic, budget, entry, looped, called, caller);
             Err(Unstarted::Declined)
         }
     }
@@ -562,8 +554,7 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView,
-        arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
         // A function whose compiles from this entry are spent plans nothing; one whose last plan
@@ -622,7 +613,7 @@ impl Vm {
             if super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneEntry(plan_unit), facts: entry_facts }).compiled().is_none() {
                 *stopped.borrow_mut() = Some(Unstarted::Short); return false;
             }
-            let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), generic, entry, budget, arrays));
+            let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), generic, entry, budget));
             if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
             true
         };
@@ -652,7 +643,7 @@ impl Vm {
             refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short);
         };
         bind_callees(&direct, caller);
-        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget, arrays));
+        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if !self.programs.admit_lane_compile(&key, tiers.lane_body.compile_bound(entry.is_some())) { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
@@ -661,7 +652,7 @@ impl Vm {
             .chain(direct.iter().map(|callee| callee.target.function)).collect();
         let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Detached(program.detached(&functions)), function, &unit, &fields,
-            global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
+            global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), &construct);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
         let census = crate::compiled::admission::diagnosing(self).then(|| Census {
@@ -708,10 +699,10 @@ impl Vm {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
         let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
-        let (mut looped, mut called, mut arrays) = (None, false, Vec::new());
+        let (mut looped, mut called) = (None, false);
         let caller;
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (looped, called, caller, arrays) = (iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, looped: iterations, called: by_bodies, caller: view } => { (looped, called, caller) = (iterations, by_bodies, Some(view)); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => { caller = Some(view); replan }
@@ -729,7 +720,7 @@ impl Vm {
                 return LaneBodyOutcome::Published(published);
             }
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, looped, called, caller.expect("a started body names its view"), &arrays) {
+            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, looped, called, caller.expect("a started body names its view")) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
@@ -932,32 +923,3 @@ pub(crate) use dependencies::LaneDependencies;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] pub(crate) mod tests;
 
-/// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
-/// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
-/// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(crate) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(quench_runtime::bytecode::Register, quench_runtime::typed_ir::Type)],
-    abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
-    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| {
-            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
-            let read = matches!(crate::compiled::decoded_completed(*instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }));
-            read && !abandoned.contains(pc)
-        })
-        .filter_map(|(pc, instruction)| {
-            let register = instruction.operand_b().register_index()?;
-            let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
-            // An inlined callee's reads are Numbers whatever the entry showed: its registers
-            // hold nothing at entry that the sample could have seen. So is a read that left
-            // once: an int32 observation it outgrew widens to Numbers before it is dropped.
-            let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { quench_runtime::typed_ir::Type::NUMBER };
-            Some(super::facts::ObservedRead { pc, ty, kind: None })
-        }).collect();
-    // A register's `length` read defines an int32: the region reads it as one
-    // (`Lowering::array_length`), leaving where it is not.
-    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
-        && instruction.result_flags() == 0
-        && matches!(instruction.field_lookup(), Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
-        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: quench_runtime::typed_ir::Type::INT32, kind: None }));
-    reads.sort_by_key(|read| read.pc);
-    reads
-}

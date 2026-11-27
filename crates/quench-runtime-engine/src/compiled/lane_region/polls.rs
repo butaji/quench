@@ -70,6 +70,19 @@ fn specialize_interrupt_owner(function: &mut ir::Function, call: ir::Inst, polls
     cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof: call, gates });
 }
 
+/// The work, in instructions, a loop may do between two polls while its back edge polls nothing: its trips
+/// bounded by the solver times its body (`Lowering::trip_bound`).
+const POLL_FREE_WORK: u64 = 65_536;
+
+/// Whether `instruction` makes no call and no allocation: a jump, a move, a local slot, or a Number operation.
+fn call_and_allocation_free(instruction: WideInstruction) -> bool {
+    use quench_runtime::staged::meaning::{means, Meaning};
+    [Meaning::Move, Meaning::Nop, Meaning::Jump, Meaning::ConditionalJump, Meaning::TruthJump, Meaning::CompareJump,
+        Meaning::NumericBinary, Meaning::NumericArithmetic, Meaning::NumericUnary, Meaning::IncDec,
+        Meaning::LoadLocal, Meaning::StoreLocal, Meaning::BranchTable, Meaning::LoadConst]
+        .into_iter().any(|meaning| means(instruction, meaning))
+}
+
 impl Lowering<'_, '_> {
     pub(crate) fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
@@ -83,6 +96,50 @@ impl Lowering<'_, '_> {
         let interrupt = self.interrupt;
         let exit = self.guard_exit(state, pc);
         quench_runtime::staged::poll::back_edge_poll(&mut super::super::object_slots::emit(&mut self.builder), interrupt, exit).expect("a guard always emits");
+    }
+
+    /// The interrupt check of the back edge at `pc` to `target`, skipped where the loop polls nothing
+    /// (`poll_free_loop`).
+    pub(crate) fn back_edge_check(&mut self, state: &mut State, pc: usize, target: usize) {
+        if !self.poll_free_loop(pc, target) { self.interrupt_check(state, pc as u32); }
+    }
+
+    /// Whether the loop of the back edge `pc` to `target` polls nothing: it is innermost, so its work is its
+    /// body times its trips, makes no call and no allocation, and its trips are bounded so that the body times
+    /// the trips stays within `POLL_FREE_WORK` instructions. Any other loop polls.
+    fn poll_free_loop(&self, pc: usize, target: usize) -> bool {
+        let instructions = &self.unit.instructions;
+        if pc <= target { return false; }
+        let body = &instructions[target..=pc];
+        let innermost = (target..pc).all(|at| {
+            let mut back = false;
+            quench_runtime::bytecode::for_each_instruction_successor(at, instructions[at], |to| back |= to <= at);
+            !back
+        });
+        if !innermost || !body.iter().all(|instruction| call_and_allocation_free(*instruction)) { return false; }
+        self.trip_bound(target, pc).is_some_and(|trips| trips.saturating_mul(body.len() as u64) <= POLL_FREE_WORK)
+    }
+
+    /// The trips the loop from `target` to its back edge `pc` takes at most, from the solver's range of its
+    /// counter at the header (`cell_before`, over every entry). The counter is a register the last instruction
+    /// before the back edge increments by one and no other instruction of the loop writes, and no jump of the
+    /// loop reaches the back edge past that increment, so every trip increments it once: its range's width bounds the trips.
+    fn trip_bound(&self, target: usize, pc: usize) -> Option<u64> {
+        let instructions = &self.unit.instructions;
+        let increment = pc - 1;
+        if increment < target { return None; }
+        let skips = (target..increment).any(|at| {
+            let mut reaches = false;
+            quench_runtime::bytecode::for_each_instruction_successor(at, instructions[at], |to| reaches |= to == pc);
+            reaches
+        });
+        if skips { return None; }
+        let range = instructions[increment].written_registers().find_map(|counter| {
+            let sole = self.steps_by_one(instructions[increment], counter)
+                && !(target..increment).any(|at| instructions[at].written_registers().any(|written| written == counter));
+            sole.then(|| self.cell_before(target, counter).ty.int_range()).flatten()
+        })?;
+        u64::try_from((range.max - range.min).checked_add(1)?).ok()
     }
 
     pub(crate) fn emit_fault_poll(&mut self) {

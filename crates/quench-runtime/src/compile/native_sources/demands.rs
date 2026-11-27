@@ -3,6 +3,7 @@
 //! that can reach dynamic source needs the interpreter and JIT linked beside its
 //! native code, and one that cannot is linked execution-only.
 
+use super::reachability::Reachability;
 use super::{constructors, NativeSourceKey};
 use crate::Engine;
 use oxc_ast::ast::{
@@ -60,6 +61,15 @@ pub struct SourceDemands {
 impl SourceDemands {
     pub fn requires_dynamic_source(&self) -> bool {
         !(self.eval.is_empty() && self.function.is_empty() && self.reflective.is_empty())
+    }
+
+    /// The sites that can run: those in a live function body (`Reachability`). A site in a body
+    /// nothing can call never executes, so it cannot receive source.
+    fn running(mut self, reachability: &Reachability) -> Self {
+        for sites in [&mut self.eval, &mut self.function, &mut self.reflective] {
+            sites.retain(|offset| reachability.reaches(*offset));
+        }
+        self
     }
 }
 
@@ -272,8 +282,9 @@ impl Engine {
         Self::standalone_source_demands(source, kind).is_none_or(|demands| demands.requires_dynamic_source())
     }
 
-    /// The demands (`source_demands`) of a standalone Script or Module; `None` where it does not
-    /// parse, or without the source routes (`source_routes`), which link the parser.
+    /// The demands (`source_demands`) of a standalone Script or Module that can run: the sites in
+    /// live function bodies only (`SourceDemands::running`). `None` where it does not parse, or
+    /// without the source routes (`source_routes`), which link the parser.
     pub fn standalone_source_demands(source: &str, kind: crate::SourceKind) -> Option<SourceDemands> {
         crate::compile::source_routes::routes().and_then(|routes| (routes.standalone_source_demands)(source, kind))
     }
@@ -287,7 +298,9 @@ impl Engine {
         let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
         if !parsed.diagnostics.is_empty() { return None; }
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping(), true))
+        let scoping = semantic.semantic.scoping();
+        let live = Reachability::of(&parsed.program, scoping);
+        Some(Self::source_demands(&parsed.program, scoping, true).running(&live))
     }
 }
 
@@ -308,7 +321,7 @@ mod tests {
             "Reflect.construct(Function, [s])", "Reflect.apply(f, null, [])",
             "let i = 0; i = 'constructor'; o[i]()", "let i = 0; i += 'x'; o[i]()", "var i = 0; var i = s; o[i]()",
             "let i = 0; [i] = a; o[i]()", "let i = 0; ({ i } = a); o[i]()", "let i = 0; i ||= s; o[i]()", "let i; o[i]()",
-            "function f(i) { return o[i](); }", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
+            "function f(i) { return o[i](); } f(0);", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
         ] {
             assert!(requires(source), "{source}");
         }
@@ -329,6 +342,39 @@ mod tests {
             assert!(!requires(source), "{source}");
         }
         assert!(requires("function broken("));
+    }
+
+    #[test]
+    fn a_site_in_a_body_nothing_calls_does_not_require_dynamic_source() {
+        // The closure is created and never called, so its eval never runs (`reachability`).
+        assert!(!requires("(function () { function dead() { return eval('1'); } })();"));
+        // Two declarations that only read each other are both dead: the fixpoint starts from the roots.
+        assert!(!requires("(function () { function a() { b(); return eval('1'); } function b() { a(); } })();"));
+        // A read from live code makes the declaration live, and so its site runs.
+        assert!(requires("(function () { function live() { return eval('1'); } live(); })();"));
+        // A Script's global function is reached by a property read of the global object.
+        assert!(requires("function f() { return eval('1'); } globalThis.f();"));
+    }
+
+    #[test]
+    fn computed_reads_on_local_objects_keep_a_dead_site_dead() {
+        // Without the global object as a value, a computed read reaches no global: `f` stays dead.
+        assert!(!requires("function f() { return eval('1'); } var a = [1], o = {}, k = 'f'; a[k]; o[k]; var x = o[k + 1];"));
+        assert!(!requires("var k = 'f'; function f() { return eval('1'); } (function () { var s = {}; s[k]; })();"));
+    }
+
+    #[test]
+    fn the_global_object_as_a_value_roots_the_script_globals() {
+        // A computed read of `globalThis` may name any global function.
+        assert!(requires("function f() { return eval('1'); } var k = 'f', g = globalThis[k];"));
+        // A sloppy function called plainly binds `this` to the global object.
+        assert!(requires("function f() { return eval('1'); } (function () { return this; })();"));
+        // A dead `globalThis` read does not materialize it.
+        assert!(!requires("function f() { return eval('1'); } (function () { function dead() { return globalThis; } })();"));
+        // A constructor only built with `new` gets a fresh object as `this`, not the global object.
+        assert!(!requires("function C() { this.x = 1; } var c = new C(); function f() { return eval('1'); }"));
+        // Strict code binds `this` to undefined.
+        assert!(!requires("'use strict'; function f() { return eval('1'); } (function () { return this; })();"));
     }
 
     #[test]

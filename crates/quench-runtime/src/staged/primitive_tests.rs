@@ -7,7 +7,7 @@ use super::{Concrete, NumericStage, Stage};
 /// Bytes whose every width reads a different value at offset zero: `0xFF`, `0x80`, ...
 const BYTES: [u8; 8] = [0xFF, 0x80, 0x01, 0xC0, 0x00, 0x00, 0x80, 0x3F];
 
-fn stage() -> Concrete { Concrete::new(std::ptr::null()) }
+fn stage() -> Concrete { Concrete::pure() }
 
 #[test]
 fn integer_loads_extend_as_their_names_say() {

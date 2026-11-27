@@ -284,12 +284,12 @@ impl Vm {
         self.set_property(env, self.runtime_atoms.bound_this, this)?;
         self.set_property(env, self.runtime_atoms.bound_args, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
-        self.object_data_mut(function).expect("bound function has object storage").set_proto(prototype);
+        self.heap.object_mut(function).expect("bound function has object storage").set_proto(prototype);
         let length_atom = self.length_atom;
         self.set_property_with_attributes(function, length_atom, Value::number(length), BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
         self.set_property_with_attributes(function, self.runtime_atoms.name, name, BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
         self.capture_function_name_for_atom(function, name_atom);
-        let shape_of = |vm: &Self, object: Value| vm.object_data(object).map(crate::heap::Object::shape).filter(|&shape| !vm.shape_is_dictionary(shape));
+        let shape_of = |vm: &Self, object: Value| vm.heap.object(object).map(|object| object.shape()).filter(|&shape| !vm.shape_is_dictionary(shape));
         self.bound_function_shape = shape_of(self, function).zip(shape_of(self, env));
         Ok(function)
     }
@@ -298,12 +298,13 @@ impl Vm {
     /// property's attributes and no getter (`Vm::plain_function_length`'s test): its value,
     /// read observing nothing. `None` for an accessor, an absent name or any other object.
     pub fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
-        let data = self.object_data(object)?;
-        if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
+        let data = self.heap.object(object)?;
+        // record-only: side descriptors
+        if data.record().has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(data.shape(), atom)?;
-        self.heap.property_get(data, slot).filter(|value| !self.is_accessor_pair(data.shape(), *value))
+        self.heap.property_get_ref(data, slot).filter(|value| !self.is_accessor_pair(data.shape(), *value))
     }
 
     /// What a bound function of the target `target_root` holds is read from it (ECMA-262
@@ -447,7 +448,8 @@ impl Vm {
     /// script can reach, so its elements never change. A call site may keep the words for a
     /// bound function it calls again (`LaneStack::bound_call`).
     pub fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
-        let data = self.object_data(env)?;
+        // record-only: flat slot reads below take the record
+        let data = self.heap.object(env)?.record();
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
         // bound function (`bound_parts_layout`), found by name once per shape.

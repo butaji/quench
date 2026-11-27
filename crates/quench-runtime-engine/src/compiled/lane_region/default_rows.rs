@@ -3,6 +3,7 @@
 //! rather than leaving at its record; a row the emit stage cannot hold makes its generic step in
 //! place through the lane's helper (`LaneHelper::Step`), as the b-jit does, and continues past it; an ahead image's
 //! body makes it through the same helper's image entry (`ahead_general_step`), with the same status mapping.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;

@@ -1,7 +1,7 @@
 use super::wtf16::JsString;
 use super::{
     CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, NO_FIELD_HOLDER,
-    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation,
+    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation, activation::FrameRecord,
     regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Value};
@@ -2388,15 +2388,15 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     let before = vm.shapes.len();
     vm.collect_now(&program);
     assert!(vm.shapes.len() < before);
-    let object = vm.object_data(owner).unwrap();
+    let object = vm.heap.object(owner).unwrap();
     assert_eq!(vm.shapes[object.shape() as usize].storage_len(), 1);
     assert_eq!(
-        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        vm.heap.property_get_ref(vm.heap.object(owner).unwrap(), 0),
         Some(Value::integer(42))
     );
     vm.collect_now(&program);
     assert_eq!(
-        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        vm.heap.property_get_ref(vm.heap.object(owner).unwrap(), 0),
         Some(Value::integer(42))
     );
     assert!(vm.heap.release_root(root));
@@ -2487,7 +2487,7 @@ fn added_property_shapes_preserve_every_attribute_combination_after_table_growth
                         Value::integer(1),
                         super::DataAttributes::of(attributes).unwrap(),
                     ).unwrap();
-                    recorded.push((key, attributes, vm.object_data(object).unwrap().shape()));
+                    recorded.push((key, attributes, vm.heap.object(object).unwrap().shape()));
                 }
             }
         }
@@ -2501,7 +2501,7 @@ fn added_property_shapes_preserve_every_attribute_combination_after_table_growth
             Value::integer(2),
             super::DataAttributes::of(attributes).unwrap(),
         ).unwrap();
-        assert_eq!(vm.object_data(object).unwrap().shape(), shape);
+        assert_eq!(vm.heap.object(object).unwrap().shape(), shape);
         assert!(vm.property_attributes(object, key) == Some(attributes));
     }
     assert_eq!(vm.shapes.len(), shape_count);
@@ -2528,14 +2528,14 @@ fn equivalent_data_descriptor_transitions_share_one_shape() {
     let first = vm.object();
     vm.set_property(first, atom, Value::integer(1)).unwrap();
     vm.set_property_attributes(first, PropertyKey::string(atom), attributes);
-    let first_shape = vm.object_data(first).unwrap().shape();
+    let first_shape = vm.heap.object(first).unwrap().shape();
     let shape_count = vm.shapes.len();
 
     let second = vm.object();
     vm.set_property(second, atom, Value::integer(2)).unwrap();
     vm.set_property_attributes(second, PropertyKey::string(atom), attributes);
 
-    assert_eq!(vm.object_data(second).unwrap().shape(), first_shape);
+    assert_eq!(vm.heap.object(second).unwrap().shape(), first_shape);
     assert_eq!(vm.shapes.len(), shape_count);
 }
 
@@ -2562,7 +2562,7 @@ fn new_accessor_properties_reach_the_two_step_shape_in_one_add() {
     let fused = vm.object();
     vm.create_shape_accessor_property(fused, key, accessor(second_getter, None)).unwrap();
 
-    assert_eq!(vm.object_data(fused).unwrap().shape(), vm.object_data(two_step).unwrap().shape());
+    assert_eq!(vm.heap.object(fused).unwrap().shape(), vm.heap.object(two_step).unwrap().shape());
     assert!(vm.property_attributes(fused, key) == Some(accessor(second_getter, None)));
     assert!(vm.property_attributes(two_step, key) == Some(accessor(first_getter, None)));
 
@@ -2596,13 +2596,13 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
     vm.heap.retain_allocations_for_test();
 
     let first = vm.closure(&program, closure_id, Value::NULL).unwrap();
-    let first_shape = vm.object_data(first).unwrap().shape();
+    let first_shape = vm.heap.object(first).unwrap().shape();
     let shapes_after_first = vm.shapes.len();
     let mut roots = vec![vm.heap.root(first)];
 
     for _ in 1..CLOSURES {
         let closure = vm.closure(&program, closure_id, Value::NULL).unwrap();
-        assert_eq!(vm.object_data(closure).unwrap().shape(), first_shape);
+        assert_eq!(vm.heap.object(closure).unwrap().shape(), first_shape);
         roots.push(vm.heap.root(closure));
     }
 
@@ -2690,7 +2690,7 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
         assert_eq!(second_attributes.getter, Some(second_getter));
         assert_eq!((first_attributes.setter, second_attributes.setter), (setter, setter));
         assert_eq!(
-            vm.object_data(first).unwrap().shape() == vm.object_data(second).unwrap().shape(),
+            vm.heap.object(first).unwrap().shape() == vm.heap.object(second).unwrap().shape(),
             shared
         );
     }
@@ -3829,7 +3829,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             let object = vm
                 .own_property(global, atom)
                 .expect("global binding exists");
-            let shape = vm.object_data(object).expect("object value").shape();
+            let shape = vm.heap.object(object).expect("object value").shape();
             assert!(
                 vm.field_caches.iter().all(|cache| cache.receiver != shape),
                 "{mode}: dictionary shape entered a monomorphic field cache for {name}"
@@ -3865,7 +3865,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             let object = vm
                 .own_property(global, atom)
                 .expect("global binding exists");
-            let shape = vm.object_data(object).expect("object value").shape();
+            let shape = vm.heap.object(object).expect("object value").shape();
             assert!(vm.shape_is_dictionary(shape), "{mode}: {name}");
             assert_eq!(
                 vm.shapes[shape as usize].dictionary_trigger(),
@@ -3877,7 +3877,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         vm.collect_now(&program);
         let atom = vm.intern_atom("inherited");
         let inherited = vm.own_property(global, atom).unwrap();
-        let shape = vm.object_data(inherited).unwrap().shape();
+        let shape = vm.heap.object(inherited).unwrap().shape();
         assert!(
             vm.shape_is_dictionary(shape),
             "{mode}: dictionary mode survives GC"
@@ -3945,7 +3945,7 @@ fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
         assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
         let atom = vm.intern_atom("x");
         let x = vm.own_property(vm.realm.globals, atom).unwrap();
-        let shape = vm.object_data(x).unwrap().shape();
+        let shape = vm.heap.object(x).unwrap().shape();
         assert!(!vm.shape_is_dictionary(shape), "{mode}: receiver keeps a cacheable shape");
     }
 }
@@ -3970,7 +3970,7 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
     let shape_of = |vm: &mut Vm, name: &str| {
         let atom = vm.intern_atom(name);
         let object = vm.own_property(global, atom).expect("global binding exists");
-        vm.object_data(object).expect("object value").shape()
+        vm.heap.object(object).expect("object value").shape()
     };
     let (first, second, emptied) =
         (shape_of(&mut vm, "first"), shape_of(&mut vm, "second"), shape_of(&mut vm, "emptied"));
@@ -4002,7 +4002,7 @@ fn deleting_the_last_added_property_returns_to_the_earlier_shape() {
     let shape_of = |vm: &mut Vm, name: &str| {
         let atom = vm.intern_atom(name);
         let object = vm.own_property(global, atom).expect("global binding exists");
-        vm.object_data(object).expect("object value").shape()
+        vm.heap.object(object).expect("object value").shape()
     };
     // Each key is deleted while it is the last one added: the object is back on the shape
     // it started with, and no deletion forked a shape of its own.
@@ -5497,8 +5497,9 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 super::property_key::PropertyKey::string(atom),
                 attributes,
             );
-            let object = vm.object_data_mut(namespace).unwrap();
+            let mut object = vm.heap.object_mut(namespace).unwrap();
             object.set_proto(Value::NULL);
+            let object = object.record_mut_departing();
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -5945,7 +5946,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 assert_eq!(vm.active_call_roots.len(), calls);
                 let weak_result = result.ok().map(|result| {
                     assert!(vm.is_function(result));
-                    assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
+                    assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
                     vm.heap.weak_handle(result).unwrap()
                 });
                 vm.collect_now(&program);
@@ -6781,7 +6782,7 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
             match outcome {
                 Ok(function) => {
                     assert_eq!(phase, "accept");
-                    assert!(vm.object_data(function).unwrap().proto().is_null());
+                    assert!(vm.heap.object(function).unwrap().proto().is_null());
                     let atom = vm.intern_atom("length");
                     assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
                     let handle = vm.heap.weak_handle(function).unwrap();
@@ -7164,7 +7165,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     frame.env = live;
     frame.dynamic_bindings = vec![(held_atom, held)];
     let continuation =
-        Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
+        Continuation::suspend(FrameRecord::capture(frame), Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState::arm(
             crate::heap::AwaitKind::function(continuation),
@@ -7376,7 +7377,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             ));
             let clone = vm
                 .heap
-                .alloc_object(vm.object_data(error).unwrap().clone());
+                .alloc_object(vm.heap.object(error).unwrap().record().clone());
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -7431,10 +7432,10 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
             let error = vm.aggregate_error(&program, vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
-            assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
+            assert_eq!(vm.heap.object(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");
             let errors = vm.own_property(error, errors_atom).unwrap();
-            assert_eq!(vm.object_data(errors).unwrap().proto(), array_prototype);
+            assert_eq!(vm.heap.object(errors).unwrap().proto(), array_prototype);
             let error_weak = vm.heap.weak_handle(error).unwrap();
             let errors_weak = vm.heap.weak_handle(errors).unwrap();
             let root = vm.heap.root(error);
@@ -7555,7 +7556,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
         let result = vm
             .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
             .unwrap();
-        assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
+        assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
         assert_eq!(vm.heap.root_count_for_test(), roots);
         let value = vm.object();
         assert!(
@@ -8470,11 +8471,11 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                                 assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
                                 if success {
                                     let raw = vm.proxy_target(target);
-                                    assert_eq!(vm.object_data(raw).unwrap().proto(), proto);
+                                    assert_eq!(vm.heap.object(raw).unwrap().proto(), proto);
                                 }
                             } else if success {
                                 let raw = vm.proxy_target(target);
-                                assert!(!vm.object_data(raw).unwrap().is_extensible());
+                                assert!(!vm.heap.object(raw).unwrap().is_extensible());
                             }
                         }
                         Err(error) => {
@@ -8715,7 +8716,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                     };
                     if symbol {
                         if phase == "nonext" {
-                            vm.object_data_mut(raw).unwrap().set_extensible(true);
+                            vm.heap.object_mut(raw).unwrap().set_extensible(true);
                         }
                         vm.define_property_or_throw(
                             &program,
@@ -8730,7 +8731,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         )
                         .unwrap();
                         if phase == "nonext" {
-                            vm.object_data_mut(raw).unwrap().set_extensible(false);
+                            vm.heap.object_mut(raw).unwrap().set_extensible(false);
                         }
                     }
                     let handles = [proxy, key].map(|value| vm.heap.weak_handle(value).unwrap());
@@ -9548,7 +9549,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 fixed_this: false,
             };
             let continuation = Continuation::suspend(
-                Box::new(frame),
+                FrameRecord::capture(Box::new(frame)),
                 completion(completion_value),
                 Some(0),
                 promise,
@@ -24482,7 +24483,7 @@ fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
     };
     let v = global(&mut vm, "v");
     let x = vm.intern_atom("x");
-    let shape = vm.heap.object_ref(v).unwrap().shape();
+    let shape = vm.heap.object(v).unwrap().shape();
     let slot = vm.shape_slot(shape, x).unwrap();
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
 
@@ -24514,7 +24515,7 @@ fn declared_null_fields_seed_their_slot_type_at_the_first_add() {
     };
     let v = global(&mut vm, "v");
     let next = vm.intern_atom("next");
-    let shape = vm.heap.object_ref(v).unwrap().shape();
+    let shape = vm.heap.object(v).unwrap().shape();
     let slot = vm.shape_slot(shape, next).unwrap();
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::language(crate::ValueType::Null));
 
@@ -24564,7 +24565,7 @@ fn declared_class_layouts_allocate_receivers_without_showing_fields_early() {
         let first = vm.own_property(vm.realm.globals, first).unwrap();
         let second = vm.intern_atom("second");
         let second = vm.own_property(vm.realm.globals, second).unwrap();
-        let shape = |vm: &Vm, value| vm.object_data(value).map(|object| object.shape());
+        let shape = |vm: &Vm, value| vm.heap.object(value).map(|object| object.shape());
         assert!(shape(&vm, first).is_some());
         // One layout from birth.
         assert_eq!(shape(&vm, first), shape(&vm, second));
@@ -24729,7 +24730,7 @@ fn a_prototype_change_retires_only_the_chains_that_hold_it() {
     };
     let prototype = |vm: &mut Vm, name: &str| {
         let object = global(vm, name);
-        vm.heap.object_ref(object).unwrap().proto()
+        vm.heap.object(object).unwrap().proto()
     };
     let (a_proto, b_proto, c_proto) = (prototype(&mut vm, "a"), prototype(&mut vm, "b"), prototype(&mut vm, "c"));
     let cells = |vm: &mut Vm| {
@@ -24942,7 +24943,7 @@ fn constant_class_fields_allocate_receivers_in_their_layout() {
         // One layout from birth.
         let first = global(&mut vm, "first");
         let second = global(&mut vm, "second");
-        let shape = |vm: &Vm, value| vm.object_data(value).map(|object| object.shape());
+        let shape = |vm: &Vm, value| vm.heap.object(value).map(|object| object.shape());
         assert!(shape(&vm, first).is_some());
         assert_eq!(shape(&vm, first), shape(&vm, second));
         if mode == crate::ExecutionMode::Interpreted {

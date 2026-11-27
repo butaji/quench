@@ -1,14 +1,17 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 mod fields;
 
 use super::accessors::site_holder;
+
 pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
 use self::fields::{member_stores, member_type, prototype_base};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length};
-use crate::bytecode::{Register, Traits, WideInstruction};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, View};
+use crate::bytecode::{Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
 use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation};
@@ -167,7 +170,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
-            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never });
+            .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None });
     }
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
@@ -237,6 +240,9 @@ fn value_of(
     if ctx.types.is_some() && let Some(array) = array_constructed(ctx, pc, instruction, state) {
         return array;
     }
+    if ctx.types.is_some() && let Some(typed) = typed_array_constructed(ctx, pc, instruction, state) {
+        return typed;
+    }
     if instruction.op() == crate::bytecode::Op::Construct {
         let callee = state.get(usize::from(instruction.register_b())).copied().unwrap_or(Word::UNKNOWN);
         if let Some(class) = callee.cell.ty.body_index() { return Word::instance(class); }
@@ -262,7 +268,7 @@ fn value_of(
         let cell = Cell {
             ty: Type::language(crate::ValueType::Object),
             classes: Classes::Many,
-            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
+            elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length), view: View::Plain },
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -314,11 +320,30 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
     let cell = Cell {
         ty: Type::language(crate::ValueType::Object),
         classes: Classes::Many,
-        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any },
+        elements: Elements { ty: holes, classes: Classes::Never, length: Length::Any, view: View::Plain },
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
 
+/// The typed array a call of a native typed-array constructor (`new Float64Array(...)`) allocates at `pc`. Whatever its
+/// arguments, its kind is the constructor's, so its elements are that kind's (`View::One`) and its length is not fixed
+/// (a resizable buffer's view may change length). Its element class is its own, as an array's is.
+fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+    let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
+    let crate::staged::Callee::Register(register) = invocation.callee else { return None };
+    let kind = ctx.scope.typed_array_kind(state[usize::from(register)].origin)?;
+    let cell = Cell {
+        ty: Type::language(crate::ValueType::Object),
+        classes: Classes::Many,
+        elements: Elements {
+            ty: crate::typed_ir::view_element_type(kind),
+            classes: Classes::Never,
+            length: Length::Any,
+            view: View::One(kind),
+        },
+    };
+    Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
+}
 
 /// The registers of the facts before an instruction, read as the operands of `staged::typing`. A constant's cell is the
 /// type of its value (`Scope::constant_type`); the unnamed elements are the types' (`Types::unnamed_elements`).
@@ -332,7 +357,6 @@ impl Abstract for Before<'_, '_> {
     fn constant(&self, index: usize) -> Cell { Cell::of(self.ctx.scope.constant_type(index)) }
     fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
 }
-
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
 /// that the analysis cannot follow.
@@ -348,7 +372,6 @@ fn writes(
     binding_stores(ctx, pc, operation, state, events);
     member_stores(ctx, pc, instruction, operation, state, events);
 }
-
 
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and
 /// global stores (`with`, `delete`, sloppy declarations), and writes through a computed key, which may name a global or an element of an arguments object.
@@ -371,7 +394,6 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         _ => {}
     }
 }
-
 
 /// Records the binding stores `operation` makes, with the facts they store.
 fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>, state: &[Word], events: &mut Events) {

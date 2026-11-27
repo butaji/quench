@@ -574,7 +574,7 @@ pub fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M:
 /// The interpreter's `immediate_typeof_index` of `value`.
 #[inline(always)]
 pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {
-    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let mut stage = crate::staged::Concrete::pure();
     immediate_typeof_index(&mut stage, value.to_bits(), ()).map(|index| index as usize)
 }
 

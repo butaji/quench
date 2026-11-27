@@ -1,4 +1,5 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
+#[allow(unused_imports)] use crate::staged::OperationNamesExt;
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
 use crate::typed_ir::Type;
@@ -114,7 +115,7 @@ impl NumericFrame<Concrete> for Probe {
 }
 
 fn run(frame: &mut Probe, operation: Row<u64, ()>) -> Step<u64, Edge> {
-    step(&mut Concrete::new(std::ptr::null()), frame, operation)
+    step(&mut Concrete::pure(), frame, operation)
 }
 
 #[test]

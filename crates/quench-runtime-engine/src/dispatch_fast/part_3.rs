@@ -41,7 +41,7 @@ pub(super) fn activate_gathering_in_lane(
         // SAFETY: the room checked above holds the kept values past the window.
         unsafe {
             quench_runtime::staged::call_keeping::keep_passed(
-                &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.add(count).expose_provenance() as u64,
+                &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.add(count).expose_provenance() as u64,
                 passed.expose_provenance() as u64, argc,
             );
             vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
@@ -205,7 +205,7 @@ pub(super) fn record_forwarded_fields_in_lane(
     let Some(index) = holding_construct_plan_index(vm, callee) else {
         return;
     };
-    let Some(shape) = vm.object_data(this).map(|object| object.shape()) else {
+    let Some(shape) = vm.heap_reads().object(this).map(|object| object.shape()) else {
         return;
     };
     let plan = &mut vm.lane_stack.construct_plans[index];
@@ -297,7 +297,7 @@ pub(super) fn forwarded_resolution(
     let data = |owner: Value, atom, slot: usize| {
         let key = quench_runtime::vm::PropertyKey::string(atom);
         vm.property_attributes(owner, key).is_some_and(|attributes| !attributes.accessor)
-            && vm.object_data(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
+            && vm.heap_reads().object(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
     };
     if vm.shape_slot(plan.shape, method.method.0).is_some() {
         return None;
@@ -309,7 +309,7 @@ pub(super) fn forwarded_resolution(
         return None;
     }
     let apply_holder = object.proto();
-    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?, method.apply.0)?;
+    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?.record(), method.apply.0)?;
     (found == apply
         && data(plan.prototype, method.method.0, usize::from(method_slot))
         && data(apply_holder, method.apply.0, usize::from(apply_slot)))
@@ -1594,7 +1594,7 @@ pub(super) fn enter_plain_window(
         target.function, argc, 0, target.callee.to_bits(),
     );
     push_plain_at(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         stack.plain_frames_word() as u64, callee_registers.0.expose_provenance() as u64, header, u64::from(program.raw()), depth as u64,
     );
     // SAFETY: the program store keeps a derived view alive with its program.
@@ -1604,7 +1604,7 @@ pub(super) fn enter_plain_window(
         (*cx).base = base;
     }
     quench_runtime::staged::call_keeping::enter_context(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), callee_registers.0.expose_provenance() as u64,
+        &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
     );
     // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
@@ -1761,7 +1761,7 @@ pub(super) fn activate_environment_in_lane(
     let callee_registers = unsafe {
         let registers = stack.values.top();
         environment_row::enter_environment(
-            &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+            &mut quench_runtime::staged::Concrete::pure(),
             registers.expose_provenance() as u64,
             shape,
             environment_row::EnvironmentPassed {

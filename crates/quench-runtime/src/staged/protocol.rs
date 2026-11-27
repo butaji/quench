@@ -16,6 +16,8 @@
 //! and the lane's activation record); the receiver rule of a
 //! construction through an initializer is `construct`.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
 use super::call::admit_room;
 use super::frame;
 use super::layout_offsets::{JS_STEP_BODY_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_PLAIN_DEPTH, JS_STEP_RETURNED_PC};
@@ -146,7 +148,7 @@ pub(crate) fn bind_this_with<S: Stage, G: FnOnce(&mut S) -> S::Word>(stage: &mut
 /// the same row the native tiers emit.
 #[inline(always)]
 pub fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
-    bind_this(&mut super::Concrete::new(std::ptr::null()), receiver, Some(global), ())
+    bind_this(&mut super::Concrete::pure(), receiver, Some(global), ())
 }
 
 /// The callee's window at `top`: parameter `k` lives in register `k` of a plain activation, so
@@ -341,7 +343,7 @@ mod tests {
     const RETURNED: u32 = 7;
 
     fn run(operation: CallOperation<u64>) -> Option<u64> {
-        match step::<Concrete, ()>(&mut Concrete::new(std::ptr::null()), (), operation) {
+        match step::<Concrete, ()>(&mut Concrete::pure(), (), operation) {
             Step::Value(word) => Some(word),
             _ => None,
         }
@@ -387,7 +389,7 @@ mod tests {
         let mut heap = crate::heap::Heap::new();
         let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let text = heap.alloc_string("x".into());
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut stage = Concrete::pure();
         for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {
             let ordinary = is_direct_object(&mut stage, value.to_bits());
             assert_eq!(is_object_family(&mut stage, value.to_bits(), ordinary), value.is_direct_object_family(), "{value:?}");

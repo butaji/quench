@@ -2,6 +2,8 @@
 //! that runs those rows in place. The lane's helper (`dispatch_fast::vm_operation_step`) makes the same
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationNamesExt};
 use super::*;
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
@@ -396,8 +398,9 @@ impl Vm {
 
     /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
     fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>, op: crate::bytecode::Op) -> Result<(), JsError> {
+        let mut stage = crate::staged::concrete_over_vm(self);
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
-        match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
+        match crate::staged::step(&mut stage, &mut frame, row) {
             Step::Unresolved => Err(frame.raised.unwrap_or_else(|| panic!("a step left to the VM raised: {op:?}"))),
             Step::Value(_) | Step::Control(_) => Ok(()),
         }

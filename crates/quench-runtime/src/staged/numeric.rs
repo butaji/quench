@@ -256,7 +256,7 @@ fn constant_int32(_number: f64) -> i32 { 0 }
 
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
 #[inline(always)]
-pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
     step_of::<{ kind::ANY }, S, F>(stage, frame, operation)
 }
@@ -265,18 +265,18 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 pub mod kind {
     pub const ANY: u8 = 0;
     pub const ARITHMETIC: u8 = 1;
-    pub(crate) const RELATION: u8 = 2;
+    pub const RELATION: u8 = 2;
     pub const RELATION_VALUE: u8 = 3;
     pub const BITWISE: u8 = 4;
     pub const REMAINDER: u8 = 5;
-    pub(crate) const INC_DEC: u8 = 6;
-    pub(crate) const BITWISE_NOT: u8 = 7;
-    pub(crate) const TO_NUMERIC: u8 = 8;
-    pub(crate) const UNARY: u8 = 9;
-    pub(crate) const MATH: u8 = 10;
-    pub(crate) const EXTREME: u8 = 11;
-    pub(crate) const IMUL: u8 = 12;
-    pub(crate) const INT_CASE: u8 = 13;
+    pub const INC_DEC: u8 = 6;
+    pub const BITWISE_NOT: u8 = 7;
+    pub const TO_NUMERIC: u8 = 8;
+    pub const UNARY: u8 = 9;
+    pub const MATH: u8 = 10;
+    pub const EXTREME: u8 = 11;
+    pub const IMUL: u8 = 12;
+    pub const INT_CASE: u8 = 13;
 }
 
 /// `step` where the caller knows the operation's variant `KIND` (`kind`) at compile time: every other arm is
@@ -583,7 +583,7 @@ fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 /// `operand`'s ToInt32 word for a bitwise operator: a constant's ToInt32 is the stage's own constant
 /// (`i32_constant`), else `int32_operand`'s.
 #[inline(always)]
-pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>> {
+pub fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<super::IntOf<S>> {
     match frame.constant_operand(operand) {
         Some(value) => {
             let int = match value.as_int() {
@@ -691,7 +691,7 @@ pub fn binary_operation(operator: u32, destination: Register, left: Operand, rig
 /// Number row (`**`), leaves at `miss`.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn binary64_value<S: NumericStage>(stage: &mut S, operator: u32, left: super::NumberOf<S>, right: super::NumberOf<S>,
+pub fn binary64_value<S: NumericStage>(stage: &mut S, operator: u32, left: super::NumberOf<S>, right: super::NumberOf<S>,
     miss: S::Miss) -> Option<S::Word> {
     let number = match binary_operation(operator, 0, Operand::register(0), Operand::register(1)) {
         Some(NumberOperation::Arithmetic { operation, .. }) => stage.float_arithmetic(operation, left.word(), right.word()),
@@ -733,7 +733,7 @@ pub fn int32_binary_operation(operator: u32, destination: Register, left: Operan
 
 /// Whether `relation` holds of two operands in `domain`; `None` where the frame proves neither.
 #[inline(always)]
-pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Option<S::Cond> {
     match domain {
         Domain::Int32 => {

@@ -34,6 +34,16 @@ pub enum IcOp<'a> {
     /// `key` (`ImageWord::Layout`): a construction's exact shape, a plain arena run and its
     /// prototype link, proved by one compare, so the `LoadSlot` after it reads the run untested.
     GuardImageLayout(u32),
+    /// The reached cell's class (`object::cell_class`) is this one, else the read misses. The reached word is a
+    /// class cell (`object::cell_of`), so the guard is one compare of its header's low half: a departed object's
+    /// header holds `DEPARTED_CLASS`, which no class guard names, so it misses here and takes the record path.
+    GuardClass(u32),
+    /// `GuardClass` of the class an ahead image's loader resolves for field guard key `key` (`ImageWord::Layout`,
+    /// the class id it names on this heap), for the image's construction and its fields.
+    GuardImageClass(u32),
+    /// The value at `slot` of the class cell the guard before it proved (`object::cell_fields`): tagged, at
+    /// `cell + 8 + 8 * slot`. It ends the read.
+    LoadField { slot: u16, rep: Representation },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
@@ -86,6 +96,8 @@ pub enum IcOp<'a> {
 /// loading again. A prototype the read reaches starts with none.
 #[derive(Clone, Copy)]
 pub struct Reached<W, C> {
+    /// The object part the read starts from: a record's address, or for a class-fixed object the class cell
+    /// (`object::cell_of`), which the class ops (`GuardClass`, `LoadField`) read.
     pub record: W,
     pub shape: Option<W>,
     pub inline: Option<C>,
@@ -170,6 +182,9 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
             at.shaped = Some(guarded!(guard_image_layout(stage, at, key, miss)));
             at.formed = Some(0);
         }
+        IcOp::GuardClass(class) => at.shaped = Some(guarded!(guard_class(stage, at, class, miss))),
+        IcOp::GuardImageClass(key) => at.shaped = Some(guarded!(guard_image_class(stage, at, key, miss))),
+        IcOp::LoadField { slot, rep } => return Break(Some(load_field(stage, at, (slot, rep)))),
         IcOp::GuardFormed { id, form } => {
             at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
@@ -204,15 +219,14 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
 
 /// The own field a site's hint proved: the value at `slot` of `object` where its exact shape
 /// is `shape`, else `None` (the interpreter's `GetField` hit: `GuardShape` then `LoadSlot`, the
-/// ops `run` interprets, through `Concrete`), through the arena whose values start at `property_values`.
+/// ops `run` interprets, through `Concrete`), through the arena of `heap`.
 ///
 /// # Safety
-/// `object` is a live record, and `property_values` is the base of the arena that holds its
-/// run; a hint's slot is one its shape covers.
+/// `object` is a live record of `heap`, and its run lies in `heap`'s arena; a hint's slot is one its shape covers.
 #[inline(always)]
-pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
     shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
 }
@@ -242,9 +256,9 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
 /// # Safety
 /// As for `concrete_own_field_hit`.
 #[inline(always)]
-pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
     shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // Each arm's form is a constant, so its layout tests no bit.
@@ -254,7 +268,7 @@ pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, property_v
         super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), OBJECT.extras_form, usize::from(slot) + 1)
     } else {
         // Any other form takes the general hit's formed walk.
-        return unsafe { concrete_own_field_hit(object, property_values, shape, slot) };
+        return unsafe { concrete_own_field_hit(object, heap, shape, slot) };
     }?;
     Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)))
 }
@@ -278,10 +292,9 @@ pub const HINTED_FORM: u32 = u32::MAX;
 /// shape table stops short of it (`vm::push_child`).
 pub const SYMBOLIC_SHAPE: u32 = 1 << 30;
 
-/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
-/// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes
-/// nothing. The handler is chosen with the flag when its hint is installed, so the switch is
-/// read once per installation, not per read. Below every storage-form bit.
+/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of a record is a tagged
+/// `Value` (the arena writes no raw doubles, `ValueArena::float`), so the read decodes nothing.
+/// Below every storage-form bit.
 pub const TAGGED_SLOTS: u32 = 1 << 26;
 const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
 
@@ -298,8 +311,8 @@ const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | 
 /// names `FORM`.
 #[inline(always)]
 pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
-    property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+    heap: &crate::heap::Heap, hint: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     let record = object as *const crate::heap::Object as u64;
     let word = layout_id(&mut stage, record);
     // A fixed form's hint names it (the caller's contract), so equality proves that form
@@ -330,11 +343,10 @@ pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::hea
 ///
 /// # Safety
 /// `entries` is the table of the running program and `offset` a site's byte offset in it,
-/// `records` the object record reservation and `property_values` the base of the arena that
-/// holds the record's run; none outlives the call.
+/// `records` the object record reservation of `heap`, whose arena holds the record's run; none outlives the call.
 #[inline(always)]
-pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -343,8 +355,8 @@ pub unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entr
 /// # Safety
 /// As `concrete_site_own_read`.
 #[cfg(test)]
-pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub(crate) unsafe fn concrete_site_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -355,8 +367,8 @@ pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (e
 /// # Safety
 /// As `concrete_site_own_read`, for both offsets.
 #[inline(always)]
-pub unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
-    let mut stage = super::Concrete::new(property_values);
+pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
 }
 
@@ -369,7 +381,7 @@ pub unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tabl
 #[inline(always)]
 #[cfg(not(stencil_build))]
 pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
-    let mut stage = super::Concrete::storing(heap);
+    let mut stage = super::Concrete::over(heap);
     super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }
 
@@ -382,8 +394,8 @@ mod tests {
 
     /// The interpreter's reading of `run`: `None` for a miss.
     fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
-        let mut stage = Concrete::new(heap.property_values_base());
-        let record = heap.object_ref(object)?.record() as *const Object as u64;
+        let mut stage = Concrete::over(heap);
+        let record = heap.object(object)?.record() as *const Object as u64;
         let records = heap.object_record_base()? as u64;
         run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
     }
@@ -402,7 +414,7 @@ mod tests {
         let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::number(7.0), 1);
         heap.property_add(object, Value::number(8.0), 2);
-        let (own, holder) = (heap.object_ref(object).unwrap().exact_shape(), heap.object_ref(prototype).unwrap().exact_shape());
+        let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
         let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
@@ -421,7 +433,7 @@ mod tests {
         let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
         let object = heap.alloc_object(Object::new(prototype));
-        let (link, shape) = { let record = heap.object_ref(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
+        let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
@@ -444,7 +456,7 @@ mod tests {
             }
             heap.object_record_mut(prototype).unwrap().mark_as_prototype();
             let object = heap.alloc_object(Object::new(prototype));
-            let holder = heap.object_ref(prototype).unwrap();
+            let holder = heap.object(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
                 let interpreter = unsafe { heap.holder_property_get_flat(holder.record(), slot) };

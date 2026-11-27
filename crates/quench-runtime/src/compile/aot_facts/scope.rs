@@ -2,6 +2,7 @@
 //! atoms that name the global object.
 
 use crate::bytecode::{Constant, INTRINSIC_SET_PROTOTYPE_OF_BINDING, ResidualProgram};
+use crate::heap::TypedArrayKind;
 use crate::typed_ir::{IntRange, Type};
 use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS};
@@ -22,6 +23,19 @@ const ARRAY_BUILTINS: [&str; 12] = ["push", "pop", "shift", "unshift", "splice",
 /// Builtins that add or re-shape the properties of the objects they are given: a call hands them an
 /// object, which the closed world must treat as changed (`shape::of_call`).
 const PROPERTY_ADDERS: [&str; 4] = ["defineProperty", "defineProperties", "setPrototypeOf", "assign"];
+/// The typed-array constructors whose kind has a native element (`TypedArrayKind::has_native_element`): a call of one
+/// allocates a typed array of that kind (`effects::typed_array_constructed`).
+const TYPED_ARRAY_CONSTRUCTORS: [(&str, TypedArrayKind); 9] = [
+    ("Uint8Array", TypedArrayKind::Uint8),
+    ("Uint8ClampedArray", TypedArrayKind::Uint8Clamped),
+    ("Uint16Array", TypedArrayKind::Uint16),
+    ("Uint32Array", TypedArrayKind::Uint32),
+    ("Int8Array", TypedArrayKind::Int8),
+    ("Int16Array", TypedArrayKind::Int16),
+    ("Int32Array", TypedArrayKind::Int32),
+    ("Float32Array", TypedArrayKind::Float32),
+    ("Float64Array", TypedArrayKind::Float64),
+];
 
 /// The program-wide tables the per-function analyses read.
 pub(super) struct Scope {
@@ -46,6 +60,8 @@ pub(super) struct Scope {
     array_builtins: Vec<u32>,
     /// The atom `Array` interns to, if the program names it: `new Array(n)` and `Array(n)` construct an array.
     array: Option<u32>,
+    /// The atoms of the native typed-array constructors the program names, with their kinds (`TYPED_ARRAY_CONSTRUCTORS`).
+    typed_arrays: Vec<(u32, TypedArrayKind)>,
     /// Each String constant's atom, by constant index.
     pub(super) constant_atoms: Vec<Option<u32>>,
     /// Each constant's type, by constant index (`constant_type`).
@@ -66,7 +82,8 @@ impl Scope {
             parents: (0..program.function_count())
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
-            constant_types: program.constants.iter().map(constant_type).collect(),
+            constant_types: program.constants.iter().zip(constant_atoms(program))
+                .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             global_objects: program
                 .atoms
                 .iter()
@@ -100,10 +117,8 @@ impl Scope {
                 .map(|(atom, _)| atom as u32)
                 .collect(),
             array: program.atoms.iter().position(|name| name == "Array").map(|atom| atom as u32),
-            constant_atoms: program.constants.iter().map(|constant| match constant {
-                Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
-                _ => None,
-            }).collect(),
+            typed_arrays: TYPED_ARRAY_CONSTRUCTORS.iter().filter_map(|(name, kind)| atom_named(program, name).map(|atom| (atom, *kind))).collect(),
+            constant_atoms: constant_atoms(program),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
             builtins: BUILTINS.iter().filter_map(|builtin| {
@@ -141,6 +156,14 @@ impl Scope {
         matches!(origin, Some(Origin::Binding(Key::Global(atom))) if self.array == Some(atom))
     }
 
+    /// The native kind of the typed-array constructor `origin` is the global binding of, if it is one.
+    pub(super) fn typed_array_kind(&self, origin: Option<Origin>) -> Option<TypedArrayKind> {
+        match origin {
+            Some(Origin::Binding(Key::Global(atom))) => self.typed_arrays.iter().find(|(named, _)| *named == atom).map(|(_, kind)| *kind),
+            _ => None,
+        }
+    }
+
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).
     pub(super) fn passes_this(&self, atom: u32) -> bool {
         self.this_passers.contains(&atom)
@@ -170,16 +193,33 @@ fn atom_named(program: &ResidualProgram, text: &str) -> Option<u32> {
     }).map(|atom| atom as u32)
 }
 
+/// Each constant's atom, by constant index: a String constant whose text the program names interns to that atom.
+fn constant_atoms(program: &ResidualProgram) -> Vec<Option<u32>> {
+    program.constants.iter().map(|constant| match constant {
+        Constant::String(text) => program.atoms.iter().position(|name| name == text.as_ref()).map(|atom| atom as u32),
+        _ => None,
+    }).collect()
+}
+
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
-/// a string's, a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
-pub fn constant_type(constant: &Constant) -> Type {
+/// a string's exact length, which is an atom's (`atom`) where the program names its text, so the string is that atom;
+/// a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
+pub fn constant_type(constant: &Constant, atom: Option<u32>) -> Type {
     match constant {
         Constant::Number(value) => crate::value::exact_int32(*value)
             .map_or(Type::NUMBER, |int| Type::int(IntRange::singleton(i64::from(int)))),
         Constant::Null => Type::language(ValueType::Null),
         Constant::Undefined => Type::language(ValueType::Undefined),
         Constant::Boolean(_) => Type::language(ValueType::Boolean),
-        Constant::String(_) | Constant::StringUnits(_) => Type::language(ValueType::String),
+        Constant::String(text) => {
+            let length = u32::try_from(text.encode_utf16().count()).unwrap_or(u32::MAX);
+            let atoms: Vec<u32> = atom.into_iter().collect();
+            Type::string_atoms(&atoms, length, length)
+        }
+        Constant::StringUnits(units) => {
+            let length = u32::try_from(units.len()).unwrap_or(u32::MAX);
+            Type::string_length(length, length)
+        }
         Constant::BigInt(_) => Type::language(ValueType::BigInt),
         _ => Type::ANY,
     }

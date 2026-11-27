@@ -50,7 +50,7 @@ pub mod wasm_indirect;
 pub mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
-    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+    NEW_TARGET_BINDING, Op, Operand, ProgramRecord, Register, ResidualProgram, WideInstruction};
 use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_add_property_held, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
@@ -62,7 +62,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-pub use activation::{CallCompletion, CallContext, ConstructionTarget};
+pub use activation::{CallCompletion, CallContext, ConstructionTarget, FrameRecord};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -241,7 +241,7 @@ pub mod object_static;
 pub mod object_symbols;
 pub mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
-#[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod record_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
@@ -263,6 +263,8 @@ use var_owner::{EvalCaller, VarOwner};
 pub mod operations;
 pub mod native_table;
 pub mod reachable_realm;
+mod native_effects;
+mod reachable_protocol;
 #[cfg(all(test, feature = "bench-primitives"))]
 pub mod primitive_bench;
 pub mod primitives;
@@ -1517,10 +1519,13 @@ pub(crate) enum DictionaryTrigger {
     /// and a field cache hit, which only records non-dictionary shapes, proves an ordinary
     /// receiver.
     ModuleNamespace,
+    /// A class cell's object departs its class on an add past its capacity or a delete
+    /// (`Heap::depart_class_object`), so it leaves the class's shape for a dictionary of its own.
+    ClassDeparture,
 }
 impl DictionaryTrigger {
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) const COUNT: usize = 4;
+    pub(crate) const COUNT: usize = 5;
 
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn index(self) -> usize {
@@ -1529,6 +1534,7 @@ impl DictionaryTrigger {
             Self::DeletionPattern => 1,
             Self::PrototypeUse => 2,
             Self::ModuleNamespace => 3,
+            Self::ClassDeparture => 4,
         }
     }
 }
@@ -1714,6 +1720,7 @@ impl ShapeFacts {
             Some(DictionaryTrigger::DeletionPattern) => 2,
             Some(DictionaryTrigger::PrototypeUse) => 3,
             Some(DictionaryTrigger::ModuleNamespace) => 4,
+            Some(DictionaryTrigger::ClassDeparture) => 5,
         };
         Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
     }
@@ -1725,7 +1732,8 @@ impl ShapeFacts {
             1 => Some(DictionaryTrigger::PropertyCount),
             2 => Some(DictionaryTrigger::DeletionPattern),
             3 => Some(DictionaryTrigger::PrototypeUse),
-            _ => Some(DictionaryTrigger::ModuleNamespace),
+            4 => Some(DictionaryTrigger::ModuleNamespace),
+            _ => Some(DictionaryTrigger::ClassDeparture),
         }
     }
 
@@ -1959,10 +1967,11 @@ pub enum FrameOutcome {
         this: Value,
     },
     ParameterInitializationComplete,
-    /// A suspension, with the activation's frame when the caller retains it. The frame is boxed
-    /// so every `FrameOutcome` stays a few words: the common completions move it through each
-    /// call return.
-    Suspend(Suspended, Option<Box<Frame>>),
+    /// A suspension. Its frame is the record the suspension captured (`FrameRecord::capture`) at
+    /// the pop that retired the activation, which the caller takes; `None` where the frame is still
+    /// on the frame stack for that pop to take. The record is boxed so every `FrameOutcome` stays a
+    /// few words: the common completions move it through each call return.
+    Suspend(Suspended, Option<Box<FrameRecord>>),
 }
 
 impl FrameOutcome {
@@ -2817,7 +2826,7 @@ impl Vm {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
-                    .object_data(self.realm.globals)
+                    .heap_reads().object(self.realm.globals)
                     .is_some_and(|object| !object.is_extensible())
                 {
                     return Err(self.type_error(program, "cannot declare global function".into()));
@@ -2859,7 +2868,7 @@ impl Vm {
                 continue;
             }
             if self
-                .object_data(self.realm.globals)
+                .heap_reads().object(self.realm.globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(program, "cannot declare global var".into()));
@@ -2978,7 +2987,8 @@ impl Vm {
         };
         let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
-        if drain_jobs {
+        // A captured run stops at its native call: its jobs wait for the run that resumes it.
+        if drain_jobs && !result.as_ref().is_err_and(JsError::is_captured) {
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;

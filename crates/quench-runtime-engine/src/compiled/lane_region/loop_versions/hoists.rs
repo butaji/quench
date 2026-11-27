@@ -6,6 +6,7 @@
 //! the held word (`Lowering::hoisted_read`). The operation has no effect to reorder: it reads its
 //! operands, which are not written, and writes the register it is held for.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;

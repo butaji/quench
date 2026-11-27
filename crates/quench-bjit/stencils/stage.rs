@@ -84,10 +84,17 @@ impl StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut T).write_unaligned(value) }
     }
 
-    /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
+    /// The runtime's `Concrete::pure`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
-    pub(crate) fn new(_property_values: *const crate::Value) -> Self {
+    pub(crate) fn pure() -> Self {
+        Self { sites: 0, values: 0, payload: 0 }
+    }
+
+    /// The runtime's `Concrete::over` (the heap-bearing constructor): the stencil reads its tables
+    /// through its payload, so the heap is not needed here.
+    #[inline(always)]
+    pub(crate) fn over(_heap: *const crate::heap::Heap) -> Self {
         Self { sites: 0, values: 0, payload: 0 }
     }
 }

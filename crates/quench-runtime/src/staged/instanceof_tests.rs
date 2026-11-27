@@ -7,7 +7,7 @@ use crate::Value;
 /// The staged answer for `value` and a constructor whose `prototype` is `prototype`, or `None` where the words leave it.
 fn words(heap: &Heap, value: Value, prototype: Value) -> Option<bool> {
     let records = heap.object_record_base().expect("object records are reserved") as u64;
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::over(heap);
     object::instanceof_by_words(&mut stage, records, value.to_bits(), u64::from(ProtoLink::of(prototype).bits()), ())
 }
 
@@ -26,6 +26,6 @@ fn a_chain_of_object_records_is_walked_and_a_primitive_is_no_instance() {
     }
     let cell = Value::from_bits(ValueLayout::HEAP_TAG | 1);
     assert_eq!(words(&heap, cell, root), None, "a cell the walk does not follow is the VM's");
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::over(&heap);
     assert_eq!(object::instanceof_by_words(&mut stage, 0, leaf.to_bits(), u64::from(ProtoLink::of(root).bits()), ()), None, "no record table");
 }

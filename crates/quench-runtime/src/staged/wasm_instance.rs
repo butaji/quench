@@ -5,10 +5,6 @@
 
 use super::wasm::WasmStage;
 use crate::WasmType;
-#[cfg(not(stencil_build))]
-use crate::bytecode::{Class, Op, WideInstruction};
-#[cfg(not(stencil_build))]
-use std::ops::Range;
 
 /// The binding-time decisions the interpreter and the u-jit make per instruction; the stencil
 /// build does not decode instructions, so it has none of them.
@@ -41,35 +37,6 @@ pub fn local_register(registers: u16, slot: u32) -> u16 {
     u16::try_from(slot).map_or(u16::MAX, |slot| registers.saturating_add(slot))
 }
 
-#[cfg(not(stencil_build))]
-impl Instance {
-    pub const fn of(op: Op) -> Option<Self> {
-        match op.class() {
-            Class::Move => Some(Self::Move),
-            Class::LoadConst => Some(Self::Constant),
-            Class::WasmFillRegisters => Some(Self::Fill),
-            Class::WasmInstanceBinding => Some(Self::Binding),
-            Class::WasmGlobalGet => Some(Self::GlobalGet),
-            Class::WasmGlobalSet => Some(Self::GlobalSet),
-            Class::LoadLocal => Some(Self::LoadLocal),
-            Class::StoreLocal => Some(Self::StoreLocal),
-            _ => None,
-        }
-    }
-
-    /// The registers a constant operation defines: one, or a window.
-    pub fn constant_registers(self, instruction: WideInstruction) -> Option<Range<u16>> {
-        match self {
-            Self::Constant => Some(instruction.a()..instruction.a() + 1),
-            Self::Fill => {
-                let window = instruction.register_window();
-                Some(window.base..window.base + window.count)
-            }
-            _ => None,
-        }
-    }
-}
-
 /// How a global's native slot (`Cell::WasmGlobal::bits`) holds its value, decided once from the
 /// global's type: the static operand of every access. A slot is one raw word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -93,7 +60,7 @@ impl Storage {
     }
 
     /// The word a slot holds for `word`: a 32-bit payload zero-extended, any other whole.
-    pub(crate) const fn narrow(self, word: u64) -> u64 {
+    pub const fn narrow(self, word: u64) -> u64 {
         match self {
             Self::Bits32 => word as u32 as u64,
             Self::Bits64 | Self::Handle => word,
@@ -125,7 +92,7 @@ pub fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, v
 /// The instance fields a binding step reads: the environment slots its function's instance
 /// holds, each a handle the binding step copies into a register (`Instance::Binding`).
 #[cfg(not(stencil_build))]
-pub(crate) trait WasmBindings: WasmStage {
+pub trait WasmBindings: WasmStage {
     /// The word of the environment slot `slot`, or `None` where the instance holds no field there.
     fn binding_word(&mut self, slot: u32) -> Option<Self::Word>;
 }
@@ -137,3 +104,9 @@ pub(crate) trait WasmBindings: WasmStage {
 pub fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
     stage.binding_word(slot)
 }
+
+// The bytecode queries (`instance_of`, `constant_registers`) read opcodes: `glue.rs`.
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

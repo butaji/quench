@@ -136,12 +136,11 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// other space uses those records.
     #[allow(dead_code)]
     pub(in crate::heap) unsafe fn over(base: NonNull<MaybeUninit<T>>, records: usize) -> Self {
-        let mut space = Self {
-            base,
-            reservation: Reservation::Borrowed,
-            reserved: records,
-            ..Self::default()
-        };
+        // Set in place: a `Drop` type cannot be built by moving fields out of a temporary.
+        let mut space = Self::default();
+        space.base = base;
+        space.reservation = Reservation::Borrowed;
+        space.reserved = records;
         space.blocks.reserve_exact(records.div_ceil(RECORDS_PER_BLOCK));
         space
     }

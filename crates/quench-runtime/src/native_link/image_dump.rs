@@ -1,24 +1,57 @@
-//! An image's runtime at rest, mapped from a dump instead of decoded from its snapshot.
+//! An image's runtime at rest, mapped from a dump instead of built or decoded at each start.
 //!
-//! A run saved at its first wait for input (`aot::prefix::reach_wait`) resumes by decoding its
-//! saved runtime (`SavedWait::rest`), most of an image's start. The build runs the image once
-//! more per saved run, with every allocation in the dump arena (`quench_alloc::begin_dump`)
-//! and every reservation at its fixed address (`quench_alloc::map_anonymous`), on a worker
-//! whose stack, and so its thread-locals, sits at a fixed address
-//! (`quench_alloc::run_on_fixed_stack`); once the snapshot is decoded it writes the process
-//! memory that state lies in (`write`). The build keeps of the statics and thread-locals only
-//! the runtime's own that the run changed (`finish`) and appends the dump to the image. As the
-//! image starts it maps the dump back at the same addresses (`adopt`) and binds the host to
-//! its own process (`NodeHost::adopt_process`), where the decode would have run.
+//! The build runs the linked image once more with `DUMP_VARIABLE` set, with every allocation
+//! in the dump arena (`quench_alloc::begin_dump`) and every reservation at its fixed address
+//! (`quench_alloc::map_anonymous`), on a worker whose stack, and so its thread-locals, sits at
+//! a fixed address (`quench_alloc::run_on_fixed_stack`). The run builds the state the image
+//! starts from and writes the process memory that state lies in (`write`). The build keeps of
+//! the statics and thread-locals only the runtime's own that the run changed (`finish`) and
+//! appends the dump to the image (`append`). As the image starts it maps the dump back at the
+//! same addresses (`adopt`), where the build would have run.
 //!
-//! A start that cannot have every address, or runs under a configuration the dump did not
-//! (`adoptable`), decodes the snapshot as before.
+//! This module is host-generic: it links the runtime alone, so a closed-world core image
+//! and a Node image both dump and adopt through it. Each host names its own dumped roots
+//! (`UNDUMPED`) and what its process binds again after an adoption.
+//!
+//! A start that cannot have every address (`adopt` returns none) builds its state as the
+//! dumping run did. A run dumps only when its build asks it to (`DumpRequest`), by argument or,
+//! for a Node image, by the environment its driver reads.
 
 use std::fs::File;
 use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
-/// `WAIT:PATH`: the run dumps the saved run `WAIT` to `PATH` once it is restored.
-pub(crate) const DUMP_VARIABLE: &str = "QUENCH_IMAGE_DUMP";
+mod symbols;
+pub use symbols::{dump_image, UNDUMPED};
+
+/// The environment a Node image's dump run names its request in (`DumpRequest::parse`).
+pub const DUMP_VARIABLE: &str = "QUENCH_IMAGE_DUMP";
+/// The argument prefix a core image's dump run names its request in (`DumpRequest::from_arguments`).
+pub const DUMP_ARGUMENT: &str = "--quench-image-dump=";
+
+/// A run's dump request: the state of index `wait` is written to `path` once it is built.
+#[derive(Debug)]
+pub struct DumpRequest {
+    wait: usize,
+    path: PathBuf,
+}
+
+impl DumpRequest {
+    /// `WAIT:PATH`, the value both the environment and the argument carry.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (wait, path) = value.split_once(':')?;
+        Some(Self { wait: wait.parse().ok()?, path: PathBuf::from(path) })
+    }
+
+    /// The request an argument list names: `--quench-image-dump=WAIT:PATH`.
+    pub fn from_arguments(arguments: impl IntoIterator<Item = String>) -> Option<Self> {
+        arguments.into_iter().find_map(|argument| Self::parse(argument.strip_prefix(DUMP_ARGUMENT)?))
+    }
+}
+
+/// The request this process dumps, once `begin` has taken it.
+static REQUEST: OnceLock<DumpRequest> = OnceLock::new();
 const MAGIC: [u8; 8] = *b"QNCHDMP1";
 const TRAILER_MAGIC: [u8; 8] = *b"QNCHDMPT";
 const PAGE: usize = 4096;
@@ -28,24 +61,24 @@ const ARENA_BASE: u64 = quench_alloc::DUMP_BASE as u64;
 /// A dump: as the dumping run writes it (`write`), its statics and thread-local block whole;
 /// as the build appends it (`finish`), only the runtime's own words the run changed.
 #[derive(Default)]
-pub(crate) struct Dump {
-    pub(crate) wait: u64,
+pub struct Dump {
+    pub wait: u64,
     /// The `Box<(EntryRuntime, NativeJsProgram)>` the run leaked.
-    pub(crate) root: u64,
+    pub root: u64,
     /// `quench_alloc::fixed_space_next` after the run.
-    pub(crate) fixed_next: u64,
+    pub fixed_next: u64,
     /// Anonymous mappings the run made: start, length, protection.
-    pub(crate) regions: Vec<(u64, u64, u64)>,
+    pub regions: Vec<(u64, u64, u64)>,
     /// Resident pages of those, of the arena and of the fixed layout table: address, bytes, and
     /// whether the page maps straight from the file (the arena's, which the run never gives
     /// back to the kernel) or is copied (a reservation's, whose released pages must read zero).
-    pub(crate) runs: Vec<(u64, Vec<u8>, bool)>,
+    pub runs: Vec<(u64, Vec<u8>, bool)>,
     /// Static words: address, bytes.
-    pub(crate) statics: Vec<(u64, Vec<u8>)>,
+    pub statics: Vec<(u64, Vec<u8>)>,
     /// Thread-local words of the worker: distance below the thread pointer, bytes.
-    pub(crate) tls: Vec<(u64, Vec<u8>)>,
+    pub tls: Vec<(u64, Vec<u8>)>,
     /// Ranges of the dumping process no dumped word may point into: start, end, name.
-    pub(crate) foreign: Vec<(u64, u64, String)>,
+    pub foreign: Vec<(u64, u64, String)>,
 }
 
 fn put(out: &mut Vec<u8>, value: u64) {
@@ -62,7 +95,7 @@ impl Dump {
     /// The dump as bytes at file offset `at`: a header holding the statics and thread-local
     /// words, then the pages no earlier dump in `pool` holds, each page aligned so a run maps
     /// straight from the file.
-    pub(crate) fn encode(&self, at: u64, pool: &mut std::collections::HashMap<Vec<u8>, u64>) -> Vec<u8> {
+    pub fn encode(&self, at: u64, pool: &mut std::collections::HashMap<Vec<u8>, u64>) -> Vec<u8> {
         let mut header = Vec::new();
         header.extend_from_slice(&MAGIC);
         // The header's length, filled in below.
@@ -155,8 +188,13 @@ impl Dump {
         out
     }
 
+    /// The bytes of the dump's resident pages.
+    pub fn page_bytes(&self) -> usize {
+        self.runs.iter().map(|run| run.1.len()).sum()
+    }
+
     /// Reads `encode`'s bytes back.
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, String> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let header = Header::parse(bytes)?;
         let mut dump = Self {
             wait: header.wait, root: header.root, fixed_next: header.fixed_next, regions: header.regions,
@@ -229,21 +267,18 @@ impl Header {
     }
 }
 
-/// The saved run this process dumps (`DUMP_VARIABLE`), if it dumps one.
-pub(crate) fn requested_wait() -> Option<usize> {
-    let value = std::env::var(DUMP_VARIABLE).ok()?;
-    value.split_once(':')?.0.parse().ok()
+/// The state index this process dumps, if it dumps one.
+pub fn requested_wait() -> Option<usize> {
+    REQUEST.get().map(|request| request.wait)
 }
 
 /// The anonymous mappings that held before the dump began (`begin`), which it leaves out.
 static BEFORE: std::sync::Mutex<Vec<(u64, u64)>> = std::sync::Mutex::new(Vec::new());
 
-/// Starts the dump `DUMP_VARIABLE` asks for: from here every allocation is the arena's. Call
-/// first in `main`.
-pub fn begin() {
-    if requested_wait().is_none() {
-        return;
-    }
+/// Starts the dump `request` asks for (none: nothing is dumped): from here every allocation is
+/// the arena's. Call first in `main`, with the request the process was started with.
+pub fn begin(request: Option<DumpRequest>) {
+    let Some(request) = request else { return };
     // Read before the arena serves allocations, so the dump holds no copy of it.
     let before = maps().into_iter().filter(|mapping| mapping.anonymous()).map(|mapping| (mapping.start, mapping.end)).collect();
     *BEFORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = before;
@@ -251,6 +286,7 @@ pub fn begin() {
         eprintln!("quench: image dump: the arena's range is taken");
         std::process::exit(2);
     }
+    let _ = REQUEST.set(request);
 }
 
 /// One line of `/proc/self/maps`.
@@ -389,9 +425,9 @@ fn bytes_at(start: u64, end: u64) -> Vec<u8> {
 
 /// Ends the dump `begin` started: `root` is the restored runtime and entry, leaked into the
 /// arena. Writes the process memory they lie in to the dump's path and exits.
-pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
+pub fn write(wait: usize, root: *mut u8) -> ! {
     let outcome = (|| -> Result<(), String> {
-        let path = std::env::var(DUMP_VARIABLE).ok().and_then(|value| value.split_once(':').map(|(_, path)| path.to_owned())).ok_or("no dump path")?;
+        let path = REQUEST.get().map(|request| request.path.display().to_string()).ok_or("no dump path")?;
         let (_, used) = quench_alloc::end_dump();
         // Read once the arena is closed, so the dump holds no copy of it.
         let mappings = maps();
@@ -412,7 +448,7 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
             push_pages(&mut dump.runs, start, end, true);
         }
         let image = std::fs::read_link("/proc/self/exe").ok().map(|path| path.to_string_lossy().into_owned());
-        let table = quench_runtime::fixed_layout_table_range().map(|(start, length)| (start as u64, (start + length) as u64));
+        let table = crate::fixed_layout_table_range().map(|(start, length)| (start as u64, (start + length) as u64));
         let arena = ARENA_BASE..ARENA_BASE + (1 << 34);
         for mapping in mappings {
             let ours = (stack..arena.end).contains(&mapping.start);
@@ -461,7 +497,7 @@ pub(crate) fn write(wait: usize, root: *mut u8) -> ! {
 /// refusing a dump any of whose words points into the dumping process's own memory (its
 /// stack, its C library heap, its vDSO, files it mapped), which the run that maps it does not
 /// have: such a word differs in `again`, a second dumping run's.
-pub(crate) fn finish(
+pub fn finish(
     raw: &[u8], again: &[u8], keep_statics: &[(u64, u64)], keep_tls: &[(u64, u64)], initial: &dyn Fn(u64, usize) -> Vec<u8>, tls_initial: &dyn Fn(u64, usize) -> Vec<u8>,
 ) -> Result<Dump, String> {
     let mut dump = Dump::decode(raw)?;
@@ -543,7 +579,7 @@ pub(crate) fn finish(
 
 /// Appends `dumps` (`finish`'s, one per saved run) to the image at `path`, with the trailer
 /// `adopt` finds them by.
-pub(crate) fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
+pub fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new().append(true).open(path).map_err(|error| error.to_string())?;
     let mut at = file.metadata().map_err(|error| error.to_string())?.len().next_multiple_of(PAGE as u64);
@@ -564,17 +600,9 @@ pub(crate) fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), Strin
     file.write_all(&trailer).map_err(|error| error.to_string())
 }
 
-/// Whether this start may map a dump: it runs under the configuration the dump was made in.
-fn adoptable() -> bool {
-    ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS", DUMP_VARIABLE].iter().all(|name| std::env::var_os(name).is_none())
-}
-
-/// The runtime and entry of saved run `wait`, mapped from the dump this image carries; none
+/// The root the dump of state `wait` holds, mapped from the dump this image carries; none
 /// where it carries none, or any of its addresses is taken, which leaves the process as it was.
-pub(crate) fn adopt(wait: usize) -> Option<*mut u8> {
-    if !adoptable() {
-        return None;
-    }
+pub fn adopt(wait: usize) -> Option<*mut u8> {
     let image = File::open("/proc/self/exe").ok()?;
     let length = image.metadata().ok()?.len();
     let mut tail = [0u8; 16];
@@ -659,4 +687,26 @@ pub(crate) fn adopt(wait: usize) -> Option<*mut u8> {
     }
     quench_alloc::resume_fixed_space(header.fixed_next as usize);
     Some(header.root as *mut u8)
+}
+
+
+/// Runs `body` on the fixed-stack worker (`quench_alloc::run_on_fixed_stack`), where a dump's
+/// thread-locals lie, or on a thread of its own where that range is taken. None where the body
+/// panicked.
+pub fn run_on_fixed_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let writer = slot.clone();
+    let work: Box<dyn FnOnce() + Send> = Box::new(move || {
+        let value = body();
+        *writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
+    });
+    let rest = match quench_alloc::run_on_fixed_stack(c"quench-image", crate::WORKER_STACK_SIZE, work) {
+        Ok(_) => None,
+        Err(work) => Some(work),
+    };
+    if let Some(work) = rest {
+        std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(work).ok()?.join().ok()?;
+    }
+    let value = slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    value
 }

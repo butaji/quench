@@ -1,5 +1,6 @@
 //! Host-neutral native executable publication, available only in compiler builds.
 
+pub mod image_dump;
 mod exports;
 mod footprint;
 mod link;

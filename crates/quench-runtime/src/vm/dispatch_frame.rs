@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
@@ -582,7 +584,7 @@ impl Vm {
                 ))
             }
             FrameOutcome::Suspend(suspended @ Suspended::Await { .. }, _) => {
-                Ok(FrameOutcome::Suspend(suspended, Some(frame)))
+                Ok(FrameOutcome::Suspend(suspended, Some(FrameRecord::capture(frame))))
             }
             FrameOutcome::Suspend(Suspended::Yield { .. }, _) => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -623,7 +625,7 @@ impl Vm {
         parent: Value,
         this: Value,
         context: CallContext,
-    ) -> Result<Box<Frame>, JsError> {
+    ) -> Result<Box<FrameRecord>, JsError> {
         self.unstarted_frame_with(p, id, parent, this, &[], context)
     }
 
@@ -636,11 +638,11 @@ impl Vm {
         this: Value,
         args: &[Value],
         context: CallContext,
-    ) -> Result<Box<Frame>, JsError> {
+    ) -> Result<Box<FrameRecord>, JsError> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         let mut frame = self.frames.pop().expect("the activation pushed a frame");
         frame.with_objects = self.with_stack.split_off(frame.with_base);
-        Ok(frame)
+        Ok(FrameRecord::capture(frame))
     }
 
     /// `activate_user_frame` for a function whose static layout describes its whole
@@ -1112,11 +1114,11 @@ impl Vm {
             return Ok(None);
         };
         let anchor = self
-            .object_data(template.anchor)
+            .heap.object(template.anchor)
             .expect("arguments template anchor is an object");
         let iterator = self
             .heap
-            .property_get(anchor, template.iterator_slot)
+            .property_get_ref(anchor, template.iterator_slot)
             .expect("arguments template has an iterator method");
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
         properties[template.length_slot] = Value::number(args.len() as f64);
@@ -1124,7 +1126,7 @@ impl Vm {
             callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
         } else {
             self.heap
-                .property_get(anchor, template.callee_slot)
+                .property_get_ref(anchor, template.callee_slot)
                 .expect("arguments template has a callee accessor")
         };
         properties[template.iterator_slot] = iterator;
@@ -1140,15 +1142,16 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.object_data_mut(arguments)
+            self.heap.object_mut(arguments)
                 .expect("arguments object is an array")
+                .record_mut_departing()
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.object_data_mut(arguments) {
-            object.set_arguments_object();
+        if let Some(object) = self.heap.object_mut(arguments) {
+            object.record_mut_departing().set_arguments_object();
         }
         let length = self.length_atom;
         self.set_property_with_attributes(
@@ -1248,17 +1251,17 @@ impl Vm {
             return;
         }
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
-        let Some(object) = self.object_data(arguments) else {
+        let Some(object) = self.heap.object(arguments) else {
             return;
         };
         let proto = object.proto();
-        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
+        let Some(iterator_method) = self.heap.property_get_ref(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
         let (_, expose_callee) = key;
         if !expose_callee {
-            let Some(thrower) = self.heap.property_get(object, callee_slot) else {
+            let Some(thrower) = self.heap.property_get_ref(object, callee_slot) else {
                 return;
             };
             properties[callee_slot] = thrower;
@@ -1433,12 +1436,19 @@ impl Vm {
     /// stopped as `stop` says (returned where `None`), and its result is the call's value; any
     /// other frame ends its scopes and goes back to the pool, its value unchanged. True where a
     /// generator's step finished, which may have allocated.
-    pub fn retire_returned_frame(&mut self, completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
+    pub fn retire_returned_frame(&mut self, mut completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
         stop: Option<super::generator::MaterializedStop>) -> (Value, bool) {
         match completion.take_generator() {
             Some(resume) => {
                 let stop = stop.unwrap_or(super::generator::MaterializedStop::Returned);
-                (self.finish_materialized_generator_step(completed, resume, value, stop), true)
+                // The frame's scopes end as its stop says: a return leaves them, a yield keeps its
+                // `with` objects with the frame, which the record then holds (`FrameRecord::capture`).
+                match stop {
+                    super::generator::MaterializedStop::Returned => self.finish_frame_scopes(&completed),
+                    _ => completed.with_objects = self.with_stack.split_off(completed.with_base),
+                }
+                let record = FrameRecord::capture(completed);
+                (self.finish_materialized_generator_step(record, resume, value, stop), true)
             }
             None => {
                 self.finish_frame_scopes(&completed);
@@ -2625,7 +2635,7 @@ impl Vm {
                         // SAFETY: as for `p` at the top of the loop.
                         let callee_code = unsafe { &*executing_residual };
                         let continuation = self.suspend_activation(
-                            suspended,
+                            FrameRecord::capture(suspended),
                             super::activation::Completion::Await(value),
                             Some(destination),
                             promise,
@@ -2740,6 +2750,10 @@ impl Vm {
             match self.exception_handler_target(p, frame, function, throwing_pc, error) {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
+                    // A capture took the frames the pending calls name: the run ends with the chain.
+                    if unhandled.is_captured() {
+                        return Err(unhandled);
+                    }
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     let Some(mut pending) = pending_calls.pop() else {
@@ -2803,7 +2817,8 @@ impl Vm {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
-        if error.is_execution_terminated() { return Err(error); }
+        // A captured run's frames are gone and a termination is uncatchable: neither has a handler.
+        if error.is_execution_terminated() || error.is_captured() { return Err(error); }
         let error = self.name_non_callable_callee(program, frame, function, throwing_pc, error);
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or

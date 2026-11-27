@@ -1684,9 +1684,9 @@ impl Vm {
         }
         let object = self.json_object();
         self.with_call_roots([object], |vm| {
-            if let Some(data) = vm.object_data_mut(object) {
+            if let Some(data) = vm.heap.object_mut(object) {
                 data.set_proto(Value::NULL);
-                data.set_raw_json();
+                data.record_mut_departing().set_raw_json();
             }
             let raw_atom = vm.intern_atom("rawJSON");
             let raw_text_value = vm.heap.alloc_string(text);
@@ -1706,7 +1706,8 @@ impl Vm {
 
     pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let is_raw = self.object_data(value).is_some_and(Object::is_raw_json);
+        // record-only: raw JSON flag
+        let is_raw = self.heap.object(value).is_some_and(|object| object.record().is_raw_json());
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
@@ -2171,7 +2172,7 @@ impl Vm {
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
-        if !self.object_data(value).is_some_and(Object::is_raw_json) {
+        if !self.heap.object(value).is_some_and(|object| object.record().is_raw_json()) { // record-only: raw JSON flag
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;

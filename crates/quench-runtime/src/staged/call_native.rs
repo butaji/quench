@@ -29,7 +29,7 @@ pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected:
 /// `admit_identity` on machine words, for the interpreter's native call handlers.
 #[inline(always)]
 pub fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
-    admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
+    admit_identity(&mut Concrete::pure(), callee, expected, ()).is_some()
 }
 
 /// The registers of a call site's in-place native call: its callee, receiver, first argument (the
@@ -388,7 +388,7 @@ pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
 /// `math_call` of `call` on the interpreter's values, for the stage rows.
 #[inline(always)]
 fn concrete_row(call: MathCall, args: &[Value]) -> Option<Value> {
-    let stage = &mut Concrete::new(std::ptr::null());
+    let stage = &mut Concrete::pure();
     match *args {
         [] => step_number_native_of(stage, NumberNative::Math(call), &[], ()),
         [only] => step_number_native_of(stage, NumberNative::Math(call), &[only.to_bits()], ()),

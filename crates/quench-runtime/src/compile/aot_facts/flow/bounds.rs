@@ -25,6 +25,7 @@ pub(super) fn relational_bounds(function: &Function, scope: &Scope) -> Vec<i64> 
         .flat_map(|range| [range.min, range.max])
         .collect()
 }
+
 /// The integer range of a program constant operand (`Scope::constant_type`); `None` for a register.
 fn constant_range(ctx: &Ctx<'_>, operand: Operand) -> Option<IntRange> {
     if matches!(operand.kind(), Some(OperandKind::Constant)) { ctx.scope.constant_type(usize::from(operand.payload())).int_range() } else { None }

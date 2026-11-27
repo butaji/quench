@@ -11,13 +11,13 @@ use crate::WasmValue;
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::{SimdKernel, bits_of, value_of};
 
-pub(crate) struct ConcreteSimd;
+pub struct ConcreteSimd;
 
 /// The operator `selector` names, its `kernel` already resolved from that selector, applied to its
 /// decoded operands by the staged decision (`simd`) on the bit stage: the interpreter's execution of
 /// a vector operator. The result's type is the kernel's.
 #[inline(always)]
-pub(crate) fn execute(kernel: &SimdKernel, selector: u32, left: WasmValue, right: Option<WasmValue>) -> WasmValue {
+pub fn execute(kernel: &SimdKernel, selector: u32, left: WasmValue, right: Option<WasmValue>) -> WasmValue {
     let (left, right) = (bits_of(left), right.map(bits_of));
     let result = kernel.result;
     let bits = match result {

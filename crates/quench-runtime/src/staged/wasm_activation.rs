@@ -320,7 +320,7 @@ pub trait WasmReturn {
 #[inline(always)]
 pub fn step_wasm_return_of<S: WasmReturn>(stage: &mut S, value: S::Value) -> Option<S::Resume> {
     let (completes, result) = stage.innermost()?;
-    if completes || super::call_complete::returns_callee_completion(&mut super::Concrete::new(core::ptr::null()), result) {
+    if completes || super::call_complete::returns_callee_completion(&mut super::Concrete::pure(), result) {
         return None;
     }
     let popped = stage.pop();

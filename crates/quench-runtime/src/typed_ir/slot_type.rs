@@ -56,7 +56,7 @@ impl SlotType {
             _ if ty == Type::language(ValueType::Null) => Self::Null,
             _ if ty == Type::language(ValueType::Undefined) => Self::Undefined,
             _ if ty == Type::NULLISH => Self::Nullish,
-            _ if ty == Type::language(ValueType::String) => Self::String,
+            _ if ty.string_fact().is_some() => Self::String,
             _ if ty == Type::language(ValueType::Boolean) => Self::Boolean,
             _ => Self::Tagged,
         }

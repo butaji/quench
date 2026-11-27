@@ -41,7 +41,6 @@ impl Solver<'_> {
         refined[register] = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
         refined
     }
-
     /// The state an edge of a relational jump carries when its two operands are integer ranges: each keeps the range
     /// the comparison leaves it on that edge (`typing::relation_edge`). `None` where the jump compares no two integer
     /// ranges, one register against itself, or no value reaches the edge (the edge then keeps the state it has).
@@ -65,6 +64,7 @@ impl Solver<'_> {
         Some(refined)
     }
 }
+
 /// The fact a conditional jump's test proves about the register it tests, on its target edge (`to_target`)
 /// or its fallthrough, from the state `state` the jump leaves. Recognized with certainty only:
 /// - `JumpIf` on a register `r` is a truth test. Its truthy edge proves `r` not nullish; its falsy edge may
@@ -101,6 +101,7 @@ fn edge_fact(instruction: WideInstruction, state: &[Word], to_target: bool) -> O
         _ => None,
     }
 }
+
 /// Whether a word is exactly `null` or exactly `undefined`: its type holds no other value, so it is that constant.
 fn is_nullish_constant(word: Word) -> bool {
     word.cell.ty == Type::language(ValueType::Null) || word.cell.ty == Type::language(ValueType::Undefined)

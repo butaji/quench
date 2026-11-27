@@ -1,3 +1,5 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::*;
 use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;
@@ -688,6 +690,19 @@ impl Vm {
         result
     }
 
+    /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
+    /// native's call parked on the chain's top record, kept for the build. The native does not run;
+    /// the watched run ends here (`clock::store_input_capture`). Only the input natives' own entries
+    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
+    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value]) -> JsError {
+        let chain = self.capture_chain_parked(0, native, this, args);
+        crate::clock::store_input_capture(chain);
+        match self.check_execution_interrupt() {
+            Err(error) => error,
+            Ok(()) => JsError("build-time input capture".into()),
+        }
+    }
+
     /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
     pub(super) fn call_native_dispatch(
@@ -807,7 +822,7 @@ impl Vm {
                 self.require_object_coercible(p, this)?;
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if self.is_object_like(this)
-                    && (proto.is_null() || self.object_data(proto).is_some())
+                    && (proto.is_null() || self.heap.object(proto).is_some())
                 {
                     self.object_set_prototype_of(p, this, proto)?;
                 }
@@ -824,7 +839,7 @@ impl Vm {
             }),
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.object_data(target).is_none() {
+                if self.heap.object(target).is_none() {
                     return Ok(Value::FALSE);
                 }
                 let prototype = self.box_object(this)?;
@@ -943,8 +958,7 @@ impl Vm {
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::Array
-            Native::Object | Native::Array | Native::Map | Native::Set => {
+            Native::Array | Native::Map | Native::Set => {
                 self.construct_native(p, native, args)
             }
             Native::ThrowTypeError => {

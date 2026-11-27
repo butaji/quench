@@ -4,6 +4,8 @@
 //! source once and a read defines its destination once. A binding the frame's own access does
 //! not take (an uninitialized `let`, a `const`, a shared slot) is the interpreter's exact path.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::{NumericFrame, NumericStage, Operation, Step};
 
 /// Run the capture row `operation`: its word, or `Unresolved` where the frame's access declines.
@@ -108,7 +110,7 @@ mod tests {
     }
 
     fn run(frame: &mut CaptureFrame, operation: Operation<u64, ()>) -> Step<u64, Edge> {
-        crate::staged::step(&mut Concrete::new(core::ptr::null()), frame, operation)
+        crate::staged::step(&mut Concrete::pure(), frame, operation)
     }
 
     /// The row reads what the slots hold, through the frame's access, and a slot the access

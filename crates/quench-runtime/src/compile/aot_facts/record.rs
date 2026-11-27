@@ -2,17 +2,16 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
-use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, this_fact};
+use super::effects::{Ctx, Events, decoded, is_global_load, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
 use super::flow::{Call, FunctionFlow, Target};
-use super::lengths::Settled;
 use super::registers::RegisterCells;
 use super::shape::{self, Shape};
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::staged::effects::{Affine, Indices};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type, View};
 
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).
@@ -49,6 +48,10 @@ pub(super) struct Record {
     /// Per register, whether a read saw a value that is not a Number.
     unsafe_reads: Vec<bool>,
     field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
+    /// Per element access (a read or a store), by PC, the view of the array its base holds before it (`settled`).
+    element_views: std::collections::BTreeMap<u32, View>,
+    /// The capture slots the function reads from its parent's environment (depth 0), as (owner, slot).
+    captures: std::collections::BTreeSet<(u32, u16)>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
     links: Vec<(ElementClass, ElementClass)>,
@@ -60,8 +63,6 @@ pub(super) struct Record {
     quiet: Vec<(u32, Quiet)>,
     /// The integer bounds the replay puts on keys, in replay order (`flow::Solver::replay`, `FunctionFlow::bounds`).
     pub(super) bounds: Vec<(Key, i64)>,
-    /// The length relations each pc holds before its instruction (`lengths::Settled`).
-    pub(super) lengths: Settled,
     /// Per pc of an element store (`ElementWrite`), the array it writes and the indices it touches (`ElementStore`).
     element_stores: std::collections::BTreeMap<u32, ElementStore>,
     accessors: Vec<Accessor>,
@@ -83,6 +84,8 @@ impl Record {
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
+            element_views: std::collections::BTreeMap::new(),
+            captures: std::collections::BTreeSet::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
             links: Vec::new(),
@@ -93,7 +96,6 @@ impl Record {
             guest_runs: Vec::new(),
             quiet: Vec::new(),
             bounds: Vec::new(),
-            lengths: Settled::default(),
             element_stores: std::collections::BTreeMap::new(),
             accessors: Vec::new(),
             parents: Vec::new(),
@@ -128,6 +130,28 @@ impl Record {
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
             self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
+        }
+        // An element access (a read or a store) keeps the view of the array its base holds, so a tier reads a typed array's
+        // element by its kind (`FunctionFacts::element_view`).
+        let element_base = match decoded(instruction) {
+            Some(crate::staged::Operation::ElementWrite { base, .. }) => Some(base),
+            _ if instruction.op() == crate::bytecode::Op::GetIndex => Some(instruction.register_b()),
+            _ => None,
+        };
+        if let Some(base) = element_base {
+            let view = settled(ctx, state[usize::from(base)]).elements.view;
+            let joined = self.element_views.entry(pc as u32).or_insert(View::None);
+            *joined = joined.join(view);
+        }
+        // A capture of the parent's environment reads the parent's slot: its cell is the slot's settled cell, which the
+        // function depends on as a `Key::Slot` (`AotFacts::captured_slot_cell`).
+        if let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = decoded(instruction)
+            && let Some(owner) = ctx.scope.owner(ctx.id, depth)
+        {
+            self.reads.insert(Key::Slot { owner, slot });
+            if depth == 0 {
+                self.captures.insert((owner, slot));
+            }
         }
         if runs_guest_code(ctx, instruction, state) {
             self.guest_runs.push(pc as u32);
@@ -171,7 +195,7 @@ impl Record {
             // length (`Scope::is_array_mutator`).
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
-                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
+                let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None };
                 let written = Cell { ty: stored.ty, classes: stored.classes, elements };
                 self.writes.push((Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
@@ -264,7 +288,6 @@ impl Record {
         self.shapes.sort_by_key(|shape| shape.pc);
         self.guest_runs.sort_unstable();
         self.quiet.sort_by_key(|(pc, _)| *pc);
-        self.lengths.sort();
         let numbers: Box<[Option<Representation>]> = self
             .defs
             .iter()
@@ -284,6 +307,8 @@ impl Record {
             wild_elements: self.wild_elements,
             numbers,
             field_owners: self.field_owners,
+            element_views: self.element_views,
+            captures: self.captures,
             registers: self.registers,
             reads: self.reads,
             links: self.links,
@@ -296,7 +321,7 @@ impl Record {
             handed: self.handed,
             closures: self.closures,
             bounds: self.bounds,
-            lengths: self.lengths,
+            entries: Vec::new(),
             element_stores: self.element_stores,
             accessors: self.accessors,
             parents: self.parents,
