@@ -23,6 +23,8 @@ use crate::typed_ir::Type;
 mod concrete;
 mod word_ops;
 pub mod numeric;
+/// The one typing of an operation over the typed cells: the solve, the graph lowering and check deletion all read it.
+pub mod typing;
 pub mod proof;
 pub use proof::{Float64, HeldLayouts, HeldShapes, HeldViews, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped, TypedViewFact, Viewed};
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.

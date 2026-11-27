@@ -19,7 +19,6 @@ mod census;
 mod effects;
 mod flow;
 mod gate;
-mod numeric;
 mod scope;
 mod types;
 mod value;

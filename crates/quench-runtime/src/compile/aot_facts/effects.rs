@@ -1,12 +1,12 @@
 //! What one instruction does to a function's register facts, and to the bindings it writes.
 
-use super::numeric;
 use super::scope::Scope;
 use super::value::{Word, Key, Origin, PrototypeBase, UNNAMED_ARRAYS};
 use crate::typed_ir::{Cell, Classes, Elements, Length};
-use crate::bytecode::{Operand, OperandKind, Traits, WideInstruction};
+use crate::bytecode::{Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::protocol_literals::LiteralStep;
+use crate::staged::typing::{self, Abstract};
 use crate::staged::{Allocation, DecodeContext, NumberOperation, Operation, Protocol};
 
 /// The function an instruction belongs to, and where its parameters end.
@@ -174,15 +174,19 @@ fn value_of(
             elements: Elements { ty: hole, classes: Classes::Never, length: Length::Fixed(length) },
         });
     }
-    // A `Binary` record, whatever operation it decodes to (none over a constant operand, a numeric one over
-    // registers): its operator and operands are the record's.
-    // An increment or decrement defines a Number, or a BigInt off one.
+    // Over the operands' cells (`typing`): an increment and a `Binary` record in the typed pass, whose operands are the
+    // record's own (none over a constant operand, a numeric one over registers), and an indexed read by its index.
+    let before = Before { ctx, state };
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::IncDec {
         let source = state[usize::from(instruction.register_b())].cell.ty;
-        return Word::of(numeric::step(source, instruction.boolean_flag() == Some(true)));
+        return Word::of(typing::step(source, instruction.boolean_flag() == Some(true)));
     }
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
-        return binary_value(ctx.scope, state, (instruction.operand_b(), instruction.operand_c()), instruction.binary_operator());
+        return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
+    }
+    if instruction.op() == crate::bytecode::Op::GetIndex {
+        let (base, index) = (state[usize::from(instruction.register_b())].cell, state[usize::from(instruction.register_c())].cell);
+        return Word::of_cell(typing::element(&before, base, index));
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -198,20 +202,10 @@ fn value_of(
         Some(Operation::Allocate { allocation: Allocation::Closure { function }, .. }) => Word::closure(function),
         // A function's `this` is the join of the receivers its calls pass (`types::Types::this`).
         Some(Operation::LoadThis { .. }) if !ctx.is_root => this_fact(ctx),
-        Some(Operation::Number(number)) => number_value(ctx.scope, state, number),
-        // The operations whose result is a Boolean, whatever their operands: an equality, a negation, a
-        // `typeof` test or an `instanceof`.
-        Some(Operation::Equality { .. } | Operation::LogicalNot { .. } | Operation::TypeofTest { .. } | Operation::InstanceOf { .. }) =>
-            Word::of(Type::language(crate::ValueType::Boolean)),
-        Some(Operation::Void { .. }) => Word::of(Type::language(crate::ValueType::Undefined)),
-        // An indexed read of the array a field holds: the field's element type, or `undefined` for a hole or an
-        // index past its length.
-        _ if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::GetIndex =>
-            element_value(ctx, state[usize::from(instruction.register_b())], state[usize::from(instruction.register_c())]),
-        Some(Operation::ElementRead { base, key, .. }) if ctx.types.is_some() =>
-            element_value(ctx, state[usize::from(base)], operand_fact(ctx.scope, state, key)),
-        Some(Operation::Binary { left, right, operator, .. }) => binary_value(ctx.scope, state, (left, right), operator),
-        _ => Word::UNKNOWN,
+        // `+x` of a Number is `x` itself, origin included: the cell `typing::number_cell` defines for it.
+        Some(Operation::Number(NumberOperation::ToNumeric { source, .. })) if typing::reached_number(state[usize::from(source)].cell) =>
+            state[usize::from(source)],
+        _ => operation.as_ref().and_then(|operation| typing::value(operation, &before)).map_or(Word::UNKNOWN, Word::of_cell),
     }
 }
 
@@ -277,73 +271,17 @@ fn prototype_base(base: Word) -> Option<PrototypeBase> {
     }
 }
 
-/// The fact of an operand: its register's, or the type of its constant.
-pub(super) fn operand_fact(scope: &Scope, state: &[Word], operand: Operand) -> Word {
-    match (operand.register_index(), operand.kind()) {
-        (Some(register), _) => state[usize::from(register)],
-        (None, Some(OperandKind::Constant)) => Word::of(scope.constant_type(usize::from(operand.payload()))),
-        _ => Word::UNKNOWN,
-    }
+/// The registers of the facts before an instruction, read as the operands of `staged::typing`. A constant's cell is the
+/// type of its value (`Scope::constant_type`); the unnamed elements are the types' (`Types::unnamed_elements`).
+pub(super) struct Before<'a, 'b> {
+    pub(super) ctx: &'a Ctx<'b>,
+    pub(super) state: &'a [Word],
 }
 
-/// The fact of the Number a numeric operation defines, when its operands are Numbers: the
-/// operation of an operand that is not one may run guest code or yield a string.
-fn number_value(scope: &Scope, state: &[Word], number: NumberOperation) -> Word {
-    let fact = |operand: Operand| operand_fact(scope, state, operand);
-    // An operand no value reaches yet (`Type::NEVER`, the type solve's bottom) is a Number among the
-    // others: what reaches it later is joined in a later pass, and an operation over it defines none yet.
-    let numeric = |fact: Word| fact.cell.ty.is_subtype(Type::NUMBER);
-    let both = |left: Operand, right: Operand| numeric(fact(left)) && numeric(fact(right));
-    let one = |source: Operand| numeric(fact(source));
-    let register = |source: u16| state[usize::from(source)];
-    let reached = |operands: &[Word]| operands.iter().all(|fact| fact.cell.ty != Type::NEVER);
-    let operands: Vec<Word> = match number {
-        NumberOperation::Arithmetic { left, right, .. } | NumberOperation::Remainder { left, right, .. } | NumberOperation::Extreme { left, right, .. }
-        | NumberOperation::Bitwise { left, right, .. } | NumberOperation::Imul { left, right, .. } => vec![fact(left), fact(right)],
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } | NumberOperation::BitwiseNot { source, .. } => vec![fact(source)],
-        NumberOperation::IncDec { source, .. } | NumberOperation::ToNumeric { source, .. } => vec![register(source)],
-        _ => Vec::new(),
-    };
-    if !reached(&operands) && operands.iter().all(|fact| numeric(*fact)) { return Word::of(Type::NEVER); }
-    let ty = |operand: Operand| fact(operand).cell.ty;
-    match number {
-        NumberOperation::Arithmetic { left, right, operation, .. } if both(left, right) =>
-            Word::of(numeric::arithmetic(operation, ty(left), ty(right))),
-        NumberOperation::Remainder { left, right, .. } if both(left, right) => Word::of(numeric::remainder(ty(left), ty(right))),
-        NumberOperation::Extreme { left, right, .. } if both(left, right) => Word::of(Type::NUMBER),
-        NumberOperation::Bitwise { left, right, operation, .. } if both(left, right) =>
-            Word::of(numeric::bitwise(operation, ty(left), ty(right))),
-        NumberOperation::Imul { left, right, .. } if both(left, right) => Word::of(Type::INT32),
-        NumberOperation::Unary { source, .. } | NumberOperation::Math { source, .. } if one(source) => Word::of(Type::NUMBER),
-        NumberOperation::BitwiseNot { source, .. } if one(source) => Word::of(Type::INT32),
-        NumberOperation::IncDec { source, decrement, .. } if numeric(register(source)) =>
-            Word::of(numeric::step(register(source).cell.ty, decrement)),
-        NumberOperation::ToNumeric { source, .. } if numeric(register(source)) => register(source),
-        _ => Word::UNKNOWN,
-    }
-}
-
-/// The fact of an indexed read of `base` at `index`: the elements `base`'s cell names (`Elements::element`), joined with
-/// those no field names (`Types::unnamed_elements`), and with `undefined` unless the index is within a fixed length
-/// (`within_length`), where a hole may read. Any value where the types are not solved yet.
-fn element_value(ctx: &Ctx<'_>, base: Word, index: Word) -> Word {
-    let Some(types) = ctx.types else { return Word::UNKNOWN };
-    let elements = base.cell.elements.join(types.unnamed_elements());
-    let element = elements.element();
-    if within_length(elements.length, index.cell.ty) {
-        Word::of_cell(element)
-    } else {
-        Word::of_cell(element.join(Cell::of(Type::language(crate::ValueType::Undefined))))
-    }
-}
-
-/// Whether an index of type `index` stays within an array of length `length`: a fixed length, and an integer range
-/// inside `[0, length)`.
-fn within_length(length: Length, index: Type) -> bool {
-    match (length, index.int_range()) {
-        (Length::Fixed(count), Some(range)) => range.min >= 0 && range.max < i64::from(count),
-        _ => false,
-    }
+impl Abstract for Before<'_, '_> {
+    fn register(&self, register: Register) -> Cell { self.state[usize::from(register)].cell }
+    fn constant(&self, index: usize) -> Cell { Cell::of(self.ctx.scope.constant_type(index)) }
+    fn unnamed_elements(&self) -> Option<Elements> { self.ctx.types.map(|types| types.unnamed_elements()) }
 }
 
 /// The write that makes the length of the arrays `key` names (`Key::Element`) unknown: a length write, a method that
@@ -351,23 +289,6 @@ fn within_length(length: Length, index: Type) -> bool {
 fn length_change(key: u32) -> (Key, Word) {
     let unknown = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any };
     (Key::Element(key), Word::of_cell(Cell { ty: Type::NEVER, classes: Classes::Never, elements: unknown }))
-}
-
-/// The fact of what a `Binary` of `operator` defines: a comparison a Boolean whatever its operands; otherwise the
-/// operator's type over the operands' types (`numeric::binary_type`: an integer range over integer ranges, a Number
-/// or an int32 over Numbers, a BigInt or a string where the operands are those), else anything. An operand no value
-/// reaches yet (the type solve's bottom) makes none either.
-fn binary_value(scope: &Scope, state: &[Word], (left, right): (Operand, Operand), operator: u32) -> Word {
-    use crate::vm::operations::binary_operator as op;
-    let (left, right) = (operand_fact(scope, state, left).cell.ty, operand_fact(scope, state, right).cell.ty);
-    if left == Type::NEVER || right == Type::NEVER {
-        return if matches!(operator, op::In | op::Instanceof) { Word::UNKNOWN } else { Word::of(Type::NEVER) };
-    }
-    if matches!(operator, op::Equality | op::Inequality | op::StrictEquality | op::StrictInequality
-        | op::LessThan | op::LessEqualThan | op::GreaterThan | op::GreaterEqualThan) {
-        return Word::of(Type::language(crate::ValueType::Boolean));
-    }
-    numeric::binary_type(operator, left, right).map_or(Word::UNKNOWN, Word::of)
 }
 
 /// Records the bindings `instruction` writes, from the facts before it, and the writes it makes
@@ -401,7 +322,7 @@ fn member_stores(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<
         Some(Operation::ElementWrite { value, base, key, .. }) if state[usize::from(key)].is_number() => {
             let (array, index, stored) = (state[usize::from(base)], state[usize::from(key)], state[usize::from(value)]);
             let length = array.cell.elements.length;
-            let length = if length == Length::Never || within_length(length, index.cell.ty) { Length::Never } else { Length::Any };
+            let length = if length == Length::Never || typing::within_length(length, index.cell.ty) { Length::Never } else { Length::Any };
             let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length };
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements })));
         }
