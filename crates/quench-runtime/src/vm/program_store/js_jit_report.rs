@@ -111,7 +111,7 @@ fn write_counters(out: &mut impl Write, counters: &JsJitCounters) -> io::Result<
         ("entries", &counters.entries), ("lane_entries", &counters.lane_entries),
         ("numeric_entries", &counters.numeric_entries), ("promotions", &counters.promotions),
         ("compile_attempts", &counters.compile_attempts), ("compile_successes", &counters.compile_successes),
-        ("compile_ns", &counters.compile_ns), ("native_entries", &counters.native_entries),
+        ("native_entries", &counters.native_entries),
         ("native_entry_coverage_ppm", &parts_per_million(counters.native_entries, counters.entries)),
         ("all_entry_native_coverage_ppm", &parts_per_million(counters.native_entries, total_entries)),
         ("field_cache_probes", &counters.field_cache_probes), ("field_cache_hits", &counters.field_cache_hits),

@@ -7966,7 +7966,6 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
-        let compile_started = admission::diagnosing(self).then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
@@ -7992,9 +7991,9 @@ impl Vm {
         let compiled = artifact.and_then(CompiledJsFunction::from_artifact).map(Rc::new);
         let compile_rejection = Self::js_tier_compile_rejection(&residual, function_id, artifact_failed, compiled.is_none());
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone());
-        if let Some(compile_started) = compile_started {
+        if admission::diagnosing(self) {
             let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
-            self.record_js_tier_compile(program_id, function_id, compile_started, compiled.as_deref().filter(|_| installed), rejection);
+            self.record_js_tier_compile(program_id, function_id, compiled.as_deref().filter(|_| installed), rejection);
         }
         installed.then_some(())?;
         compiled
@@ -8011,14 +8010,13 @@ impl Vm {
         }
     }
 
-    /// Records a compile for the diagnostics: its time, the installed code's size, and why
-    /// nothing was installed.
-    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32, started: std::time::Instant,
+    /// Records a compile for the diagnostics: the installed code's size, and why nothing was
+    /// installed.
+    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32,
         installed: Option<&CompiledJsFunction>, rejection: Option<&'static str>) {
         self.programs.record_js_jit_compile(
             program_id,
             function_id,
-            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             installed.map_or(0, CompiledJsFunction::mapped_bytes),
             installed.is_some(),
             rejection,
@@ -8174,7 +8172,6 @@ impl Vm {
     ) -> Option<CompiledProgram> {
         let _ = unit;
         let code = self.programs.get(program)?;
-        let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
@@ -8425,8 +8422,7 @@ impl Vm {
             build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
-                let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
-                let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
                 let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
                 let built = WasmSpecializer {
                     index,
@@ -8437,11 +8433,10 @@ impl Vm {
                     tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
                 }
                 .specialize(&code);
-                if let Some(started) = body_build_started {
+                if diagnostics_enabled {
                     let memory_after = jit_memory_snapshot();
                     eprintln!(
-                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                        started.elapsed().as_micros(),
+                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
                         body_memory_before.map(|memory| memory.0),
                         memory_after.map(|memory| memory.0),
                         body_memory_before.map(|memory| memory.1),
@@ -8621,7 +8616,6 @@ impl Vm {
                 compiled_functions,
                 code_bytes: bytes.len(),
                 mapped_bytes,
-                compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
                 native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
                 compiled_to_vm_callouts: std::cell::Cell::new(0),
@@ -8889,7 +8883,6 @@ impl Vm {
                     // keeps its callees in the VM; root-first mode allows a
                     // hot callee to enter the existing bounded tier below.
                     let diagnose = jit_diagnostics_enabled();
-                    let started = diagnose.then(std::time::Instant::now);
                     let root = jit_root_override().ok().flatten();
                     let compiled = root
                         .and_then(|root| {
@@ -8903,14 +8896,10 @@ impl Vm {
                             "\"root_only\":true"
                         };
                         eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{},\"compile_ns\":{}}}",
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{}}}",
                             program.raw(),
                             mode_field,
                             root.map_or_else(|| "null".to_owned(), |root| root.to_string()),
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
                         );
                     }
                     self.programs.set_compiled(program, compiled);
@@ -8932,7 +8921,6 @@ impl Vm {
                             .programs
                             .get(program)
                             .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-                    let started = diagnose.then(std::time::Instant::now);
                     let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
                     if diagnose && compiled.is_none() {
                         let total_functions = self
@@ -8940,13 +8928,9 @@ impl Vm {
                             .get(program)
                             .map_or(0, |code| code.functions.len());
                         eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{}}}",
                             program.raw(),
                             total_functions,
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
                         );
                     }
                     self.programs.set_compiled(program, compiled);
@@ -8976,9 +8960,9 @@ impl Vm {
             // Their records' addresses name private-name sites' entries (`PrivateSiteHomes`).
             self.private_site_homes.clear();
         }
-        let started = jit_diagnostics_enabled().then(std::time::Instant::now);
+        let diagnose = jit_diagnostics_enabled();
         let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-        if let Some(started) = started {
+        if diagnose {
             let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
                 (0..code.functions.len())
                     .filter_map(|index| code.function_get(index))
@@ -8986,11 +8970,10 @@ impl Vm {
                     .sum()
             });
             eprintln!(
-                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
+                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{}}}",
                 program.raw(),
                 compiled.is_some(),
                 bytecodes,
-                started.elapsed().as_nanos(),
             );
         }
         self.programs.set_compiled(program, compiled);

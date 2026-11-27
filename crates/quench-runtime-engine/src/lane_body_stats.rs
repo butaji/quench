@@ -12,7 +12,6 @@ impl LaneBodyStats {
         self.function.set(function);
         self.compiles.set(self.compiles.get() + 1);
         self.frames.set(frames.len() as u32);
-        self.compiled_at.borrow_mut().push(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64));
         *self.shape.borrow_mut() = frames.iter().enumerate().map(|(index, frame)| {
             let parent = frame.parent.map_or(String::from("root"), |parent| parent.to_string());
             format!("{index}:f{}<-{parent}@{}{}", frame.target.function, frame.call, if frame.alternative.is_some() { "+" } else { "" })
