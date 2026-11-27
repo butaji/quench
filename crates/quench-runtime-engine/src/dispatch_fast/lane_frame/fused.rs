@@ -622,9 +622,9 @@ pub(crate) fn fuse_rows(records: &mut [LaneInstruction], decoded: &[quench_runti
         let Some((_, _, backward, mode, numbers, number_b, fused)) = pairs.iter().find(|(a, b, _, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
-        // An arithmetic `Binary` runs its own operator row (`specialize_plain_operators`), whose operator is a
+        // A `Binary` of a Number operator runs its own operator row (`specialize_plain_operators`), whose operator is a
         // parameter of the instantiation: a pair would decode and dispatch on it at run time instead.
-        if [pc, pc + 1].into_iter().any(|at| super::super::arithmetic_binary(decoded[at])) {
+        if [pc, pc + 1].into_iter().any(|at| super::super::number_binary(decoded[at])) {
             continue;
         }
         let direction = usize::from(backward(second));

@@ -788,24 +788,47 @@ pub(super) fn specialize_returning_binaries(decoded: &[WideInstruction], constan
     }
 }
 
-/// Whether `instruction` is a plain `Binary` of an arithmetic operator (`arithmetic_operators!`), which
-/// `specialize_plain_operators` gives its operator's row.
-pub(super) fn arithmetic_binary(instruction: WideInstruction) -> bool {
+/// Whether `instruction` is a plain `Binary` of a Number operator: an arithmetic one (`arithmetic_operators!`), or a
+/// loose equality or relation (`relation_operators!`, whose strict forms `strict_equality_row` decides instead). Such a
+/// record runs its operator's row (`specialize_plain_operators`), so no fused pair takes it.
+pub(super) fn number_binary(instruction: WideInstruction) -> bool {
     macro_rules! pick { ($op:expr) => { () }; }
+    let code = instruction.binary_operator();
     quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.result_flags() == 0
-        && arithmetic_operators!(instruction.binary_operator(), pick).is_some()
+        && code != oxc_ast::ast::BinaryOperator::StrictEquality as u32 && code != oxc_ast::ast::BinaryOperator::StrictInequality as u32
+        && arithmetic_operators!(code, pick).or_else(|| relation_operators!(code, pick)).is_some()
 }
 
-/// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
-/// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
-/// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
-/// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
-/// generated row, so every operand pair stays decided by the one staged row.
+/// The row of a `Binary` operator that no Number operation denotes (`**`, `in`, `instanceof`): `binary_operator_miss`
+/// of that operator. It decides the operands' pure value (`binary_values`) and takes any other pair to the general
+/// step. The operator is the row's static parameter, so the row reads none from its record.
+fn value_operator_row(code: u32) -> Option<Handler> {
+    use oxc_ast::ast::BinaryOperator as B;
+    use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
+    if code == B::Exponential as u32 {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ B::Exponential as u8 }> as Handler)
+    } else if code == IN_OPERATOR {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ IN_OPERATOR as u8 }> as Handler)
+    } else if code == INSTANCEOF_OPERATOR {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ INSTANCEOF_OPERATOR as u8 }> as Handler)
+    } else {
+        None
+    }
+}
+
+/// Gives each plain `Binary` record that still runs its generated row, at any accumulator field, the row of its
+/// operator, so the operator is a parameter of the instantiation and the row neither decodes nor dispatches on it at
+/// run time (179 against 64 instructions for an int32 add). A Number operator (`arithmetic_operators!`, and
+/// `relation_operators!` aside from strict equality) takes `operator_row`; `===` and `!==` take `strict_equality_row`,
+/// unless the cells prove both operands int32s; `**`, `in` and `instanceof`, which no Number operation denotes, take
+/// `value_operator_row` (accumulator-free records only: that row reads its operands from the registers). A record's
+/// operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). A Number row's misses widen within its
+/// own operator (`operator_row`), so no record returns to the generated row once it has its operator's row.
 ///
 /// Where the solve's int32 cells (`int32`, by pc and register) prove every register operand of a record with no
 /// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
-/// which reads them with no tag test. Where the cells prove no such operand, a register pair takes the guarded
-/// form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
+/// which reads them with no tag test. Where the cells prove no such operand, a register pair of a Number operator
+/// takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
 pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
     int32: &dyn Fn(u32, u16) -> bool) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
@@ -859,41 +882,50 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
                 }
             };
         }
-        if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
-            records[pc].handler = handler as *const ();
-            // The proven form, where the cells prove each register operand an int32 before this record.
-            let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| int32(pc as u32, register));
-            let proven_form = match form {
-                OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
-                OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
-                _ => None,
+        let code = instruction.binary_operator();
+        let strict = code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 || code == oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+        let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| int32(pc as u32, register));
+        // The proven form, where the cells prove each register operand an int32 before this record.
+        let proven_form = match form {
+            OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
+            OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
+            _ => None,
+        };
+        // A strict equality the cells do not prove int32 operands keeps `strict_equality_row`.
+        if strict && proven_form.is_none() {
+            records[pc].handler = if code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+                strict_equality_row::<false> as Handler as *const ()
+            } else {
+                strict_equality_row::<true> as Handler as *const ()
             };
-            macro_rules! proven_at {
-                ($op:expr) => {
-                    if proven_form == Some(OPERANDS_PROVEN) {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
-                    } else {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
-                    }
-                };
-            }
-            if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(instruction.binary_operator(), proven_at) {
-                records[pc].handler = proven_handler as *const ();
-            }
-            // The guarded form, where the cells prove neither register of a register pair: the same operator's
-            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Its guard is the
-            // check, and its general form is the record's requicken target. A register and an int32 constant keep
-            // their int32 form, which tests one tag already.
-            macro_rules! guarded_at {
-                ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
-            }
-            if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(instruction.binary_operator(), guarded_at) {
-                records[pc].handler = guarded_handler as *const ();
-            }
-        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
-            records[pc].handler = strict_equality_row::<false> as Handler as *const ();
-        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictInequality as u32 {
-            records[pc].handler = strict_equality_row::<true> as Handler as *const ();
+            continue;
+        }
+        macro_rules! proven_at {
+            ($op:expr) => {
+                if proven_form == Some(OPERANDS_PROVEN) {
+                    operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
+                } else {
+                    operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
+                }
+            };
+        }
+        // The guarded form, where the cells prove neither register of a register pair: the same operator's
+        // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Its guard is the
+        // check, and its general form is the record's requicken target. A register and an int32 constant keep
+        // their int32 form, which tests one tag already.
+        macro_rules! guarded_at {
+            ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
+        }
+        if let Some(handler) = arithmetic_operators!(code, pick).or_else(|| relation_operators!(code, pick)) {
+            records[pc].handler = handler as *const ();
+        } else if acc == 0 && let Some(handler) = value_operator_row(code) {
+            records[pc].handler = handler as *const ();
+        }
+        if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(code, proven_at).or_else(|| relation_operators!(code, proven_at)) {
+            records[pc].handler = proven_handler as *const ();
+        }
+        if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(code, guarded_at).or_else(|| relation_operators!(code, guarded_at)) {
+            records[pc].handler = guarded_handler as *const ();
         }
     }
 }
