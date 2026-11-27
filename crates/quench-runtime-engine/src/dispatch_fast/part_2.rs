@@ -491,7 +491,6 @@ pub(super) fn frame_state_in_lane(
         (*cx).base = base;
         (*cx).memory = view;
         let this = vm.frame_lane_this(frame);
-        note_lane_this(vm, this, || view_in_lane.this_rows);
         r.set_this(this);
         r.set_env(Value::DELETED);
         (*cx).registers.set_capture(std::ptr::null());
@@ -626,7 +625,6 @@ pub(super) fn materialize_leaf_in_lane(cx: *mut LaneContext) {
             .expect("the leaf's call proved its receiver's binding")
             .to_bits()
     });
-    if let Some(this) = this { note_lane_this(vm, Value::from_bits(this), || unsafe { (*target.view).this_rows }); }
     // The context words the form left to its caller, by the staged row on machine words.
     quench_runtime::staged::call_leaf::materialize_leaf_context(
         &mut quench_runtime::staged::Concrete::new(std::ptr::null()), window.expose_provenance() as u64, form, this,

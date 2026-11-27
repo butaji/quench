@@ -956,7 +956,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
-/// `trusted`: the code holds the lane's `this` trust (`VmFacts::this_trusted`), so `this` is a direct
+/// `trusted`: the receiver fact holds (`dispatch_fast::receiver_trusted`), so `this` is a direct
 /// object the binding checked once, and only the tables are tested.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
     use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
@@ -1541,9 +1541,6 @@ pub(crate) struct VmFacts<'a> {
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
-    /// Whether the lane trusts every activation's `this` as a direct object (`Vm::this_trust`): code that
-    /// holds the trust (`StableFacts::this_trust`) takes its receiver as one, and retires with the trust.
-    pub(crate) this_trusted: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1559,7 +1556,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false, this_trusted: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1567,8 +1564,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false,
-            this_trusted: self.this_trust.get() == 1 }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false }
     }
 }
 
