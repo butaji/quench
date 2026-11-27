@@ -86,7 +86,7 @@ fn is_integral_arithmetic(instruction: WideInstruction) -> bool {
 /// as one source of local types: each is conformed where it is written, so a join keeps it unboxed.
 /// Parameters enter typed instead (`closed_entry_types`); a register an annotation types keeps it.
 pub(crate) fn closed_local_types(vm: VmFacts<'_>, function_id: u32, function: &quench_runtime::bytecode::Function, locals: &mut Vec<(Register, Type)>) {
-    let Some(numbers) = vm.closed.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
+    let Some(numbers) = vm.facts.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
     let parameters: Vec<usize> = (0..usize::from(function.params)).filter_map(|index| super::scalar::parameter_register(function, index).map(usize::from)).collect();
     for (register, number) in numbers.iter().enumerate() {
         let ty = match number {
@@ -105,7 +105,7 @@ pub(crate) fn closed_local_types(vm: VmFacts<'_>, function_id: u32, function: &q
 /// parameter's type enters (`scalar::declared_entry_types`), so the entry proves each once and the
 /// body holds it unboxed. Nothing without a closed world (`VmFacts::closed`).
 pub(crate) fn closed_entry_types(vm: VmFacts<'_>, function_id: u32, function: &quench_runtime::bytecode::Function, initial: &mut [Type]) {
-    let Some(numbers) = vm.closed.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
+    let Some(numbers) = vm.facts.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
     for index in 0..usize::from(function.params) {
         let Some(register) = super::scalar::parameter_register(function, index).map(usize::from) else { continue };
         let ty = match numbers.get(register) {

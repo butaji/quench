@@ -662,6 +662,8 @@ struct ProgramEntry {
     raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
+    /// The program's AOT facts, solved once on the first lowering that reads them (`aot_facts`).
+    aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -902,6 +904,13 @@ impl ProgramStore {
                 Rc::new(facts)
             }
         })))
+    }
+
+    /// The AOT facts of program `id` (`compile::aot_facts::analyze`), solved on its first call and
+    /// shared by every lowering of the program after it.
+    pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
+        let entry = self.entry(id)?;
+        Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
     }
 
     pub fn len(&self) -> usize {
@@ -1318,6 +1327,7 @@ impl ProgramStore {
             views_in_lane,
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
+            aot_facts: std::cell::OnceCell::new(),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),

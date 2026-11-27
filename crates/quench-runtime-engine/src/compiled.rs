@@ -1524,10 +1524,11 @@ pub(crate) struct VmFacts<'a> {
     /// Where an ahead lane body's leaves continue, in its base body (`lane_region::AheadLeaves`);
     /// `None` where a leave returns its exit word.
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
-    /// The whole-program facts of an AOT image (`compile::aot_facts`): its call targets admit the
-    /// callees the unit inlines (`Lowering::closed_call`) and its Number registers are entry
-    /// entry types (`int_inputs::closed_entry_types`), each a dependency on the image's invalidation word.
-    pub(crate) closed: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
+    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::closed_call`),
+    /// its Number registers are entry types (`int_inputs::closed_entry_types`), and its register cells
+    /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
+    pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
@@ -1549,7 +1550,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false, this_trusted: false };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false, this_trusted: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1557,7 +1558,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false,
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, proven_entry: false,
             this_trusted: self.this_trust.get() == 1 }
     }
 }

@@ -243,7 +243,7 @@ impl Lowering<'_, '_> {
     /// (`NativeFieldLoad::closed_typed`): the closed world's field type, which the image's slot
     /// dependencies hold (`ahead_images::guard_dependencies`), retiring it where a store widens one.
     fn closed_typed_read(&self, instruction: WideInstruction) -> bool {
-        self.vm.closed.is_some() && self.helpers.links()
+        self.vm.facts.is_some() && self.helpers.links()
             && last_read_site(self.program, instruction).and_then(|last| site_loads(self.fields, last))
                 .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.closed_typed()))
     }

@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the closed world proves inlined `frame`'s target (`closed_call`), which no entry admits either.
     pub(crate) fn closed_proves(&self, frame: usize) -> bool {
-        let Some(closed) = self.vm.closed else { return false };
+        let Some(closed) = self.vm.facts else { return false };
         let call = self.unit.frames[frame];
         let caller = call.parent.map_or(self.function_id, |parent| self.unit.frames[parent].target.function);
         call.target.callee == CalleeBinding::Function && closed.function_facts(caller).proven_call_target(call.call) == Some(call.target.function)
