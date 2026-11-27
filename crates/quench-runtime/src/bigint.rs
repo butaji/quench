@@ -49,9 +49,9 @@ pub(crate) enum Error {
     TooLarge,
 }
 
-/// The value of a BigInt literal; OXC normalizes its digits to base 10 without separators.
+/// The value of a BigInt literal; the source front end normalizes its digits to base 10 without separators.
 pub(crate) fn decimal_literal(digits: &str) -> BigInt {
-    digits.parse().expect("OXC normalizes BigInt literal digits to base 10")
+    digits.parse().expect("the source front end normalizes BigInt literal digits to base 10")
 }
 
 /// The Number nearest `value`, ties to even; magnitudes past the finite range are infinite.

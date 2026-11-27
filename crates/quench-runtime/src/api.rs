@@ -16,7 +16,7 @@ pub use native::{
 };
 
 /// The syntax context used when compiling source. Script and Module use
-/// their OXC parse goals; contextual Eval requires an active guest activation.
+/// their parse goals; contextual Eval requires an active guest activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceKind {
     Script,
@@ -60,7 +60,7 @@ impl<'a> ExecutionRequest<'a> {
 }
 
 impl Engine {
-    /// Compile a source unit through the single OXC-to-residual boundary.
+    /// Compile a source unit through the single source-to-residual boundary.
     pub fn compile(request: ExecutionRequest<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
         match request.kind {
             SourceKind::Script => Self::specialize(request.source, request.name),

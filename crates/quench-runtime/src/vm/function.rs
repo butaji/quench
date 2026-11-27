@@ -499,8 +499,8 @@ fn native_function_source(name: &str) -> String {
     let symbol_member = property_name
         .strip_prefix("[Symbol.")
         .and_then(|name| name.strip_suffix(']'));
-    let source_name = if oxc_syntax::identifier::is_identifier_name(property_name)
-        || symbol_member.is_some_and(oxc_syntax::identifier::is_identifier_name)
+    let source_name = if quench_regexp::identifier::is_identifier_name(property_name)
+        || symbol_member.is_some_and(quench_regexp::identifier::is_identifier_name)
     {
         name
     } else {

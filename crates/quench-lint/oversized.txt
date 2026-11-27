@@ -582,8 +582,8 @@ complexity crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_shared_native 
 complexity crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_wait 24
 complexity crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomics_native 20
 complexity crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomics_notify 14
-complexity crates/quench-runtime/src/vm/call_printer.rs::freeze_expressions 20
-complexity crates/quench-runtime/src/vm/call_printer.rs::render 30
+complexity crates/quench-runtime/src/compile/call_sites.rs::freeze_expressions 20
+complexity crates/quench-runtime/src/compile/call_sites.rs::render 30
 complexity crates/quench-runtime/src/vm/coercion.rs::Vm<H>::to_string 15
 complexity crates/quench-runtime/src/vm/coercion.rs::Vm<H>::unary 16
 complexity crates/quench-runtime/src/vm/collections.rs::Vm<H>::call_collection_native 88
@@ -1374,7 +1374,6 @@ file-lines crates/quench-runtime/src/vm/array_indexed.rs 603
 file-lines crates/quench-runtime/src/vm/array_modern.rs 917
 file-lines crates/quench-runtime/src/vm/atomics.rs 902
 file-lines crates/quench-runtime/src/vm/builtins.rs 1447
-file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
 file-lines crates/quench-runtime/src/vm/collections.rs 1354
 file-lines crates/quench-runtime/src/vm/compiled.rs 11801
@@ -2672,8 +2671,8 @@ function-lines crates/quench-runtime/src/vm/bigint.rs::Vm<H>::install_bigint_for
 function-lines crates/quench-runtime/src/vm/boolean.rs::Vm<H>::install_boolean_for_realm 61
 function-lines crates/quench-runtime/src/vm/builtins.rs::Vm<H>::install_builtins 261
 function-lines crates/quench-runtime/src/vm/builtins.rs::Vm<H>::override_builtin_function_name 46
-function-lines crates/quench-runtime/src/vm/call_printer.rs::freeze_expressions 66
-function-lines crates/quench-runtime/src/vm/call_printer.rs::render 78
+function-lines crates/quench-runtime/src/compile/call_sites.rs::freeze_expressions 66
+function-lines crates/quench-runtime/src/compile/call_sites.rs::render 78
 function-lines crates/quench-runtime/src/vm/call_printer.rs::tests::frozen_descriptions_cover_every_call_and_survive_both_encodings 44
 function-lines crates/quench-runtime/src/vm/closure_retention_tests.rs::check_case 43
 function-lines crates/quench-runtime/src/vm/coercion.rs::Vm<H>::to_string 44
@@ -4709,7 +4708,7 @@ magic crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_wait 4
 magic crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomics_notify 1
 magic crates/quench-runtime/src/vm/atomics.rs::Vm<H>::normalize_atomic_bigint 1
 magic crates/quench-runtime/src/vm/bigint.rs::Vm<H>::bigint_to_string 4
-magic crates/quench-runtime/src/vm/call_printer.rs::render 1
+magic crates/quench-runtime/src/compile/call_sites.rs::render 1
 magic crates/quench-runtime/src/vm/coercion.rs::typeof_name_index 6
 magic crates/quench-runtime/src/vm/compiled.rs::Analysis<'a,H>::build_entry 5
 magic crates/quench-runtime/src/vm/compiled.rs::Emitter<'_,'_,H>::callout_function 1
