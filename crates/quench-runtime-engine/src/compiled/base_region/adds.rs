@@ -30,9 +30,9 @@ pub(crate) struct Add {
 const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::site_bits::ADD_OBJECT_BITS);
 
 impl Add {
-    /// The heap row that runs it.
+    /// The heap row that runs it: a class-keyed transition adds in its live cell (`Heap::AddClass`).
     pub(crate) fn heap(self) -> Heap {
-        Heap::Add { form: self.form, this: self.this }
+        if self.site.transition.is_class_keyed() { Heap::AddClass } else { Heap::Add { form: self.form, this: self.this } }
     }
 
     /// The chain whose prototypes' layouts the code holds for the chain proof, where the add has one.
@@ -41,11 +41,13 @@ impl Add {
     }
 
     /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
-    /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
+    /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`). A class-keyed
+    /// transition's before is its key (`Transition::edge`), which the class row compares.
     pub(crate) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
         use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
         let transition = self.site.transition;
         let [before, after] = transition.layouts.map(u64::from);
+        let before = if transition.is_class_keyed() { u64::from(transition.before) } else { before };
         let layouts = before | after << ADD_AFTER_AT;
         let site = u64::from(transition.slot) | u64::from(self.site.link.unwrap_or_default()) << ADD_LINK_AT | object << ADD_OBJECT_AT;
         padded_holes([layouts, value, site])
@@ -77,7 +79,9 @@ pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) { return None; }
     let site = adds(instruction.cache_site_index(), atom, !defines)?;
-    Some(Add { site, form: site.transition.form()?, this: receiver(instruction).is_none() })
+    let add = Add { site, form: site.transition.form()?, this: receiver(instruction).is_none() };
+    // A class-keyed add names its object register: a store to `this` has no class row (`Heap::AddClass`).
+    (!(add.this && site.transition.is_class_keyed())).then_some(add)
 }
 
 /// The registers an add row names: the value in `a`, the receiver through `base`.

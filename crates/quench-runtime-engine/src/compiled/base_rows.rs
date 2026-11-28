@@ -120,6 +120,17 @@ pub(crate) enum Heap {
     /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
     /// (`base_region::proofs`), so the row tests nothing of its own.
     IcKnownSet { int: bool, admitted: bool },
+    /// `IcGet` of a class-keyed entry (`ic_rows::class_get_row`): the field at hole 3 (a field index) of the live class cell
+    /// the receiver (hole 0's upper half) is, whose class key hole 2 holds; a miss leaves as `IcGet`'s.
+    IcGetClass,
+    /// `IcGetClass` of a held field: the holder cell's granule at hole 4 names the cell the field is read from.
+    IcHeldClass,
+    /// The store of a Number (hole 1) into the field at hole 3 of the live class cell the object register (hole 0) is, whose
+    /// class key is hole 2 (`ic_rows::class_set_value`), where the class space's store gate admits it.
+    IcSetClass,
+    /// The class-keyed add (`add::class_add`): hole 0 holds the before-key (low) and after-class (high), hole 2 the slot and the
+    /// object register's frame offset; the value is hole 1. A hit continues at TAKEN.
+    AddClass,
     /// `IcKnownGet` of a receiver whose entry proved its shape and flat form (`ShapeFlat`, `base_region::proofs`): the
     /// arena slot at hole 3 (its byte offset), no compare; hole 2 is zero and unread.
     IcKnownGetFlat,
@@ -336,7 +347,7 @@ mod catalog_tests {
         let mut all = vec![
             Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
             Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
-            Heap::IcGet, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
             Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Class, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
             Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,

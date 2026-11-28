@@ -99,14 +99,9 @@ pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S:
 #[inline(always)]
 pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let direct = super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
     let keyed = edge_keys_class(stage, edge.before);
     stage.choose_leaving(keyed, #[inline(always)] |stage| {
-        let granule = super::value::direct_object_id(stage, object);
-        let cell = super::object::cell_at_granule(stage, granule);
-        let class = super::object::cell_class(stage, cell);
-        add_cell_property(stage, (granule, cell, class), edge, value, miss)?;
+        class_add(stage, object, edge, value, miss)?;
         Some(stage.constant(0))
     }, #[inline(always)] |stage| {
         let present = stage.ne_imm(records, 0u32);
@@ -122,6 +117,19 @@ pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edg
         Some(stage.constant(0))
     })?;
     Some(())
+}
+
+/// The add of `value` at the slot of a class-keyed `edge` to the live class cell the direct object `object` is
+/// (`add_cell_property`): where `object` is no direct object, or its cell is of another class, it leaves before
+/// any write. The class-keyed rows (`ADD_CLASS_ROW`) run it on its own; `site_add` runs it for a keyed edge.
+#[inline(always)]
+pub fn class_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, value: S::Word, miss: S::Miss) -> Option<()> {
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let granule = super::value::direct_object_id(stage, object);
+    let cell = super::object::cell_at_granule(stage, granule);
+    let class = super::object::cell_class(stage, cell);
+    add_cell_property(stage, (granule, cell, class), edge, value, miss)
 }
 
 /// Whether the edge's `before` is a class key (`CLASS_KEY` set): a record's before-layout id is below

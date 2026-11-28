@@ -230,6 +230,8 @@ heap_reads! {
     fn native_array_cursor() -> usize;
     /// The native objects' mark blocks (`Heap::native_object_mark_blocks`).
     fn native_object_mark_blocks() -> (*const u8, usize);
+    /// A class cell region's mark blocks and their count (`Heap::native_class_mark_blocks`).
+    fn native_class_mark_blocks(region: u32) -> (*const u8, usize);
     /// The native functions' mark blocks (`Heap::native_function_mark_blocks`).
     fn native_function_mark_blocks() -> (*const u8, usize);
     /// The native arrays' mark blocks (`Heap::native_array_mark_blocks`).

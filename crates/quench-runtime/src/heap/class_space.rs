@@ -496,6 +496,12 @@ impl ClassSpace {
         }
     }
 
+    /// The mark blocks of region `region` and their count (`RecordSpace::native_mark_blocks`), which a native
+    /// store into a cell of that region reads through `JsStepHead::class_mark_lists`.
+    pub(super) fn native_mark_blocks(&self, region: u32) -> (*const u8, usize) {
+        with_region!(self.regions, region, |space| space.native_mark_blocks())
+    }
+
     /// Blocks made so far in every region, which `native_layout_epoch` counts: a new block can move
     /// the mark blocks native code caches.
     pub(super) fn block_count(&self) -> usize {

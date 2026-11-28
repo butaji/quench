@@ -244,7 +244,10 @@ impl Stage for Emit<'_, '_> {
             // A fresh holder logs nothing (4.7 (b)): only the observation gate is asked.
             return self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_untracked(stage, payload, watch, logged));
         }
-        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
+        self.gate_word(|stage, payload, watch, logged| match space {
+            quench_runtime::staged::StagedRecordSpace::Class => quench_runtime::staged::barrier::class_store_unlogged(stage, payload, watch, super::super::class_mark_table(), record_id, value, logged),
+            _ => quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged),
+        })
     }
     /// Whether a store of a value the slot's type holds needs no barrier log
     /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
@@ -263,8 +266,11 @@ impl Stage for Emit<'_, '_> {
         let open = self.builder.append_block_param(join, types::I8);
         let clear = self.counts_clear(payload);
         emit_js_guard(self.builder, clear, logged);
-        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
-            .expect("an Emit guard always continues");
+        match space {
+            quench_runtime::staged::StagedRecordSpace::Class => quench_runtime::staged::barrier::class_value_unlogged(self, payload, super::super::class_mark_table(), record_id, value, logged),
+            _ => quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged),
+        }
+        .expect("an Emit guard always continues");
         let yes = self.raw_const(Lane::I8, 1);
         self.goto(join, &[yes]);
         self.builder.switch_to_block(logged);

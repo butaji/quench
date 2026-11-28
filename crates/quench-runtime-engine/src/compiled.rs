@@ -881,7 +881,8 @@ fn emit_lane_helper_call(
     emit_lane_call(builder, helper, &values)
 }
 
-/// The mark list a store into record space `space` reads its owner's mark blocks from.
+/// The mark list a store into record space `space` reads its owner's mark blocks from. A class cell's
+/// mark is read through `class_mark_lists` instead (`class_mark_table`), so `Class` never reaches here.
 fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_runtime::staged::barrier::MarkList {
     use quench_runtime::staged::barrier::MarkList;
     match space {
@@ -893,7 +894,16 @@ fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_r
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
+        quench_runtime::staged::StagedRecordSpace::Class => {
+            unreachable!("a class cell's mark is read through `class_mark_table`")
+        }
     }
+}
+
+/// The byte offset of the class cells' mark lists in the dispatch payload (`JsStepHead::class_mark_lists`),
+/// which `barrier::class_unmarked` reads by region.
+fn class_mark_table() -> usize {
+    std::mem::offset_of!(JsStepDispatch, head.class_mark_lists)
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -4024,7 +4034,7 @@ impl JsStepDispatch {
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
-                array_mark_blocks: 0, array_mark_block_count: 0,
+                array_mark_blocks: 0, array_mark_block_count: 0, class_mark_lists: [0; 12],
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
@@ -4117,6 +4127,12 @@ impl JsStepDispatch {
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap_reads().native_array_mark_blocks();
         (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
+        // The class cell regions 1 to 5 (region 0, the stubs, keeps its entry zero).
+        for region in 1..=5_u32 {
+            let (blocks, count) = vm.heap_reads().native_class_mark_blocks(region);
+            let slot = 2 * region as usize;
+            (self.class_mark_lists[slot], self.class_mark_lists[slot + 1]) = (blocks as usize, count);
+        }
         self.empty_string = vm.empty_string_word().to_bits();
         self.store_watch = vm.heap_reads().store_watch_word();
         let atoms = vm.method_cache_atoms.words();

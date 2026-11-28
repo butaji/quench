@@ -281,7 +281,7 @@ mod tests {
     fn a_typed_read_keeps_its_proof_only_where_a_check_drops() {
         let number = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::NUMBER };
         let object = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::DIRECT_OBJECT_FAMILY };
-        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(7), proven: true, typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
+        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(IcEntry::Shape(7)), proven: true, typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
         // Web 0 holds a pinned double, web 1 a frame slot; web 2 is the receiver.
         let homes = Homes::of(&[], &[0], vec![0, 1, 2], &[Vec::new(), Vec::new(), Vec::new()]);
         let mut rows = [read(0, number), read(1, number), read(1, object), Decoded { ic: None, ..read(0, number) }];

@@ -170,14 +170,18 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
-        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        Heap::IcGet | Heap::IcKnownGet | Heap::IcGetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [object, upper, key, slot, 0] }
+        // A held class read names the holder cell's granule in hole 4 (`ic_rows::class_get_row`).
+        Heap::IcHeldClass => { let (key, slot, holder) = IcEntry::words(decoded.ic); [object, upper, key, slot, holder] }
+        // A class store takes no atom: the key names the cell, and the field index follows it.
+        Heap::IcSetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [base, a_hole, key, slot, 0] }
+        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), shape, offset] }
         // An admitted store takes no atom test, so its shape is hole 2 (`slot_store::own_flat_known`) and the offset hole 3.
-        Heap::IcKnownSet { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcKnownSet { admitted: true, .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, shape, offset, 0] }
         // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
-        Heap::IcKnownGetFlat => { let ic = decoded.ic.unwrap_or_default(); [object, upper, 0, ic >> u32::BITS, 0] }
-        Heap::IcKnownSetFlat { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic >> u32::BITS, 0] }
-        Heap::IcKnownSetFlat { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic >> u32::BITS, 0, 0] }
+        Heap::IcKnownGetFlat => { let (_, offset, _) = IcEntry::words(decoded.ic); [object, upper, 0, offset, 0] }
+        Heap::IcKnownSetFlat { admitted: false, .. } => { let (_, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), offset, 0] }
+        Heap::IcKnownSetFlat { admitted: true, .. } => { let (_, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, offset, 0, 0] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
@@ -265,13 +269,18 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
     let delivered = (heap == Heap::Site && decoded.typed.is_some_and(|dependency| dependency.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY))
         .then(|| proof_row(dst_hole, pc)).transpose()?;
     let int = decoded.slot.is_some_and(|ty| ty.is_subtype(quench_runtime::typed_ir::Type::INT32));
-    let ic = match (heap, decoded.proven, decoded.flat) {
-        (Heap::Site, false, _) => Heap::IcGet,
-        (Heap::Site, true, false) => Heap::IcKnownGet,
-        (Heap::Site, true, true) => Heap::IcKnownGetFlat,
-        (_, false, _) => Heap::IcSet { int },
-        (_, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
-        (_, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
+    // A class-keyed entry takes the class rows, which test the live cell's class themselves, so neither the receiver's
+    // proof nor its flat form changes them.
+    let ic = match (heap, decoded.ic, decoded.proven, decoded.flat) {
+        (Heap::Site, Some(IcEntry::Class { holder: Some(_), .. }), _, _) => Heap::IcHeldClass,
+        (Heap::Site, Some(IcEntry::Class { holder: None, .. }), _, _) => Heap::IcGetClass,
+        (_, Some(IcEntry::Class { .. }), _, _) => Heap::IcSetClass,
+        (Heap::Site, _, false, _) => Heap::IcGet,
+        (Heap::Site, _, true, false) => Heap::IcKnownGet,
+        (Heap::Site, _, true, true) => Heap::IcKnownGetFlat,
+        (_, _, false, _) => Heap::IcSet { int },
+        (_, _, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+        (_, _, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
     };
     // A known get whose slot the fact store proved a Number (`Decoded::typed`, kept by `repr::keep_typed_reads`)
     // takes the row variant that delivers to its pinned double untested: its entry flag cleared. An object slot

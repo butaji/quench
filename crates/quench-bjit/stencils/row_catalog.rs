@@ -201,6 +201,10 @@ macro_rules! catalog {
     THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Packed, this: true },
     THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Arena, this: true },
     THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Either, this: true },
+    /// The class-keyed add (`add::class_add`): the value operand (hole 1) joins the live class cell of the object
+    /// register at the frame offset hole 2 carries, by the class transition holes 0 and 2 carry (`ADD_AFTER_AT`,
+    /// the before-key low, the after-class high; the slot below `ADD_SLOT_BITS`). A hit continues at TAKEN.
+    ADD_CLASS_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::AddClass,
     /// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
     /// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
@@ -268,6 +272,12 @@ macro_rules! catalog {
     IC_KNOWN_SET_INT_FLAT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: false },
     IC_KNOWN_SET_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: false, admitted: true },
     IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: true },
+    /// The class-keyed rows (`ic_rows.rs`, `entry::class_key_cell`): the own field, the held field and the own store of
+    /// a live class cell whose class key (`class | CLASS_KEY`) hole 2 names, the field index at hole 3 (the shape rows'
+    /// holes, with the key in the shape's). `IC_GET_HELD_CLASS_ROW`'s holder cell granule is hole 4.
+    IC_GET_CLASS_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcGetClass,
+    IC_GET_HELD_CLASS_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field) = Heap::IcHeldClass,
+    IC_SET_CLASS_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSetClass,
     /// A declared parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a word
     /// whose language its tag alone decides, in the mask of hole 1 (`shared_words::language`), where the mask
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
