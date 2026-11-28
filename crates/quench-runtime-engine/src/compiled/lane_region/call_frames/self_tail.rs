@@ -54,11 +54,17 @@ impl<'a, 'f> Lowering<'a, 'f> {
             quench_runtime::compile::call_plan::Miss::Edge(key) => { self.stable.cells.insert(key); }
             quench_runtime::compile::call_plan::Miss::None => self.hold_stable(state, missed),
         }
-        let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, callee.capture_word());
-        let entry_captures = self.entry_words.1;
-        let same_captures = self.raw_compare(Relation::Equal, entry_captures, captures);
-        crate::compiled::emit_js_guard(&mut self.builder, same_captures, missed);
-        if matches!(site.receiver, quench_runtime::staged::forms::Receiver::Undefined) {
+        // The callee's captures are the entry's where the closed world proves the self call runs in the entry's environment
+        // (`FunctionFacts::self_callee_env`): no compare of them.
+        if !self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).self_callee_env()) {
+            let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, callee.capture_word());
+            let entry_captures = self.entry_words.1;
+            let same_captures = self.raw_compare(Relation::Equal, entry_captures, captures);
+            crate::compiled::emit_js_guard(&mut self.builder, same_captures, missed);
+        }
+        // The entry's raw receiver is `undefined` where every call of the body passes one (`this_undefined_at_entry`): no compare.
+        let this_undefined = self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).this_undefined_at_entry());
+        if matches!(site.receiver, quench_runtime::staged::forms::Receiver::Undefined) && !this_undefined {
             let undefined = self.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64);
             let entry_this = self.entry_words.0;
             let same_this = self.raw_compare(Relation::Equal, entry_this, undefined);

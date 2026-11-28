@@ -310,7 +310,8 @@ impl Lowering<'_, '_> {
     /// that calls it: its value (one load from the entry's held slot, in the entry) compared with that
     /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
     fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let callee = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call").callee;
+        let direct = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call");
+        let (callee, body) = (direct.callee, direct.target.function);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let loaded = match self.completion {
             Completion::Scalar(_) => {
@@ -320,8 +321,11 @@ impl Lowering<'_, '_> {
             }
             _ => self.load_capture(state, pc, instruction, miss, None, RootedRead::No),
         };
-        let same = self.is_identity(loaded, callee);
-        super::super::emit_js_guard(&mut self.builder, same, miss);
+        // A loaded closure of a body the closed world makes one object is that object (`is_body_closure_identity`): no compare.
+        if !self.is_body_closure_identity(pc, instruction.result_register(), body) {
+            let same = self.is_identity(loaded, callee);
+            super::super::emit_js_guard(&mut self.builder, same, miss);
+        }
         let constant = self.identity_constant(callee);
         let ty = Type::function(callee).expect("a direct callee is a function");
         self.define(state, instruction.result_register(), constant, RegisterFact::definition(ty, Representation::Tagged));

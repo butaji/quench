@@ -107,10 +107,13 @@ impl Lowering<'_, '_> {
         let Some(args) = (0..argc).map(|index| self.exact_argument(state, pc, window + index)).collect::<Option<Vec<Value>>>() else { return false };
         let Some(result) = quench_runtime::staged::call_native::concrete_math_call(call, &args) else { return false };
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
-        let held = self.tagged(state, callee);
         self.hold_holder_any(state, exit, holder);
-        let same = self.is_identity(held, value);
-        emit_js_guard(&mut self.builder, same, exit);
+        // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity.
+        if !self.callee_is_builtin(defined, pc, callee) {
+            let held = self.tagged(state, callee);
+            let same = self.is_identity(held, value);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         self.fold_constant(state, instruction.result_register(), result);
         true
     }
