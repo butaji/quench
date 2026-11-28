@@ -13,7 +13,6 @@ use super::{Heap, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
 use crate::staged::object_encoding::DICTIONARY_STORAGE;
 use crate::value::Value;
-use crate::value_vec::CONSTANT_FORM;
 
 impl Heap {
     /// The granule of `value` when it names a class cell: one in a cell region. Every cell granule is live, since
@@ -36,18 +35,16 @@ impl Heap {
     }
 
     /// The receiver key of a field entry for `value` when it is a class cell outside dictionary
-    /// storage and not under a constant mark: its class id OR'd with `CLASS_KEY`. A class id names the
+    /// storage: its class id OR'd with `CLASS_KEY`. A class id names the
     /// shape, the prototype link and the flags (`layouts::intern_class`), so the key fixes the cell's own
     /// slots, its holder and its flags; a flag change is a class change, so the key of the old class
     /// matches nothing. A frozen or non-extensible class keys: no write to it succeeds, so no store or add
-    /// entry is ever filled from it (the fill is the edge). A constant-marked class has no key: a store
-    /// through a key writes the field without `note_cell_write` and would leave the mark standing. `None`
-    /// for any other value, and for a record.
+    /// entry is ever filled from it (the fill is the edge). `None` for any other value, and for a record.
     #[inline(always)]
     pub(crate) fn live_class_key(&self, value: Value) -> Option<u32> {
         let granule = self.live_class_cell(value)?;
         let class = header_class(self.class_space.header(granule));
-        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64 | CONSTANT_FORM as u64) == 0).then_some(class | CLASS_KEY)
+        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64) == 0).then_some(class | CLASS_KEY)
     }
 
     /// The spill slot of live class `class`, in its region's cell (`layouts::spill_from`): `None` where its shape's
@@ -78,18 +75,6 @@ impl Heap {
         self.class_space.take_holder_moves()
     }
 
-    /// Notes a write to class cell `granule` (`Object::note_constant_write`): a constant mark clears in
-    /// place, its class word takes the cleared flags, and the readers of the mark retire.
-    #[inline(always)]
-    pub(super) fn note_cell_write(&mut self, granule: u32) {
-        let class = header_class(self.class_space.header(granule));
-        let mut object = Object::of_class(class);
-        object.note_constant_write();
-        if object.layout_id() != class {
-            self.class_space.write_class(granule, object.layout_id());
-        }
-    }
-
     /// The append of `value` to class cell `granule` (not dictionary storage), which moves it to `shape`: the new slot
     /// is the one after its shape's last, and the cell takes `shape`'s class in place (`class_cell_add`).
     pub(crate) fn class_cell_append(&mut self, granule: u32, value: Value, shape: u32) {
@@ -98,19 +83,10 @@ impl Heap {
         self.class_cell_add(granule, before, shape, slot, value);
     }
 
-    /// The add of `value` as field `slot` of class cell `granule` along the shape edge `before` -> `after`, for a cell
-    /// with no class key (a constant-marked cell, `live_class_key`): the mark clears first (`note_cell_write` retires
-    /// the readers of the mark), then the add is `class_cell_add`, which takes the after-shape's class in place.
-    pub(crate) fn constant_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) {
-        self.note_cell_write(granule);
-        self.class_cell_add(granule, before, after, slot, value);
-    }
-
-    /// The notes of a write to slot `slot` of class cell `granule` (`Object::note_value_write`, for a cell): the
-    /// constant mark clears (`note_cell_write`), a marked prototype's readers retire, and a global object's table
-    /// notes the write. Only the cell's extras hold the last two, so a cell without extras has neither.
+    /// The notes of a write to slot `slot` of class cell `granule` (`Object::note_value_write`, for a cell): a
+    /// prototype's readers retire, and a global object's table notes the write. Only the cell's extras hold the
+    /// last two, so a cell without extras has neither.
     pub(super) fn note_cell_value_write(&mut self, granule: u32, slot: usize) {
-        self.note_cell_write(granule);
         let object = Object::of_class(header_class(self.class_space.header(granule)));
         let extras = self.class_space.extras_id(granule);
         if let Some(extras) = self.extras.get_mut(extras) {
@@ -119,7 +95,7 @@ impl Heap {
     }
 
     /// A store or add of `value` at slot `slot` of class cell `granule`, whose spill slot is `from` before and `to`
-    /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the constant mark's clear, then
+    /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the value write's notes, then
     /// the word. A moved run (allocated or grown) fires the holder edge. A field holds the one Value word, which is
     /// already a double's raw bits under invariant I (c-design 4.1), so every field is stored and scanned alike.
     pub(super) fn class_cell_put(&mut self, granule: u32, from: Option<u32>, to: Option<u32>, slot: usize, value: Value) {
@@ -155,7 +131,6 @@ impl Heap {
         if words.iter().any(|word| word.heap_index().is_some()) {
             self.class_space.barrier(granule);
         }
-        self.note_cell_write(granule);
         let from = self.live_spill_from(granule);
         if self.class_space.lay_out(granule, from, &words) {
             self.holder_fields_moved(granule);

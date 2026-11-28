@@ -272,14 +272,13 @@ impl super::Object {
     /// Whether code holds what this object's slots hold, so a raw store that skips
     /// `note_value_write` must not write them: a prototype's or a read global object's.
     pub(crate) fn observes_value_writes(&self) -> bool {
-        self.holds_constant_mark() || self.was_used_as_prototype() || self.global_values().is_some()
+        self.was_used_as_prototype() || self.global_values().is_some()
     }
 
     /// A write to slot `slot` of this object: what it offers its inheritors, or as a global
     /// object by name, may change.
     #[inline(always)]
     pub(crate) fn note_value_write(&mut self, slot: usize) {
-        self.note_constant_write();
         if self.was_used_as_prototype() {
             super::prototype_values::retire(self.exact_shape());
             if let Some(extras) = self.extras() {

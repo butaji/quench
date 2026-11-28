@@ -162,7 +162,6 @@ impl Object {
     }
 
     pub fn set_proto(&mut self, proto: Value) {
-        self.note_constant_write();
         self.note_prototype_layout_change();
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
     }
@@ -244,11 +243,8 @@ impl Object {
     #[inline(always)] pub(super) fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
-        // A storage change ends the object's constancy (`note_constant_write`): its readers
-        // retire here, and the new word carries no mark.
-        self.note_constant_write();
         let (meta, current) = (self.meta(), self.aux());
-        let auxiliary = (auxiliary & !crate::value_vec::CONSTANT_FORM) | (current & crate::value_vec::EXOTIC_ACCESS);
+        let auxiliary = auxiliary | (current & crate::value_vec::EXOTIC_ACCESS);
         let flags = meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
         let position = start & VALUE_VEC_START_BITS;
         if properties.has_inline_property_storage() {

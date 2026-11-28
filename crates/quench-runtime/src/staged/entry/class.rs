@@ -40,8 +40,7 @@ pub fn class_slot_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word)
         #[inline(always)] |stage| inline_address(stage, cell, slot))
 }
 
-/// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store. The gate
-/// leaves no constant mark standing: a constant-marked class has no key (`Heap::live_class_key`).
+/// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store.
 #[inline(always)]
 pub fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
     let address = class_slot_address(stage, cell, slot);

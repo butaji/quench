@@ -18,7 +18,7 @@
 
 use super::cell::{ProtoLink, header_word};
 use crate::staged::object_encoding::{CAPACITY_CLASSES, DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS, region_field_capacity};
-use crate::value_vec::{CONSTANT_FORM, SHAPE_LIMIT, SHAPE_MASK};
+use crate::value_vec::{SHAPE_LIMIT, SHAPE_MASK};
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
 #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
@@ -168,9 +168,9 @@ pub(crate) fn intern(word: u64) -> u32 {
 }
 
 /// The class word's flag bits beyond shape and link, in header-word positions: the
-/// auxiliary flags (constant mark, exotic access, dictionary storage) in the low half, the meta
+/// auxiliary flags (exotic access, dictionary storage) in the low half, the meta
 /// flags (array, non-extensible, frozen) in the high half. `intern_class` takes them as `flags`.
-pub(crate) const CLASS_FLAG_MASK: u64 = (CONSTANT_FORM | EXOTIC_ACCESS | DICTIONARY_STORAGE) as u64
+pub(crate) const CLASS_FLAG_MASK: u64 = (EXOTIC_ACCESS | DICTIONARY_STORAGE) as u64
     | ((OBJECT_ARRAY | NON_EXTENSIBLE | FROZEN) as u64) << u32::BITS;
 
 /// The capacity-region bits of a class word, in its auxiliary word: bits 22 to 24 hold the cell's region `k`
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn class_round_trips_shape_link_and_flags() {
         let link = ProtoLink::from_bits(0x0123_4567 & PROTO_INDEX_BITS);
-        let flags = CONSTANT_FORM as u64 | ((FROZEN | OBJECT_ARRAY) as u64) << u32::BITS;
+        let flags = EXOTIC_ACCESS as u64 | ((FROZEN | OBJECT_ARRAY) as u64) << u32::BITS;
         let id = intern_class(1234, link, flags, 3);
         assert_eq!(class_shape(id), 1234);
         assert_eq!(class_link(id), link);
