@@ -112,7 +112,7 @@ impl LaneMethod {
     /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
     /// caches and the values its folded reads hold of prototypes), whose change retires it and
     /// sets `invalidation`: the word its rows read, whose address its code names.
-    fn of_base_body(tiers: &Tiers, body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
+    fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
@@ -127,7 +127,7 @@ impl LaneMethod {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: Some(memory), entry,
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::compiled::admission::Tier::Base) || !direct.is_empty(),
+            caller_registers: registers, frame_reach: body.scratch,
             direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
@@ -146,7 +146,7 @@ impl LaneMethod {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &[]), stable: StableFacts::default(), invalidation, _code: None, entry,
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
             names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
-            caller_registers: registers, frame_reach: scratch, amortizes: true,
+            caller_registers: registers, frame_reach: scratch,
             direct: Box::new([]), proven_calls: false, closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
         }
     }
@@ -210,11 +210,8 @@ impl Vm {
         // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
         // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
         let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
-        let Some(mut method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
+        let Some(mut method) = LaneMethod::of_base_body(built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
         method.exits = ExitTable::of_code(code);
-        // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
-        // length, as a Cranelift body does (`start_lane_method`).
-        if !method.amortizes_entry() && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }.map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
@@ -222,40 +219,35 @@ impl Vm {
     /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
-    /// run first, or is too short for its entry to pay (`amortizes_entry`).
+    /// run first.
     /// The unit `base_body_work` compiles `function` as, or the outcome the gate gives where it
-    /// declines (`admission::specialize`): not covered, too short to repay its entry (refused as
-    /// `NotAmortized`), or indexing a typed parameter.
-    pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+    /// declines (`admission::specialize`): not covered, or indexing a typed parameter.
+    pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value])
+        -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // An execution-only build (no `jit`) runs no stencil tier.
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, parameters, caller);
+            let _ = (program, function, parameters);
             return Err(LaneBodyOutcome::Declined);
         }
         #[cfg(feature = "jit")]
-        self.base_unit_or_outcome_compiled(program, function, parameters, caller)
+        self.base_unit_or_outcome_compiled(program, function, parameters)
     }
 
     #[cfg(feature = "jit")]
-    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value])
+        -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {
             covers: super::base_region::covers(&code),
-            amortizes: super::body_may_amortize(self.programs.tiers(), body, crate::compiled::admission::Tier::Base),
-            called_by_bodies: caller.called_by_bodies(),
             indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
             ..Default::default()
         };
         match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }) {
             super::admission::Decision::Compile(unit) => Ok(unit),
-            super::admission::Decision::Short => { refuse(self, Refusal::NotAmortized); Err(LaneBodyOutcome::Short) }
             super::admission::Decision::Declined => Err(LaneBodyOutcome::Declined),
-            super::admission::Decision::Unpaid => unreachable!("a stencil body's gate decides only Short or Declined"),
         }
     }
 

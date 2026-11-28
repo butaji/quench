@@ -535,8 +535,7 @@ impl Vm {
         let facts = lane_compile::LaneMethodFacts {
             unit, stable: lane_region::StableFacts { roots, slots, holders, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
-            // An AOT program's lane tier is the AOT mode's, for every function (`tier_policy::AOT_LANE_TIER`).
-            tiers: self.programs.tiers(), tier: quench_runtime::vm::tier_policy::AOT_LANE_TIER, fault_poll, exits, summary: None,
+            fault_poll, exits, summary: None,
             // An image body dumps its linked code like a JIT body (`jit-dump`), for instruction-level profiles.
             clif: super::native_dump_directory().map(|_| String::new()),
             proven_calls: images.image.calls.iter().any(|site| site.function == function),

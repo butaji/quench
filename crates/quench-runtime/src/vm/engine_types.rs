@@ -953,8 +953,6 @@ pub struct LaneMethod {
     /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
     /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
     pub frame_reach: usize,
-    /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
-    pub amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     pub direct: Box<[DirectCallee]>,
     /// Whether its code calls callees by their entries through an AOT image's call records
@@ -1585,8 +1583,6 @@ pub enum LaneBody {
 pub struct LaneBodyHistory {
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
     pub unpaid: bool,
-    /// Whether its body was declined for its length alone (`LaneBodyOutcome::Short`).
-    pub short: bool,
     /// Whether a caller's compile asked for its body (`LaneView::demand_body`).
     pub demanded: bool,
     /// Whether a loop region called it while it had no body (`LaneView::note_native_caller`).
@@ -5254,11 +5250,6 @@ impl LaneView {
     /// Whether a loop region called it while it had no body (`note_native_caller`).
     #[inline]
     pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
-
-    /// Whether a body compiled a call of this function (`note_caller`): native callers want its
-    /// body whatever its length, which only the lane's own entries ask to amortize.
-    #[inline]
-    pub fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// A specialized body that went at a lifecycle edge warms again from the start: a call site's behavior
     /// outlives the shape ids the edge renumbered.

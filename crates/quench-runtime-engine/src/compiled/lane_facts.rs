@@ -4,7 +4,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::vm::tier_policy::Tier;
 use quench_runtime::vm::tier_policy::PredictedTier;
 use std::collections::BTreeMap;
 
@@ -48,29 +47,6 @@ pub(crate) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidat
 pub(crate) fn entry_pc(unit: &lane_unit::Unit, header: Option<u32>) -> Option<Option<usize>> {
     let Some(header) = header else { return Some(None) };
     unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header)).map(Some)
-}
-
-
-/// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
-pub(crate) fn closes_loop(code: &[quench_runtime::bytecode::WideInstruction]) -> bool {
-    code.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
-}
-
-/// Whether one entry of `unit` repays the body's entry cost (`Priors::body_entry_ns`): the one
-/// such predicate, shared by every compile gate and by the published method. A body has work
-/// that amortizes an entry, which costs a few hundred instructions the lane's own run of a short
-/// leaf never pays: a loop, an inlined call, a call of itself (its recursion runs natively inside
-/// the entry), or length (`Tiers::amortizing_instructions`, which counts the inlined callees'
-/// instructions too, as they are in `unit.instructions`).
-pub(crate) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee], tier: Tier) -> bool {
-    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier)
-}
-
-/// Whether a body of `function` calls itself directly: one entry then runs a native call tree
-/// rather than one straight line, as a loop does. Recursion through other functions is `CallGraph::in_cycle`'s.
-fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
-    direct.iter().any(|callee| callee.target.function == function)
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -163,17 +139,4 @@ pub(crate) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn
             lane_unit::Origin::Caller(origin) => targets(function, origin),
             lane_unit::Origin::Inlined { frame, pc } => targets(unit.frames[frame].target.function, pc),
         }.is_empty())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_straight_line_unit_repays_its_entry_from_the_tier_length() {
-        // The length threshold is `Tiers::amortizing_instructions`, checked per tier by
-        // `tier_policy`'s `each_lane_body_tier_has_its_own_amortizing_length`.
-        let priors = &tier_policy::TEST_PRIORS;
-        assert_eq!(quench_runtime::test_support::repaying_length(&priors, priors.body_share), 48);
-    }
 }
