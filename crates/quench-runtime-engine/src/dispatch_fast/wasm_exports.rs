@@ -34,7 +34,7 @@ impl quench_runtime::staged::wasm_activation::WasmExportCall for LaneExportCall 
         let (cx, i) = (self.cx, unsafe { &*self.i });
         let vm = unsafe { vm(cx) };
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        (unsafe { (*cx).script_calls }) && (!returns || returning_call_admitted(cx)) && vm.execution_mode != ExecutionMode::Compiled
+        (unsafe { (*cx).script_calls }) && (!returns || returning_call_admitted(cx)) && !quench_runtime::vm::tier_policy::wasm_runs_native(vm.execution_mode)
     }
     #[inline(always)]
     fn export(&mut self) -> Option<LaneExport> {

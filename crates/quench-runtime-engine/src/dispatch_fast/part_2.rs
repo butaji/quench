@@ -980,7 +980,7 @@ pub(super) fn native_value_in_lane(
                 vm.data_view_access_of(Native::DataViewSetFloat64, receiver, args)
             };
             if value.is_some() {
-                if vm.execution_mode == quench_runtime::vm::ExecutionMode::Compiled {
+                if quench_runtime::vm::tier_policy::feeds_compiled_tiers(vm.execution_mode) {
                     vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
                 }
                 return value;

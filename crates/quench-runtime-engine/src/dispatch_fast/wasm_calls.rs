@@ -75,7 +75,7 @@ impl WasmNativeEntry for LaneCall<'_> {
     type Resume = Resumed;
     #[inline(always)]
     fn native_mode(&mut self) -> bool {
-        unsafe { vm(self.cx) }.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
+        quench_runtime::vm::tier_policy::wasm_runs_native(unsafe { vm(self.cx) }.execution_mode) && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
     }
 
     /// The lane makes no compile: one an entry makes due leaves for the general loop (`HandoffTiers`).

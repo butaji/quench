@@ -157,6 +157,48 @@ pub fn cranelift_runs() -> bool {
     crate::jit_mode::tiers_allowed(Tier::CRANELIFT)
 }
 
+/// Whether the lane runs a program that has no loaded AOT image: one compiled at run time, a callback a native makes into
+/// script, or a deferred call. Native-only execution (and a build without dynamic execution) runs AOT images alone.
+#[inline(always)]
+pub fn interprets_unimaged(mode: crate::ExecutionMode) -> bool {
+    mode.allows_dynamic_execution()
+}
+
+/// Whether the lane-body tier claims functions in this VM (`ProgramStore::js_jit_lane_methods_enabled`): a callee may
+/// take the tier prologue rather than a lane activation, and may be entered across programs.
+#[inline(always)]
+pub fn lane_bodies_claim(programs: &crate::vm::program_store::ProgramStore) -> bool {
+    programs.js_jit_lane_methods_enabled()
+}
+
+/// Whether a loaded AOT image's bodies run where the lane enters them: the lane-body tier claims them, or they are the
+/// only code (`interprets_unimaged` is false).
+#[inline(always)]
+pub fn images_run_in_lane(mode: crate::ExecutionMode, programs: &crate::vm::program_store::ProgramStore) -> bool {
+    lane_bodies_claim(programs) || !interprets_unimaged(mode)
+}
+
+/// Whether a regexp's native search is stitched from the stencil rows (`stencils`: the target has them) rather than
+/// built by the Cranelift tier: BaseJIT runs and Cranelift does not.
+#[inline(always)]
+pub fn regexp_stitches(stencils: bool) -> bool {
+    stencils && base_runs() && !cranelift_runs()
+}
+
+/// Whether execution records the run-time feedback a compiled tier reads when it compiles later (such as
+/// `ProgramStore::note_js_jit_dataview_float64`): only where tiers compile at run time, compiled execution.
+#[inline(always)]
+pub fn feeds_compiled_tiers(mode: crate::ExecutionMode) -> bool {
+    mode == crate::ExecutionMode::Compiled
+}
+
+/// Whether a Wasm function runs as the module's native code rather than the lane's records: compiled execution. A lane
+/// call of a Wasm export then enters the native entry, and the lane does not activate it in place.
+#[inline(always)]
+pub fn wasm_runs_native(mode: crate::ExecutionMode) -> bool {
+    mode == crate::ExecutionMode::Compiled
+}
+
 /// What `policy` lets the tiers compile.
 pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]
