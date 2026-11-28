@@ -7457,7 +7457,7 @@ impl Vm {
     pub(crate) fn wasm_module_unit(&self, program: ProgramId) -> Option<admission::CompiledUnit> {
         let code = self.programs.get(program)?;
         let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() };
-        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
+        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts })
     }
 
     pub(crate) fn native_execution_rejections(&self) -> u64 {
@@ -7506,7 +7506,7 @@ impl Vm {
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
             base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
-            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
+            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).is_none() {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
@@ -7723,7 +7723,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }) else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -8122,7 +8122,7 @@ impl Vm {
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
@@ -8160,7 +8160,7 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,

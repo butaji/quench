@@ -7,7 +7,7 @@ use super::*;
 
 /// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
 fn mode_compiles_bodies() -> bool {
-    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default(), fresh: false }).compiled().is_some()
+    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).is_some()
 }
 
 #[quench_macros::ext(LaneViewSpecializeOps)]

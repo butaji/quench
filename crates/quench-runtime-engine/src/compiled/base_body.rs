@@ -245,10 +245,7 @@ impl Vm {
             indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
             ..Default::default()
         };
-        match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }) {
-            super::admission::Decision::Compile(unit) => Ok(unit),
-            super::admission::Decision::Declined => Err(LaneBodyOutcome::Declined),
-        }
+        super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }).ok_or(LaneBodyOutcome::Declined)
     }
 
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
