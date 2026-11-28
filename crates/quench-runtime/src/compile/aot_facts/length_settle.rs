@@ -18,6 +18,9 @@ use crate::dataflow::BitSet;
 use crate::typed_ir::ElementClass;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// What one round's length relations prove, which the next round's solve reads (`Ctx`): the allocations filled, the element
 /// stores that write no hole, the element reads in bounds, and the spans the element stores cover, each by (function, pc). Round 1

@@ -11,6 +11,9 @@ use crate::bytecode::{Operand, OperandKind, Register, WideInstruction};
 use crate::typed_ir::{ElementClass, Length, Type};
 use crate::staged::{Callee, Comparison, Invocation, Operation};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// What a step may resize: no array (`Nothing`), every array (`Every`: a mutator, or guest code the solve does not follow), or the
 /// arrays of the element classes the call at a point may write (`Calls`, `Types::call_writes`).

@@ -7,10 +7,16 @@
 //! - Closures (`closures_once`): a body whose closure is created at most once per run, so every value of it is one object.
 //! - Receivers (`this_undefined`): a function every call of which passes an undefined receiver, so its raw `this` is
 //!   `undefined` at entry.
+//! - The global object (`Identity::GlobalObject`, `global_object_proof`): the root's `this` of a Script, the value of a
+//!   `globalThis` read, and a sloppy function's `this` where its calls are plain. One proof holds for all three, because a
+//!   cell carries no source: the program never writes `globalThis` or the global object's shape is fixed, and every sloppy
+//!   function a plain call binds `this` of is one `this_undefined` names. Narrower per-source proofs would need a cell to
+//!   name its source, which `Identity` does not.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::census::Census;
+use super::scope::Scope;
 use super::escapes::{self, Escapes};
 use super::flow::FunctionFlow;
 use super::gate::{self, World};
@@ -20,12 +26,13 @@ use super::AotFacts;
 use crate::bytecode::{Op, ResidualProgram, may_repeat};
 use crate::typed_ir::{Cell, Classes, Identity};
 
-/// The identity a cell holds once the closed world settles it: a builtin or a closure the proofs keep stays (it is the proof the
-/// lane reads, `Cell::identity`); any other proposed builtin or closure is `Many`. Applied to every settled register and fact cell
-/// after the proofs above are built, so an `Identity` a lane reads is always a proven one.
+/// The identity a cell holds once the closed world settles it: a builtin, the global object or a closure the proofs keep stays
+/// (it is the proof the lane reads, `Cell::identity`); any other proposed builtin, global object or closure is `Many`. Applied
+/// to every settled register and fact cell after the proofs above are built, so an `Identity` a lane reads is always a proven one.
 pub(super) fn proven(facts: &AotFacts, cell: Cell) -> Cell {
     let identity = match cell.identity {
         Identity::Builtin(path) if !facts.builtin_identity(path) => Identity::Many,
+        Identity::GlobalObject if !facts.global_object_identity() => Identity::Many,
         Identity::Closure(body) if !facts.closure_identity(body) => Identity::Many,
         other => other,
     };
@@ -63,6 +70,25 @@ pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[F
         !named_definer && call.arguments.iter().any(|argument| argument.cell.classes == Classes::Many || argument.cell.global)
     }));
     (!unshaped_definer).then(|| Proofs::of(flows))
+}
+
+/// Whether a `GlobalObject` identity holds in every run of the closed program (`AotFacts::global_object_identity`), where the
+/// settled solve has `this_undefined` as its receivers' proof. Three conditions:
+/// - the global object keeps its `globalThis` binding (`Proofs::global_object_identity_fixed`): the program never writes that
+///   name, and no store or define reaches a name the analysis cannot follow, so a by-name read of it is the realm's global object;
+/// - every sloppy function a plain call may reach is one `this_undefined` names: its calls all pass an undefined receiver, no
+///   code the solve does not follow calls it, and no other receiver reaches it, so its `this` is the global object at every entry.
+/// False where the solve is not closed (no builtin proofs).
+pub(super) fn global_object_proof(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope,
+    this_undefined: &BTreeSet<u32>) -> bool {
+    let Some(proofs) = facts.builtins.as_ref() else { return false };
+    if !proofs.global_object_identity_fixed(scope.global_this()) { return false; }
+    flows.iter().enumerate().all(|(caller, flow)| flow.calls.iter().filter(|call| call.plain).all(|call| {
+        types::targets(caller as u32, call, facts, census).into_iter().all(|target| {
+            let sloppy = flows.get(target as usize).is_none_or(|callee| !callee.strict);
+            !sloppy || this_undefined.contains(&target)
+        })
+    }))
 }
 
 /// The bodies whose closure is created at most once per run (`AotFacts::closure_identity`): a body with exactly one

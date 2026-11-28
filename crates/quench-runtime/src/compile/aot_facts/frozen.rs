@@ -31,6 +31,9 @@ use super::gate::{self, World};
 use super::types::targets;
 use super::value::{Key, Word};
 use super::AotFacts;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The single store of a frozen key: the root's store of an immediate, which dominates every read of the key.
 #[derive(Clone, Copy, PartialEq, Eq)]

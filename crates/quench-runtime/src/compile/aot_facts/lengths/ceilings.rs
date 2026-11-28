@@ -21,6 +21,9 @@ use crate::staged::{NumberOperation, Operation};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The most forms an end of an interval holds. An end past it is unbounded, which is what makes the join's fixpoint finite.
 pub(super) const MAX_TERMS: usize = 4;

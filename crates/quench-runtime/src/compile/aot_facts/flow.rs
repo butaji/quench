@@ -20,6 +20,9 @@ use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Representation, WIDENING_ROUNDS};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
