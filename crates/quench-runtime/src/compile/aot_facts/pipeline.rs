@@ -173,7 +173,8 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         types: Option<&types::Types>, feedback: &length_settle::Feedback| -> Vec<FunctionFlow> {
         let mut flows: Vec<FunctionFlow> = (0..program.function_count())
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, classes, names, types, feedback)))
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments),
+                program.register_root_masks(id as u32).and_then(|masks| masks.get(0)), resolved, classes, names, types, feedback)))
             .collect();
         copies::expand(&mut flows, scope.assign, scope.prototype);
         flows

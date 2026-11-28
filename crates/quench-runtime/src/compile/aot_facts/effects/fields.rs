@@ -163,7 +163,11 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             // An owner of no value yet (`Type::NEVER`: a pass from the bottom, or a function no call reaches) is no object yet, so
             // the store puts no value yet: its keys are written (a read of them is no host value) with nothing a later pass
             // that sees the owner does not add.
-            let landed = owner.cell.ty != Type::NEVER;
+            // An owner the solve types as no object yet (no class, no literal site, no closure, not the global object: a read off
+            // one reads no class's stores, `stored_member_type`) is the same: the store lands with the pass that gives it its class.
+            let objectless = owner.cell.classes == Classes::Never && owner.cell.sites == Sites::Never && owner.class_site().is_none()
+                && !owner.cell.global && !owner.cell.prototype;
+            let landed = owner.cell.ty != Type::NEVER && !objectless;
             let value_word = if landed { state[usize::from(value)] } else { Word::of_cell(Cell::NEVER) };
             events.writes.push((Key::Member(atom), value_word));
             events.member_bases.push((atom, Holders::of(owner.cell)));

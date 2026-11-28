@@ -227,6 +227,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         registers: usize::from(function.registers),
         // The settled replay starts each block from the solve's entry registers alone (`FunctionFlow::entries`).
         tracked_locals: 0,
+        dynamic_scope: function.has_dynamic_scope_access(),
         whole_literals: &whole[..],
         types: Some(types),
         decode,

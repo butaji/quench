@@ -7,7 +7,7 @@ use super::scope::Scope;
 use super::types::targets;
 use super::value::{Key, Origin, Word};
 use super::AotFacts;
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Sites, language_bit};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Sites, language_bit};
 use super::copies::literal_fields;
 use crate::typed_ir::Type;
 use crate::ValueType;
@@ -79,7 +79,7 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
         callees
     }).collect()).collect();
     // The functions that run with no call the flows record: the roots (and a Module's declarations, which the host imports), the
-    // accessors, and the closures stored under a name a builtin reads with no instruction of the program (a conversion's
+    // accessors, and the closures stored under a name a builtin calls with no instruction of the program (a conversion's
     // `valueOf`, a thenable's `then`, `scope::Scope::protocols`). Every other function runs only where a live one calls it, or
     // where it escapes. A function that never runs hands nothing to unseen code and stores nothing.
     let mut seeds: BTreeSet<u32> = (0..flows.len() as u32).filter(|&id| scope.parent(id).is_none() || scope.is_module() && scope.parent(id).is_some_and(|parent| scope.parent(parent).is_none())).collect();
@@ -251,6 +251,9 @@ impl Handed {
         // A method call on a receiver no value reaches yet (`Type::NEVER`, a pass from the bottom) runs nothing yet.
         // One whose receiver is only `null` or `undefined` throws before it reads the method, and runs nothing either.
         if call.receiver.cell.ty.is_subtype(Type::NULLISH) && method_atom(call).is_some() { return; }
+        // A register call whose callee no value reaches yet (a pass from the bottom) runs nothing yet: what it hands is handed
+        // once a pass gives its callee a value, so the escapes grow with the types instead of starting from every function.
+        if call.target == Target::Register && call.callee.cell.ty == Type::NEVER { return; }
         let callees = targets(function, call, facts, census);
         if resolved(call, &callees, census) || builtin_array_call(call, &callees, scope) { return; }
         // A plain call, or one on the global object, may run its callee with a `this` the solve does not follow.
@@ -399,7 +402,7 @@ impl Round<'_> {
                 for word in self.defined.clone() { held.push(word); reach.add(word, self, &mut held); }
             }
             let before = named.len() + elements.len();
-            let (taken, rest): (Vec<_>, Vec<_>) = named.into_iter().partition(|&(key, _)| census.live(fact_key(key)) || reach.reaches(key));
+            let (taken, rest): (Vec<_>, Vec<_>) = named.into_iter().partition(|&(key, _)| census.live(fact_key(key)) || reach.reaches(key, census));
             named = rest;
             for (_, word) in taken {
                 held.push(word);
@@ -489,12 +492,31 @@ impl Reach {
         }
     }
 
-    /// Whether unknown code holding these objects can read a store under `key`.
-    fn reaches(&self, key: Key) -> bool {
+    /// Whether unknown code holding these objects can read a store under `key`. A store under a name on an object of no one class
+    /// (`Key::MemberAny`, and the name-wide `Key::Member`) lands on one of the objects its name's stores write on
+    /// (`Census::member_holders`): unknown code reads it only where it may hold one of them.
+    fn reaches(&self, key: Key, census: &Census) -> bool {
         match key {
             Key::MemberOn { class, .. } => self.every || self.classes.contains(&class),
+            Key::Member(atom) | Key::MemberAny(atom) => self.object && (self.every || self.holds(census.member_holders(atom))),
             _ => self.object,
         }
+    }
+
+    /// Whether a held object may be one of `holders`: a class or a literal site they share, a literal of no known site where
+    /// `holders` names literals, or any held object where `holders` does not know its objects (`Many`).
+    fn holds(&self, holders: Holders) -> bool {
+        let classes = match holders.classes {
+            Classes::Never => false,
+            Classes::Many => true,
+            classes => classes.ids().iter().any(|class| self.classes.contains(class)),
+        };
+        let sites = match holders.sites {
+            Sites::Never => false,
+            Sites::Many => true,
+            sites => self.unsited || sites.set().is_some_and(|sites| sites.iter().any(|site| self.sites.contains(&(site.function, site.pc)))),
+        };
+        classes || sites
     }
 }
 
@@ -547,8 +569,11 @@ pub(super) fn resolved(call: &Call, callees: &[u32], census: &Census) -> bool {
         (Target::Register, Some(Origin::MemberOn { class, instance: false, atom, guess: false }))
             if call.receiver.cell.ty.body_index() == Some(census.classes.body(class)) =>
             !census.live_callee(call.callee) && census.static_method(class, atom, callees),
+        // A method read the solve types as one closure (`Census::guessed` takes it as a proof) runs that closure, whatever the
+        // receiver's classes: the call is resolved as `Census::target` resolves it.
         (Target::Register, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => {
-            !census.live_callee(call.callee) && census.own_methods(call.receiver.cell.classes, atom, callees)
+            !census.live_callee(call.callee) && (census.own_methods(call.receiver.cell.classes, atom, callees)
+                || call.callee.cell.ty.body_index().is_some_and(|callee| callees == [callee]))
         }
         _ => !census.guessed(call.callee),
     }

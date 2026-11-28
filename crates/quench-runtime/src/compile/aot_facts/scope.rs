@@ -70,7 +70,7 @@ pub(super) struct Scope {
     module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
-    /// The atoms of the names a builtin reads off an object with no read instruction of the program (`readers::PROTOCOL_NAMES`).
+    /// The atoms of the names a builtin calls off an object with no instruction of the program (`readers::PROTOCOL_CALLED`).
     pub(super) protocols: std::collections::BTreeSet<u32>,
     /// The atom `globalThis` interns to, if the program names it: the one global name the realm installs as the global
     /// object itself (`GlobalObject`). `global` is the host's alias of it, and `self` and `window` are not installed.
@@ -134,7 +134,7 @@ impl Scope {
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
             module: matches!(program.kind, ProgramKind::Module),
-            protocols: program.atoms.iter().enumerate().filter(|(_, name)| super::readers::PROTOCOL_NAMES.contains(&name.as_ref())).map(|(atom, _)| atom as u32).collect(),
+            protocols: program.atoms.iter().enumerate().filter(|(_, name)| super::readers::PROTOCOL_NAMES[..super::readers::PROTOCOL_CALLED].contains(&name.as_ref())).map(|(atom, _)| atom as u32).collect(),
             constant_types: program.constants.iter().zip(constant_atoms(program))
                 .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             constant_numbers: program.constants.iter().map(|constant| match constant {

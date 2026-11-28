@@ -31,12 +31,17 @@ use crate::typed_ir::{Cell, Classes, FactKey, Type};
 #[allow(unused_imports)]
 use crate::staged::glue_prelude::*;
 
-/// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
+/// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`). The first
+/// `PROTOCOL_CALLED` are the ones a builtin calls (a conversion's `valueOf`, a thenable's `then`, a descriptor's `get`); the rest
+/// it only reads as data (an error's `name`, an iterator result's `value`).
 pub(super) const PROTOCOL_NAMES: [&str; 33] = [
-    "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "length", "next", "done", "value", "return",
-    "throw", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll",
-    "hasIndices", "exec", "join", "message", "name", "cause", "index", "input", "groups", "get", "set",
+    "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "next", "return", "throw", "exec", "join", "get",
+    "set", "length", "done", "value", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode",
+    "unicodeSets", "dotAll", "hasIndices", "message", "name", "cause", "index", "input", "groups",
 ];
+
+/// How many of `PROTOCOL_NAMES`, from the first, a builtin calls.
+pub(super) const PROTOCOL_CALLED: usize = 13;
 
 
 /// The global object whose methods read none of their receiver's properties (their arguments are still sinks).
