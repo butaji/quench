@@ -315,17 +315,22 @@ pub(crate) fn derive_lane_view<'live>(
                 Some(LaneHandler { handler: derived_frames::super_construct_in_frame as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
                 Some(LaneHandler { handler: returning_handler(kind), produces: false })
-            } else if let Some(index) = typed_element {
+            } else if let Some(index) = typed_element.filter(|_| acc == ACC_NONE) {
                 Some(LaneHandler {
                     handler: element_typed_row(quench_runtime::staged::element_read_family(op), index),
                     produces: false,
                 })
-            } else if let Some(handler) = named_read_row(vm, instruction) {
-                Some(LaneHandler { handler, produces: false })
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                handler_in_lane(backward_jump, acc, op as usize)
+                // The installed row of the opcode and accumulator; where that is the first-run field read, the load
+                // chooses its row from the atom and base instead (`named_read_row`), keeping the row's `produces`.
+                handler_in_lane(backward_jump, acc, op as usize).map(|row| {
+                    match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
+                        Some(handler) => LaneHandler { handler, ..row },
+                        None => row,
+                    }
+                })
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
@@ -362,6 +367,10 @@ pub(crate) fn derive_lane_view<'live>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
+            // The kind's index goes to the immediate only where the typed row was the one chosen; any other row keeps
+            // the record's own immediate (a store's strictness among them).
+            let typed_element = typed_element.filter(|&index| selected.is_some_and(|selected| selected.handler as usize
+                == element_typed_row(quench_runtime::staged::element_read_family(op), index) as usize));
             let handler = selected.map_or(exit_lane as Handler, |selected| selected.handler) as *const ();
             LaneInstruction {
                 handler,
