@@ -115,6 +115,7 @@ fn add_chain_stores(
     this: Value,
     stores: &[(ProgramId, InitializerStore)],
     argument: &impl Fn(u16) -> Value,
+    fixed: bool,
     each: &mut dyn FnMut(&InitializerStore, Value),
 ) -> bool {
     let running = vm.active_program;
@@ -131,7 +132,7 @@ fn add_chain_stores(
         let code = unsafe { &*code };
         // Each class's atoms name its own program's fields, which the running program's facts do not
         // settle, so every chain store is kept.
-        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_| true, |_, _| None, &mut *each);
+        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_| true, fixed, |_, _| None, &mut *each);
         if !added {
             break;
         }
@@ -189,7 +190,7 @@ pub(crate) fn super_construction(
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
     let argument = construct_argument_in_lane(r, i);
-    let (this, added) = initialize_stores_in_lane(vm, callee, root, Value::UNDEFINED, |vm, this, _, each| add_chain_stores(vm, this, &stores, &argument, each))?;
+    let (this, added) = initialize_stores_in_lane(vm, callee, root, Value::UNDEFINED, |vm, this, fixed, _, each| add_chain_stores(vm, this, &stores, &argument, fixed, each))?;
     added.then(|| {
         plan_super_parent(vm, callee);
         this

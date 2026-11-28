@@ -2384,10 +2384,14 @@ impl FixedUnion {
     pub fn cell_slots(&self, names: &[crate::bytecode::Atom]) -> Option<[u8; CONSTRUCT_PLAN_FIELDS]> {
         let mut slots = [0; CONSTRUCT_PLAN_FIELDS];
         for (field, name) in names.iter().enumerate() {
-            let slot = self.atoms().iter().position(|atom| atom == name)?;
-            slots[field] = u8::try_from(slot).ok()?;
+            slots[field] = u8::try_from(self.slot_of(*name)?).ok()?;
         }
         Some(slots)
+    }
+
+    /// The union slot `atom` names, `None` where it names no union slot.
+    pub fn slot_of(&self, atom: crate::bytecode::Atom) -> Option<usize> {
+        self.atoms().iter().position(|&name| name == atom)
     }
 
     /// A fixed class's union of `shape` (`Vm::fixed_union`) with no names yet.
