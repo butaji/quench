@@ -4658,6 +4658,19 @@ impl Lowering<'_, '_> {
                         (*known == site).then_some(*binding));
                     Some((*store, binding))
                 }).collect();
+            // A fixed class's receiver is no record: its stores project their union slots in its cell (`fixed_loop_store`).
+            let mut record_stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> = smallvec::SmallVec::new();
+            for (store, binding) in stores {
+                match receiver {
+                    Some((owner, _)) if self.fixed_class(store, Some(owner)).is_some() => {
+                        if let Some(loop_store) = self.fixed_loop_store(state, store, owner) {
+                            self.loop_stores.insert(store, loop_store);
+                        }
+                    }
+                    _ => record_stores.push((store, binding)),
+                }
+            }
+            let stores = record_stores;
             let object_header = if !stores.is_empty() {
                 receiver.map(|(owner, _)| self.object_header(state, Some(owner), false, exit))
             } else { None };
