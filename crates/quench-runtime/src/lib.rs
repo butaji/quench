@@ -250,19 +250,3 @@ pub mod native_image;
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
-
-// Library tests run with the layer crates compiled in as modules: a layer crate names this crate
-// `quench_runtime` and its own root `crate`, so both resolve here (`quench-layers` links the
-// layer crates into every other build).
-#[cfg(test)]
-extern crate self as quench_runtime;
-#[cfg(test)]
-#[path = "../../quench-runtime-intl/src/lib.rs"]
-mod intl_layer;
-#[cfg(test)]
-use intl_layer::*;
-#[cfg(test)]
-#[path = "../../quench-runtime-engine/src/lib.rs"]
-mod engine_layer;
-#[cfg(test)]
-use engine_layer::*;
