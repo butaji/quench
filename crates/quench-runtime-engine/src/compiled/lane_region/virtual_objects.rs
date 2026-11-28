@@ -403,14 +403,11 @@ impl Lowering<'_, '_> {
             let argc = self.raw_const(Lane::I64, count as i64);
             let class = self.raw_const(Lane::I64, i64::from(kept.class));
             let payload = self.payload;
-            // The plan held at the construction and nothing since could retire it: the allocation
-            // cannot refuse for the plan, and a due collection is no refusal (DESIGN 4.7). Were the
-            // plan refused anyway, the answer is `DELETED`, which the code does not resume with: it
-            // is a violated invariant, so the trap stops the code rather than resume with a register
-            // that names no object.
+            // The helper cannot refuse: the plan held where `virtual_construct` tested it, and only
+            // instructions that neither call, store nor construct ran since (`keeps_virtuals`).
+            // A refusal would be a violated invariant, which the helper panics on rather than
+            // returning a register that names no object (`compiled::constructions`).
             let this = self.helper_call(LaneHelper::MaterializeConstruct, &[payload, callee, class, arguments, argc]);
-            let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
-            self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
             self.bind_allocated(state, &kept.aliases, this);
         }
     }
