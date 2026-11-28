@@ -121,4 +121,8 @@ pub enum FieldPlan<'a> {
     /// slot word past the cell's spill slot (`field_cache_layout::spilled_slot`), which `cell_field` decodes. Where
     /// `hole` the class may leave the field absent (`!AotFacts::field_always_stored`): the read then leaves at the miss.
     Fixed { slot: u32, hole: bool },
+    /// A nested lookup `a.b.c` whose two hops are fixed cells (`Fixed` of each link, `AotFacts::hop_class` naming the
+    /// second): `base` is the site's base, `first` the base object's field, `second` the intermediate object's, each as
+    /// `Fixed` reads it. No guard runs.
+    FixedChain { base: FieldBase, first: (u32, bool), second: (u32, bool) },
 }

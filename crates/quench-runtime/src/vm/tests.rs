@@ -1311,7 +1311,7 @@ fn shape_compaction_clears_own_field_hints() {
 #[test]
 fn nested_reads_follow_their_first_steps_hint_across_shapes() {
     // A nested read's record keeps the own entry its first step last hit as its hint
-    // (`lane_nested_value`): bases of two layouts holding the first field at different
+    // bases of two layouts holding the first field at different
     // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
     // gains a field mid-run each read the field the layout in hand holds. Expected value is
     // Node's (v26).

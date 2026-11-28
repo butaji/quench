@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::getters::{lane_read_getter, set_getter_hint, GetterMemo, LaneGetterAnswer};
+use super::getters::{lane_read_getter, GetterMemo, LaneGetterAnswer};
 use quench_runtime::staged::call_getter::step_getter_answer_of;
 use quench_runtime::staged::Concrete;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};
@@ -68,31 +68,9 @@ impl AccessorCall {
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
         let value = step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, base)?;
-        let slot = self
-            .getter_field_slot(getter, base)
-            .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
-        if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-        }
+        // No getter's own field is held as a hint: the record moves to the getter protocol row for good.
+        requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
         Some(value)
-    }
-
-    /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
-    /// by the field cache entry its record answers with.
-    fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
-        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::frameless(Frameless::Reads))?;
-        let vm = unsafe { vm(self.cx) };
-        (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
-        // SAFETY: a `CallEntry::frameless(Frameless::Reads)` target of the running program.
-        let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of(&target) }? else {
-            return None;
-        };
-        let entry = vm.field_cache_entry(cache);
-        let receiver = vm.heap_reads().object_record_by_id(vm.heap_reads().record_id(base.direct_object_index()?)?);
-        (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
-            && entry.holder == NO_FIELD_HOLDER
-            && entry.receiver == receiver.exact_shape())
-        .then(|| entry.record_slot())
     }
 
     /// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`

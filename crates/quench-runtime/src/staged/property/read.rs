@@ -90,12 +90,21 @@ pub fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
         FieldPlan::Private { atom } => frame.private_field(stage, object, atom, miss),
         // The receiver is a fixed cell of a proved class: its cell is addressed with no guard. The slot word decodes
         // inline or spilled (`cell_field`); a hole the class may hold leaves at `miss`.
-        FieldPlan::Fixed { slot, hole } => {
-            let cell = super::super::object::cell_of(stage, object);
-            let slot = stage.constant(u64::from(slot));
-            if hole { super::super::entry::cell_own_field(stage, cell, slot, miss) } else { Some(super::super::entry::cell_field(stage, cell, slot)) }
+        FieldPlan::Fixed { slot, hole } => fixed_read(stage, object, (slot, hole), miss),
+        FieldPlan::FixedChain { base: _, first, second } => {
+            let middle = fixed_read(stage, object, first, miss)?;
+            fixed_read(stage, middle, second, miss)
         }
     }
+}
+
+/// The field of a fixed class cell `object` (`FieldPlan::Fixed`): its slot word `slot`, where `hole` the class may leave
+/// the field absent, a leave at `miss`.
+#[inline(always)]
+pub fn fixed_read<S: Stage>(stage: &mut S, object: S::Word, (slot, hole): (u32, bool), miss: S::Miss) -> Option<S::Word> {
+    let cell = super::super::object::cell_of(stage, object);
+    let slot = stage.constant(u64::from(slot));
+    if hole { super::super::entry::cell_own_field(stage, cell, slot, miss) } else { Some(super::super::entry::cell_field(stage, cell, slot)) }
 }
 
 /// A prototype-held read (`FieldPlan::Inherited`) of `owner`'s `object`: the receiver's exact shape and the
