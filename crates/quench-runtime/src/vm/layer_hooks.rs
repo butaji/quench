@@ -68,6 +68,9 @@ layer_hooks! {
     /// Installs the JIT's compile routes (the engine's `jit_routes`) and every lane handler, as
     /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
     fn enable_jit => quench_layer_enable_jit() -> ();
+    /// The creation edge of body `body`'s one closure in `program`, once its closure cell is written (`Vm::note_closure_created`):
+    /// the layer binds the proven calls of the image that fold that body's closure.
+    fn closure_created => quench_layer_closure_created(vm: &mut Vm, program: ProgramId, body: u32) -> ();
     /// Resolves the planned arms of `class` (a class id: a constructor's function id or a synthetic class) in `program` once its header is recorded:
     /// `prototype` is the prototype its instances hold, which holds the arms' methods. Called after the header is set,
     /// so a planned row that reads the header reads a target already resolved. The class-header edge makes the call

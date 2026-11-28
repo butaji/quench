@@ -2,8 +2,10 @@
 //! the closures the program makes. A record starts as the image's template, naming the unbound callee record
 //! (`unbound_callee_record`), so its rows refuse every call to the VM's. A binding makes a callee record for the
 //! closure (`CalleeRecord`) and names it from the site (`CallRecord::callee_record`). It binds to the closure of the
-//! proven function that its program's closure cell holds, when a publication of its function's lane body installs
-//! (`Vm::install_ahead_body`). A site whose closure is not created yet stays unbound: its calls go to the VM's.
+//! proven function that its program's closure cell holds: at the creation edge of that closure (`Vm::note_closure_created`,
+//! `bind_closure_records`), or at the install of its function's lane body (`Vm::install_ahead_body`), whichever is later.
+//! A site whose closure is not created yet stays unbound: its calls go to the VM's. A body's install moves its entry cell's
+//! validity, so the records that name the cell take it then (`refresh_cell`).
 //! A site binds at most `POLYMORPHISM` closures, a site's feedback width; past it, the VM's call keeps it.
 //!
 //! Every closure bound stays alive and every descriptor and callee record written stays allocated for the image's
@@ -82,6 +84,20 @@ impl BoundCalls {
         let Some(address) = self.callee_record(key) else { return false };
         // SAFETY: a callee record is the loader's unbound one or a binding's, alive for the image's life; read on this thread.
         (unsafe { (*(address as *const CalleeRecord)).callee }) == callee.to_bits()
+    }
+
+    /// Takes the current validity of entry cell `cell` into every bound callee record that names it (`expected`). Called at
+    /// the edge where the cell's validity moves (a body's install, `Vm::install_ahead_body`): a record that keeps an older
+    /// validity sends every call to the VM's, so each record is refreshed at the edge, not on a call's miss.
+    pub(crate) fn refresh_cell(&self, cell: usize) {
+        let validity = (cell + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
+        // SAFETY: `cell` is a live entry cell of a view of the running program (`LaneView::entry_cell`), read on this thread.
+        let now = unsafe { validity.read() };
+        for record in self.held.records.borrow().iter() {
+            // SAFETY: a bound record is read in place on this thread, while no code that reads it runs (as `names`).
+            let callee = unsafe { &mut *record.get() };
+            if callee.cell == cell as u64 { callee.expected = now; }
+        }
     }
 
     /// Binds record `key` to `direct`, the callee its site resolved. A new callee record holds the callee's words, as a

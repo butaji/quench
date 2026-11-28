@@ -31,6 +31,7 @@ impl Vm {
     pub fn note_closure_created(&mut self, program: ProgramId, body: u32, closure: Value) {
         if self.programs.write_closure_cell(program, body, closure) {
             self.heap.dependencies_mut().widen_cell(ProgramStore::closure_cell_key(program, body));
+            super::layer_hooks::closure_created(self, program, body);
         }
     }
 

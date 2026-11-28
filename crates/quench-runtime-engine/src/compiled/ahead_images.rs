@@ -422,7 +422,7 @@ impl AheadImages {
 /// Whether `direct`, a closure of function `callee`, is what a proven site's row was planned for: it
 /// binds `this` as the row does (`ThisForm`), and its cell holds the facts of a plain activation of
 /// its window (as `DirectFacts::describes` admits a JIT plan's).
-fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
+pub(crate) fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
     let Some(body) = program.function_get(callee as usize) else { return false };
     let this = super::base_region::callees::ThisForm::of(body);
     direct.sloppy.is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
@@ -487,7 +487,7 @@ impl Vm {
         }
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
-        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
+        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); } self.refresh_entry_cell(&linked_live.calls, function);
         Some(published)
     }
 

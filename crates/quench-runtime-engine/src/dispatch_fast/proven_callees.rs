@@ -24,4 +24,27 @@ impl Vm {
         super::compiled::lane_facts::bind_callees(std::slice::from_ref(&direct), view);
         Some(direct)
     }
+
+    /// The creation edge of body `body`'s one closure in `program` (`layer_hooks::closure_created`, once the closure cell is
+    /// written): binds the active image's proven calls of `body` as `ahead_callees` binds them at install, where the site's
+    /// row admits the closure. A site whose closure is not created stays unbound.
+    pub(crate) fn bind_closure_records(&mut self, program: quench_runtime::vm::ProgramId, body: u32) {
+        if program != self.active_program { return; }
+        let Some(code) = self.programs.get(program) else { return };
+        let Some(images) = self.programs.ahead_images(program, &code) else { return };
+        let Some(live) = images.linked.as_ref() else { return };
+        for (key, site) in images.image.calls.iter().enumerate().filter(|(_, site)| site.callee == body) {
+            let Some(direct) = self.proven_callee(&code, (site.function, site.pc), body) else { continue };
+            if crate::compiled::ahead_images::admits_proven(&code, body, &direct) { live.calls.bind(key, direct, self); }
+        }
+    }
+
+    /// Takes the validity of `function`'s entry cell into the bound records that name it (`BoundCalls::refresh_cell`), at
+    /// the edge where the cell took its published body: its validity moves then, and a record that keeps the older one sends
+    /// every call to the VM's.
+    pub(crate) fn refresh_entry_cell(&self, calls: &crate::aot_image::bound::BoundCalls, function: u32) {
+        let cell = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
+            .and_then(super::program_store::derived_lane_view).map(|view| view.entry_cell());
+        if let Some(cell) = cell { calls.refresh_cell(cell); }
+    }
 }
