@@ -7,10 +7,11 @@ use super::scope::Scope;
 use super::types::targets;
 use super::value::{Key, Origin, Word};
 use super::AotFacts;
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, language_bit};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Sites, language_bit};
+use super::copies::literal_fields;
 use crate::typed_ir::Type;
 use crate::ValueType;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What the closed world leaves open: the functions code the solve does not follow may call, the element classes of the
 /// arrays that code may read or write, and the cells that code may hold. `types::Types::of` takes the functions and the
@@ -30,6 +31,13 @@ pub(super) struct Escapes {
     pub(super) classes: BTreeSet<ElementClass>,
     /// The cell of every value an escaped position holds (the sinks and the escaped positions' writes).
     pub(super) sinks: Vec<Cell>,
+}
+
+impl Escapes {
+    /// An assumption of the functions that escape (`pipeline::solve_assumed`), with nothing else open.
+    pub(super) fn assumed(functions: BTreeSet<u32>) -> Self {
+        Self { functions, plain: BTreeSet::new(), passed_this: Vec::new(), classes: BTreeSet::new(), sinks: Vec::new() }
+    }
 }
 
 /// The functions whose closure may reach a position the solve cannot follow, so that code it does not see may call
@@ -64,11 +72,38 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
     let roots: BTreeSet<u32> = flows.iter().enumerate().filter(|(_, flow)| flow.returns_out).map(|(id, _)| id as u32).collect();
     let handed = Handed::of(flows, facts, census, scope);
     let writes: Vec<(Key, Word)> = flows.iter().flat_map(|flow| &flow.writes).map(|&(_, key, word)| (key, word)).collect();
+    // A name-wide store (`Key::Member`) made with its own-class store (`MemberOn`, `MemberAny`) at the same instruction is that
+    // store's mirror: the own-class store, which names the object, decides whether it is held.
+    let own: BTreeSet<(usize, u32, u32)> = flows.iter().enumerate()
+        .flat_map(|(id, flow)| flow.writes.iter().filter_map(move |&(pc, key, _)| match key {
+            Key::MemberOn { atom, .. } | Key::MemberAny(atom) => Some((id, pc, atom)),
+            _ => None,
+        }))
+        .collect();
+    let mirrors: Vec<bool> = flows.iter().enumerate()
+        .flat_map(|(id, flow)| flow.writes.iter().map(move |&(pc, key, _)| (id, pc, key)))
+        .map(|(id, pc, key)| matches!(key, Key::Member(atom) if own.contains(&(id, pc, atom))))
+        .collect();
+    // Every `extends` link any flow makes, agreeing or not: an instance reaches each parent's prototype a link may give it.
+    let mut parents: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    for &(child, parent) in flows.iter().flat_map(|flow| &flow.parents) {
+        parents.entry(child).or_default().insert(parent);
+    }
+    // The classes of each body: the body's own and its synthetic classes (`ClassIds::body`), which a closure of it may construct.
+    let mut bodies: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    for class in 0..census.classes.count() {
+        bodies.entry(census.classes.body(class)).or_default().insert(class);
+    }
     let round = Round {
         handed: &handed,
         reached: read_words(&writes, &handed.read),
         plain_reached: read_words(&writes, &handed.plain_read),
         writes: &writes,
+        mirrors: &mirrors,
+        census,
+        flows,
+        parents: &parents,
+        bodies: &bodies,
         roots: &roots,
         // Every accessor's function, which code the solve does not see may run with any receiver where an object reaches such code.
         accessor_words: census.accessors.functions().map(Word::closure).collect(),
@@ -85,6 +120,9 @@ pub(super) fn escapes(flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
                 mark(&receiver.cell, &materialized, &mut functions);
                 functions.into_iter().map(move |function| (function, this.cell))
             }).collect();
+            if crate::trace::Channel::AotLanes.on() {
+                eprintln!("aot-lanes: escapes {} functions, {} plain", escaped.len(), plain.len());
+            }
             return Escapes { functions: escaped, plain, passed_this, classes, sinks: held.iter().map(|word| word.cell).collect() };
         }
         escaped = next;
@@ -104,6 +142,8 @@ struct Handed {
     /// Per `call`, `apply` or `bind` the solve does not resolve: the function it is called on and its first argument, the
     /// `this` the function runs with.
     this_passes: Vec<(Word, Word)>,
+    /// Per sink, the function and PC that hand it (the `aot-lanes` trace).
+    sources: Vec<(u32, u32, String)>,
 }
 
 impl Handed {
@@ -112,9 +152,14 @@ impl Handed {
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
                 handed.call(id as u32, call, facts, census, scope);
+                if crate::trace::Channel::AotLanes.on() {
+                    let tag = format!("{:?} callee {:?} construct {}", call.target, call.callee.origin, call.construct);
+                    handed.sources.resize(handed.sinks.len(), (id as u32, call.pc, tag));
+                }
             }
             for word in &flow.handed {
                 handed.hand(*word);
+                if crate::trace::Channel::AotLanes.on() { handed.sources.resize(handed.sinks.len(), (id as u32, 0, String::from("handed"))); }
             }
         }
         handed
@@ -168,7 +213,9 @@ impl Handed {
                 }
             }
             None => {
-                self.hand(call.receiver);
+                // A construction's receiver is the object it makes: fresh, holding nothing but its prototype, which is the callee's
+                // and reached through the callee, a sink of its own. So it hands nothing the callee does not.
+                if !call.construct { self.hand(call.receiver); }
                 for argument in &call.arguments {
                     self.hand(*argument);
                 }
@@ -191,42 +238,164 @@ struct Round<'a> {
     reached: Vec<Word>,
     plain_reached: Vec<Word>,
     writes: &'a [(Key, Word)],
+    /// Per write, whether it is a name-wide mirror of an own-class store at the same instruction (`escapes`).
+    mirrors: &'a [bool],
+    census: &'a Census,
+    flows: &'a [FunctionFlow],
+    /// Every `extends` link: the parents each class's prototype may link to.
+    parents: &'a BTreeMap<u32, BTreeSet<u32>>,
+    /// Per function body, the classes a closure of it constructs.
+    bodies: &'a BTreeMap<u32, BTreeSet<u32>>,
     roots: &'a BTreeSet<u32>,
     accessor_words: Vec<Word>,
 }
 
 impl Round<'_> {
     /// The values held once `escaped` is marked, and the ones unknown code may call plainly (`Escapes::plain`). A named store
-    /// is held where an object reader or new code reaches it, but is no plain hand: the method is called with its object.
+    /// is held where new code can move it, or where unknown code can reach its object: a class's own store (`MemberOn`) where
+    /// an instance, the prototype or the constructor of the class or of a class that extends it is held (`Reach`); any other
+    /// named store where any object is held. A held value adds the objects it may be, so the rule is a fixpoint. A named store
+    /// is no plain hand: the method is called with its object.
     fn held(&self, escaped: &BTreeSet<u32>, census: &Census) -> (Vec<Word>, Vec<Word>) {
         let mut held: Vec<Word> = self.handed.sinks.iter().chain(&self.reached).copied().collect();
         let mut plain: Vec<Word> = self.handed.plain.iter().chain(&self.plain_reached).copied().collect();
         // An element store is a plain hand only where its array's class is one the sinks hold: unknown code reads those arrays.
         let held_classes: BTreeSet<ElementClass> = held.iter().filter(|word| word.cell.elements != Elements::NEVER).map(|word| word.elements_key()).collect();
-        let mut object_reader = self.handed.sinks.iter().chain(&self.reached).any(|word| may_be_object(word.cell));
         let mut named = Vec::new();
-        for &(key, word) in self.writes {
+        for (&(key, word), &mirror) in self.writes.iter().zip(self.mirrors) {
             match key {
                 Key::Element(class) => {
                     held.push(word);
                     if held_classes.contains(&class) { plain.push(word); }
                 }
-                Key::Global(_) if census.live(fact_key(key)) => { object_reader |= may_be_object(word.cell); held.push(word); plain.push(word); }
+                Key::Global(_) if census.live(fact_key(key)) => { held.push(word); plain.push(word); }
                 Key::Global(_) => {}
                 Key::Return(function) if escaped.contains(&function) || self.roots.contains(&function) => {
-                    object_reader |= may_be_object(word.cell);
                     held.push(word);
                     plain.push(word);
                 }
+                Key::Member(_) if mirror && !census.live(fact_key(key)) => {}
                 Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_) => named.push((key, word)),
                 Key::Return(_) | Key::Slot { .. } => {}
             }
         }
-        held.extend(named.into_iter()
-            .filter(|(key, _)| object_reader || census.live(fact_key(*key)))
-            .map(|(_, word)| word));
-        if object_reader { held.extend(self.accessor_words.iter().copied()); }
+        let mut reach = Reach::default();
+        let (sinks, reached) = (self.handed.sinks.len(), self.reached.len());
+        for (index, word) in held.clone().into_iter().enumerate() {
+            let every = reach.every;
+            reach.add(word, self, &mut held);
+            if !every && reach.every && crate::trace::Channel::AotLanes.on() {
+                let from = if index < sinks { "sink" } else if index < sinks + reached { "reached" } else { "write" };
+                eprintln!("aot-lanes: escapes open every class from {from} {:?}: {word:?}", self.handed.sources.get(index));
+            }
+        }
+        loop {
+            let before = named.len();
+            let (taken, rest): (Vec<_>, Vec<_>) = named.into_iter().partition(|&(key, _)| census.live(fact_key(key)) || reach.reaches(key));
+            named = rest;
+            for (_, word) in taken {
+                held.push(word);
+                reach.add(word, self, &mut held);
+            }
+            if named.len() == before { break; }
+        }
+        if reach.object { held.extend(self.accessor_words.iter().copied()); }
+        // An instance reaches its constructor (`constructor` up its chain), which unknown code may then call.
+        // Where the held objects name no class set, every class's constructor may be reached so.
+        let constructors: Box<dyn Iterator<Item = u32>> = if reach.every { Box::new(self.bodies.keys().copied()) } else { Box::new(reach.classes.iter().map(|&class| census.classes.body(class))) };
+        held.extend(constructors.map(Word::closure));
         (held, plain)
+    }
+}
+
+/// The objects held values may be, as far as unknown code can reach them (`Round::held`): whether any object is held, and the
+/// classes whose own stores it can read (an instance's, its prototype's or its constructor's, closed under `extends`), or all
+/// of them (`every`) where a held object names no class set (a prototype read, a closure of unknown identity, `Classes::Many`).
+#[derive(Default)]
+struct Reach {
+    object: bool,
+    every: bool,
+    classes: BTreeSet<u32>,
+    /// The literal sites whose values are added.
+    sites: BTreeSet<(u32, u32)>,
+}
+
+impl Reach {
+    /// Adds the objects `word` may be, and the values of the literal objects it may be (`copies::literal_fields`), which unknown
+    /// code reads through it: those are held too, so they are added in turn.
+    fn add(&mut self, word: Word, round: &Round<'_>, held: &mut Vec<Word>) {
+        let mut pending = vec![word];
+        while let Some(word) = pending.pop() {
+            // A primitive (by its type) is no object, whatever classes its cell defaults to (`Classes::of_type`).
+            if !word.cell.ty.may_be_languages(Type::languages(language_bit(ValueType::Object) | language_bit(ValueType::Function))) { continue; }
+            self.object = true;
+            if let Some(sites) = word.cell.sites.set() {
+                for site in sites {
+                    if !self.sites.insert((site.function, site.pc)) { continue; }
+                    match literal_fields(round.flows, Sites::one(*site)) {
+                        Some(fields) => for (_, field) in fields { held.push(field); pending.push(field); },
+                        None => self.every = true,
+                    }
+                }
+            }
+            if self.every { continue; }
+            self.add_classes(word, round);
+        }
+    }
+
+    fn add_classes(&mut self, word: Word, round: &Round<'_>) {
+        let cell = word.cell;
+        if matches!(word.origin, Some(Origin::Prototype(_))) { self.every = true; return; }
+        // A value read off a key no program write reaches, and no write the analysis cannot follow (a host global such as
+        // `console`, a builtin's method), is a host value: it holds a program object only through a store into it, which is a
+        // named store (`MemberAny`, held where any object is) or an element store (always held), so it names no class here.
+        if let Some(origin @ (Origin::Binding(_) | Origin::Member(_))) = word.origin
+            && !round.census.wild_read(origin) && !round.writes.iter().any(|&(key, _)| reads(origin, key))
+        {
+            return;
+        }
+        let mut found: Vec<u32> = Vec::new();
+        let array = matches!(word.origin, Some(Origin::Alloc { .. }));
+        // A closure is no class's instance; it is a constructor, whose static members and `prototype` unknown code reads.
+        // An allocated array is no class's instance either: its cell's classes are its type's default (`Classes::of_type`).
+        match cell.ty.body_index() {
+            Some(body) => found.extend(round.bodies.get(&body).into_iter().flatten().copied()),
+            None if cell.ty.may_be_languages(Type::language(ValueType::Function)) => { self.every = true; return; }
+            None if array => {}
+            None => match cell.classes {
+                Classes::Never => {}
+                Classes::Many => { self.every = true; return; }
+                classes => found.extend_from_slice(classes.ids()),
+            },
+        }
+        // A literal array's elements are its definitions (`effects`), which no element store holds: they are read through it.
+        // An instance's or another object's elements are its element stores, which are held themselves.
+        if cell.ty.body_index().is_none() && (array || cell.sites.set().is_some()) {
+            match cell.elements.ty.body_index() {
+                Some(body) => found.extend(round.bodies.get(&body).into_iter().flatten().copied()),
+                None if cell.elements.ty.may_be_languages(Type::language(ValueType::Function)) => { self.every = true; return; }
+                None => {}
+            }
+            match cell.elements.classes {
+                Classes::Never => {}
+                Classes::Many if cell.elements.ty.may_be_languages(Type::language(ValueType::Object)) => { self.every = true; return; }
+                Classes::Many => {}
+                classes => found.extend_from_slice(classes.ids()),
+            }
+        }
+        while let Some(class) = found.pop() {
+            if self.classes.insert(class) {
+                found.extend(round.parents.get(&class).into_iter().flatten().copied());
+            }
+        }
+    }
+
+    /// Whether unknown code holding these objects can read a store under `key`.
+    fn reaches(&self, key: Key) -> bool {
+        match key {
+            Key::MemberOn { class, .. } => self.every || self.classes.contains(&class),
+            _ => self.object,
+        }
     }
 }
 
