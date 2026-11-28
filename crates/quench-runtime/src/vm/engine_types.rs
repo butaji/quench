@@ -642,8 +642,8 @@ pub struct StringCaseFilter {
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
 /// Two 64-byte lines whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56,
-/// `proven` 64, `numbers` 72, `uses_this` 80, `proven_entry` 88, `proven_body` 96, `stub` 104.
+/// below): `entry` 0, `body` 8, `facts` 16, `recovery` 24, `counters` 32, `scalar` 40, `rows` 48,
+/// `proven` 56, `numbers` 64, `uses_this` 72, `proven_entry` 80, `proven_body` 88, `stub` 96.
 /// Writers: `entry`, `scalar`, `recovery`, `body`, `rows`, `proven`, `numbers`, `uses_this`, `proven_entry` and `proven_body` by `publish`/`withdraw`;
 /// `facts` once per function (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
@@ -655,9 +655,6 @@ pub struct EntryCell {
     /// The function's registers, room, parameters and entry kind (`CellFacts`), which a native
     /// call's admission reads.
     pub facts: std::cell::Cell<u64>,
-    /// What the body's native callers compare to admit a call (the layout epoch the body was
-    /// published under).
-    pub validity: std::cell::Cell<u64>,
     /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
     pub recovery: std::cell::Cell<usize>,
     /// The entry cell's run counters word, which the native code lays out and no run writes.

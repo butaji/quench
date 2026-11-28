@@ -487,7 +487,7 @@ impl Vm {
         }
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
-        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); } self.refresh_entry_cell(&linked_live.calls, function);
+        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
         Some(published)
     }
 

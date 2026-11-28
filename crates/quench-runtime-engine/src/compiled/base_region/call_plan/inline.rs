@@ -427,7 +427,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, fill: quench_runtime::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false, closed: false, descriptor: 0 }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false, closed: false, descriptor: 0 }
     }
 
     fn operand(register: Register) -> u16 {

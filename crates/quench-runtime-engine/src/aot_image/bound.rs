@@ -4,8 +4,7 @@
 //! closure (`CalleeRecord`) and names it from the site (`CallRecord::callee_record`). It binds to the closure of the
 //! proven function that its program's closure cell holds: at the creation edge of that closure (`Vm::note_closure_created`,
 //! `bind_closure_records`), or at the install of its function's lane body (`Vm::install_ahead_body`), whichever is later.
-//! A site whose closure is not created yet stays unbound: its calls go to the VM's. A body's install moves its entry cell's
-//! validity, so the records that name the cell take it then (`refresh_cell`).
+//! A site whose closure is not created yet stays unbound: its calls go to the VM's.
 //! A site binds at most `POLYMORPHISM` closures, a site's feedback width; past it, the VM's call keeps it.
 //!
 //! Every closure bound stays alive and every descriptor and callee record written stays allocated for the image's
@@ -86,23 +85,9 @@ impl BoundCalls {
         (unsafe { (*(address as *const CalleeRecord)).callee }) == callee.to_bits()
     }
 
-    /// Takes the current validity of entry cell `cell` into every bound callee record that names it (`expected`). Called at
-    /// the edge where the cell's validity moves (a body's install, `Vm::install_ahead_body`): a record that keeps an older
-    /// validity sends every call to the VM's, so each record is refreshed at the edge, not on a call's miss.
-    pub(crate) fn refresh_cell(&self, cell: usize) {
-        let validity = (cell + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
-        // SAFETY: `cell` is a live entry cell of a view of the running program (`LaneView::entry_cell`), read on this thread.
-        let now = unsafe { validity.read() };
-        for record in self.held.records.borrow().iter() {
-            // SAFETY: a bound record is read in place on this thread, while no code that reads it runs (as `names`).
-            let callee = unsafe { &mut *record.get() };
-            if callee.cell == cell as u64 { callee.expected = now; }
-        }
-    }
-
     /// Binds record `key` to `direct`, the callee its site resolved. A new callee record holds the callee's words, as a
-    /// JIT plan's callee record does (`DirectFacts::of`): the identity, the cell and the validity the call was planned
-    /// under, the captures and global, the function, the descriptor (the callee's `DirectCallee` address, the native
+    /// JIT plan's callee record does (`DirectFacts::of`): the identity, the cell, the captures and
+    /// global, the function, the descriptor (the callee's `DirectCallee` address, the native
     /// header's descriptor word), the context words, the window and the sloppiness. The site keeps its own words (the
     /// caller's call record and base), and names the new record last, which admits the rows and the AOT lane body's
     /// native call (`call_frames::push_native`). `None` where the site has bound its `POLYMORPHISM` closures already.
@@ -117,10 +102,9 @@ impl BoundCalls {
         held.push(Box::new(direct));
         // The box's contents do not move when the vector grows, so the descriptor address stays valid.
         let direct: &DirectCallee = &**held.last()?;
-        let validity = (direct.cell + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
         let descriptor = std::ptr::from_ref(direct) as u64;
         let callee = Box::new(UnsafeCell::new(CalleeRecord {
-            callee: identity, cell: direct.cell as u64, expected: validity.read(), captures: direct.capture_word(),
+            callee: identity, cell: direct.cell as u64, captures: direct.capture_word(),
             global_this: direct.sloppy.map_or(0, quench_runtime::Value::to_bits), function: u64::from(direct.target.function),
             descriptor, env: direct.target.context_words().0, capture: direct.target.context_words().1,
             registers: u64::from(direct.registers), sloppy: u64::from(direct.sloppy.is_some()) }));

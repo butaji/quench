@@ -32,9 +32,9 @@
 //! lives in the chain: the code that uses the chain must not outlive it.
 //!
 //! Direct admission reads the cell's facts word once at plan time (`CellFacts`: its registers,
-//! room, params and entry kind must describe the callee this site recorded) and the cell's
-//! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
-//! validity sends the call to the helper row, which resolves the target anew.
+//! room, params and entry kind must describe the callee this site recorded). The row loads the
+//! cell's `entry` at each call, so a republish or withdrawal moves it: a withdrawn body's stub sends
+//! the call to the helper row, which resolves the target anew.
 
 #[allow(unused_imports)] use quench_runtime::staged::{InvocationFormsExt};
 #[allow(unused_imports)]

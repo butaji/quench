@@ -33,7 +33,6 @@ pub(super) fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8
     let callee = Box::new(CalleeRecord {
         callee: facts.callee,
         cell: facts.cell as u64,
-        expected: facts.validity,
         captures: facts.captures,
         global_this: facts.global_this.unwrap_or_default(),
         function: u64::from(facts.function),

@@ -9,9 +9,9 @@ pub const WORD_BYTES: u64 = std::mem::size_of::<u64>() as u64;
 
 /// The entry cell, one 64-byte line per function, the one definition every projection reads
 /// (`entry-cell-contract.md`): the interpreter's lane call, the u-jit's native call and the b-jit's
-/// call stencil. `entry` is also the native validity (the stub means not entered); the
-/// interpreter's validity is `epoch` (generation and program, a never-matching value once
-/// retired), compared once against the lane's expected word. `facts` packs registers, room,
+/// call stencil. `entry` is the native validity itself (the stub means not entered): a body's
+/// retirement moves `entry` to the stub, and the code that relied on the body is retired by its
+/// code dependencies, so no call compares a version word. `facts` packs registers, room,
 /// params and the entry kind, one load.
 ///
 /// The cell is per function: the callee closure's `env`, `capture` and view are read from the
@@ -24,7 +24,6 @@ pub struct EntryCellLayoutWords {
     /// The published body (owns the recovery space); read by leave and exit paths only.
     pub body: u64,
     pub facts: u64,
-    pub epoch: u64,
     /// The address of the published body's recovery space (`LaneMethod::recovery_space`).
     pub recovery: u64,
     /// Leaves (low half) and completions (high half), the tier machine's run statistics (`EntryCell::evidence`).
@@ -53,7 +52,6 @@ pub struct EntryCellLayoutWords {
 pub struct CellLayout {
     pub entry_offset: i32,
     pub body_offset: i32,
-    pub validity_offset: i32,
     pub facts_offset: i32,
     pub recovery_offset: i32,
     pub counters_offset: i32,
@@ -66,7 +64,6 @@ pub struct CellLayout {
 pub const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
     body_offset: std::mem::offset_of!(EntryCellLayoutWords, body) as i32,
-    validity_offset: std::mem::offset_of!(EntryCellLayoutWords, epoch) as i32,
     facts_offset: std::mem::offset_of!(EntryCellLayoutWords, facts) as i32,
     recovery_offset: std::mem::offset_of!(EntryCellLayoutWords, recovery) as i32,
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
@@ -147,19 +144,14 @@ impl CellFacts {
     }
 }
 
-/// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
-/// compare) and the values stack from `top` to `end` holds the cell's room past `reserved` words
-/// (the callee's recovery space and the frame context): one pointer compare, `top + (room + reserved)
-/// words <= end`. Returns the room and the window's fill, both read from the one facts word. Entry
-/// kind and argc are decided at site admission or publish, so the admission does not read them.
+/// Admits a native call: the values stack from `top` to `end` hold the cell's room past `reserved` words
+/// (the callee's recovery space and the frame context), else leaves at `miss`: one pointer compare,
+/// `top + (room + reserved) words <= end`. Returns the room and the window's fill, both read from the one
+/// facts word. Entry kind and argc are decided at site admission or publish, so the admission does not read them.
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/call_rows.rs`), which includes this file
 #[inline(always)]
-pub fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, top: S::Word, end: S::Word, reserved: S::Word, miss: S::Miss)
+pub fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, top: S::Word, end: S::Word, reserved: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Word)> {
-    let validity = stage.load_u64(Region::EntryCell.mutable(), cell, CELL.validity_offset);
-    let difference = stage.sub(validity, expected);
-    let valid = stage.eq_imm(difference, 0u32);
-    stage.guard(valid, miss)?;
     let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
     let room = stage.shr_imm(facts, ROOM_SHIFT);
     let room = stage.and_imm(room, u64::from(u16::MAX));

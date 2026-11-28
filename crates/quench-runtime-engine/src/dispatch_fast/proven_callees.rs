@@ -38,13 +38,4 @@ impl Vm {
             if crate::compiled::ahead_images::admits_proven(&code, body, &direct) { live.calls.bind(key, direct, self); }
         }
     }
-
-    /// Takes the validity of `function`'s entry cell into the bound records that name it (`BoundCalls::refresh_cell`), at
-    /// the edge where the cell took its published body: its validity moves then, and a record that keeps the older one sends
-    /// every call to the VM's.
-    pub(crate) fn refresh_entry_cell(&self, calls: &crate::aot_image::bound::BoundCalls, function: u32) {
-        let cell = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
-            .and_then(super::program_store::derived_lane_view).map(|view| view.entry_cell());
-        if let Some(cell) = cell { calls.refresh_cell(cell); }
-    }
 }
