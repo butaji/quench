@@ -10,7 +10,7 @@ use super::value::{Origin, PrototypeBase, Word};
 use crate::bytecode::WideInstruction;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::{Operation, Protocol};
-use crate::typed_ir::Classes;
+use crate::typed_ir::{Classes, Identity};
 
 /// The object a shape changes: the function's own `this` (a store that names it directly), any other
 /// object of the classes the solve names for it (`Classes::Many`: any object), or the prototype object a
@@ -20,13 +20,16 @@ pub(super) enum Owner {
     This(Classes),
     Object(Classes),
     Prototype(PrototypeBase),
+    /// An object the closed world holds as a builtin (`Identity::Builtin`) or as the global object (`Identity::GlobalObject`),
+    /// with the classes its cell names: a store or delete through it writes that builtin's own properties (`quiet::Proofs`).
+    Host(Identity, Classes),
 }
 
 impl Owner {
     /// The classes of the objects this owner may be. A prototype object is no instance, so none.
     pub(super) fn classes(self) -> Option<Classes> {
         match self {
-            Self::This(classes) | Self::Object(classes) => Some(classes),
+            Self::This(classes) | Self::Object(classes) | Self::Host(_, classes) => Some(classes),
             Self::Prototype(_) => None,
         }
     }
@@ -83,15 +86,27 @@ pub(super) fn of_call(ctx: &Ctx<'_>, pc: u32, call: &Call) -> Option<Shape> {
     Some(Shape { pc, owner: Owner::Object(arguments), change: Change::Define })
 }
 
-/// The owner a store through register `base` (`None`: the function's `this`) writes to: a prototype object
-/// where the register holds one (`Origin::Prototype`), else an object of the classes its cell names.
+/// The owner a store through register `base` (`None`: the function's `this`) writes to: a prototype object where the register
+/// holds one (`Origin::Prototype`), the builtin or global object its identity proves (`Owner::Host`), else an object of the
+/// classes its cell names.
 fn owner_of(ctx: &Ctx<'_>, base: Option<usize>, state: &[Word]) -> Owner {
     match base {
-        None => Owner::This(if ctx.is_root { Classes::Many } else { this_fact(ctx).cell.classes }),
-        Some(register) => match state[register].origin {
-            Some(Origin::Prototype(prototype)) => Owner::Prototype(prototype),
-            _ => Owner::Object(state[register].cell.classes),
-        },
+        None if ctx.is_root => Owner::This(Classes::Many),
+        None => {
+            let this = this_fact(ctx).cell;
+            match this.identity {
+                host @ (Identity::Builtin(_) | Identity::GlobalObject) => Owner::Host(host, this.classes),
+                _ => Owner::This(this.classes),
+            }
+        }
+        Some(register) => {
+            let word = state[register];
+            match (word.origin, word.cell.identity) {
+                (Some(Origin::Prototype(prototype)), _) => Owner::Prototype(prototype),
+                (_, host @ (Identity::Builtin(_) | Identity::GlobalObject)) => Owner::Host(host, word.cell.classes),
+                _ => Owner::Object(word.cell.classes),
+            }
+        }
     }
 }
 

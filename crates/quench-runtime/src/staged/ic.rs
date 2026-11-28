@@ -80,10 +80,6 @@ pub enum IcOp<'a> {
     /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
     /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldNumber { watch: u64, value: u64 },
-    /// The own field at `slot` of the record, which a getter's hint returned for a receiver of
-    /// layout `guard` (`getter_own_read`): the record's layout is `guard` and the watch at `watch`
-    /// on its prototype's values still holds, else the read misses. It ends the read.
-    GetterOwn { guard: u64, watch: u64, slot: u16 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -202,7 +198,6 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         }
         IcOp::HeldString { watch, value } => return Break(string_read(stage, at.record, watch, value, miss)),
         IcOp::HeldNumber { watch, value } => return Break(number_read(stage, at.record, watch, value, miss)),
-        IcOp::GetterOwn { guard, watch, slot } => return Break(getter_own_read(stage, at.record, guard, watch, slot, miss)),
     }
     Continue(())
 }

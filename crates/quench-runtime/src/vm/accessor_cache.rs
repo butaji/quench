@@ -36,13 +36,6 @@ impl Vm {
         self.fact_accessor(receiver, PropertyKey::string(atom), false).flatten()
     }
 
-    /// Whether the accessor the site's recorded entry answers for `object` lives on its
-    /// immediate prototype, whose values a hint's watch covers (`hold_getter_hint`).
-    pub fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
-        self.receiver_entry(object, atom, site)
-            .is_some_and(|(receiver, cache)| cache.holder != OWN_ACCESSOR && cache.holder == receiver.proto())
-    }
-
     /// The accessor functions the site's recorded entry answers for `object` (a store's
     /// setter, a read's getter): its getter, and its setter where it has one.
     pub fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<ShapeAccessors> {

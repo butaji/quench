@@ -74,6 +74,9 @@ pub(super) struct Events {
     pub(super) computed_store: bool,
     /// Whether the instruction keys an access into a value that may be the global object (`keyed_global`).
     pub(super) global_keyed: bool,
+    /// Whether the instruction reads `constructor`, or a key that may name it, off a value that may be a function or prototype
+    /// object (`reflective_read`).
+    pub(super) reflective_read: bool,
     pub(super) wild_owner: bool,
     /// The holders of the objects a store under a name the analysis cannot list writes into (`FunctionFlow::wild`).
     pub(super) wild: Holders,
@@ -465,6 +468,7 @@ fn writes(
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
     member_stores(ctx, pc, instruction, operation, state, events);
+    events.reflective_read |= reflective_read(ctx, instruction, &operation, state);
     events.global_keyed |= keyed_global(ctx, instruction, operation, state);
 }
 
@@ -495,6 +499,34 @@ fn keyed_global(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<O
             && instruction.binary_operator() == BinaryOperator::In as u32
             && instruction.operand_c().register_index().is_some_and(flagged),
     }
+}
+
+/// Whether the instruction reads `constructor` off a value that may be a function or a prototype object, or reads a key that may
+/// name it: a prototype chain reaches the `Function` constructor so (`fn.constructor`, `Object.getPrototypeOf(f)[k]` with `k` a
+/// string). Its code is compiled at run time, which the closed world does not see (`gate::verify`).
+fn reflective_read(ctx: &Ctx<'_>, instruction: WideInstruction, operation: &Option<Operation<(), ()>>, state: &[Word]) -> bool {
+    let may_reflect = |base: FieldBase| base_fact(ctx, base, state).is_none_or(|word| {
+        word.cell.prototype || word.cell.ty.may_be_languages(Type::language(crate::ValueType::Function))
+    });
+    let names_constructor = |atom: u32| Some(atom) == ctx.scope.constructor;
+    let key_may_name = |key: Word| match key.origin {
+        Some(Origin::Atom(atom)) => names_constructor(atom),
+        _ => !key.is_number(),
+    };
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
+        return match instruction.field_lookup() {
+            Some(FieldLookup::Atom { atom, base, .. }) => names_constructor(atom) && may_reflect(base),
+            Some(FieldLookup::Site(index)) => ctx.scope.site_paths.get(index).copied().flatten().is_some_and(|(base, first, second)| {
+                (names_constructor(first) || second.is_some_and(names_constructor)) && may_reflect(base)
+            }),
+            None => false,
+        };
+    }
+    if instruction.op() == crate::bytecode::Op::GetIndex {
+        return may_reflect(FieldBase::register(instruction.register_b())) && key_may_name(state[usize::from(instruction.register_c())]);
+    }
+    matches!(operation, Some(Operation::ElementRead { base, key, .. })
+        if may_reflect(FieldBase::register(*base)) && key_may_name(state[usize::from(*key)]))
 }
 
 /// Whether the object a named access reads or stores through `base` may be the global object: its fact (`base_fact`) may

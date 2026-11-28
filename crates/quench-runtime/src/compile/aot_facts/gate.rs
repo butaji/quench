@@ -111,9 +111,12 @@ pub(super) fn openers(program: &ResidualProgram) -> Option<Vec<u32>> {
 pub(super) fn verify(program: &ResidualProgram, openers: &[u32], flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &Escapes) -> bool {
     let reached = reached(program, flows, facts, census, escaped);
     let indexed = flows.iter().zip(&reached).any(|(flow, &live)| live && flow.global_keyed);
+    // A reached read of `constructor`, or of a computed key, off a value that may be a function or a prototype object reaches the
+    // `Function` constructor, whose code no opener site names (`effects::reflective_read`).
+    let reflective = flows.iter().zip(&reached).any(|(flow, &live)| live && flow.reflective_read);
     let escaping = escaped.sinks.iter().any(|cell| cell.global);
     let opened = opener_functions(program, openers).is_some_and(|functions| functions.iter().all(|&function| !reached[function as usize]));
-    opened && !indexed && !escaping
+    opened && !indexed && !reflective && !escaping
 }
 
 /// The functions the solve's call graph reaches: every seed (`seeds`) and every target a reached function's calls may name.

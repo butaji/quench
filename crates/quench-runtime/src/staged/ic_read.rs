@@ -31,25 +31,6 @@ pub fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: 
     Some(stage.add_imm(zero, value))
 }
 
-/// The own field the getter hint `(guard, watch, slot)` records for the object part at `record`:
-/// `None` (leaving at `miss`) where the record's layout word differs from `guard` (`holder_read`'s
-/// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
-/// slot `LoadSlot` reads, as a getter's own-field return is.
-#[inline(always)]
-pub fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
-    miss: S::Miss) -> Option<S::Word> {
-    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
-    let guard = stage.site(guard);
-    let same = stage.eq_imm(words, guard);
-    stage.guard(same, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let at = Reached { shaped: Some(Shaped::of_guard(record)), ..Reached::bare(record) };
-    load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
-}
-
 /// The per-site operand `bits` as a word (a record table's base the row names).
 #[inline(always)]
 pub fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {

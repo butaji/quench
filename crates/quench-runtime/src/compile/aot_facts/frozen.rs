@@ -17,7 +17,7 @@
 //!
 //! Each argument is a greatest fixpoint: a function is late until one of its calls may run before the store.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bytecode::{Constant, Successors};
 use crate::staged::Operation;
@@ -26,7 +26,7 @@ use crate::value::Value;
 use super::blocks::Blocks;
 use super::census::Census;
 use super::escapes::Escapes;
-use super::flow::FunctionFlow;
+use super::flow::{FunctionFlow, Target};
 use super::gate::{self, World};
 use super::types::targets;
 use super::value::{Key, Word};
@@ -69,12 +69,55 @@ pub(super) fn root_stores(program: &crate::bytecode::ResidualProgram, world: Wor
 ) -> BTreeMap<FactKey, RootStore> {
     if world != World::Closed || flows.is_empty() { return BTreeMap::new(); }
     let root = program.function(0);
-    let blocks = Blocks::of(&Successors::of_code(root), root.code.len());
-    let dominators = Dominators::of(&blocks, root.code.len());
-    let mut seeded = vec![false; flows.len()];
-    for seed in gate::seeds(program, flows, census, escaped) {
-        if let Some(slot) = seeded.get_mut(seed as usize) { *slot = true; }
+    let order = RootOrder::of(program, flows, census, escaped);
+    let (writes, reads) = fact_sites(flows);
+    let mut roots = BTreeMap::new();
+    for (&key, sites) in &writes {
+        if wild(census, key) { continue; }
+        let key_reads = reads.get(&key).map_or(&[][..], Vec::as_slice);
+        let Some((pc, word)) = dominating_store(&order, flows, facts, census, sites, key_reads) else { continue };
+        let Some(value) = store_value(program, root, &order.blocks, &order.dominators, pc) else { continue };
+        // The solve's cell of the stored word is no wider than the constant it holds.
+        if !word.cell.ty.is_subtype(Type::immediate(value)) { continue; }
+        roots.insert(key, RootStore { function: 0, pc, cell: word.cell, value });
     }
+    roots
+}
+
+/// The bindings of `flows` (`Key::Global`, `Key::Slot`) that hold a closure, and the bodies those closures are, where no root store
+/// dominates every read of the binding. Such a binding is read before its closure is stored, when it holds `undefined`, so its
+/// closure identity is no proof (`identity::proven`) and `census::single` resolves none of it. Computed over the first pass of the
+/// solve, whose census names the closures a register call may reach (`reached_by`).
+pub(super) fn undominated_closures(program: &crate::bytecode::ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
+    escaped: &Escapes,
+) -> (BTreeSet<Key>, BTreeSet<u32>) {
+    let order = RootOrder::of(program, flows, census, escaped);
+    let mut writes: BTreeMap<Key, Vec<(u32, u32, Word)>> = BTreeMap::new();
+    let mut reads: BTreeMap<Key, Vec<(u32, u32)>> = BTreeMap::new();
+    for (function, flow) in flows.iter().enumerate() {
+        for &(pc, key, word) in &flow.writes {
+            if matches!(key, Key::Global(_) | Key::Slot { .. }) { writes.entry(key).or_default().push((function as u32, pc, word)); }
+        }
+        for &(pc, key) in &flow.key_reads {
+            if matches!(key, Key::Global(_) | Key::Slot { .. }) { reads.entry(key).or_default().push((function as u32, pc)); }
+        }
+    }
+    let mut keys = BTreeSet::new();
+    let mut bodies = BTreeSet::new();
+    for (key, sites) in &writes {
+        let closures: Vec<u32> = sites.iter().filter_map(|(_, _, word)| word.cell.ty.body_index()).collect();
+        if closures.is_empty() { continue; }
+        let key_reads = reads.get(key).map_or(&[][..], Vec::as_slice);
+        if census.wild(*key) || dominating_store(&order, flows, facts, census, sites, key_reads).is_none() {
+            keys.insert(*key);
+            bodies.extend(closures);
+        }
+    }
+    (keys, bodies)
+}
+
+/// The writes and the reads of each frozen key group of `flows`, by key group (`fact_group`), in flow order.
+fn fact_sites(flows: &[FunctionFlow]) -> (BTreeMap<FactKey, Vec<(u32, u32, Word)>>, BTreeMap<FactKey, Vec<(u32, u32)>>) {
     let mut writes: BTreeMap<FactKey, Vec<(u32, u32, Word)>> = BTreeMap::new();
     let mut reads: BTreeMap<FactKey, Vec<(u32, u32)>> = BTreeMap::new();
     for (function, flow) in flows.iter().enumerate() {
@@ -85,20 +128,40 @@ pub(super) fn root_stores(program: &crate::bytecode::ResidualProgram, world: Wor
             if let Some(group) = fact_group(key) { reads.entry(group).or_default().push((function as u32, pc)); }
         }
     }
-    let mut roots = BTreeMap::new();
-    for (&key, sites) in &writes {
-        let [(function, pc, word)] = sites.as_slice() else { continue };
-        if *function != 0 || wild(census, key) { continue; }
-        let Some(value) = store_value(program, root, &blocks, &dominators, *pc) else { continue };
-        // The solve's cell of the stored word is no wider than the constant it holds.
-        if !word.cell.ty.is_subtype(Type::immediate(value)) { continue; }
-        // A store no path from the entry reaches never writes the key.
-        if !dominators.reached(*pc) { continue; }
-        let key_reads = reads.get(&key).map_or(&[][..], Vec::as_slice);
-        if !dominates_reads(flows, facts, census, &seeded, &dominators, *pc, key_reads) { continue; }
-        roots.insert(key, RootStore { function: 0, pc: *pc, cell: word.cell, value });
+    (writes, reads)
+}
+
+/// The root's order facts the dominance rules read: its blocks and their dominators, and the functions a seed or an escape may
+/// start at any time (`seeded`).
+struct RootOrder {
+    blocks: Blocks,
+    dominators: Dominators,
+    seeded: Vec<bool>,
+}
+
+impl RootOrder {
+    fn of(program: &crate::bytecode::ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Self {
+        let root = program.function(0);
+        let blocks = Blocks::of(&Successors::of_code(root), root.code.len());
+        let dominators = Dominators::of(&blocks, root.code.len());
+        let mut seeded = vec![false; flows.len()];
+        for seed in gate::seeds(program, flows, census, escaped) {
+            if let Some(slot) = seeded.get_mut(seed as usize) { *slot = true; }
+        }
+        Self { blocks, dominators, seeded }
     }
-    roots
+}
+
+/// The one write of a key that is a root store dominating every read of it (`key_reads`): the write is the key's only one, in the
+/// root and reached from its entry, and runs before every read. Its PC and the word it writes; None where any of that fails.
+/// Shared by the immediate stores (`root_stores`) and the closure stores (`undominated_closures`).
+fn dominating_store(order: &RootOrder, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, sites: &[(u32, u32, Word)],
+    key_reads: &[(u32, u32)],
+) -> Option<(u32, Word)> {
+    let [(function, pc, word)] = sites else { return None };
+    // A store no path from the entry reaches never writes the key.
+    if *function != 0 || !order.dominators.reached(*pc) { return None; }
+    dominates_reads(flows, facts, census, &order.seeded, &order.dominators, *pc, key_reads).then_some((*pc, *word))
 }
 
 /// The key a write or a read of `key` belongs to: a global's own, a slot's own, and a named property's name-wide group (every
@@ -175,7 +238,7 @@ fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, see
             for call in &flow.calls {
                 let after_store = if caller == 0 { dominators.dominates_pc(store, call.pc) } else { late[caller] };
                 if after_store { continue; }
-                for callee in targets(caller as u32, call, facts, census) {
+                for callee in reached_by(caller as u32, call, facts, census) {
                     if let Some(mark) = late.get_mut(callee as usize) && *mark {
                         *mark = false;
                         changed = true;
@@ -185,6 +248,16 @@ fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, see
         }
         if !changed { return late; }
     }
+}
+
+/// The functions a call may reach: `types::targets`, and for a register call the one closure its callee names where the solve names
+/// none. A call the first pass resolves only through the census (`Census::target`) keeps its callee in the call graph this way.
+fn reached_by(caller: u32, call: &super::flow::Call, facts: &AotFacts, census: &Census) -> Vec<u32> {
+    let mut callees = targets(caller, call, facts, census);
+    if callees.is_empty() && call.target == Target::Register && let Some(function) = census.target(call.callee) {
+        callees.push(function);
+    }
+    callees
 }
 
 /// The immediate dominators of a function's basic blocks, from its entry block (block 0), over the blocks the entry reaches.

@@ -17,14 +17,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::census::Census;
 use super::scope::Scope;
-use super::escapes::{self, Escapes};
-use super::flow::FunctionFlow;
+use super::escapes::Escapes;
+use super::flow::{Call, FunctionFlow, Target};
 use super::gate::{self, World};
 use super::quiet::Proofs;
 use super::types;
 use super::AotFacts;
 use crate::bytecode::{Op, ResidualProgram, may_repeat};
-use crate::typed_ir::{Cell, Classes, Identity};
+use crate::typed_ir::{Cell, Identity};
 
 /// The identity a cell holds once the closed world settles it: a builtin, the global object or a closure the proofs keep stays
 /// (it is the proof the lane reads, `Cell::identity`); any other proposed builtin, global object or closure is `Many`. Applied
@@ -42,10 +42,6 @@ pub(super) fn proven(facts: &AotFacts, cell: Cell) -> Cell {
 /// Names whose presence lets a builtin's property change with no shape the flows record: `Reflect.set` and its kin store
 /// through a builtin that no `Shape` names, so a program naming `Reflect` leaves no builtin proven.
 const REFLECTIVE_NAMES: [&str; 1] = ["Reflect"];
-/// The builtins that define or store properties on the objects they are given (`Scope::adds_properties`). A call of one
-/// through a callee that names none (an alias, or `call`, `apply`, `bind`) records no shape, so a program naming one
-/// treats every call handed an object that may be a builtin as a define.
-const DEFINERS: [&str; 3] = ["defineProperty", "defineProperties", "assign"];
 
 /// Whether the program names `text`.
 fn names(program: &ResidualProgram, text: &str) -> bool {
@@ -56,20 +52,35 @@ fn names(program: &ResidualProgram, text: &str) -> bool {
 }
 
 /// The proofs of the builtins the closed world leaves as the host installed them (`AotFacts::builtin_identity`): `Proofs`
-/// over the settled flows. None where the solve is not closed, or the program names a writer the shapes do not record.
-pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> Option<Proofs> {
+/// over the settled flows. None where the solve is not closed, or the program names a writer the shapes do not record. A call
+/// that may define properties on what it is handed (`may_define`) is a change to each handed value (`Proofs::handed`).
+pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[FunctionFlow], scope: &Scope) -> Option<Proofs> {
     if world != World::Closed || REFLECTIVE_NAMES.iter().any(|name| names(program, name)) {
         return None;
     }
-    let definers_named = DEFINERS.iter().any(|name| names(program, name));
-    let unshaped_definer = definers_named && flows.iter().any(|flow| flow.calls.iter().any(|call| {
-        let named_definer = escapes::method_atom(call).is_some_and(|atom| {
-            let text: &str = program.atoms[atom as usize].as_ref();
-            DEFINERS.contains(&text)
-        });
-        !named_definer && call.arguments.iter().any(|argument| argument.cell.classes == Classes::Many || argument.cell.global)
-    }));
-    (!unshaped_definer).then(|| Proofs::of(flows))
+    let mut proofs = Proofs::of(flows);
+    for call in flows.iter().flat_map(|flow| &flow.calls).filter(|call| may_define(scope, call)) {
+        for handed in call.arguments.iter().chain(std::iter::once(&call.receiver)) {
+            proofs.handed(&handed.cell);
+        }
+    }
+    Some(proofs)
+}
+
+/// Whether a call may define properties on the objects it is handed, by its callee's identity. A call the solve resolves to a
+/// script function, or to a closure, runs that function's own shapes, which its flow records. A callee the identity proves to
+/// be a builtin that defines no property (`Scope::is_property_builtin`) defines none. Any other callee may define on what it is
+/// handed (an alias of `defineProperty`, `call`, `apply`, an unknown method).
+fn may_define(scope: &Scope, call: &Call) -> bool {
+    let callee = call.callee.cell;
+    let script = matches!(call.target, Target::Known(_)) || callee.ty.body_index().is_some() || matches!(callee.identity, Identity::Closure(_));
+    if script {
+        return false;
+    }
+    match callee.identity {
+        Identity::Builtin(path) => scope.is_property_builtin(path.member.unwrap_or(path.global)),
+        _ => true,
+    }
 }
 
 /// Whether a `GlobalObject` identity holds in every run of the closed program (`AotFacts::global_object_identity`), where the

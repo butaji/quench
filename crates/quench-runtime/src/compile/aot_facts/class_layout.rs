@@ -98,7 +98,7 @@ fn claimed_store(shape: &Shape, class: u32, accessors: &Accessors) -> bool {
 /// (an object of unknown class, or a prototype read the census resolves to `class`, or one it does not resolve).
 fn reshapes_prototype(shape: &Shape, class: u32, fields: &[u32], census: &Census) -> bool {
     let may_be_prototype = match shape.owner {
-        Owner::This(classes) | Owner::Object(classes) => classes == Classes::Many,
+        Owner::This(classes) | Owner::Object(classes) | Owner::Host(_, classes) => classes == Classes::Many,
         Owner::Prototype(base) => match census.prototype_owner(base) {
             Some(owner) => owner == class,
             None => true,
@@ -388,7 +388,7 @@ fn binds_this(function: &Function) -> bool {
 /// through it may write any name of a prototype), or a prototype object the census resolves to `class` or cannot resolve.
 fn may_be_prototype(owner: Owner, class: u32, census: &Census) -> bool {
     match owner {
-        Owner::This(classes) | Owner::Object(classes) => matches!(classes, Classes::Never | Classes::Many),
+        Owner::This(classes) | Owner::Object(classes) | Owner::Host(_, classes) => matches!(classes, Classes::Never | Classes::Many),
         Owner::Prototype(base) => census.prototype_owner(base).is_none_or(|owner| owner == class),
     }
 }

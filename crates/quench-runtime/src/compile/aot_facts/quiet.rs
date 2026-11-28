@@ -8,7 +8,7 @@ use super::flow::{Call, FunctionFlow, Target};
 use super::scope::Scope;
 use super::shape::{Change, Owner};
 use super::value::{Key, Origin, Word};
-use crate::typed_ir::{Classes, Sites};
+use crate::typed_ir::{Cell, Classes, Identity, Sites};
 use std::collections::BTreeSet;
 
 /// The argument types a builtin runs no guest code for: a conversion of an object runs `valueOf`, of a Number none.
@@ -149,6 +149,11 @@ impl Proofs {
                 proofs.any_change = true;
             }
             for shape in &flow.shapes {
+                // A change through an object the closed world holds as a builtin or the global object is a write to it.
+                if let Owner::Host(identity, _) = shape.owner {
+                    proofs.host_change(identity, shape.change);
+                    continue;
+                }
                 // A store or delete reaches a builtin's own property only through an object that may be one: any object
                 // (`Classes::Many`) or a prototype object. An instance of a program class (`Classes::Set`) is none.
                 let builtin = match shape.owner {
@@ -166,6 +171,34 @@ impl Proofs {
             }
         }
         proofs
+    }
+
+    /// A change the program makes through an object the closed world holds as `identity`: a store or delete of a builtin's
+    /// property names it (`Field`), and any other change may name any of the builtin's (`Any`, `Define`). On the global object a
+    /// store names a global (`Field`, as `binding_stores` records it), and a delete or define may name any.
+    fn host_change(&mut self, identity: Identity, change: Change) {
+        match (identity, change) {
+            (Identity::Builtin(_), Change::Field(atom)) => {
+                self.stored.insert(atom);
+            }
+            (Identity::Builtin(_), Change::Any | Change::Define) => self.any_change = true,
+            (_, Change::Field(atom)) => {
+                self.written.insert(atom);
+            }
+            (_, Change::Any) => self.global_wild = true,
+            (_, Change::Define) => self.defined = true,
+        }
+    }
+
+    /// A value a call may define properties on (`identity::builtin_proofs`): it may be a builtin (any builtin's property may
+    /// change, `any_change`) or the global object (`defined`, which fails `global_object_fixed`).
+    pub(super) fn handed(&mut self, cell: &Cell) {
+        if matches!(cell.identity, Identity::Builtin(_)) || cell.classes == Classes::Many {
+            self.any_change = true;
+        }
+        if matches!(cell.identity, Identity::GlobalObject) || cell.global {
+            self.defined = true;
+        }
     }
 
     /// Whether the proof `quiet` holds for the whole program. An own-field read is decided by the body, not here.
