@@ -46,18 +46,13 @@ fn chain_runs(tier: Tier) -> Vec<BodyRuns> {
 
 /// Every body ran natively to its end (`ended`) and none left for the general path.
 fn all_native_and_none_left(runs: &[BodyRuns]) {
-    for (name, (ended, left, _)) in NAMES.iter().zip(runs) {
+    for (name, (ended, left)) in NAMES.iter().zip(runs) {
         assert!(*ended > 0, "{name} was never entered natively");
         assert_eq!(*left, 0, "a run of {name} left for the general path");
     }
 }
 
 #[test]
-fn a_base_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
-    all_native_and_none_left(&chain_runs(Tier::BJit));
-}
-
-#[test]
-fn an_ultra_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
-    all_native_and_none_left(&chain_runs(Tier::UJit));
+fn a_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
+    all_native_and_none_left(&chain_runs(Tier::Full));
 }

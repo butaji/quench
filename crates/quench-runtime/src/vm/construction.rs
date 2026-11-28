@@ -569,6 +569,7 @@ impl Vm {
             && let Some(template) = self.recorded_closure_template(id, realm)
         {
             let function = self.closure_of_template(template, env);
+            self.note_closure_created(self.active_program, id, function);
             if let Some(slot) = p.functions.get(id as usize)
                 && self.records_closure(p, &slot.header(), id)
             {

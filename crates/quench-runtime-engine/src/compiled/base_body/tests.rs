@@ -1,6 +1,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::{Engine, JitMode};
+use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;
 use crate::test_oracle::{assert_tier_agrees_after, Expect, Tier};
 use quench_runtime::vm::tier_events::Event;
@@ -11,23 +11,17 @@ pub(crate) mod inlined;
 #[path = "tests/returns.rs"]
 pub(crate) mod returns;
 
-/// What a program prints, run in the interpreter and under `--b-jit`, and the runs of lane bodies
+/// What a program prints, run in the interpreter and compiled, and the runs of lane bodies
 /// the second made (all, and those that completed their activation).
 pub(crate) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
-    run_in(JitMode::BaseOnly, source)
+    run_after(&[], source)
 }
 
-/// `run_both` with the compiled run under `mode`.
-pub(crate) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
-    run_after(mode, &[], source)
-}
-
-/// `run_in` of `source` after the global scripts `scripts` (source and name) ran in the same realm: what they declare
+/// `run_both` of `source` after the global scripts `scripts` (source and name) ran in the same realm: what they declare
 /// is retained in the realm's records when `source` runs. The oracle has the tiers agree and engage; the printed lines
 /// come twice, as the two runs share them.
-pub(crate) fn run_after(mode: JitMode, scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
-    let tier = if mode == JitMode::UltraOnly { Tier::UJit } else { Tier::BJit };
-    let run = assert_tier_agrees_after(scripts, source, tier, Expect::ENGAGED);
+pub(crate) fn run_after(scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+    let run = assert_tier_agrees_after(scripts, source, Tier::Full, Expect::ENGAGED);
     let runs = [Event::Entered, Event::Returned].map(|event| run.events.count(event) as usize);
     (run.outcome.printed.clone(), run.outcome.printed, runs)
 }
@@ -151,7 +145,7 @@ fn a_script_root_loop_over_a_closure_runs_whole_in_a_region() {
          const f = make(3); let t = 0;
          for (let i = 0; i < 300; i++) t = (t + f(i)) | 0;
          print(t);",
-        Tier::BJit,
+        Tier::Full,
         Expect::ENGAGED,
     );
     assert_eq!(run.events.count(Event::OsrLeft), 0);

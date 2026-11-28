@@ -53,6 +53,13 @@ impl Lowering<'_, '_> {
         self.cell_before(pc, register).identity == Identity::Builtin(expected)
     }
 
+    /// Whether the solve proves unit register `register` holds the global object just before the unit instruction at `pc`
+    /// (`Identity::GlobalObject`, proven in every run by the closed world). A site that would compare the register with the
+    /// global object at run time emits no compare where this holds.
+    pub(crate) fn proves_global_object(&self, pc: usize, register: Register) -> bool {
+        self.cell_before(pc, register).identity == Identity::GlobalObject
+    }
+
     /// The builtin the value the unit instruction at `defined` reads by name stands for, named from the program's own atoms
     /// in the solver's naming (`BuiltinPath`, `aot_facts::effects`): a name load of global `g` is `{g, None}`, and a field
     /// read `m` off the register a name load of `g` defined is `{g, Some(m)}`. None where the read names no builtin so.
@@ -105,6 +112,13 @@ impl Lowering<'_, '_> {
         facts.function_facts(function).backing_plain(pc, local)
     }
 
+    /// Whether an unwritten element of a frame array reads as `undefined`: no builtin prototype object has an index property
+    /// in the closed world the facts describe (`AotFacts::prototype_indices_empty`), an edge fact with no run-time check.
+    /// Without facts, it is not known.
+    pub(crate) fn holes_read_undefined(&self) -> bool {
+        self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).prototype_indices_empty())
+    }
+
     /// The fixed class (`AotFacts::class_fixed_cell`) every instance of which the receiver `owner` holds just before the unit
     /// instruction at `pc`: the register's cell (`FunctionFacts::cell_at`) names that one class, proven; `None` names `this`,
     /// whose class is the function's `this_classes`, the unit's own function only (an inlined frame's `this` is its
@@ -122,7 +136,16 @@ impl Lowering<'_, '_> {
                 Origin::Inlined { .. } => return None,
             },
         };
-        proven_class(classes).filter(|&class| facts.class_fixed_cell(class))
+        proven_class(classes).filter(|&class| facts.class_fixed_cell(class) && facts.spill_from(class).is_none())
+    }
+
+    /// The fixed class (`fixed_class`) whose instances the lane may store into in place: its cell is no flag transition
+    /// reaches (`AotFacts::class_writable_cell`), so a store's slot is never frozen out from under it. A store site that
+    /// addresses a fixed cell uses this; a read uses `fixed_class`.
+    pub(crate) fn writable_class(&self, pc: usize, owner: Option<Register>) -> Option<u32> {
+        let class = self.fixed_class(pc, owner)?;
+        let facts = self.vm.facts?;
+        facts.class_writable_cell(class).then_some(class)
     }
 }
 

@@ -70,6 +70,6 @@ fn a_recursive_numeric_function_agrees_with_the_interpreter_through_its_scalar_e
         format!("{wide} globalThis.answer = wide(6) + wide(12);"),
         format!("{fib} {redefined}"),
     ] {
-        assert_tier_agrees(&source, Tier::UJit, Expect::ENGAGED);
+        assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
     }
 }

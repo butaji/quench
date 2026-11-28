@@ -14,7 +14,7 @@ use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
-use super::super::entry_cell::{EntryCell, RAISED_RUN};
+use super::super::entry_cell::EntryCell;
 use quench_bjit::call_record::{CalleeRecord, CallRecord, LaneStatus};
 use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
@@ -66,6 +66,9 @@ pub(crate) struct CallSite<'a> {
     /// `LaneHelper::Construct` (`lane_body_construction`), which is the construction's result; its body is
     /// not entered (`call_enter`), as the VM's own construction does not run it (`initializes()`).
     pub(crate) initializing: Option<(Register, u16)>,
+    /// The class a construction builds its receiver under (`Lowering::construct_class`, a compile-time constant); `None`
+    /// for a call that is no construction, or one whose class is unknown.
+    pub(crate) construct: Option<u32>,
     /// A sibling tail call (DESIGN.md 4.4) of an owned body: the window of the call's arguments (`first`, `count`). The
     /// running frame becomes the callee's, and the body returns through the callee's entry (`tail_call`); the call's
     /// completion is the callee's. `None` where the call pushes its own frame.

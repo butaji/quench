@@ -21,7 +21,7 @@ use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Regist
 use quench_runtime::code_dependencies::InstanceofFact;
 use quench_runtime::typed_ir::{Representation, Type};
 use quench_runtime::value::Value;
-use crate::dispatch_fast::operand_feedback::OperandKinds;
+use crate::operand_class::Site;
 use quench_runtime::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -192,7 +192,7 @@ static LEAVES: Mutex<BTreeMap<(u32, u32), (quench_runtime::bytecode::Op, u64)>> 
 static REPORT: std::sync::Once = std::sync::Once::new();
 
 /// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
-/// cost of the tier machinery around the regions, which `--b-jit` pays whether or not a region exists.
+/// cost of the tier machinery around the regions, which the b-jit tier pays whether or not a region exists.
 #[derive(Clone, Copy)]
 pub(crate) enum Event {
     /// A loop site's run entered published code.
@@ -203,7 +203,7 @@ pub(crate) enum Event {
     Declined,
     /// A compilation of a loop region started (`loop_compile_in_lane`).
     Compiled,
-    /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
+    /// A lane body compile started (a Cranelift function tier; none under the b-jit tier).
     BodyCompile,
     /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
     BodyPlanned,
@@ -342,7 +342,7 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<Site>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();

@@ -82,7 +82,7 @@ impl BoundCalls {
     pub(crate) fn names(&self, key: usize, callee: quench_runtime::Value) -> bool {
         let Some(address) = self.callee_record(key) else { return false };
         // SAFETY: a callee record is the loader's unbound one or a binding's, alive for the image's life; read on this thread.
-        unsafe { (*(address as *const CalleeRecord)).callee } == callee.to_bits()
+        (unsafe { (*(address as *const CalleeRecord)).callee }) == callee.to_bits()
     }
 
     /// Takes the current validity of record `key`'s callee cell where the callee record holds an older one: a cell's

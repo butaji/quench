@@ -455,6 +455,11 @@ impl AotFacts {
             && !self.element_classes.get(&crate::typed_ir::FactKey::Elements(first)).is_some_and(|members| members.contains(&crate::typed_ir::FactKey::Elements(second)))
     }
 
+    /// The class of the construct site at `pc` of function `function` (`construct_classes`), where the closed world names it.
+    pub fn construct_class(&self, function: u32, pc: u32) -> Option<u32> {
+        self.construct_classes.get(&(function, pc)).copied()
+    }
+
     /// The classes some construction (`new`) always constructs (`construct_classes`).
     pub fn constructed_classes(&self) -> std::collections::BTreeSet<u32> {
         self.construct_classes.values().copied().collect()

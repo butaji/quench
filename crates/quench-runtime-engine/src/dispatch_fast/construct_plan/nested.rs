@@ -28,10 +28,12 @@ fn capture_value(vm: &mut Vm, env: Value, capture: u32) -> Option<Value> {
 }
 
 /// A fresh object of `constructor` as its own plans build it from `arguments`, which run no
-/// guest code: `None` where it has no holding plan.
+/// guest code: `None` where it has no holding plan. A nested construction has no construct site
+/// of its own in the bytecode, so its class is the constructor's body (`Vm::ordinary_class`).
 pub(crate) fn nested_construction(vm: &mut Vm, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
-    planned_construction(vm, constructor, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, argument))
+    let class = vm.ordinary_class(constructor);
+    planned_construction(vm, constructor, class, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, class, argument))
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain

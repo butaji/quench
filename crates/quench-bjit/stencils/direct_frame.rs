@@ -21,10 +21,10 @@ use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
 use crate::layout::CALL_CONTEXT_BODY_SHIM;
 use crate::layout::call_record::{CalleeRecord, CallRecord, LaneStatus, PLACED_ARGUMENTS, REGISTER_BYTES};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
+use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
     CELL_USES_THIS_AT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, JS_STEP_ACTIVATION_COUNT,
     JS_STEP_BODY_TABLE, JS_STEP_LANE_VALUES_END, JS_STEP_NATIVE_TABLE, JS_STEP_POP_OBSERVED_HEADER, JS_STEP_RESIDUAL, JS_STEP_VM,
-    PLAIN_DEPTH_LIMIT, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+    PLAIN_DEPTH_LIMIT, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::bytecode::Register;
@@ -244,8 +244,6 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
             }
             Some(LaneStatus::Threw) => {
                 Self::pop(&a);
-                let counters = word_at(a.cell, CELL_COUNTERS_AT);
-                StencilStage::from_hole(0).store_u64(Region::EntryCell.mutable(), a.cell as u64, CELL_COUNTERS_AT as i32, counters.wrapping_add(RAISED_RUN));
                 Ended::Raised
             }
             _ => Ended::Left(body.status, body.value),
@@ -375,7 +373,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames
         // under a bound run or the run's window is a leaf's (`refuse_direct_calls_in_leaf`): the helper row calls then.
         // Comparing against the cell's address instead admitted every call, so a body entered as a leaf pushed its callee
-        // over the leaf's pending activation (crypto's and deltablue's `--b-jit` failures).
+        // over the leaf's pending activation (crypto's and deltablue's failures under the b-jit tier alone).
         if depth + frames > word_at(word_at(payload, PLAIN_DEPTH_LIMIT) as usize, 0) {
             return None;
         }

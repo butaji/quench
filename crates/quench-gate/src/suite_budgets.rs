@@ -97,9 +97,9 @@ const DONE: &str = "DONE";
 const FAIL: &str = "FAIL";
 /// The RSS a run prints when it printed none.
 const UNMEASURED: &str = "?";
-/// The three shipped modes (user, 2026-11-22): interpreter only, b-jit only, and the default (every
-/// tier on), as `sweep3.sh` names them.
-const MODES: [&str; 3] = ["no-jit", "b-jit", "default"];
+/// The three shipped modes (user, 2026-11-22): interpreter only, the default (every tier on), and
+/// AOT, as `sweep3.sh` names them.
+const MODES: [&str; 3] = ["no-jit", "default", "aot"];
 const ENGINES: [&str; 4] = ["node", "bun", "node-jitless", "bun-nojit"];
 const SCORE_TARGET: f64 = 1.5;
 const RSS_TARGET: f64 = 0.5;

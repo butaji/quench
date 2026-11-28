@@ -716,7 +716,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench [--no-jit|--b-jit|--u-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
+            println!("quench [--no-jit] [{}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG);
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}

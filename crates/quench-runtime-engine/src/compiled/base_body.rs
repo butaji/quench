@@ -1,4 +1,4 @@
-//! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
+//! A function's BaseJIT body (the b-jit tier): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
 //! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
@@ -22,6 +22,7 @@ use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::typed_ir::Type;
+use quench_runtime::compile::aot_facts::AotFacts;
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
@@ -217,7 +218,7 @@ impl Vm {
         { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }.map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
 
-    /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
+    /// `function`'s body for lane activations under the b-jit tier: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
     /// run first.
@@ -299,10 +300,11 @@ impl Vm {
             shapes: &[],
         };
         // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
-        let typed: Vec<_> = self.aot_facts_of(program)
+        let facts = self.aot_facts_of(program);
+        let typed: Vec<_> = facts.as_deref()
             .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
-        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &[], seen: &seen, kinds: &[], typed: &typed };
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &[], seen: &seen, facts: facts.as_deref(), typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
@@ -374,7 +376,7 @@ pub(crate) struct ImageBody {
 }
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
-pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<ImageBody, String> {
+pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Result<ImageBody, String> {
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
     // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree
@@ -398,7 +400,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<Ima
         program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
-    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[], typed: &[] };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], facts: Some(facts), typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
     let calls = image_calls(&built)?;

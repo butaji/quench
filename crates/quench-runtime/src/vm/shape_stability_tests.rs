@@ -41,7 +41,6 @@ fn an_object_leaving_a_held_shape_from_a_callee_ends_as_the_interpreter_does() {
     for (name, callee) in FROM_CALLEE {
         eprintln!("departure from a callee: {name}");
         assert_tier_agrees(&program(callee, ""), Tier::Full, Expect::ENGAGED);
-        assert_tier_agrees(&program(callee, ""), Tier::UJit, Expect::ENGAGED);
     }
 }
 
@@ -52,6 +51,5 @@ fn an_object_leaving_a_held_shape_from_outside_ends_as_the_interpreter_does() {
         ("prototype", "Object.setPrototypeOf(pts[0], { z: 7 });"), ("freeze", "Object.freeze(pts[0]);")] {
         eprintln!("departure from outside: {name}");
         assert_tier_agrees(&program("same", between), Tier::Full, Expect::ENGAGED);
-        assert_tier_agrees(&program("same", between), Tier::UJit, Expect::ENGAGED);
     }
 }

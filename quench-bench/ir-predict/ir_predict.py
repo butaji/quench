@@ -19,16 +19,17 @@ usage:
   ir_predict.py ops BINARY PLAN [SETTLED]          ops.js loops: predicted vs ir_budget.txt
   ir_predict.py offfloor BINARY                    handlers measured above their floor, ranked
                                                    (ir_budget_handlers.txt), the excess per op
-  ir_predict.py tiers BINARY PLAN BLOG BDIR ULOG UDIR [TIERS_REPORT]
-                                                   no-jit, b-jit and u-jit per op, flagged where
-                                                   no-jit > b-jit > u-jit <= 3C+6 breaks
+  ir_predict.py tiers BINARY PLAN DLOG DDIR [TIERS_REPORT]
+                                                   no-jit and default per op (AOT is measured only),
+                                                   flagged where no-jit > default <= 3C+6 breaks
 
 PLAN: QUENCH_TRACE=bytecode=lanes quench --no-jit load_only.cjs ops.js 2> PLAN
 SETTLED: the same trace of a run (settle.cjs).
-BLOG/BDIR (ULOG/UDIR): QUENCH_TRACE=jit-dump=BDIR quench --b-jit (--u-jit)
-  jit_dump.cjs ops.js 2> BLOG. The JIT tiers generate code at run time, so their prediction reads the
+DLOG/DDIR: QUENCH_TRACE=jit-dump=DDIR quench
+  jit_dump.cjs ops.js 2> DLOG (the default mode). The JIT tiers generate code at run time, so their prediction reads the
   code they compiled (one warm-up per op, no valgrind): each loop's shortest path from its head to its
-  back edge, the cheapest loop of the code compiled for the op's measured loop. Handler costs are cached beside the binary
+  back edge, the cheapest loop of the code compiled for the op's measured loop. AOT compiles at build time and writes no
+  run-time dump, so it has no prediction here; its measured count is shown. Handler costs are cached beside the binary
 (<binary>.handler-costs.tsv) until the binary changes.
 """
 import bisect, collections, heapq, os, re, subprocess, sys
@@ -397,7 +398,7 @@ def jit_cost(op, head, dumps, directory):
 
 
 def measured_tiers(path):
-    """{op: (no-jit, b-jit, u-jit)} from a `QUENCH_IR_BUDGET_MODE=tiers` gate report."""
+    """{op: (no-jit, default, aot)} from a `QUENCH_IR_BUDGET_MODE=tiers` gate report."""
     rows = {}
     if path and os.path.exists(path):
         for line in open(path):
@@ -410,9 +411,9 @@ def measured_tiers(path):
     return rows
 
 
-def command_tiers(binary, plan_path, bjit_log, bjit_dir, ujit_log, ujit_dir, measured_path=None):
-    """Per op: predicted no-jit, b-jit and u-jit Ir/iter and the design's order,
-    no-jit > b-jit > u-jit <= 3 x C + 6, flagged where the prediction breaks it."""
+def command_tiers(binary, plan_path, dlog, ddir, measured_path=None):
+    """Per op: predicted no-jit and default Ir/iter, the measured three modes, and the design's order,
+    no-jit > default <= 3 x C + 6, flagged where the prediction breaks it."""
     costs = handler_costs(binary)
 
     def static_cost(handler):
@@ -420,9 +421,9 @@ def command_tiers(binary, plan_path, bjit_log, bjit_dir, ujit_log, ujit_dir, mea
         return (menu[0], False) if menu else (through or 0, True)
 
     records, chunks = plan(plan_path, binary)
-    bdumps, udumps = jit_dumps(bjit_log), jit_dumps(ujit_log)
+    dumps = jit_dumps(dlog)
     table, measured = budgets(), measured_tiers(measured_path)
-    print(f"{'op':16}{'no-jit':>8}{'b-jit':>8}{'u-jit':>8}{'C':>7}{'3C+6':>7}  {'measured n/b/u':>22}  predicted breaks")
+    print(f"{'op':16}{'no-jit':>8}{'default':>8}{'C':>7}{'3C+6':>7}  {'measured n/d/a':>22}  predicted breaks")
     flagged, predicted = collections.Counter(), []
     for op, stub in op_functions(chunks):
         body = records.get(chunks[stub])
@@ -430,30 +431,27 @@ def command_tiers(binary, plan_path, bjit_log, bjit_dir, ujit_log, ujit_dir, mea
         head = loop_head(body) if body else None
         if not interp or head is None:
             continue
-        (b, bcalls), (u, ucalls) = jit_cost(op, head, bdumps, bjit_dir), jit_cost(op, head, udumps, ujit_dir)
+        d, dcalls = jit_cost(op, head, dumps, ddir)
         c, _ = table.get(op, (0.0, 0.0))
         budget = 3 * c + 6
         breaks = []
-        if b is None: breaks.append('no b-jit code')
-        elif b >= interp[0]: breaks.append('b-jit>=no-jit')
-        if u is None: breaks.append('no u-jit code')
-        elif b is not None and u >= b: breaks.append('u-jit>=b-jit')
-        if u is not None and c and u > budget: breaks.append('u-jit>3C+6')
-        if bcalls or ucalls: breaks.append(f'calls in loop b={bcalls} u={ucalls}')
-        for brk in breaks: flagged[brk.split(' b=')[0]] += 1
-        predicted.append((op, (interp[0], b, u), (False, bool(bcalls), bool(ucalls))))
+        if d is None: breaks.append('no default code')
+        elif d >= interp[0]: breaks.append('default>=no-jit')
+        if d is not None and c and d > budget: breaks.append('default>3C+6')
+        if dcalls: breaks.append(f'calls in loop d={dcalls}')
+        for brk in breaks: flagged[brk.split(' d=')[0]] += 1
+        predicted.append((op, (interp[0], d), dcalls))
         m = measured.get(op)
         shown = '/'.join(f'{x:.0f}' for x in m) if m else '-'
         show = lambda v: f'{v:8}' if v is not None else '       -'
-        print(f"{op:16}{interp[0]:8.0f}{show(b)}{show(u)}{c:7.1f}{budget:7.1f}  {shown:>22}  {', '.join(breaks)}")
+        print(f"{op:16}{interp[0]:8.0f}{show(d)}{c:7.1f}{budget:7.1f}  {shown:>22}  {', '.join(breaks)}")
     print('# predicted breaks: ' + ', '.join(f'{k} {v}' for k, v in flagged.most_common()))
-    for index, tier in ((1, 'b-jit'), (2, 'u-jit')):
-        pairs = [(p[index], measured[op][index]) for op, p, calls in predicted if op in measured and p[index] and not calls[index]]
-        if pairs:
-            errors = sorted(abs(a - b) / b for a, b in pairs)
-            share = lambda x: 100 * sum(e <= x for e in errors) / len(errors)
-            print(f"# {tier} vs measured, loops without calls: {len(errors)} ops, median error {100 * errors[len(errors) // 2]:.0f}%, "
-                  f"within 10% {share(0.1):.0f}%, within 25% {share(0.25):.0f}%")
+    pairs = [(p[1], measured[op][1]) for op, p, calls in predicted if op in measured and p[1] and not calls]
+    if pairs:
+        errors = sorted(abs(a - b) / b for a, b in pairs)
+        share = lambda x: 100 * sum(e <= x for e in errors) / len(errors)
+        print(f"# default vs measured, loops without calls: {len(errors)} ops, median error {100 * errors[len(errors) // 2]:.0f}%, "
+              f"within 10% {share(0.1):.0f}%, within 25% {share(0.25):.0f}%")
 
 
 if __name__ == '__main__':

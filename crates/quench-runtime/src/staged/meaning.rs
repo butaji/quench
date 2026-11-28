@@ -109,10 +109,3 @@ pub fn means(instruction: impl std::borrow::Borrow<WideInstruction>, meaning: Me
         Meaning::StringCaseIndex => op.is_string_case_index(),
     }
 }
-
-/// Whether the record of `op` carries an operand feedback byte (`operand_feedback`): the loop arms that read
-/// one (`frame_arm`, the one opcode-to-arm map): the generic and numeric arithmetic and the element accesses.
-#[inline(always)]
-pub const fn records_operand_feedback(op: Op) -> bool {
-    matches!(frame_arm(op), FrameArm::Binary | FrameArm::NumericArith | FrameArm::GetIndex | FrameArm::SetIndex)
-}

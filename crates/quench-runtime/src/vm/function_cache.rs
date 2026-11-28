@@ -24,6 +24,16 @@ impl Vm {
         })
     }
 
+    /// The creation edge of a closure: `closure` is the one object of body `body` of `program` that a creation just made (a
+    /// closure over an environment, a recorded template's, a call-only closure). It is written into the body's closure cell
+    /// where the closed world makes the body's closure one object (`ProgramStore::closure_cell`), and that one write retires
+    /// the code subscribed to the cell's key. Every path that creates a closure calls this, and a second creation writes nothing.
+    pub fn note_closure_created(&mut self, program: ProgramId, body: u32, closure: Value) {
+        if self.programs.write_closure_cell(program, body, closure) {
+            self.heap.dependencies_mut().widen_cell(ProgramStore::closure_cell_key(program, body));
+        }
+    }
+
     /// Records `value`, the closure of `program`'s function `function` a lane made, for an image's
     /// `ClosureOf(function)` recipe (`cached_functions`).
     pub fn record_closure(&mut self, program: ProgramId, function: u32, value: Value) {

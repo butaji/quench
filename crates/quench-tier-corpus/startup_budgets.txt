@@ -1,24 +1,19 @@
 # Startup budget for the quench-gate `startup` step (crates/quench-gate/src/startup.rs).
 # One row per measurement: `<case> <mode> <metric> <ceiling>`.
 #   case: empty (an empty .js), hello (console.log("hi")), module (require of a generated 200-function module).
-#   mode: --no-jit, --b-jit, default (no flag, every tier on: the shipped mode).
+#   mode: --no-jit, default (no flag, every tier on: the shipped mode), aot (the program compiled ahead of time).
 #   metric: ir (callgrind instructions of the whole run), rss_kb (peak resident set, wait4 ru_maxrss).
 # A measurement more than 2% over its ceiling fails. More than 10% under it fails too: lower the ceiling.
 # Shrink-only: QUENCH_DEBT_WRITE=1 quench-gate --only startup rewrites the ceilings from the measurements (never up).
 # Binary size and hello wall time are reported per fold by Stabilize (TOD-2228), not gated here.
-empty --b-jit ir 10292853
-empty --b-jit rss_kb 3588
 empty --no-jit ir 10508546
 empty --no-jit rss_kb 3588
 empty default ir 10295831
 empty default rss_kb 3572
-hello --b-jit ir 10938643
-hello --b-jit rss_kb 3596
 hello --no-jit ir 11163964
 hello --no-jit rss_kb 3616
 hello default ir 10950655
 hello default rss_kb 3588
-module --b-jit ir 13324530
 module --no-jit ir 34879429
 module default ir 13321807
 v8-crypto --no-jit rss_kb 7556

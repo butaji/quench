@@ -1533,9 +1533,8 @@ mod tests {
             .programs
             .find_shared(&function.module.program)
             .expect("registered Wasm program");
-        // The entry's argmin (`predicted_tiers`, column 0: not called by a loop) decides whether the
-        // first call compiles the root.
-        let pick = vm.programs.predicted_tiers(program).expect("predicted tiers")[0][0];
+        // The function's argmin (`predicted_tiers`) decides whether the first call compiles the root.
+        let pick = vm.programs.predicted_tiers(program).expect("predicted tiers")[0];
         let compiles = crate::vm::tier_policy::lane_body_tier(pick).is_some();
 
         assert_eq!(

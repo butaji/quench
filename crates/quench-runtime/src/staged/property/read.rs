@@ -12,13 +12,13 @@ pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, obj
     Some(Reached::bare(object_record_of(stage, records, object, miss)?))
 }
 
-/// The object part a plan's ops read from: a class-keyed plan (its first op guards a class) starts from the
+/// The object part a plan's ops read from: a class-keyed plan (its first op guards a class, constant or an ahead image's) starts from the
 /// live class cell, every other from the object's record. The key decides it, so no run-time test chooses.
 #[inline(always)]
 pub fn plan_receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
     object: S::Word, ops: &[IcOp<'_>], miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     match ops {
-        [IcOp::GuardClass(_), ..] => frame.receiver_cell(stage, object, miss),
+        [IcOp::GuardClass(_) | IcOp::GuardImageClass(_), ..] => frame.receiver_cell(stage, object, miss),
         _ => frame.receiver_record(stage, owner, object, readable, miss),
     }
 }
@@ -143,9 +143,6 @@ pub fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
     ops: &[IcOp<'_>], (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), object, &at, *word, (*slot, *rep, *storage_len), miss);
-    }
-    if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return slots::image_layout_slot(stage, frame, (owner, true), object, &at, *key, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest

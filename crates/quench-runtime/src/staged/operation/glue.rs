@@ -114,9 +114,9 @@ impl<W, P> OperationOperationExt<W, P> for Operation<W, P> {
 
     /// Whether the packed step helper runs this operation directly (`dispatch_fast::family_helpers`): its
     /// direct arm reads the operands from the running frame and declines, before any effect, where the
-    /// general step decides. Only the operations whose arms are shared with `Vm::step` and whose miss the
-    /// site's feedback can gate qualify (`write_binary_result`; element sites record `OperandKinds::DENSE`
-    /// and `TYPED`; field sites have no direct arm yet).
+    /// general step decides. Only the operations whose arms are shared with `Vm::step` qualify
+    /// (`write_binary_result`; an element arm declines on any non-dense, non-typed element; field sites
+    /// have no direct arm yet).
     fn direct_helper(&self) -> bool {
         matches!(self, Self::Binary { .. } | Self::ElementRead { .. } | Self::ElementWrite { .. }
             | Self::GetField { .. } | Self::SetField { .. } | Self::LogicalNot { .. } | Self::TypeofIndex { .. })

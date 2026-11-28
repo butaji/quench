@@ -523,6 +523,11 @@ impl Vm {
         for (program, class, layout, prototype) in self.programs.take_restored_classes() {
             self.record_class_edge(program, class, layout, prototype);
         }
+        // The closure cells take their creation edge again, so each restored body's closure is the one the snapshot held
+        // (`ProgramStore::write_snapshot`).
+        for (program, body, closure) in self.programs.take_restored_closures() {
+            self.note_closure_created(program, body, closure);
+        }
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which

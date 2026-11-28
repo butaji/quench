@@ -74,7 +74,7 @@ pub(crate) enum Symbol {
     HolderLink(u32),
     /// The value that holder's slot holds when the code links (`holder_constant`).
     HolderValue(u32),
-    /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
+    /// The class id of the cell a field guard key's construction makes (`guarded_layout`):
     /// `NO_LAYOUT` where the guard does not resolve.
     GuardLayout(u32),
     /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where its
@@ -498,12 +498,12 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
 const NO_LAYOUT: u32 = u32::MAX;
 const _: () = assert!(NO_LAYOUT as usize >= quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY);
 
-/// The layout id of the objects of field guard key `key`'s construction (`guarded_shape`): its
-/// exact shape, its values a plain arena run, under the link of its recipe's prototype
-/// (`ProtoLink::class`). A construction of more fields than inline storage holds keeps its
-/// values in that run, so the id is the class's one representation, and a compare of a record's
-/// own word with it proves the shape, the form and the link. `None` where the guard does not
-/// resolve, or the recipe is of a construction whose fields may stay inline.
+/// The class id of the cell field guard key `key`'s construction (`guarded_shape`) makes: the class a
+/// cell carries, its exact shape and its fields in a class cell's region (`ProtoLink::class`, which
+/// names the prototype's link and the region). A construction of more fields than inline storage holds
+/// is a class cell, so a compare of the live cell's class with this id proves the shape and the link
+/// (`IcOp::GuardImageClass`). `None` where the guard does not resolve, or the recipe is of a construction
+/// whose fields may stay inline.
 pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     let (shape, _, _) = guarded_shape(image, vm, key)?;
     let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;

@@ -4184,30 +4184,31 @@ script_handler! {
 }
 
 /// `operator_row`'s operand forms: any operands (`binary_operation`); two registers; a register and a
-/// constant on the right; a register and an int32 constant on the right; an int32 constant with any
-/// other operand (`int32_binary_operation` for the two int32 forms).
+/// constant on the right; a register and an int32 constant on the right (`int32_binary_operation`, installed only where
+/// the solve proves the register an int32 and the result within int32). Form 4 is retired: an int32 constant with an
+/// operand no fact types is the generic form.
 pub(crate) const OPERANDS_ANY: u8 = 0;
 pub(crate) const OPERANDS_REGISTERS: u8 = 1;
 pub(crate) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(crate) const OPERANDS_REGISTER_INT32: u8 = 3;
-pub(crate) const OPERANDS_INT32: u8 = 4;
 /// Two registers the solve's int32 cells prove int32s (`int32_cell`): read with no tag test.
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the solve's int32 cells prove an int32 and an int32 constant on the right.
 pub(crate) const OPERANDS_PROVEN_INT32: u8 = 6;
-/// Two registers the view did not prove: their int32 tags are tested once per execution, and a pair of
-/// int32s runs the `OPERANDS_PROVEN` instance; any other pair requickens the record to `OPERANDS_REGISTERS` for good.
+/// Two registers the solve does not prove: their int32 tags are tested once per execution, and a pair of
+/// int32s runs the `OPERANDS_PROVEN` instance; any other pair runs the `OPERANDS_REGISTERS` instance.
 pub(crate) const OPERANDS_GUARDED: u8 = 7;
 
 script_handler! {
     /// The lane handler of a plain `Binary` of Number operator `OPERATOR` (a `BinaryOperator`'s value: arithmetic,
     /// bitwise, or a loose equality or relation) whose accumulator field is `ACC`: `generated_row`'s row with the
     /// operator a parameter of the instantiation rather than a field the row decodes and dispatches on. `FORM`
-    /// (`OPERANDS_*`) states the operand kinds the view proved, so the row's operand tests fold, and whether an
-    /// operand is an int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
-    /// `numeric::binary_operation`'s, over the record's own operands. A step that is not a value widens the record
-    /// to the form below it, and at the bottom to `binary_operator_miss` of the same operator, which decides the
-    /// operands' value or leaves the pair to the general step: the record never returns to the operator-reading row.
+    /// (`OPERANDS_*`) is chosen once at load from the solver (`specialize_plain_operators`), and the record keeps it:
+    /// execution never rewrites the record's handler. It states the operand kinds, so the row's operand tests fold,
+    /// and whether an operand is an int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
+    /// `numeric::binary_operation`'s, over the record's own operands. A decline (a step that is not a value) takes
+    /// the operator's generic step in place, `binary_operator_miss` of the same operator, which decides the operands'
+    /// value or leaves the pair to the general step.
     pub(crate) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, FORM: u8>(cx, r, ip, i, view) {
         // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
         unsafe {
@@ -4222,36 +4223,31 @@ script_handler! {
             }
         }
         // The guarded form: each register's int32 tag is tested here, once per execution; an int32 pair runs the
-        // proven instance over the same record, and any other pair requickens the record to its general form for
-        // good. The register kinds are asserted above.
+        // proven instance over the same record, and any other pair runs the general register instance beside it.
+        // The register kinds are asserted above.
         if const { FORM == OPERANDS_GUARDED } {
             // SAFETY: both operands are registers (asserted above).
             let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
             if r.int(left).is_some() && r.int(right).is_some() {
                 sibling!(operator_row::<OP, ACC, OPERATOR, OPERANDS_PROVEN> as Handler, r, ip, view)
             }
-            let general: Handler = operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS>;
-            requicken(ip, general);
-            sibling!(general, r, ip, view)
+            sibling!(operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS> as Handler, r, ip, view)
         }
         let (left, right) = (Operand(i.b), Operand(i.c));
-        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
+        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
         };
         // A Number operator always has a Number operation, so this is the operator's own pure row (`binary_operator_miss`).
         let Some(number) = number else {
-            let value: Handler = crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler;
-            requicken(ip, value);
-            sibling!(value, r, ip, view)
+            sibling!(crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler, r, ip, view)
         };
         let mut stage = Concrete::pure();
         let mut frame = row_frame::<OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
-        // A Number form's refused operands (an int32 overflow, `a * k` past int32) widen to the next form
-        // below, not to the VM's binary call-out: the frame's `binary` makes `step_number` answer every
-        // refusal through the call-out inside the step (`general_operators`), before the widening runs.
-        // The `ANY` form keeps it, as it has no widening of its own.
+        // A Number form's refused operands (an int32 overflow, a non-Number operand) decline to the operator's
+        // generic step (`binary_operator_miss`), not to the VM's binary call-out: without `binary`, `step_number`
+        // answers a refusal as a decline. The `ANY` form keeps the call-out.
         if const { FORM != OPERANDS_ANY } { frame.binary = None; }
         // The int32 constant the view folded into the record's `mode` (`specialize_plain_operators`, which
         // installs this form only with it): an int32 the row knows as one, so its constant's load, bounds
@@ -4264,26 +4260,9 @@ script_handler! {
         if const { FORM == OPERANDS_PROVEN || FORM == OPERANDS_PROVEN_INT32 } { frame.operands_int = true; }
         match quench_runtime::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
-            Step::Control(_) | Step::Unresolved => {
-                // An int32 form whose result left int32 (`h * 31` overflowing, a fraction) widens to
-                // its Number form over the same operands, not to the generic row: only a pair the
-                // Number form refuses too goes generic.
-                // A proven form's result left int32: its checked Number form, over the same proven operands.
-                let widened: Handler = if const { FORM == OPERANDS_PROVEN } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS> as Handler
-                } else if const { FORM == OPERANDS_PROVEN_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
-                } else if const { FORM == OPERANDS_REGISTER_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTER_CONSTANT> as Handler
-                } else if const { FORM == OPERANDS_INT32 } {
-                    operator_row::<OP, ACC, OPERATOR, OPERANDS_ANY> as Handler
-                } else {
-                    // The Number form's operand pair is no Number pair: the operator's own pure operation.
-                    crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler
-                };
-                requicken(ip, widened);
-                sibling!(widened, r, ip, view)
-            }
+            // A decline of any form, proven or chosen from the kinds, takes the operator's generic step in place:
+            // the pure operation for the operator, else the general step. The record keeps its form.
+            Step::Control(_) | Step::Unresolved => sibling!(crate::dispatch_fast::binary_operator_miss::<OPERATOR> as Handler, r, ip, view),
         }
     }
 }

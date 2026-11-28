@@ -58,14 +58,17 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// `lane_body_construction` makes it: the plan's fields, or the initializer's cached adds. Its
     /// body is not entered (`call_enter`), so the helper is the whole construction.
     fn call_receiver(&mut self, stage: &mut Emit<'_, '_>, constructor: ir::Value) -> Option<ir::Value> {
-        if let Some(CallSite { initializing: Some((first, count)), registers, .. }) = self.call_site() {
-            let arguments = stage.add_imm(registers, quench_runtime::staged::word_bytes(first));
+        let call = self.call_site()?;
+        // The class the receiver is built under, a compile-time constant (`compiled::constructions`).
+        let class = stage.constant(u64::from(call.construct?));
+        if let Some((first, count)) = call.initializing {
+            let arguments = stage.add_imm(call.registers, quench_runtime::staged::word_bytes(first));
             let argc = stage.constant(u64::from(count));
             let helper = self.helpers.target(&mut stage.builder, LaneHelper::Construct);
-            return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, arguments, argc]));
+            return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, class, arguments, argc]));
         }
         let helper = self.helpers.target(&mut stage.builder, LaneHelper::ConstructReceiver);
-        Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor]))
+        Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, class]))
     }
 
     /// An indirect callee's window is its record's words, read at run time.
@@ -179,9 +182,6 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LaneStatus::Threw as u32));
         stage.branch(did_raise, (raised, &[]), (left, &[]));
         stage.builder.switch_to_block(raised);
-        let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
-        let counted = stage.add_imm(counters, RAISED_RUN);
-        stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
         self.pop_native(stage, room);
         stage.jump(call.raised, &[]);
         stage.builder.switch_to_block(left);

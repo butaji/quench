@@ -1,4 +1,4 @@
-//! What a loop region's code calls and inlines under `--b-jit`: the callees its call sites
+//! What a loop region's code calls and inlines under the b-jit tier: the callees its call sites
 //! recorded (`RegionCalls`), which its build stitches in or calls by their entries, and what its
 //! published code owns of them (`CallCode`).
 

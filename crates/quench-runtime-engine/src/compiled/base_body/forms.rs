@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::tests::{run_after, run_both, run_in};
-use quench_runtime::JitMode;
 use quench_runtime::bytecode::Op as Opcode;
 use crate::compiled::base_region::fast_rows;
 use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
@@ -206,9 +205,7 @@ fn environment_declarations_and_reads_run_in_a_body_without_leaving() {
          }
          let t = 0; for (let k = 0; k < 300; k++) t = (t + tally(8 + k % 5)) | 0;
          print(t); print(tally(3));";
-    for tier in [Tier::BJit, Tier::UJit] {
-        assert_tier_agrees(source, tier, Expect { completed: 101, leaves: 0 });
-    }
+    assert_tier_agrees(source, Tier::Full, Expect { completed: 101, leaves: 0 });
 }
 
 /// A read of an environment binding in its dead zone raises the interpreter's `ReferenceError`, in every tier.
@@ -221,11 +218,9 @@ fn an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does() {
          }
          let t = 0; for (let k = 0; k < 300; k++) t = (t + dead(k % 4)) | 0;
          print(t); print(dead(3));";
-    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
-        let (interpreted, compiled, [runs, _]) = run_in(mode, source);
-        assert_eq!(interpreted, compiled, "{mode:?}");
-        assert!(runs > 0, "{mode:?}: no body ran");
-    }
+    let (interpreted, compiled, [runs, _]) = run_both(source);
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 0, "no body ran");
 }
 
 /// `new` of a constructor whose locals closures capture activates it as an environment activation and runs its body.
@@ -235,11 +230,9 @@ fn new_of_a_constructor_that_captures_variables_runs_as_a_body() {
          class Box { constructor(n) { let v = n; this.get = () => v; for (let i = 0; i < n; i++) v = v + 1; this.v = v; } }
          let t = 0; for (let k = 0; k < 300; k++) { const a = new Counter(k % 5); const b = new Box(k % 4); t = (t + a.bump() + a.start + b.get() + b.v) | 0; }
          print(t); print(new Counter(3).bump()); print(new Box(2).get());";
-    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
-        let (interpreted, compiled, [runs, _]) = run_in(mode, source);
-        assert_eq!(interpreted, compiled, "{mode:?}");
-        assert!(runs > 100, "{mode:?}: the bodies ran {runs} times");
-    }
+    let (interpreted, compiled, [runs, _]) = run_both(source);
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
 }
 
 /// `v instanceof C` and `'k' in o` as a branch are the comparison's row writing its boolean to a scratch register and the jump on it, as the
@@ -294,7 +287,6 @@ fn global_lexical_bindings_are_read_and_written_live_by_rows() {
     let ops = [Opcode::LoadName, Opcode::StoreName];
     let before = ops.map(fast_rows);
     let (interpreted, compiled, [runs, returns]) = run_after(
-        JitMode::BaseOnly,
         &[("let counter = 0; let limit = 5;", "declarations.js")],
         "function bump(i) { counter = (counter + i) | 0; return counter + limit; }
          function absent() { return missing; }

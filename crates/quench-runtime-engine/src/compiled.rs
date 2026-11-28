@@ -187,7 +187,6 @@ pub(crate) mod wasm_roots;
 pub(crate) mod wasm_simd_stage;
 // The one stitcher every b-jit family places its rows through.
 pub(crate) mod stitcher;
-// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
 pub(crate) mod wasm_specializer;
@@ -196,7 +195,7 @@ pub(crate) mod wasm_specializer;
 pub(crate) mod wasm_image;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_world;
-use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
+use wasm_specializer::{WasmOptimizing, WasmResidual, WasmSpecializer};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
 pub(crate) mod wasm_codes_check;
@@ -2604,47 +2603,6 @@ enum CompiledArgs<'a> {
     },
 }
 
-/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
-/// for every instruction: the `WasmEntry` ABI the compiled entry has. Its World is the shared one
-/// (`Analysis::with_world`), naming this process's cells and callouts.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn stitched_entry(
-    analysis: &Analysis<'_>,
-    index: usize,
-    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
-    memory_slot: Option<u32>,
-    (full_plan, sites): (&Plan, &[(usize, usize)]),
-) -> Option<Vec<u8>> {
-    let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
-    // The indirect call row calls the non-diagnostic reference callout.
-    if !quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils() {
-        return None;
-    }
-    // The program's image may hold the rows already (`wasm_image::linked`).
-    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
-        return Some(rows);
-    }
-    let function = analysis.code.function_get(index)?;
-    // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
-    // the cell holds the entry once placed. A callee that is not callable is called through the
-    // VM (`CALL_VM`), so its callers stitch all the same.
-    let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
-    let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
-    let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    // A growth leaves the base in place only for a reserved (guarded) memory.
-    let memory_stable = memory_slot.is_none_or(|slot| {
-        vm.heap_reads().environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
-    });
-    let naming = wasm_world::Naming { constant: &|_| true, callee: &callee, indirect: &indirect, memory_stable, callouts: wasm_world::Callouts::live() };
-    let returns = plans[index].as_ref()?.result.is_some();
-    analysis.with_world(function, full_plan, memory_slot, naming, |world| wasm_stitch::stitch(function, usize::from(function.params), returns, world))
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stitched_entry(_: &Analysis<'_>, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)])) -> Option<Vec<u8>> {
-    None
-}
-
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
 const NOT_COMPILED: u32 = u32::MAX;
 
@@ -3784,7 +3742,7 @@ impl Vm {
     /// every one below it (`region_lend::lend`), so a plain frame here is a direct call's still running (a
     /// stencil call row's push, whose pop restores the plain depth, window and body top it found). Binding
     /// spills it into a record that pop never removes: each such call that allocated left one record more,
-    /// until the walk over them outgrew the activation limit (ai-astar under `--b-jit`).
+    /// until the walk over them outgrew the activation limit (ai-astar under the b-jit tier alone).
     pub(crate) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
@@ -7517,7 +7475,7 @@ impl Vm {
         if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
             return true;
         }
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
+        // The Cranelift function tiers claim, and so do lane bodies, which the b-jit tier stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
             base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
@@ -8063,16 +8021,12 @@ impl Vm {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = quench_runtime::vm::tier_policy::wasm_module_routes_to_stencils();
-        let isa = if base_only {
-            None
-        } else {
+        let isa = {
             let opt_level = "speed";
             if diagnostics_enabled {
                 eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
             }
-            Some(quench_runtime::vm::jit_backend::target_isa_at(opt_level)?)
+            quench_runtime::vm::jit_backend::target_isa_at(opt_level)?
         };
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
@@ -8110,7 +8064,7 @@ impl Vm {
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
-        // Stitched rows call a function through its cell, filled once the code is placed.
+        // Bodies call a function through its cell, filled once the code is placed.
         let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -8127,108 +8081,38 @@ impl Vm {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
-        // Without an ISA (`--b-jit`) no body or Cranelift entry exists: `bodies` stays empty.
-        let mut bodies = Vec::new();
-        if let Some(isa) = isa.as_deref() {
-            analysis.unrolls = program_unrolls(&code);
-            let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
-            build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
-            let build = build_order.into_iter().map(|index| {
-                let full_plan = full_plans[index].as_ref()?;
-                let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
-                let built = WasmSpecializer {
-                    index,
-                    plans: &plans,
-                    full_plan,
-                    reference_site_ids: &reference_site_ids[index],
-                    admitted,
-                    tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
-                }
-                .specialize(&code);
-                if diagnostics_enabled {
-                    let memory_after = jit_memory_snapshot();
-                    eprintln!(
-                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                        body_memory_before.map(|memory| memory.0),
-                        memory_after.map(|memory| memory.0),
-                        body_memory_before.map(|memory| memory.1),
-                        memory_after.map(|memory| memory.1),
-                    );
-                }
-                let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
-                Some((index, built, entry))
-            });
-            bodies = compile_built_functions(isa, count, self.memory_policy(), build)?;
-        }
-        // Under `--b-jit` each function's entry is its stitched rows. A callee whose stitch fails
-        // has no entry cell, so it leaves `callable` and its callers call it through the VM
-        // (`CALL_VM`) instead of failing. Only a movable memory (`memory_stable` false) refuses
-        // that call, so there a caller still fails with its callee; the set only shrinks.
-        let mut stitched: Vec<Option<Vec<u8>>> = if base_only {
-            let mut callable: Vec<bool> = plans.iter().map(Option::is_some).collect();
-            loop {
-                let codes: Vec<Option<Vec<u8>>> = (0..count)
-                    .map(|index| {
-                        if !callable[index] {
-                            return None;
-                        }
-                        let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
-                        let residual = WasmSpecializer {
-                            index,
-                            plans: &plans,
-                            full_plan,
-                            reference_site_ids: &reference_site_ids[index],
-                            admitted,
-                            tier: WasmTierChoice::Baseline {
-                                analysis: &analysis,
-                                memory_slot,
-                                entry_cells: &entry_cells,
-                                callable: &callable,
-                            },
-                        }
-                        .specialize(&code);
-                        match residual.ok()? {
-                            WasmResidual::Rows(rows) => Some(rows),
-                            WasmResidual::Compiled(..) => None,
-                        }
-                    })
-                    .collect();
-                let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();
-                if kept == callable {
-                    break codes;
-                }
-                callable = kept;
+        analysis.unrolls = program_unrolls(&code);
+        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+        let build = build_order.into_iter().map(|index| {
+            let full_plan = full_plans[index].as_ref()?;
+            let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
+            let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
+            let built = WasmSpecializer {
+                index,
+                plans: &plans,
+                full_plan,
+                reference_site_ids: &reference_site_ids[index],
+                admitted,
+                tier: WasmOptimizing { analysis: &analysis, isa: &isa, guarded, fixed_base, diagnostics_enabled },
             }
-        } else {
-            Vec::new()
-        };
+            .specialize(&code);
+            if diagnostics_enabled {
+                let memory_after = jit_memory_snapshot();
+                eprintln!(
+                    "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                    body_memory_before.map(|memory| memory.0),
+                    memory_after.map(|memory| memory.0),
+                    body_memory_before.map(|memory| memory.1),
+                    memory_after.map(|memory| memory.1),
+                );
+            }
+            let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
+            Some((index, built, entry))
+        });
+        let mut bodies = compile_built_functions(&isa, count, self.memory_policy(), build)?;
         for index in 0..count {
             if plans[index].is_none() {
-                continue;
-            }
-            if base_only {
-                // `--b-jit`: the stitched rows are the entry, and the table names them as the
-                // body too (the same `WasmEntry` ABI, so indirect calls enter them directly).
-                // A function whose stitch failed has no native entry: it runs in the interpreter.
-                let Some(stitched) = stitched[index].take() else {
-                    continue;
-                };
-                let stitched_projected_len = projected_code_len(bytes.len(), stitched.len())?;
-                if stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={stitched_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        );
-                    }
-                    return None;
-                }
-                let stitched_len = stitched.len();
-                let offset = place(&mut bytes, stitched);
-                offsets[index] = Some(offset);
-                spans.push((offset, stitched_len, index));
-                entries[index] = Some(offset);
                 continue;
             }
             let (body, function_calls, entry) = bodies[index].take()?;

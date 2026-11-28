@@ -154,9 +154,12 @@ impl Lowering<'_, '_> {
             self.set_tagged(state, base, global);
             return Some(StrictReference::Resolved);
         }
-        let base = self.tagged(state, instruction.register_b());
-        let same = self.raw_compare(Relation::Equal, base, global);
-        emit_js_guard(&mut self.builder, same, exit);
+        // The base is the global object where the solve proves it (`proves_global_object`): no compare is emitted.
+        if !self.proves_global_object(pc, instruction.register_b()) {
+            let base = self.tagged(state, instruction.register_b());
+            let same = self.raw_compare(Relation::Equal, base, global);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         Some(StrictReference::Store(quench_runtime::staged::Operation::GlobalWrite { source: instruction.register_a(),
             atom: instruction.atom_index(), site: 0, initialize: false }))
     }

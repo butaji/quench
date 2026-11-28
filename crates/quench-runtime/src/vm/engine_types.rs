@@ -660,8 +660,7 @@ pub struct EntryCell {
     pub validity: std::cell::Cell<u64>,
     /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
     pub recovery: std::cell::Cell<usize>,
-    /// The runs that ended by an exception through a native caller, in the high half (`RAISED_RUN`,
-    /// written by the native code only).
+    /// The entry cell's run counters word, which the native code lays out and no run writes.
     pub counters: std::cell::Cell<u64>,
     /// The address of the published body's scalar entry (`LaneMethod::scalar_address`), which a native
     /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
@@ -1244,13 +1243,11 @@ pub struct FramelessCallEntry {
     pub constructs: u64,
 }
 
-/// A view's records, with the feedback bytes of its sites in front of them: one byte per record,
-/// counted back from the first.
+/// A lane view's records: one boxed run of them, whose first record is kept so each activation's entry reads it with
+/// one load (`base`).
 pub struct Records {
     pub cells: Box<[std::cell::UnsafeCell<LaneInstruction>]>,
-    /// The records of `cells` before the first record, which hold the feedback bytes.
-    pub front: usize,
-    /// The first record, kept so each activation's entry reads it with one load (`base`).
+    /// The first record (`base`).
     pub first: Ip,
 }
 
@@ -2929,10 +2926,6 @@ pub struct PreparedLaneCallback {
     pub _stack: crate::stack::StackGuard,
 }
 
-/// The kinds of operand a site met where its quickened int32 handler declined, as a set of bits.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OperandKinds(pub u8);
-
 /// How a job's lane run ended (`Vm::run_lane_job`).
 pub enum JobEnd {
     /// The activation returned the value: its owner is finished.
@@ -4513,13 +4506,6 @@ impl NativeRoots {
     }
 }
 
-impl OperandKinds {
-    /// An element access met a present dense element (`GetIndex`, `SetIndex`).
-    pub const DENSE: Self = Self(1 << 6);
-    /// An element read met a number of a typed array.
-    pub const TYPED: Self = Self(1 << 7);
-}
-
 impl OsrFacts {
 
     /// Releases the capacity its vectors hold past their length, before the region is published.
@@ -5080,6 +5066,27 @@ impl Records {
     pub fn base(&self) -> Ip {
         self.first
     }
+
+    /// `records` as a view's records, in their own allocation, which the records never leave.
+    pub fn new(records: Box<[LaneInstruction]>) -> Self {
+        let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> = Vec::from(records).into_iter().map(std::cell::UnsafeCell::new).collect::<Vec<_>>().into_boxed_slice();
+        // SAFETY: the pointer keeps the whole allocation's provenance, and the boxed records never move.
+        let first = unsafe { std::cell::UnsafeCell::raw_get(cells.as_ptr()).cast_const() };
+        Self { cells, first }
+    }
+
+    /// A record that holds nothing.
+    pub fn blank() -> LaneInstruction {
+        LaneInstruction {
+            handler: std::ptr::null(),
+            operand: LaneOperand { jump: 0 },
+            a: 0,
+            b: 0,
+            c: 0,
+            call_link: std::cell::Cell::new(0),
+            mode: 0,
+        }
+    }
 }
 
 impl Registers {
@@ -5242,10 +5249,6 @@ impl LaneStack {
 
 impl LaneView {
 
-    /// Whether a loop region called it while it had no body (`note_native_caller`).
-    #[inline]
-    pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
-
     /// A specialized body that went at a lifecycle edge warms again from the start: a call site's behavior
     /// outlives the shape ids the edge renumbered.
     pub fn drop_body(&self, body: &mut LaneBody) {
@@ -5302,7 +5305,6 @@ impl LaneBody {
         match self {
             Self::Unspecialized => TierState::Warming,
             Self::Compiling { .. } => TierState::Compiling,
-            Self::Specialized { .. } if crate::vm::tier_policy::quick_only() => TierState::QJit,
             Self::Specialized { .. } => TierState::UJit,
             Self::Declined => TierState::Declined,
         }
@@ -5329,7 +5331,7 @@ impl std::ops::Deref for Records {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.cells[self.front..]
+        &self.cells
     }
 }
 

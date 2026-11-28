@@ -16,9 +16,10 @@ pub struct StoreArm {
     /// The slot's type (`slot_ty` of `StoreArm::of`): a Number slot's words are raw doubles, so a
     /// store writes `slot_store::class_word(class, value)` whether or not `holds` tests the value.
     pub class: Type,
-    /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
-    /// its guard compares the record's own word, which proves the form, so the store tests none.
-    pub layout: bool,
+    /// Whether `shape` is an ahead image's field guard key (`ImageWord::Layout`): the arm guards the live
+    /// cell by the class the loader resolves for that key, and stores the field of that cell
+    /// (`property_write::image_arm_store`). Its `shape` is the key without `ic::SYMBOLIC_SHAPE`.
+    pub image: bool,
 }
 
 impl StoreArm {
@@ -27,20 +28,22 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, class: slot_ty, layout: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, class: slot_ty, image: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), class: slot_ty, layout: false })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), class: slot_ty, image: false })
     }
 
-    /// This arm guarded by the layout id `shape` names (`layout`), where it stores a tagged word.
-    pub fn as_layout(self) -> Self {
-        Self { layout: true, ..self }
+    /// The arm of an ahead image's construction: `key` is its field guard key (`ImageWord::Layout`), and `slot` a field
+    /// of the live class cell the loader's class names. Like `of_class`, it takes no slot type: the cell's gate admits
+    /// or refuses a tracked slot.
+    pub fn of_image(key: u32, slot: u16) -> Self {
+        Self { shape: key, slot, holds: None, class: Type::ANY, image: true }
     }
 
     /// The arm of a class-keyed receiver: `key` is the entry's key (`class | CLASS_KEY`), and `slot` a field of the
     /// live class cell. It takes no slot type: the cell's store gate admits or refuses a tracked slot (`class_arm_store`).
     pub fn of_class(key: u32, slot: u16) -> Self {
-        Self { shape: key, slot, holds: None, class: Type::ANY, layout: false }
+        Self { shape: key, slot, holds: None, class: Type::ANY, image: false }
     }
 
     /// Whether the arm's key names a live class cell, not a shape (`field_cache_layout::is_class_key`).

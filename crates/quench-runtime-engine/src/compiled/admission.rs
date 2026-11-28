@@ -66,7 +66,7 @@ pub(crate) fn refuse(vm: &Vm, refusal: Refusal) {
 /// The kinds of unit whose tier gate `may_compile` decides.
 #[derive(Clone, Copy)]
 pub(crate) enum UnitKind {
-    /// A function's lane body: u-jit under the Cranelift tiers, or b-jit stencils under `--b-jit`.
+    /// A function's lane body: u-jit under the Cranelift tiers, or b-jit stencils where the b-jit tier runs alone.
     Body,
     /// A loop region, under its memory policy's loop tier.
     Region(quench_runtime::MemoryPolicy),
