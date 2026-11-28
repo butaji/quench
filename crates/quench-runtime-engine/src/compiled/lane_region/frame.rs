@@ -10,6 +10,7 @@ use crate::compiled::regions;
 #[path = "frame_operands.rs"] pub(crate) mod operands;
 pub(crate) use operands::{held_long, number_word, operand_int, operand_long, operand_number, operand_to_int32, integral_index_value, register_int_value, register_long_value, register_number_value};
 use truthiness::register_truthiness;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The lane's register file.
 pub(crate) const FRAME: quench_runtime::staged::Access = quench_runtime::staged::Region::Frame.mutable();

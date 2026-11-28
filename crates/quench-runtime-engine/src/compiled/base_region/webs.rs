@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A register's webs: its definitions joined whenever one value of it is live where several
 /// reach, so each web holds one value lifetime and can take its own representation and home.

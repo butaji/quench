@@ -11,6 +11,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Constant, Operation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The accesses of every word an array access of this unit reads (`regions::array_access`): the record table's base

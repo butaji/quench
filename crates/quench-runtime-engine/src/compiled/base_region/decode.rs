@@ -10,6 +10,7 @@ use fields::{field_row, field_store_row};
 pub(crate) use fields::{site_read_row, stores_field};
 pub(crate) mod number_rows;
 pub(crate) use number_rows::{numeric_row, staged_binary, staged_unary};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
 /// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.

@@ -13,6 +13,7 @@ use quench_runtime::staged::wasm_operation::{Operand, WasmOperation, WasmOperati
 use quench_runtime::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use cranelift_codegen::ir;
 use std::convert::Infallible;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The value of a result a stage with no exit cannot fail.
 pub(crate) fn infallible<T>(result: Result<T, Infallible>) -> T {

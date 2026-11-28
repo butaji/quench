@@ -10,6 +10,7 @@ use super::{Hoist, Induction, Reach, Term, Version};
 use super::super::super::facts::{IndexProof, Point};
 use super::super::super::operations::NumberArithmetic;
 use super::super::int_ranges::IntRanges;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The unit's instructions, the loops of it the region lowers whole, and the operations hoisted out of them.
 #[derive(Clone, Copy)]

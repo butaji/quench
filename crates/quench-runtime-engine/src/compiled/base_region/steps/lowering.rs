@@ -15,6 +15,7 @@ use super::super::super::{LaneHelper, LaneHelpers};
 use super::Step;
 use quench_runtime::staged::{Operation, Protocol};
 use quench_runtime::staged::meaning::{means, Meaning};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
 /// defines beside its callee.

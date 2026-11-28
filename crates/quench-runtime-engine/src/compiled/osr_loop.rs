@@ -687,6 +687,7 @@ pub(crate) use quench_runtime::vm::engine_types::MAX_INLINE_PARAMS;
 pub(crate) use quench_runtime::vm::engine_types::Origin;
 
 pub(crate) use quench_runtime::vm::engine_types::Inlining;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(InliningOps1)]
 impl Inlining {

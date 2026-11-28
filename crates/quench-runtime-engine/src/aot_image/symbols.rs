@@ -88,6 +88,7 @@ pub(crate) enum Symbol {
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
 
 pub(crate) use quench_runtime::vm::engine_types::ShapeRecipe;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Recipes or labels interned to dense keys: one key per distinct value, in first-seen order.
 struct Interned<T> {

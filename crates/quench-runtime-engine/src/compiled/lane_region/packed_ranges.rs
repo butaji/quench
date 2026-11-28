@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::facts::ranges::{self, Edge};
 use quench_runtime::vm::operations::NumberRelation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[derive(Clone)]
 pub(crate) struct State {

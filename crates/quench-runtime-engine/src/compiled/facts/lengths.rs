@@ -8,6 +8,7 @@ use crate::ext_traits::*;
 use super::run::{Model, Point};
 use quench_runtime::bytecode::{Register, WideInstruction};
 use quench_runtime::staged::Operation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What proves the index of an element access within its array.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

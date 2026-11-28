@@ -12,6 +12,7 @@ use quench_runtime::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use std::cell::{Cell, RefCell};
 use quench_runtime::staged::Operation;
 use quench_runtime::vm::operations::NumberRelation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The abstract state of a run at one point: the registers' types (a range is a type).
 #[derive(Clone)]

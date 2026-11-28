@@ -21,6 +21,7 @@ use super::*;
 use quench_runtime::bytecode::FieldLookup;
 use crate::aot_image::symbols::{GuardAccess, ShapeRecipe};
 use super::constructions::construction_recipe;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The most shape guards one field-cache site's loads take: a family of shapes behind one guard each
 /// (`object_slots::field_load_groups`). A site over the bound keeps no load and asks the VM's caches.

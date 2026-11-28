@@ -13,6 +13,7 @@ use quench_runtime::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use cranelift_codegen::ir::{self, MemFlagsData, types};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The width of a switched field's machine type.
 fn field_width(ty: ir::Type) -> Width {

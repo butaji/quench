@@ -144,6 +144,7 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(LinkedTableOps1)]
 impl LinkedTable {

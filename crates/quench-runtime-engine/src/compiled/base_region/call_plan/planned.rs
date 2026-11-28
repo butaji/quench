@@ -8,6 +8,7 @@ use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::compile::call_plan::call_plans;
 
 pub(crate) use quench_runtime::compile::call_plan::{CallForm as Lowering, CallPlan as SitePlan};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The plan of each call site of a function, by PC: none where the site has no plan.
 pub(crate) type SitePlans = Vec<Option<SitePlan>>;

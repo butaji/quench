@@ -5,6 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The webs and analysis identities of a loop, and the instructions it is admitted on.
 struct Renaming {

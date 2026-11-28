@@ -1,6 +1,7 @@
 //! The element view a compiled body's loop arrays take (`lane_region::lower_body`'s `RegionPlan::views`), read from the
 //! interpreter's element records: a typed array read in a loop holds its view, not a dense proof that leaves at every entry.
 use quench_runtime::vm::Vm;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The view a body's loop arrays take: the typed kind the element records of `function`'s own code were switched to
 /// (`quickened_typed_kind`), else dense. A typed array read in a loop then holds its view, not a dense proof that leaves.

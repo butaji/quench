@@ -24,6 +24,7 @@ use quench_runtime::compile::call_plan::Miss;
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::tier_surface::GlobalFact;
 use std::rc::Rc;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A function a site may inline: its instructions, registers, the register each parameter is
 /// passed to and the registers live before each instruction.

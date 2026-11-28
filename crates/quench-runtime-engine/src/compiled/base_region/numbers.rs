@@ -18,6 +18,7 @@ use crate::ext_traits::*;
 use super::repr::{variant_of, Variant};
 use super::*;
 use quench_runtime::dataflow::BitSet;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame slots (original registers) that hold a Number on every path into a row.
 type Held = BitSet;

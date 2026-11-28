@@ -22,6 +22,7 @@ use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::typed_ir::Type;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
 /// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).

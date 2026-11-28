@@ -510,6 +510,7 @@ pub(crate) mod wasm_stitch_tail;
 #[path = "wasm_stitch_instance.rs"]
 pub(crate) mod wasm_stitch_instance;
 use self::wasm_stitch_instance::instance_op;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[path = "wasm_stitch_indirect.rs"]
 pub(crate) mod indirect;
 

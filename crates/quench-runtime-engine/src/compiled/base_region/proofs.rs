@@ -12,6 +12,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What one row runs knowing: the registers whose value was proved a direct object, by the register that
 /// defined the value (a copy's proof is its source's), the subset an access in the body proved (`established`,

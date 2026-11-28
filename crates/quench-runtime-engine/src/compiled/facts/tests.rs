@@ -3,6 +3,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[test]
 fn native_call_retires_conditional_shapes_in_cfg_facts() {

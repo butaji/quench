@@ -4,6 +4,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, ReceiverLink, GlobalSlot, GlobalTable, StableCell, scalar_native};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(CompiledLaneSitesVm)]
 impl Vm {

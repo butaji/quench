@@ -363,6 +363,7 @@ fn proven_sites<'a>(program: &'a ResidualProgram, unit: &lane_unit::Unit, functi
 pub use quench_runtime::vm::engine_types::AheadImages;
 
 use quench_runtime::vm::engine_types::recorded;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(AheadImagesOps1)]
 impl AheadImages {

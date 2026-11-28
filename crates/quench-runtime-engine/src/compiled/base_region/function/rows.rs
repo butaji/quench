@@ -8,6 +8,7 @@ use quench_runtime::staged::AllocationAllocationExt;
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The method call `instruction` at `pc` as a `Method` chain, its callee read into the scratch register past the
 /// function's own (`Sites::scratch`), where the call is a method call of a window of consecutive registers (`call_plan::method_shape`).

@@ -329,6 +329,7 @@ fn record_publication(pointer: *mut u8, length: usize, site: &std::panic::Locati
 }
 
 pub(crate) use quench_runtime::vm::engine_types::CodeMemory;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(CodeMemoryOps1)]
 impl CodeMemory {

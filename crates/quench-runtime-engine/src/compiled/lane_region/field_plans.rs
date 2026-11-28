@@ -11,6 +11,7 @@ use quench_runtime::staged::ic::IcOp;
 use quench_runtime::staged::property::{Arm, ClassArm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use quench_runtime::staged::Form;
 use quench_runtime::typed_ir::Representation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What one access's frame proved: the plan of its read and of its store.
 pub(crate) struct LanePlans<'p> {

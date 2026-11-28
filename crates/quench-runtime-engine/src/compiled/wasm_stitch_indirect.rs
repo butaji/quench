@@ -22,6 +22,7 @@ use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_step::Step;
 use quench_bjit::padded_holes;
 use quench_bjit::wasm as codes;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 // The row's stencil reads these layouts from `quench_bjit::wasm` (`wasm_rows_indirect.rs`), so each
 // is asserted against the runtime's own.

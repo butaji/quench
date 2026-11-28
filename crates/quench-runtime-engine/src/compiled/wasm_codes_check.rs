@@ -12,6 +12,7 @@ use quench_runtime::wasm::float::{F64BinaryOperator, F64UnaryOperator};
 use quench_runtime::wasm::integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
 use quench_runtime::wasm::memory::WASM_PAGE_BITS;
 use quench_bjit::wasm as codes;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 // The integer families: the i32 operators are the first `SHARED_*` tags of the i64 families, which
 // add the wide operators after them.

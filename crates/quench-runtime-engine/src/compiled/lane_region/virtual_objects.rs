@@ -16,6 +16,7 @@ use super::*;
 use super::super::{PlanCallee, ScalarConstructPlan, ScalarField};
 use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;
 use quench_runtime::staged::Allocation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[path = "virtual_objects/arrays.rs"]
 mod arrays;

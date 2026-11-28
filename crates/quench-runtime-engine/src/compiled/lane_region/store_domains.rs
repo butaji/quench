@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The writes the raw stores of `instructions` may make, once per physical slot (shape and
 /// slot), independently of cache-row binding availability: each store site's one proved

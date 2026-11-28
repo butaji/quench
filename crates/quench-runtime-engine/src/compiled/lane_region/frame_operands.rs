@@ -5,6 +5,7 @@ use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
 use quench_runtime::staged::{Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,

@@ -6,6 +6,7 @@ use crate::ext_traits::*;
 use super::element_tests::SUM;
 use super::*;
 use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, loop_analysis::LoopAnalysis};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The blocks a loop region's hot path may span: the bounds test, the element and the sum, the
 /// fault poll and the loop's own test.

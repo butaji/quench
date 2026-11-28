@@ -8,6 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::staged::{CallFacts, CallOperation, Invocation, Operation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// What this lowering fixes around its calls (`CallFacts`): the unit's registers, and whether

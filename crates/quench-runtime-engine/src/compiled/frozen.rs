@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frozen reads of a lane unit of function `function`, by unit PC: each instruction read in the function its origin names
 /// (the caller's, or an inlined frame's callee); a `LoadName` no frozen fact folds is the lane's own read (`dynamic_load`).

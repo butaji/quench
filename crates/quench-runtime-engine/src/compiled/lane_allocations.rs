@@ -7,6 +7,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{JsStepDispatch, ResidualProgram, Value, Vm};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A lane body's empty object literal, as the lane's own (the `MakeObject` row, `Allocation::Empty`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move

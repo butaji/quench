@@ -11,6 +11,7 @@ use quench_runtime::staged::number_machine as numbers;
 use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::compiled::regions;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The specializer's stage (`quench_runtime::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.

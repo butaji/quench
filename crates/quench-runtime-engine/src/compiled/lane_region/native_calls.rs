@@ -26,6 +26,7 @@ use quench_runtime::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
 use super::data_view_calls::DataViewCall;
 use quench_runtime::vm::global_facts::scalar_native;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A native a call runs inline: a Math function of Numbers that native code lowers
 /// (`MathCall::is_row`), computed by its staged row; or a builtin on its staged row (`Builtin`).

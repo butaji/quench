@@ -9,6 +9,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Stage, add::Edge, naming::{name_form, site_name}};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The staged naming of the function `instruction` names, or `None` (nothing emitted, so the

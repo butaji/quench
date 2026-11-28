@@ -26,6 +26,7 @@ use quench_runtime::staged::wasm_call::{WasmTable, indirect_target};
 use quench_runtime::wasm::CanonicalSignature;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use cranelift_codegen::ir::{self, MemFlagsData, types};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The table an indirect target is being emitted for: the address of its published words, its
 /// binding and the type the call expects.

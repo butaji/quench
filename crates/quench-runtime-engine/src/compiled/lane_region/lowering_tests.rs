@@ -2,6 +2,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Class;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[test]
 fn unavailable_fault_page_declines_before_changing_canonical_registers() {

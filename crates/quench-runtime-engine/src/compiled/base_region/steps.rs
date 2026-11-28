@@ -406,6 +406,7 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
 #[path = "steps/branches.rs"]
 pub(crate) mod branches;
 use branches::{branching, jump_to};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[cfg(test)]
 pub(crate) mod tests;

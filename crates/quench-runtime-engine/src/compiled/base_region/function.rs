@@ -32,6 +32,7 @@ pub(crate) mod switch;
 use calls::*;
 use planning::*;
 use rows::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A function's code: bytes entered at the lane body ABI, and what its rows are.
 pub(crate) struct Body {
