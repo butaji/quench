@@ -3,8 +3,11 @@
 //! The object's `Value` never changes. The cell is its own stub: its header becomes
 //! `departed_header(record)` and the new record's `stub` is the cell's granule, so every reader that
 //! finds `DEPARTED_CLASS` takes the record hop (`ClassSpace::record_of`). The fields the object held
-//! are copied into an arena run for the record; the cell keeps its field words, which the sweep frees
+//! are copied into an arena run for the record; the cell keeps its inline field words, which the sweep frees
 //! with the object, and its slack is `Value::DELETED`.
+//!
+//! Departure is the final form only for delete, dictionary storage, extras and record-only views. A class
+//! whose shape outgrows its cell spills instead (`heap::spill`), so a field store, add or initialization never departs.
 //!
 //! A departed object takes its dictionary class from the VM (`Vm::mark_object_dictionary`), because a
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
@@ -55,9 +58,8 @@ impl Heap {
     }
 
     /// The spill slot of live class `class`, in its region's cell (`layouts::spill_from`): `None` where its shape's
-    /// fields fit the region's capacity, which is every class until a cell spills (slice S2 of the departure-free
-    /// design). The shape length is the property table's, so the answer is per class, never a global constant.
-    #[allow(dead_code)] // S2 (the spill slot) reads it.
+    /// fields fit the region's capacity. The shape length is the property table's, so the answer is per class,
+    /// never a global constant.
     #[inline(always)]
     pub(crate) fn class_spill_from(&self, class: u32) -> Option<u32> {
         layouts::spill_from(layouts::class_region(class), self.properties.shape_length(layouts::class_shape(class)))
@@ -67,14 +69,14 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn live_class_field(&self, value: Value, slot: usize) -> Option<Value> {
         let granule = self.live_class_cell(value)?;
-        Some(self.class_space.field(granule, slot))
+        Some(self.class_slot_value(granule, slot))
     }
 
     /// The field `slot` of the live class cell at `granule`, a holder cell a class-keyed held entry names
     /// (`FieldCache::holder_cell`). The caller holds the entry's key, which fixes the holder's identity.
     #[inline(always)]
     pub(crate) fn class_cell_field(&self, granule: u32, slot: usize) -> Value {
-        self.class_space.field(granule, slot)
+        self.class_slot_value(granule, slot)
     }
 
     /// The departure edge: the ordinary object `value` names becomes a record, if it is a live class
@@ -94,8 +96,8 @@ impl Heap {
         let class = header_class(header);
         let shape = layouts::class_shape(class);
         let length = self.properties.shape_length(shape);
-        debug_assert!(length <= region_capacity(granule) as usize, "a class cell holds its class's fields");
-        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.field(granule, slot)).collect();
+        let spill = self.class_spill_from(class);
+        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.word(granule, spill, slot)).collect();
         let properties = self.properties.with_values(shape, &fields);
         let mut object = Object::with_property_storage(
             layouts::class_link(class).prototype(),
@@ -111,7 +113,9 @@ impl Heap {
         // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
         unsafe { self.object_records.record_ptr(record_id).write(OrdinaryRecord { object, stub: granule }) };
         self.class_space.write_header(granule, departed_header(record_id));
-        self.class_space.delete_slack(granule, length);
+        // The departed cell keeps its inline fields; its run is freed, and its slack is `Value::DELETED`.
+        self.class_space.drop_run(granule, spill);
+        self.class_space.lay_out(granule, None, &fields[..length.min(region_capacity(granule) as usize)]);
         self.properties.note_class_departure(shape);
         // A holder cell's departure ends its direct field reads (the holder-cell edge, R4-D1b(d)).
         // The edge raises the one service word (`request_collection`): the next service point (after
@@ -150,7 +154,7 @@ impl Heap {
     /// Notes a write to live cell `granule` (`Object::note_constant_write`): a constant mark clears in
     /// place, its class word takes the cleared flags, and the readers of the mark retire.
     #[inline(always)]
-    fn note_cell_write(&mut self, granule: u32) {
+    pub(super) fn note_cell_write(&mut self, granule: u32) {
         let class = header_class(self.class_space.header(granule));
         let mut object = Object::of_class(class);
         object.note_constant_write();
@@ -159,58 +163,64 @@ impl Heap {
         }
     }
 
-    /// A store of `value` to field `slot` of live cell `granule`, in place (`Heap::property_set`): the
-    /// store gate's barrier for a heap reference, the constant mark's clear, then the field. A field holds
-    /// the one Value word, which is already a double's raw bits under invariant I (c-design 4.1), so every
-    /// field is stored and scanned alike.
-    pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
+    /// A store or add of `value` at slot `slot` of live cell `granule`, whose spill slot is `from` before and `to`
+    /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the constant mark's clear, then
+    /// the word. A moved run (allocated or grown) fires the holder edge. A field holds the one Value word, which is
+    /// already a double's raw bits under invariant I (c-design 4.1), so every field is stored and scanned alike.
+    pub(super) fn class_cell_put(&mut self, granule: u32, from: Option<u32>, to: Option<u32>, slot: usize, value: Value) {
         if value.heap_index().is_some() {
             self.class_space.barrier(granule);
         }
         self.note_cell_write(granule);
-        self.class_space.set_field(granule, slot, value);
+        if self.class_space.put_word(granule, from, to, slot, value) {
+            self.holder_fields_moved(granule);
+        }
     }
 
-    /// The initialization of live cell `granule` with `values` under exact shape `shape`, in place where
-    /// they fit the cell's capacity (`region_capacity`): each field is stored as an in-place store is
-    /// (`class_cell_store`), the fields past them are slack, and the cell takes the class of `shape` with
-    /// its link and flags. `false`, with nothing changed, where they do not fit: the caller departs.
-    pub(crate) fn class_cell_initialize(&mut self, granule: u32, shape: u32, values: &[Value]) -> bool {
-        if values.len() > region_capacity(granule) as usize {
-            return false;
-        }
+    /// A store of `value` to field `slot` of live cell `granule`, in place (`Heap::property_set`), through its run
+    /// where the slot spills.
+    pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
+        let spill = self.live_spill_from(granule);
+        self.class_cell_put(granule, spill, spill, slot, value);
+    }
+
+    /// The initialization of live cell `granule` with `values` under exact shape `shape`, in place: the fields take
+    /// the stored words of `shape` (`ClassSpace::lay_out`, spilling past the region), and the cell takes the class of
+    /// `shape` with its link and flags.
+    pub(crate) fn class_cell_initialize(&mut self, granule: u32, shape: u32, values: &[Value]) {
         // The fields' words under `shape`: a Number-typed field holds its raw double (`stored_words`).
         let words = self.properties.stored_words(shape, values);
-        for (slot, &value) in words.iter().enumerate() {
-            self.class_cell_store(granule, slot, value);
+        if words.iter().any(|word| word.heap_index().is_some()) {
+            self.class_space.barrier(granule);
         }
-        self.class_space.delete_slack(granule, values.len());
+        self.note_cell_write(granule);
+        let from = self.live_spill_from(granule);
+        if self.class_space.lay_out(granule, from, &words) {
+            self.holder_fields_moved(granule);
+        }
         let class = header_class(self.class_space.header(granule));
         let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
         self.class_space.write_header(granule, live_header(next));
-        true
     }
 
-    /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`,
-    /// in place for live cell `granule` where the field fits the cell's capacity (`region_capacity`). The cell
-    /// keeps its link and flags, takes the after-shape's class, and the readers of the old shape retire
-    /// (`Heap::set_class`). `false`, with nothing changed, where the field does not fit: the caller departs.
-    pub(crate) fn class_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) -> bool {
-        if slot >= region_capacity(granule) as usize {
-            return false;
-        }
+    /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`, in place
+    /// for live cell `granule`: the cell keeps its link and flags, takes the after-shape's class, and the readers of
+    /// the old shape retire (`Heap::set_class`). A field past the region spills into the cell's run (`class_cell_put`).
+    pub(crate) fn class_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) {
         // The add observes its value under the after-shape, the shape the add's slot belongs to, before the
         // field's word is taken: a widening rewrites the words already held, then this one is converted.
         self.properties.note_shape_value(after, slot, value);
         self.rewrite_widened_numbers();
         let word = self.properties.stored_word(after, slot, value);
-        self.class_cell_store(granule, slot, word);
+        let region = layouts::class_region(header_class(self.class_space.header(granule)));
+        let from = self.shape_spill_from(region, before);
+        let to = self.shape_spill_from(region, after);
+        self.class_cell_put(granule, from, to, slot, word);
         let class = header_class(self.class_space.header(granule));
         debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
         // The cell never moves, so its region is the one the class it leaves names.
         let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
         self.class_space.write_header(granule, live_header(next));
         self.set_class(before, after);
-        true
     }
 }

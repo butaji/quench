@@ -27,6 +27,8 @@ use super::{
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
 use super::class_space::{ClassCellMarks, cell_fields_at, live_class_at, stub_record_at};
+use super::layouts;
+use super::spill::{SpillSpace, split_cell};
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use crate::vm::wtf16::JsString;
@@ -69,6 +71,8 @@ macro_rules! parallel_mark_view {
             class_base: usize,
             /// The class cell regions' mark views (`ClassCellMarks`).
             cells: ClassCellMarks<'heap>,
+            /// The spill arena a spilled cell's run is read from (`heap::spill`).
+            spill: &'heap SpillSpace,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -85,13 +89,15 @@ macro_rules! parallel_mark_view {
                 reads_closures: bool,
                 projection_function: Option<u32>,
             ) -> Self {
+                let (cells, spill) = heap.class_space.parallel_marks();
                 Self {
                     slots: &heap.slots,
                     properties: &heap.properties,
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
                     class_base: heap.class_space.base,
-                    cells: heap.class_space.parallel_marks(),
+                    cells,
+                    spill,
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -291,8 +297,10 @@ impl<'heap> ParallelMarkView<'heap> {
                         return;
                     }
                     // SAFETY: this view just marked the cell, and no worker writes a cell's fields during the round.
-                    let fields = unsafe { cell_fields_at(self.class_base, granule) };
-                    Heap::cell_children_marking(value, class, fields, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
+                    let spill = layouts::spill_from(layouts::class_region(class), self.properties.shape_length(layouts::class_shape(class)));
+                    // SAFETY: as `cell_fields_at`, and the arena is read-only during the round.
+                    let (fields, run) = split_cell(unsafe { cell_fields_at(self.class_base, granule) }, self.spill, spill);
+                    Heap::cell_children_marking(value, class, fields, run, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
                 } else {
                     // A departed cell keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`).
                     self.cells.mark_if_new(granule);

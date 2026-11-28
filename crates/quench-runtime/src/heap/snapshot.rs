@@ -232,6 +232,13 @@ fn read_stubs(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
 
 /// Writes the class cells of regions `1..` (`read_class_cells`), each record with its granule's local id.
 fn write_class_cells(writer: &mut Writer, space: &ClassSpace) -> SnapshotResult<()> {
+    // The spill arena first: a spilled cell's spill word names its run by offset in it.
+    let (words, free) = space.spill.snapshot_parts();
+    writer.values(words);
+    writer.len(free.len());
+    for list in free {
+        writer.u32s(list);
+    }
     let regions = &space.regions;
     write_records(writer, &regions.1, |writer, cell: &ClassCell1| Ok(write_cell(writer, cell.header, &cell.fields)))?;
     write_records(writer, &regions.2, |writer, cell: &ClassCell2| Ok(write_cell(writer, cell.header, &cell.fields)))?;
@@ -268,6 +275,10 @@ fn read_class_cells(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<
     if !heap.class_space.ensure_reserved() {
         return Err(SnapshotError("snapshot class cells without a class space".into()));
     }
+    let words = reader.values()?;
+    let lists = reader.len()?;
+    let free = (0..lists).map(|_| reader.u32s()).collect::<SnapshotResult<Vec<Vec<u32>>>>()?;
+    heap.class_space.spill = super::spill::SpillSpace::from_snapshot(words, free);
     let regions = &mut heap.class_space.regions;
     read_cell_region!(reader, regions.1, ClassCell1, 1);
     read_cell_region!(reader, regions.2, ClassCell2, 3);

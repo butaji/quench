@@ -46,10 +46,11 @@ impl Heap {
         self.for_each_live_value(|value| cells.extend(self.live_class_cell(value)));
         for granule in cells {
             let shape = layouts::class_shape(header_class(self.class_space.header(granule)));
+            let spill = self.live_spill_from(granule);
             for slot in 0..self.properties.shape_length(shape) {
                 if owners.binary_search(&self.properties.slot_owner(shape, slot)).is_err() { continue; }
-                if let Some(word) = widened_word(self.class_space.field(granule, slot)) {
-                    self.class_space.set_field(granule, slot, word);
+                if let Some(word) = widened_word(self.class_space.word(granule, spill, slot)) {
+                    self.class_space.set_word(granule, spill, slot, word);
                 }
             }
         }
