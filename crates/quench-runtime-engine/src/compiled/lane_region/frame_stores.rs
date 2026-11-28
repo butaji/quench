@@ -63,7 +63,8 @@ impl EmitFrame<'_> {
             return Some(());
         }
         let (packed, arena, done) = (builder.create_block(), builder.create_block(), builder.create_block());
-        emit(builder).branch(slot.header.inline, (packed, &[]), (arena, &[]));
+        // A loop's projected slot names a record: a fixed class's cell has no storage form to test.
+        emit(builder).branch(slot.header.inline?, (packed, &[]), (arena, &[]));
         builder.switch_to_block(packed);
         #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|watched| {
             if let Some((expected, count)) = watched.get() && expected == site {

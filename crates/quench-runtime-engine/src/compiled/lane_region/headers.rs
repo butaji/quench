@@ -133,7 +133,9 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
 /// shape as that constant, under the guard's fact, which folds every later test of it.
 pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, word: ir::Value,
     header: ObjectHeader, expected: u32, exit: ir::Block) {
-    let at = quench_runtime::staged::ic::Reached { shape: Some(header.shape), ..quench_runtime::staged::ic::Reached::bare(header.address) };
+    // A fixed class's cell has no record shape to guard: its receivers take `fixed_cells`, which never asks for one.
+    let shape = header.shape.expect("a shape guard names a record, not a fixed class's cell");
+    let at = quench_runtime::staged::ic::Reached { shape: Some(shape), ..quench_runtime::staged::ic::Reached::bare(header.address) };
     let shaped = quench_runtime::staged::ic::guard_shape(&mut emit(builder), &at, expected, exit).expect("an emitted guard continues");
     note_header_shape(builder, state, word, (expected, shaped.fact()));
 }
@@ -152,7 +154,7 @@ pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut S
 pub(crate) fn header_shape(builder: &FunctionBuilder<'_>, state: &State, word: ir::Value) -> Option<(u32, ShapeFact)> {
     let (_, header, _) = *state.proofs.headers.iter().find(|(known, ..)| *known == word)?;
     let fact = header.shape_fact?;
-    let ir::ValueDef::Result(constant, _) = builder.func.dfg.value_def(header.shape) else { return None };
+    let ir::ValueDef::Result(constant, _) = builder.func.dfg.value_def(header.shape?) else { return None };
     let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = builder.func.dfg.insts[constant] else { return None };
     u32::try_from(imm.bits()).ok().map(|shape| (shape, fact))
 }

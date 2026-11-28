@@ -712,6 +712,8 @@ fn emit_js_cached_field_slot(
             let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
             object_slots::ObjectHeader::prove(builder, base, records, class_base, None, fallback)
         });
+    // A cached field read names a record, whose shape and storage form its header holds (a fixed class's cell takes `fixed_cells`).
+    let (Some(shape), Some(inline)) = (shape, inline) else { unreachable!("a cached field read's header names a record") };
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
