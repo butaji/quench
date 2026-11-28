@@ -177,21 +177,18 @@ impl FromIterator<(usize, GlobalRead)> for GlobalReads {
 impl Vm {
     /// The read of `atom` through cache `site` from the active realm's global scope as a Stable
     /// fact, where the cell the lane's own read resolves it to (`Vm::global_name_read`) is not
-    /// `Mutable`: an initialized global lexical binding, or the global object's own data field; a lexical
-    /// binding that is `Mutable` is read live (`GlobalRead::Lexical`).
+    /// `Mutable`: an initialized global lexical binding. A binding that is `Mutable` is read live
+    /// (`GlobalRead::Lexical`).
     pub fn stable_global_read(&mut self, code: &super::ResidualProgram, atom: Atom, site: u16) -> GlobalRead {
         let globals = self.realm.globals;
-        let (value, cell) = match self.global_name_read(code, atom, site) {
-            super::field_cache::GlobalNameRead::Value(value, Some(hint)) => (value, GlobalCell::Slot(u32::from(hint.record_slot()))),
-            super::field_cache::GlobalNameRead::Value(value, None) => {
-                // A lexical binding's value, or a cached field (which names no cell of the scope).
-                let index = self.realm.global_lexical_declarations.contains(&atom)
-                    .then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten();
-                let Some(index) = index.and_then(|index| u32::try_from(index).ok()) else { return GlobalRead::Dynamic };
-                (value, GlobalCell::Binding(index))
-            }
-            _ => return GlobalRead::Dynamic,
+        let super::field_cache::GlobalNameRead::Value(value) = self.global_name_read(code, atom, site) else {
+            return GlobalRead::Dynamic;
         };
+        // A lexical binding's value, or a cached field (which names no cell of the scope).
+        let index = self.realm.global_lexical_declarations.contains(&atom)
+            .then(|| self.realm.global_lexical_bindings.get_index_of(&atom)).flatten();
+        let Some(index) = index.and_then(|index| u32::try_from(index).ok()) else { return GlobalRead::Dynamic };
+        let cell = GlobalCell::Binding(index);
         self.heap.ensure_cell_extras(globals);
         let Some(table) = self.heap.object_mut(globals).map(|mut o| o.global_values_table()) else {
             return GlobalRead::Dynamic;
@@ -199,11 +196,10 @@ impl Vm {
         // A function's identity lets a call through the read skip its callee check.
         let ty = Type::function(value).filter(|_| self.heap.function(value).is_some()).unwrap_or_else(|| Type::immediate(value));
         let realm_offset = Self::realm_globals_offset();
-        match (crate::heap::global_value_fact(table, cell), cell) {
-            (Some(fact), _) => GlobalRead::Stable { value, ty, fact, global: globals, realm_offset },
+        match crate::heap::global_value_fact(table, cell) {
+            Some(fact) => GlobalRead::Stable { value, ty, fact, global: globals, realm_offset },
             // A binding that is written (`Mutable`) holds no value for code to fold: its word is read live.
-            (None, GlobalCell::Binding(_)) => self.global_lexical_slot(atom, false).map_or(GlobalRead::Dynamic, GlobalRead::Lexical),
-            (None, GlobalCell::Slot(_)) => GlobalRead::Dynamic,
+            None => self.global_lexical_slot(atom, false).map_or(GlobalRead::Dynamic, GlobalRead::Lexical),
         }
     }
 
@@ -234,14 +230,32 @@ impl Vm {
     /// seen by code that holds the cell's value or by an inheritor of the global object (`GlobalSlot`).
     pub fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
         let globals = self.realm.globals;
+        if self.global_name_hintable(atom)
+            && let Some((_, field)) = self.global_own_data_field(globals, atom, store)
+        {
+            self.heap.ensure_cell_extras(globals);
+            if let Some(table) = self.heap.object_mut(globals).map(|mut o| o.global_values_table())
+                && store
+            {
+                // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
+                let cell = GlobalCell::Slot(field);
+                while crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
+            }
+        }
+        self.global_slot(atom, store)
+    }
+
+    /// `stable_global_slot` without its effects: the same slot, where the global object already has its table of cells
+    /// (`stable_global_slot` makes it). A `store` whose slot a body holds (or an inheritor reads) is not admissible here,
+    /// so `None`; `stable_global_slot` retires those holders before it asks. The lane's by-name rows read at load through
+    /// this form (`named_name_row`).
+    pub fn global_slot(&self, atom: Atom, store: bool) -> Option<GlobalSlot> {
+        let globals = self.realm.globals;
         if !self.global_name_hintable(atom) { return None; }
         let granule = globals.direct_object_index()?.granule();
         let (shape, field) = self.global_own_data_field(globals, atom, store)?;
-        self.heap.ensure_cell_extras(globals);
-        let table = self.heap.object_mut(globals).map(|mut o| o.global_values_table())?;
+        let table = self.heap.object(globals)?.global_values()?;
         let cell = GlobalCell::Slot(field);
-        // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
-        while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
         let held = crate::heap::global_value_fact(table, cell).is_some();
         let inherited = self.heap.object(globals)?.was_used_as_prototype();
         if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
@@ -257,6 +271,14 @@ impl Vm {
         Some(GlobalSlot { slot, storage_len: self.shapes.get(shape as usize)?.storage_len(), ty, dependency,
             layout: crate::heap::global_layout_fact(table)?, global: globals, granule,
             realm_offset: Self::realm_globals_offset() })
+    }
+
+    /// The value of the active realm's global object's own data property at slot word `slot` (a `GlobalSlot`'s), read live
+    /// from the object's class cell (`Heap::class_entry_word`); `None` where the slot holds the deleted marker.
+    pub fn global_slot_value(&self, slot: u32) -> Option<Value> {
+        let granule = self.realm.globals.direct_object_index()?.granule();
+        let value = self.heap.class_entry_word(granule, slot);
+        (!value.is_deleted()).then_some(value)
     }
 
     /// The global lexical binding `atom` of the active realm as a slot code reads live (`LexicalSlot`), where the record holds it
@@ -353,7 +375,7 @@ impl Vm {
     }
 
     /// A compiled Script's global declaration instantiation: its lexical names may not
-    /// redeclare the realm's, which later scripts and the name hints then see.
+    /// redeclare the realm's, which later scripts then see.
     pub(super) fn declare_compiled_script_globals(&mut self, context: &crate::ResidualProgram, id: super::ProgramId) -> Result<(), crate::JsError> {
         let residual = self.programs.get(id).ok_or_else(|| self.type_error(context, "dynamic program is unavailable".into()))?;
         let eval_script_context = std::mem::replace(&mut self.eval_script_context, true);

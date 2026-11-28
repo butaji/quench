@@ -3409,12 +3409,11 @@ unsafe extern "C" fn function_capture_read_in_lane(vm: u64, callee: Value, slot:
 
 #[quench_macros::ext(CompiledVm3)]
 impl Vm {
-    /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
-    /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
+    /// The value a global read of `atom` through cache `site` takes: its global lexical binding's, else
+    /// the global object's cached field; none for a binding in its TDZ or a miss.
     pub(crate) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
-            quench_runtime::vm::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+            quench_runtime::vm::field_cache::GlobalNameRead::Value(value) => Some(value),
             quench_runtime::vm::field_cache::GlobalNameRead::Uninitialized | quench_runtime::vm::field_cache::GlobalNameRead::Miss => None,
         }
     }

@@ -49,10 +49,8 @@ pub(crate) enum NameRead {
     Native(Native),
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
-    /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
-    /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
-    /// `lane_load_name_lexical`.
-    Lexical(quench_runtime::vm::FieldCache),
+    /// The global object's own data property at the slot word `FLAG_NAME_GLOBAL_SLOT`'s record holds (`Vm::global_slot_value`).
+    GlobalSlot(u32),
 }
 
 /// What a by-name load's record resolved its name to: the global `undefined`, a constant no
@@ -1868,19 +1866,11 @@ pub(crate) const FLAG_SET: u8 = 2;
 pub(crate) const FLAG_NAME_NATIVE: u8 = 3;
 /// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
 pub(crate) const FLAG_NAME_UNDEFINED: u8 = 4;
-/// `FLAG` of a by-name load resolved to the global object's own data field: no row reads it in the lane, so
-/// its miss (`global_name_refresh_miss`) answers the read.
-pub(crate) const FLAG_NAME_GLOBAL: u8 = 5;
 /// `FLAG` of a by-name load resolved to an intrinsic name (`NameRead::Intrinsic`).
 pub(crate) const FLAG_NAME_INTRINSIC: u8 = 6;
-/// `FLAG` of a by-name load a probe settled onto the global object's own data field its record's
-/// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
-/// but a refresh checks the scopes' declarations first (`global_name_refresh_miss`, `SCOPED`).
-pub(crate) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
-/// `FLAG` of a by-name load of a name the closed world declares lexically (`AotFacts::global_lexical_names`): its
-/// record's hint locates the binding by index (`NameRead::Lexical`), which its refresh sets (`global_name_refresh_miss`,
-/// `LEXICAL`). Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
-pub(crate) const FLAG_NAME_LEXICAL: u8 = 16;
+/// `FLAG` of a by-name load resolved to the global object's own data property at the slot word its record's operand
+/// holds (`NameRead::GlobalSlot`): a closed world's declared name, whose slot the object's layout fixes (`named_name_row`).
+pub(crate) const FLAG_NAME_GLOBAL_SLOT: u8 = 16;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
 pub(crate) const FLAG_CASE_FILTER: u8 = 8;
@@ -2029,7 +2019,8 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             // The native is the record's immediate, its discriminant (`name_native_operand`), read by index.
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native(Native::ALL[i.imm() as usize]))),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
-            FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
+            // The slot word is the record's field operand's, which `name_global_operand` wrote at load.
+            FLAG_NAME_GLOBAL_SLOT => Some(NameBinding::Read(NameRead::GlobalSlot(unsafe { i.operand.field.shape }))),
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
         };
@@ -2261,9 +2252,8 @@ pub(crate) const fn name_row<const FLAG: u8>(load: quench_runtime::staged::NameL
     }
 }
 
-/// Where a by-name load's row leaves when its binding does not answer it: a global's read takes
-/// its refresh (`global_name_refresh_miss`); a probe takes its probe (`name_probe_miss`); any
-/// other read takes the general path, which the lane exits to.
+/// Where a by-name load's row leaves when its binding does not answer it: a probe takes its probe
+/// (`name_probe_miss`); any other read takes the general path, which the lane exits to.
 const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) -> Handler {
     match load {
         quench_runtime::staged::NameLoad::Read => name_miss_kind::<FLAG, { super::LOAD_NAME }>(),
@@ -2275,9 +2265,6 @@ const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) 
 /// `name_load_miss` for the by-name load of kind `KIND`.
 const fn name_miss_kind<const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
-        FLAG_NAME_GLOBAL => super::global_name_refresh_miss::<KIND, false, false> as Handler,
-        FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<KIND, false, true> as Handler,
-        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<KIND, true, false> as Handler,
         FLAG_PROBE => super::probe_handler::<KIND>(),
         _ => super::exit_lane as Handler,
     }
@@ -3883,7 +3870,7 @@ unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<V
     match read {
         NameRead::Native(native) => Some(vm.native_value(native)),
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
+        NameRead::GlobalSlot(slot) => vm.global_slot_value(slot),
     }
 }
 

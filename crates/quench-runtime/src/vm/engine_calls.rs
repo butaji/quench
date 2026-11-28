@@ -79,7 +79,7 @@ unsafe extern "Rust" {
     safe fn quench_engine_fn_lane_unlowered_report() -> String;
     safe fn quench_engine_fn_census() -> (u64, u64, u64);
     safe fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str;
-    safe fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) -> ();
+    safe fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize) -> ();
     safe fn quench_engine_fn_native_js_lane_helpers() -> *const ();
     safe fn quench_engine_fn_native_js_operation_entry_for(opcode: usize) -> Option<NativeJsOperationEntry>;
 }
@@ -325,7 +325,7 @@ pub fn census() -> (u64, u64, u64) { quench_engine_fn_census() }
 pub fn candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { quench_engine_fn_candidate_rejection_reason(program, function_id) }
 
 #[inline(always)]
-pub fn settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) -> () { quench_engine_fn_settle_name_record(view, pc, op, lands) }
+pub fn settle_name_record(view: &LaneView, pc: usize) -> () { quench_engine_fn_settle_name_record(view, pc) }
 
 #[inline(always)]
 pub fn native_js_lane_helpers() -> *const () { quench_engine_fn_native_js_lane_helpers() }
@@ -440,7 +440,7 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_unlowered_report = fn() -> String;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_census = fn() -> (u64, u64, u64);
     #[allow(non_camel_case_types)] pub type quench_engine_fn_candidate_rejection_reason = fn(&ResidualProgram, u32) -> &'static str;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_settle_name_record = fn(&LaneView, usize, Op, bool) -> ();
+    #[allow(non_camel_case_types)] pub type quench_engine_fn_settle_name_record = fn(&LaneView, usize) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_native_js_lane_helpers = fn() -> *const ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_native_js_operation_entry_for = fn(usize) -> Option<NativeJsOperationEntry>;
 }

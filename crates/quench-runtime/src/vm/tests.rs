@@ -20664,21 +20664,9 @@ check(hot(readG), 12000, 'property after lexical declarations');
     let program = Engine::specialize(first, "global-reads.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();
-    let held = |vm: &Vm| {
-        vm.programs
-            .views_in_lane(super::program_store::ProgramId::MAIN)
-            .into_iter()
-            .flatten()
-            .filter_map(super::program_store::derived_lane_view)
-            .map(|view| view.held_name_hints())
-            .sum::<usize>()
-    };
-    assert!(held(&vm) > 0, "the hot reads hold global-object hints");
     // A later Script's `let` shadows the global property; reading it first is a TDZ error.
     let error = vm.eval_script_source(&program, "readL(); let L = 20;", "global-lexical.js").unwrap_err();
     assert!(vm.format_error(&program, &error).contains("ReferenceError"));
-    // Declaring `L` cleared every hint, whatever name it holds (`Vm::note_global_lexical_names`).
-    assert_eq!(held(&vm), 0);
     vm.eval_script_source(&program, later, "global-reads-later.js").unwrap();
 }
 

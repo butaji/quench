@@ -204,7 +204,7 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_census =
 fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { crate::js_compiled::candidate_rejection_reason(program, function_id) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_candidate_rejection_reason = quench_engine_fn_candidate_rejection_reason;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) -> () { crate::dispatch_fast::name_probe::settle_name_record(view, pc, op, lands) }
+fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize) -> () { crate::dispatch_fast::name_probe::settle_name_record(view, pc) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_settle_name_record = quench_engine_fn_settle_name_record;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_native_js_lane_helpers() -> *const () { crate::compiled::native_js_lane_helpers() }

@@ -1,10 +1,9 @@
 use super::*;
 
-/// What a global name read finds (`Vm::global_name_read`): a value, with the hint naming the
-/// global object's own data field that held it, an uninitialized lexical binding, or nothing
+/// What a global name read finds (`Vm::global_name_read`): a value, an uninitialized lexical binding, or nothing
 /// the lane's read takes.
 pub enum GlobalNameRead {
-    Value(Value, Option<FieldCache>),
+    Value(Value),
     Uninitialized,
     Miss,
 }
@@ -54,17 +53,16 @@ impl Vm {
             })
     }
 
-    /// A global name read as the lane takes it (`dispatch_fast::global_name_refresh_miss`):
-    /// an initialized global lexical binding of the name, else the global object's own data
-    /// field with the hint that names it, else the site's cached field.
+    /// A global name read: an initialized global lexical binding of the name, else the site's cached
+    /// field of the global object.
     pub fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
         let globals = self.realm.globals;
         if self.realm.global_lexical_declarations.contains(&atom) {
             return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-                .map_or(GlobalNameRead::Uninitialized, |value| GlobalNameRead::Value(value, None));
+                .map_or(GlobalNameRead::Uninitialized, GlobalNameRead::Value);
         }
         match self.cached_field_hit(code, globals, site) {
-            object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value, None),
+            object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value),
             _ => GlobalNameRead::Miss,
         }
     }

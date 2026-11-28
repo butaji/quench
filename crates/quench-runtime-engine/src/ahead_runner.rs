@@ -78,7 +78,6 @@ fn ahead_lane_view(function: &Function, constants: &[Value]) -> LaneView {
         plain_backward_jump_sites: 0,
         osr_rejections: None,
         field_records: Box::new([]),
-        name_records: Box::new([]),
         proven_counters: Box::new([]),
         planned_calls: Box::new([]),
     }

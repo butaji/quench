@@ -71,8 +71,8 @@ pub(super) fn entry_fill_known(function: &Function) -> u16 {
 }
 
 /// Switches the record at `ip` to `handler` for the rest of its view's life, at an edge only: a handler is chosen once at
-/// load from the facts (`derive_lane_view`) and execution never rewrites it. The edges that may are the realm's landing of
-/// a probed name on the global object (`settle_name_record`) and the loop site's admission edge (`loop_retire_in_lane`).
+/// load from the facts (`derive_lane_view`) and execution never rewrites it. The edges that may are the settle of a probed
+/// name (`settle_name_record`) and the loop site's admission edge (`loop_retire_in_lane`).
 /// Every handler a record may switch between computes the same result.
 #[inline(always)]
 pub(super) fn edge_rewrite(ip: Ip, handler: Handler) {

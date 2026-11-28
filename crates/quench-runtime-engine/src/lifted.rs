@@ -61,7 +61,6 @@ impl LaneView {
             self.drop_body(body);
         }
         self.clear_hints(&self.field_records);
-        self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
             tier.retire_named_shapes();
