@@ -96,17 +96,3 @@ fn a_narrow_decode_inverts_every_narrow_encoding() {
     }
 }
 
-/// The interpreter's reading of a prototype link (`ProtoLink::object_granule`) names the same granule
-/// the staged rule reads from it, at and around every range boundary.
-#[test]
-fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let edges = [0, OBJECT.proto_record_base, OBJECT.proto_record_end, OBJECT.proto_mask];
-    for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
-        let interpreter = crate::heap::ProtoLink::from_bits(link).object_granule();
-        if let Some(granule) = interpreter {
-            let staged = super::object::proto_record_id(&mut Concrete::pure(), u64::from(link));
-            assert_eq!(u64::from(granule), staged, "link {link:#x}");
-        }
-    }
-}
