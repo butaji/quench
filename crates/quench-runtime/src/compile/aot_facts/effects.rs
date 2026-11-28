@@ -572,10 +572,8 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
         Some(Operation::StoreLocalPlain { source, slot, .. } | Operation::StoreLocalChecked { source, slot, .. }) => {
             write(ctx, pc, false, events, Key::Slot { owner: ctx.id, slot }, state[usize::from(source)]);
         }
-        // Opening the temporal dead zone writes no value: the marker joins nothing, and a checked read leaves before it reads it.
-        Some(Operation::InitializeLocal { slot }) => {
-            write(ctx, pc, true, events, Key::Slot { owner: ctx.id, slot }, Word::of_cell(Cell::NEVER));
-        }
+        // Opening the temporal dead zone (`InitializeLocal`) writes no value: a checked read throws before it could observe the
+        // hole, so it is no store of the slot and no site the dominance of its one store counts.
         Some(Operation::StoreCapture { source, depth, slot }) => match ctx.scope.owner(ctx.id, depth) {
             Some(owner) => write(ctx, pc, true, events, Key::Slot { owner, slot }, state[usize::from(source)]),
             None => {
