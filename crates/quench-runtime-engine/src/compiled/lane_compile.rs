@@ -402,7 +402,9 @@ impl Vm {
         let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
         let mut fields = self.unit_fields_in_lane(program, &unit, function, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.unit_fields_in_lane(program, &unit, function, view); }
+        let domains = lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice),
+            |pc, instruction, load| self.store_proven(aot.as_deref(), &unit, function, pc, instruction, load));
+        if !self.admit_lane_stores(domains) { fields = self.unit_fields_in_lane(program, &unit, function, view); }
         let global_reads = self.global_reads_in_lane(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         // What decides against a plan from its unit alone decides before its lowering, the most
@@ -689,6 +691,21 @@ impl Vm {
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
     fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, quench_runtime::typed_ir::Type)>) -> bool {
         domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
+    }
+
+    /// Whether the store `instruction` at unit pc `pc` of `unit` needs no admission at lane compile (`store_domains`): its receiver's
+    /// proven class seeds the slot (`lane_region::tag_proofs::store_seeded`), or, where the store's shape is a constant of this
+    /// program, the shape's constructed root names the class and the store's atom is the slot's union field (`shape_constructed_class`).
+    /// No facts, or neither, keeps the admission.
+    fn store_proven(&self, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, unit: &super::lane_unit::Unit, function: u32,
+        pc: usize, instruction: quench_runtime::bytecode::WideInstruction, load: &crate::compiled::NativeFieldLoad) -> bool
+    {
+        let Some(facts) = facts else { return false };
+        let atom = instruction.atom_index();
+        let shaped = self.shape_constructed_class(load.shape).is_some_and(|(program, class)| program == self.active_program
+            && lane_region::tag_proofs::slot_write_seeded(facts, class, atom, load.ty)
+            && lane_region::tag_proofs::union_slot(facts, class, atom) == Some(usize::from(load.slot)));
+        shaped || lane_region::tag_proofs::store_seeded(facts, unit, function, pc, instruction, load.ty)
     }
 }
 

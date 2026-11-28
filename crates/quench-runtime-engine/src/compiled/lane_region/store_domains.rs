@@ -7,14 +7,18 @@ use super::*;
 /// The writes the raw stores of `instructions` may make, once per physical slot (shape and
 /// slot), independently of cache-row binding availability: each store site's one proved
 /// field's (`field` of its cache site) declared type.
-pub(crate) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn(u16) -> Option<&'a [NativeFieldLoad]>)
-    -> Vec<(u32, u16, Type)> {
+///
+/// A store `proven` at its unit pc (`store_proven`, the receiver's class seeds the slot) needs no admission, so it is no domain.
+pub(crate) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn(u16) -> Option<&'a [NativeFieldLoad]>,
+    proven: impl Fn(usize, WideInstruction, &NativeFieldLoad) -> bool) -> Vec<(u32, u16, Type)>
+{
     let mut domains: Vec<(u32, u16, Type)> = Vec::new();
-    for instruction in instructions.iter().filter(|instruction| matches!(crate::compiled::decoded(*instruction), Some(quench_runtime::staged::Operation::SetField { .. }))) {
+    for (pc, instruction) in instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::decoded(**instruction), Some(quench_runtime::staged::Operation::SetField { .. }))) {
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
         // An ahead image's guessed store is admitted where its guard links (`symbols::guarded_shape`):
         // the slot's type holds every int32 it writes.
         if field.ty == Type::NEVER || field.guessed() { continue; }
+        if proven(pc, *instruction, field) { continue; }
         match domains.iter_mut().find(|(shape, slot, _)| (*shape, *slot) == (field.shape, field.slot)) {
             Some((_, _, domain)) => *domain = domain.join(field.ty),
             None => domains.push((field.shape, field.slot, field.ty)),
@@ -33,7 +37,9 @@ impl Lowering<'_, '_> {
         if self.vm.online.is_some() && !self.vm.frozen {
             return;
         }
-        for (shape, slot, domain) in store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice)) {
+        let domains = store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice),
+            |pc, instruction, load| self.store_proven(pc, instruction, load.ty));
+        for (shape, slot, domain) in domains {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.raw_const(Lane::I64, i64::from(shape));
             let slot = self.raw_const(Lane::I64, i64::from(slot));
