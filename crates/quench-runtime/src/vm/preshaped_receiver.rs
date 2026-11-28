@@ -223,17 +223,14 @@ impl Vm {
     fn derive_fixed_union(&mut self, constructor: Value, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return (NOT_FIXED, 0) };
         let Some(facts) = self.programs.aot_facts(program) else { return (NOT_FIXED, 0) };
-        // Fixed only where the closed world also proves the instances never depart the union (`class_never_departs`).
-        if !facts.class_never_departs(class) {
+        // One fact decides it (`AotFacts::class_fixed_cell`: a union layout of at most MAX_CELL_FIELDS fields whose
+        // instances never depart), the same bit the lane reads for direct addressing.
+        if !facts.class_fixed_cell(class) {
             return (NOT_FIXED, 0);
         }
         let Some(layout) = facts.class_union_layout(class) else { return (NOT_FIXED, 0) };
-        // One representation: the storage form is the one the field count decides, and every union field has its
-        // settled domain. The cell holds any count up to MAX_CELL_FIELDS, so `Storage::Flat` is accepted as a cell.
-        let fields_fit = layout.fields.len() <= crate::heap::MAX_CELL_FIELDS;
-        let storage_consistent = layout.storage == crate::compile::aot_facts::Storage::of_fields(layout.fields.len());
         let domains = layout.fields.iter().all(|(atom, _)| facts.slot_domain(class, *atom).is_some());
-        if !fields_fit || !storage_consistent || !domains || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
+        if !domains || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
             return (NOT_FIXED, 0);
         }
         // Only a `Constructed{C, true}` root is fixed: `seed_union_domains` seeds its union chain where the root is made,
