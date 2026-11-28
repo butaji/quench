@@ -151,6 +151,14 @@ impl Heap {
         self.collection_records.for_each_live(|id, collection| {
             if collection.object.was_used_as_prototype() { prototypes.push(Value::direct_collection(id)); }
         });
+        // Every ordinary object is a class cell, so the cell prototypes are the live cells whose extras carry the mark.
+        let mut granules = Vec::new();
+        self.class_space.for_each_live_granule(|granule| granules.push(granule));
+        for granule in granules {
+            if self.live_cell(granule).was_used_as_prototype() {
+                prototypes.push(Value::direct_object(granule));
+            }
+        }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.cell.as_ref().and_then(Cell::object).is_some_and(Object::was_used_as_prototype) {
                 prototypes.push(Value::heap(index as u32));

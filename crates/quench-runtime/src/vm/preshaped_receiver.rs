@@ -370,13 +370,14 @@ impl Vm {
     /// entry and one shape are read; anything else, an empty entry included, answers `false`.
     #[inline(always)]
     pub fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
-        let Some(record_id) = receiver.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
+        // A class cell's entry is keyed by its class (`own_receiver_key`), which names its layout.
+        let Some(key) = self.heap.live_class_key(receiver) else {
             return false;
         };
         let entry = self.field_cache_entry(site);
         let held = entry.holder == NO_FIELD_HOLDER
             && entry.receiver != NO_FIELD_RECEIVER
-            && entry.receiver == self.heap.object_record_by_id(record_id).exact_shape();
+            && entry.receiver == key;
         #[cfg(any(test, feature = "test-support"))]
         if held {
             super::call_out::counts::bump(&super::call_out::counts::CONSTANT_FIELD_SKIPS);

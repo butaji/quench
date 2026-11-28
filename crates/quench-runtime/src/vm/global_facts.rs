@@ -210,29 +210,12 @@ impl Vm {
         i32::try_from(std::mem::offset_of!(Vm, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
     }
 
-    /// The global object's own data property `atom` as a slot a lane body holds, for its
-    /// `store` or its `typeof`; `None` where a lexical binding may shadow the name, the property
-    /// is no (writable) data property, or a store would be seen by code that holds the cell's
-    /// value or by an inheritor of the global object (`GlobalSlot`).
+    /// The global object's own data property `atom` as a slot a lane body holds, for its `store` or its `typeof`.
+    /// The global object is a class cell, and a class cell's data field carries no shape hint to name it by, so no
+    /// slot is held here (the class-keyed tiers answer its reads).
     pub fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
-        let globals = self.realm.globals;
-        if !self.global_name_hintable(atom) { return None; }
-        let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
-        self.heap.ensure_cell_extras(globals);
-        let table = self.heap.object_mut(globals).map(|mut o| o.global_values_table())?;
-        let cell = GlobalCell::Slot(u32::from(hint.record_slot()));
-        // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
-        while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
-        let held = crate::heap::global_value_fact(table, cell).is_some();
-        let inherited = self.heap.object(globals)?.was_used_as_prototype();
-        if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
-        let ty = self.heap.slot_type(hint.receiver, usize::from(hint.record_slot()));
-        let dependency = (ty != Type::ANY && ty != Type::NEVER)
-            .then_some(SlotDependency { shape: hint.receiver, slot: hint.record_slot(), ty });
-        let record = self.heap.record_id(globals.direct_object_index()?)?;
-        Some(GlobalSlot { slot: hint.record_slot(), storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
-            layout: crate::heap::global_layout_fact(table)?, global: globals, record,
-            realm_offset: Self::realm_globals_offset() })
+        let _ = (atom, store);
+        None
     }
 
     /// The global lexical binding `atom` of the active realm as a slot code reads live (`LexicalSlot`), where the record holds it

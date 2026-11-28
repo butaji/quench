@@ -12,9 +12,6 @@ impl Vm {
     /// decide a direct object's chain (`instanceof_by_words`), and the walk below them any other object kind and any
     /// longer chain. `None` where a proxy's `[[GetPrototypeOf]]` may run its trap.
     pub(super) fn instanceof_chain(&self, value: Value, target: ProtoLink) -> Option<bool> {
-        if let Some(holds) = self.instanceof_by_words(value, target) {
-            return Some(holds);
-        }
         let mut object = match value.direct_object_index() {
             Some(_) => self.heap.direct_object_view(value)?,
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
@@ -37,14 +34,6 @@ impl Vm {
         }
     }
 
-    /// `instanceof_chain` by the words of a direct object's chain alone; `None` leaves any other cell and any
-    /// longer chain to the walk.
-    #[inline(always)]
-    fn instanceof_by_words(&self, value: Value, target: ProtoLink) -> Option<bool> {
-        let records = self.heap.object_record_base()? as u64;
-        let mut stage = crate::staged::concrete_over_vm(self);
-        crate::staged::object::instanceof_by_words(&mut stage, records, value.to_bits(), u64::from(target.bits()), ())
-    }
 
     /// What the steady case remembers of `constructor` (its layout, its prototype slot, the holder it inherits
     /// the native `@@hasInstance` from) where it has proved them: its record, the encoded link of its
