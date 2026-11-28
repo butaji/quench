@@ -16,13 +16,14 @@ pub(crate) fn add_initializer_fields_in_lane(
     function: u32,
     argument: impl Fn(u16) -> Value,
     read: impl Fn(u32) -> bool,
+    fixed: bool,
     nested: impl FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>,
     each: impl FnMut(&quench_runtime::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
-    add_stores_in_lane(vm, code, this, stores, argument, read, false, nested, each)
+    add_stores_in_lane(vm, code, this, stores, argument, read, fixed, nested, each)
 }
 
 /// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`). A store to a field

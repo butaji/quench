@@ -147,6 +147,7 @@ impl ConstructPlan {
             fallbacks: fields.fallbacks,
             nested: fields.nested,
             forwarded: Some(forwarded),
+            fixed: fields.fixed,
             ..*self
         }
         .derive_header()
@@ -337,7 +338,12 @@ pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value>
     if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
         return None;
     }
-    let this = vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0);
+    let plan = *plan;
+    // A fixed class's receiver is its union cell (R4-F), as `allocate_receiver` makes it.
+    let this = match plan.fixed {
+        Some(_) => plan.allocate(vm, |_| Value::UNDEFINED),
+        None => vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0),
+    };
     note_allocation(vm);
     Some(this)
 }

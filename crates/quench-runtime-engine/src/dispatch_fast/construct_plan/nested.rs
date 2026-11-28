@@ -69,22 +69,49 @@ pub(crate) fn finish_forwarded_in_lane(
     function: u32,
     argument: impl Fn(u16) -> Value,
     read: impl Fn(u32) -> bool,
+    union: Option<quench_runtime::vm::engine_types::FixedUnion>,
 ) -> Option<Option<ConstructPlan>> {
     let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
     let nested = std::cell::Cell::new(None);
-    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read,
+    // Each store's name and value in store order: a fixed receiver's slot writes, and its plan's slots.
+    let mut atoms = [0; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut values = [Value::UNDEFINED; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut stored = 0;
+    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read, union.is_some(),
         |vm, construct| {
             let (built, field) = nested_construct_in_lane(vm, env, construct)?;
             nested.set(Some(field));
             Some(built)
         },
         |store, value| {
+            if let (Some(atom), Some(stored_value)) = (atoms.get_mut(stored), values.get_mut(stored)) {
+                *atom = store.atom;
+                *stored_value = value;
+            }
+            stored += 1;
             fields = fields.and_then(|fields| match store.value {
                 InitializerValue::Construct(_) => fields.with_nested(nested.take()?),
                 _ => fields.with_field(store, value),
             });
         });
-    applied.then_some(fields)
+    if !applied {
+        return None;
+    }
+    let Some(union) = union else {
+        return Some(fields);
+    };
+    for (&atom, &value) in atoms.iter().zip(&values).take(stored) {
+        let slot = union.slot_of(atom).expect("a fixed class's store names one of its union slots");
+        vm.store_fixed_cell_slot(this, slot, atom, value);
+    }
+    // The fields' plan holds the cell's slots, as `initialize_stores_in_lane`'s does (`record_forwarded_fields_in_lane`).
+    Some(fields.map(|fields| ConstructPlan {
+        fixed: Some(quench_runtime::vm::engine_types::FixedCellPlan {
+            shape: union.shape,
+            slots: union.cell_slots(&atoms[..usize::from(fields.fields)]).expect("a fixed class's store names one of its union slots"),
+        }),
+        ..fields
+    }))
 }
 
 #[quench_macros::ext(ConstructPlanOps2)]
