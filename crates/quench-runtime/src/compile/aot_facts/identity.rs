@@ -131,7 +131,7 @@ fn may_define(scope: &Scope, call: &Call) -> bool {
 /// - every sloppy function a plain call may reach is one `this_undefined` names: its calls all pass an undefined receiver, no
 ///   code the solve does not follow calls it, and no other receiver reaches it, so its `this` is the global object at every entry.
 /// False where the solve is not closed (no builtin proofs).
-pub(super) fn global_object_proof(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope,
+pub(super) fn global_object_proof(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, scope: &Scope,
     this_undefined: &BTreeSet<u32>) -> bool {
     let Some(proofs) = facts.builtins.as_ref() else { return false };
     if !proofs.global_object_identity_fixed(scope.global_this()) { return false; }

@@ -526,7 +526,7 @@ fn reflective_read(ctx: &Ctx<'_>, instruction: WideInstruction, operation: &Opti
         return may_reflect(FieldBase::register(instruction.register_b())) && key_may_name(state[usize::from(instruction.register_c())]);
     }
     matches!(operation, Some(Operation::ElementRead { base, key, .. })
-        if may_reflect(FieldBase::register(*base)) && key_may_name(state[usize::from(*key)]))
+        if may_reflect(FieldBase::register(*base)) && key.register_index().is_none_or(|register| key_may_name(state[usize::from(register)])))
 }
 
 /// Whether the object a named access reads or stores through `base` may be the global object: its fact (`base_fact`) may

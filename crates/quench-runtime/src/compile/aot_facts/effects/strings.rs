@@ -13,7 +13,7 @@ use crate::staged::glue_prelude::*;
 
 /// The Number a read of `length` off `owner` is, where `owner` is a string: the integer range of its length
 /// (`StringFact::length`). `None` for any other read.
-fn string_length(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Option<Type> {
+pub(super) fn string_length(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Option<Type> {
     let fact = owner?.cell.ty.string_fact()?;
     if ctx.scope.length != Some(atom) { return None; }
     let length = fact.length();
@@ -24,7 +24,7 @@ fn string_length(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Option<Type> 
 /// `charAt`, `charCodeAt`, `substring` and `slice` of a string receiver are typed by their arguments' types
 /// (`typing::char_at` and the rest). A call of a name the program rebinds, or of a receiver not known to be a string,
 /// defines none.
-fn string_call(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
+pub(super) fn string_call(ctx: &Ctx<'_>, instruction: WideInstruction, state: &[Word]) -> Option<Word> {
     let strings = ctx.types?.strings();
     let invocation = crate::staged::Invocation::of(instruction, ctx.decode)?;
     let arguments: Vec<Type> = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)].cell.ty).collect();

@@ -465,8 +465,7 @@ impl AotFacts {
     /// (`heap::cell_region_for`, the largest region past every capacity) and that region's spill slot (`layouts::spill_from`).
     pub fn spill_from(&self, class: u32) -> Option<u32> {
         let fields = self.unions.get(&class)?.fields.len();
-        let largest = crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1;
-        crate::heap::layouts::spill_from(crate::heap::cell_region_for(fields).unwrap_or(largest), fields)
+        crate::heap::layouts::spill_from(crate::heap::cell_region_for(fields), fields)
     }
 
     /// Whether every instance of class `class` holds field `atom` before any code can read it: the class is a fixed cell
