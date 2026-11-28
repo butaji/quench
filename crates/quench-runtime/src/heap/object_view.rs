@@ -6,7 +6,7 @@
 //! reads and edits them through `Object::of_class`: a record of that layout with no payload. A live
 //! cell has no extras and no arena run, so no other operation exists for it. Those operations (extras,
 //! elements, arena runs, dictionary mode, prototype marking) are record-only: `ObjectRef::record_only` is
-//! `None` for a cell, and `Heap::object_record_mut` departs the cell first, so the record it returns is whole.
+//! `None` for a cell, and `Heap::object_record_mut` answers `None` too.
 
 #![allow(dead_code)]
 
@@ -149,7 +149,7 @@ macro_rules! read_methods {
 impl<'a> ObjectRef<'a> {
     /// The record of the object, for the operations a class cell cannot answer (extras, elements, arena runs,
     /// inline values, payload words). `None` for a cell, which has none of that data. A caller that must
-    /// change record data takes it through `Heap::object_record_mut`, which departs a cell first.
+    /// change record data takes it through `Heap::object_record_mut`, which answers `None` for a cell.
     #[inline(always)]
     pub fn record_only(&self) -> Option<&'a Object> {
         match self {
@@ -257,8 +257,8 @@ impl<'a> ObjectMut<'a> {
     }
 
     /// The record of the object, consuming the view so the record outlives it, for record data. `None` for a
-    /// cell. A caller that must change record data takes it through `Heap::object_record_mut`, which departs
-    /// a cell first.
+    /// cell. A caller that must change record data takes it through `Heap::object_record_mut`, which answers
+    /// `None` for a cell.
     #[inline(always)]
     pub fn record_only_mut(self) -> Option<&'a mut Object> {
         match self {

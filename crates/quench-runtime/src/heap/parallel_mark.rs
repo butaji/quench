@@ -315,7 +315,7 @@ impl<'heap> ParallelMarkView<'heap> {
                     let extras = self.extras.0.get(extras_id_at(self.class_base, granule));
                     Heap::cell_children_marking(value, class, fields, run, table, extras, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
                 } else {
-                    // A departed cell keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`).
+                    // A stub's granule keeps its mark while its Value lives (`ClassSpace::mark_cell`), and its record is marked.
                     self.cells.mark_if_new(granule);
                     let id = stub_record_at(self.class_base, granule);
                     if !self.objects.mark_if_new(id) {

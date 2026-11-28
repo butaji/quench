@@ -77,14 +77,20 @@ impl Object {
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }
 
-    /// Installs `extras` (a departing cell's, from `ExtrasSpace::release`) on this record. The record's storage stays
-    /// where it is: the extras take its inline values and arena start, and the cell's own head fields otherwise.
-    pub(crate) fn install_extras(&mut self, extras: ObjectExtras) {
-        let storage = self.extras_mut();
-        let (inline_properties, arena_start) = (storage.head.inline_properties, storage.head.arena_start);
-        *storage = extras;
-        storage.head.inline_properties = inline_properties;
-        storage.head.arena_start = arena_start;
+    /// Takes this object's extras out, for the class cell that takes them (`Heap::insert_object_as_cell`). The cell's
+    /// header then names the extras in `ExtrasSpace`, and the object keeps none. The storage head is reset: the cell
+    /// holds the fields, so the extras keep only their elements and facts. Call after `release_storage`, which frees the
+    /// arena words the head named.
+    pub(crate) fn take_extras_for_cell(&mut self) -> Option<ObjectExtras> {
+        let extras = self.extras_pointer()?;
+        // SAFETY: the pointer came from `Box::into_raw` in `extras_mut` and is owned by this object alone; the payload
+        // is replaced below, so the box is freed once, by its new owner.
+        let mut boxed = unsafe { Box::from_raw(extras) };
+        boxed.head.inline_properties = DisplacedInline::default();
+        boxed.head.arena_start = 0;
+        self.payload = 0;
+        self.set_aux(self.aux() & !crate::value_vec::EXTRAS_FORM);
+        Some(*boxed)
     }
 
     /// The payload word of inline `values`, when each has a narrow form.

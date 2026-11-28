@@ -153,7 +153,7 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
 }
 
 /// The in-place store to a site whose class-keyed arms `classes` lead its shape arms `shapes` (`in_place`): the class of a
-/// direct object's cell is chosen once, `DEPARTED_CLASS` for any other word, which no arm names, and dispatched over the
+/// direct object's cell is chosen once, `NO_CLASS` for any other word, which no arm names, and dispatched over the
 /// class arms; where none takes it, `shape_store` stores (a live cell leaves there).
 #[inline(always)]
 fn classed_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
@@ -161,7 +161,7 @@ fn classed_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
     let direct = super::value::is_direct_object(stage, object);
     let class = stage.choose(direct,
         #[inline(always)] |stage| { let cell = super::object::cell_of(stage, object); super::object::cell_class(stage, cell) },
-        #[inline(always)] |stage| stage.constant(u64::from(super::object_encoding::DEPARTED_CLASS)));
+        #[inline(always)] |stage| stage.constant(u64::from(super::object_encoding::NO_CLASS)));
     class_dispatch(stage, frame, (owner, object), (class, classes, shapes), (value, named), miss).map(drop)
 }
 

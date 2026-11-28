@@ -34,21 +34,16 @@ pub fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shape, link
     Some(super::super::Linked::of_guard(record))
 }
 
-/// The read of the direct object `object` through `entry`, routed by the entry's key: a class key reads
-/// the live cell (`direct_class_read`); a shape key reads the object's record, which leaves at `miss`
-/// for a live cell (`object_record_of`), as `record_read_in` does for a record.
+/// The read of the direct object `object` through `entry`: a direct object is a live class cell, so the read is
+/// `direct_class_read`, its own value or its held value. An entry keyed by a shape names no class, matches no cell,
+/// and leaves at `miss`: only functions and other records keep shape keys.
 #[inline(always)]
-pub fn direct_read_in<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let keyed = entry_keys_class(stage, entry);
-    stage.choose_leaving(keyed, #[inline(always)] |stage| direct_class_read(stage, object, entry, miss),
-        #[inline(always)] |stage| {
-            let record = super::super::object::object_record_of(stage, records, object, miss)?;
-            record_read_in(stage, records, record, entry, miss)
-        })
+pub fn direct_read_in<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    direct_class_read(stage, object, entry, miss)
 }
 
-/// The read of the live cell `object` through the class-keyed `entry`: its own value (`direct_own_value`)
-/// or its held value (`class_held_value`).
+/// The read of the live cell `object` through the entry `entry`: its own value (`direct_own_value`)
+/// or its held value (`class_held_value`). Both guard the class key first (`class_matches`).
 #[inline(always)]
 fn direct_class_read<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let own = own_entry(stage, entry);

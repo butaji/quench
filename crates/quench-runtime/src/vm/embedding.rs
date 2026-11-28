@@ -1714,7 +1714,7 @@ impl Vm {
         let key = super::property_key::PropertyKey::string(atom);
         let absent_plain = self.plain_named_key(atom)
             && !self.descriptors.contains_key(&(object, key))
-            && self.heap.ordinary_object(object).is_some_and(|data| {
+            && self.heap.ordinary_view(object).is_some_and(|data| {
                 data.is_extensible()
                     && !data.is_module_namespace()
                     && data.deferred_module().is_none()

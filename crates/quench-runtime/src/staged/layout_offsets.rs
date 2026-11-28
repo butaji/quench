@@ -165,13 +165,12 @@ pub const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCu
 };
 
 /// A class cell's words (`heap::class_space`): the header at `header_offset`, whose low half is the
-/// class id (`class_offset`) and whose high half is the departed object's record id (`record_id_shift`);
-/// then the capacity's fields, `field_size` bytes each, from `fields_offset`.
+/// class id (`class_offset`) and whose high half is the cell's extras id; then the capacity's fields,
+/// `field_size` bytes each, from `fields_offset`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeClassCellLayout {
     pub header_offset: usize,
     pub class_offset: usize,
-    pub record_id_shift: u32,
     pub fields_offset: usize,
     pub field_size: usize,
 }
@@ -179,7 +178,6 @@ pub struct NativeClassCellLayout {
 pub const NATIVE_CLASS_CELL_LAYOUT: NativeClassCellLayout = NativeClassCellLayout {
     header_offset: 0,
     class_offset: 0,
-    record_id_shift: 32,
     fields_offset: 8,
     field_size: 8,
 };
@@ -343,16 +341,13 @@ pub const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
 pub const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
 /// The class space's base (`heap::class_space`): a direct object's cell is at this plus its granule times
-/// `CLASS_HEADER_BYTES`, and its header names the record by its high half.
+/// `CLASS_HEADER_BYTES`, and its header's low half is its class.
 pub const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);
 /// The granules the class space spans: a direct object's granule below this names a cell of some region.
 pub const CLASS_SPACE_GRANULES: u32 = (CAPACITY_CLASSES as u32) << REGION_SHIFT;
 /// A class cell's granule, in bytes: a direct object's cell is at the class base plus its granule times this.
 pub const CLASS_CELL_GRANULE_BYTES: usize = super::object_encoding::CLASS_HEADER_BYTES;
 
-/// The class id of a departed object's class cell (`object_encoding::DEPARTED_CLASS`): a cell whose class is this
-/// holds its record id in the header's high half, and a live cell's class id is never this.
-pub const DEPARTED_CLASS: u32 = super::object_encoding::DEPARTED_CLASS;
 pub const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
 /// count, and what watches a store (`store_watch`), which an unobserved store requires zero.

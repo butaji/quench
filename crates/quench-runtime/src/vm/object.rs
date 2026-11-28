@@ -825,7 +825,7 @@ impl Vm {
             || data.is_module_namespace()
             || data.deferred_module().is_some()
             || self.shape_has_index_key(data.shape())
-            || (!is_array && self.heap.ordinary_object(object).is_none())
+            || (!is_array && self.heap.ordinary_view(object).is_none())
     }
 
     /// Whether OrdinarySet of array index `index` on `object`, which holds no own property
@@ -1073,10 +1073,10 @@ impl Vm {
         };
         self.heap.property_set(object, slot, value);
     }
-    /// Clears the field caches when a holder cell departed (`Heap::take_holder_departure`): a holder
-    /// cell is marked only where a field entry names it, so only such departures pay the reset.
-    pub(super) fn drop_departed_holder_entries(&mut self) {
-        if self.heap.take_holder_departure() {
+    /// Clears the field caches when a marked holder's fields moved (`Heap::take_holder_moves`): a holder
+    /// cell is marked only where a field entry names it, so only such moves pay the reset.
+    pub(super) fn drop_moved_holder_entries(&mut self) {
+        if self.heap.take_holder_moves() {
             self.invalidate_field_caches();
         }
     }
@@ -2333,8 +2333,7 @@ impl Vm {
     fn add_by_transition(&mut self, object: Value, transition: Transition, value: Value) {
         // A class-keyed transition (`Transition::is_class_keyed`) adds to the live class cell in place (R4-C4: the
         // class edge from the before-class to the after-shape); a field past the cell's region spills into its run.
-        // A shape-keyed transition names a dictionary or constant cell, which has no class key: it departs first,
-        // and the record takes the add below.
+        // A shape-keyed transition names a dictionary or constant cell, which has no class key: the cell's own edits take it.
         if let Some(granule) = self.heap.live_class_cell(object) {
             if transition.is_class_keyed() {
                 self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value);
@@ -2353,7 +2352,7 @@ impl Vm {
         }
         // The record path takes the transition's shapes (`record_form`), whose layouts it guards.
         let transition = transition.record_form();
-        let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object")).expect("a departed receiver is a record");
+        let record_id = self.heap.record_id(object.direct_object_index().expect("an add's receiver is an ordinary object")).expect("a receiver that is no class cell is a record");
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
         if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
             return;
@@ -2584,8 +2583,8 @@ impl Vm {
     /// shape-keyed or own entry is no held read here.
     #[inline(always)]
     fn class_held_field_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
-        // A departed holder is an edge: it makes a collection due, and the collection clears the
-        // caches before any later op reads (`drop_departed_holder_entries`), so no holder test here.
+        // A moved holder is an edge: it makes a collection due, and the collection clears the
+        // caches before any later op reads (`drop_moved_holder_entries`), so no holder test here.
         if !is_class_key(cache.receiver) || cache.holder == NO_FIELD_HOLDER {
             return None;
         }
@@ -3589,7 +3588,7 @@ impl Vm {
         atom: Atom,
         site: usize,
     ) -> Result<Value, JsError> {
-        self.drop_departed_holder_entries();
+        self.drop_moved_holder_entries();
         // A getter the site's accessor entry answers is the `[[Get]]` result's whole
         // computation: its call with the receiver, without the data walk, which it would fail.
         // A trivial getter's forward is that call's value (getters-as-calls.md).
@@ -3938,7 +3937,7 @@ impl Vm {
         // direct array (whose elements and virtual length the caller's shape lookup excludes),
         // every own name `function_links_answer` admits of a function, and every own name of
         // a collection, date, regexp, promise or iterator (`ordinary_builtin_object`).
-        let shape_holds_own = self.heap.ordinary_object(object).is_some()
+        let shape_holds_own = self.heap.ordinary_view(object).is_some()
             || self.heap.array(object).is_some()
             || self.heap.function(object).is_some() && self.function_links_answer(atom)
             || self.heap.ordinary_builtin_object(object).is_some();

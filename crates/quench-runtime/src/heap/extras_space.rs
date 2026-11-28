@@ -1,7 +1,7 @@
 //! The extras of live class cells, by id (`ObjectExtras`). A live cell's header high half names its entry here
-//! (`ClassSpace::extras_id`); the entry is made on first need (`Heap::ensure_cell_extras`), released when its cell
-//! dies (`ClassSpace::sweep_cells`), and moved into the record when its cell departs (`Heap::depart_class_cell`).
-//! Entry 0 is reserved as `NO_EXTRAS`, so a zero id names no extras. Records keep their own extras box until every
+//! (`ClassSpace::extras_id`); an ordinary object's extras move in at its birth (`Heap::insert_object_as_cell`), or the
+//! entry is made on first need (`Heap::ensure_cell_extras`), and it is released when its cell dies (`ClassSpace::sweep_cells`).
+//! Entry 0 is reserved as `NO_EXTRAS`, so a zero id names no extras. Records (arrays, functions, builtins) keep their own extras box until every
 //! object's extras move here (C5 D4), so each object's extras have exactly one home at any time.
 
 use super::cell::{Object, ObjectExtras, trace_extras};
@@ -99,7 +99,7 @@ impl super::Heap {
     }
 
     /// Makes sure the live class cell `value` names has extras: an empty entry, on first need. A value that names no
-    /// live cell (a record, a departed cell, a non-object) is left alone.
+    /// live cell (a record or a non-object) is left alone.
     pub(crate) fn ensure_cell_extras(&mut self, value: Value) {
         let Some(granule) = self.live_class_cell(value) else { return };
         if self.class_space.extras_id(granule) == NO_EXTRAS {

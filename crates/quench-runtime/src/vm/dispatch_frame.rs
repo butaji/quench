@@ -2012,8 +2012,8 @@ impl Vm {
                             Some(v) if self.heap.array(v).is_some() => "array".into(),
                             Some(v) => match self.heap.get(v) {
                                 _ if let Some(symbol) = self.heap.symbol_data(v) => format!("symbol {:?}", symbol.kind),
-                                _ if self.heap.ordinary_object(v).is_some() => {
-                                    let data = self.heap.ordinary_object(v).unwrap();
+                                _ if self.heap.ordinary_view(v).is_some() => {
+                                    let data = self.heap.ordinary_view(v).unwrap();
                                     format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
                                 }
                                 Some(cell) => format!("cell {}", cell.profile_variant_name()),

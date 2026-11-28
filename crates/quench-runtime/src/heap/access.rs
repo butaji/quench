@@ -443,7 +443,7 @@ impl Heap {
 
     /// The exclusive view of the ordinary object `value` names: a live class cell, or its record, whose
     /// narrow run widens here so a caller that mutates the record sees the full run. A caller that needs record
-    /// data takes it through `object_record_mut`, which departs a cell first.
+    /// data takes it through `object_record_mut`, which answers `None` for a cell.
     #[inline(always)]
     pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> {
         if let Some(object_ref) = value.direct_object_index() {
@@ -998,11 +998,10 @@ impl Heap {
         &unsafe { self.object_records.get_live(record_id) }.object
     }
 
-    /// The record of `value` for a mutation of record data (extras, elements, arena runs, record flags). A live
-    /// class cell departs first (`depart_for_mutation`), so the record is the whole object.
+    /// The record of `value` for a mutation of record data (arrays, functions, builtins and other records). A class
+    /// cell has no record, so it answers `None`: its extras are edited through `ensure_cell_extras` and the cell view.
     #[quench_macros::test_visible]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
-        self.depart_for_mutation(value);
         self.object_mut(value)?.record_only_mut()
     }
 

@@ -59,12 +59,11 @@ pub fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, mis
 }
 
 /// Guards that the live class cell `cell` holds the class key `key` a row's hole names (`class | CLASS_KEY`):
-/// `class_matches` with the key as an operand, where the entry's complemented word is not read. A departed
-/// cell's `DEPARTED_CLASS` gives a word past u32, which equals no key.
+/// `class_matches` with the key as an operand, where the entry's complemented word is not read. A key of another
+/// class, or a shape key, equals no cell's key, so the cell misses.
 #[inline(always)]
 pub fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::Word, miss: S::Miss) -> Option<()> {
-    // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives `class | CLASS_KEY`;
-    // `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no key. So this compare is the whole guard.
+    // `class + CLASS_KEY` in the 64-bit word: every live cell's class is below `LAYOUT_CAPACITY`, so the compare is the whole guard.
     let class = super::super::object::cell_class(stage, cell);
     let held = stage.add_imm(class, u64::from(CLASS_KEY));
     let difference = stage.sub(held, key);
@@ -93,7 +92,7 @@ pub fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, s
 }
 
 /// The held field at `slot` of the class-keyed receiver `object`, whose holder is the live cell at `holder` (its
-/// granule): the class fixes the prototype link and a departed holder resets the field caches, as
+/// granule): the class fixes the prototype link and a holder whose fields move resets the field caches, as
 /// `class_held_value`, so the value is one load after the cell lookup.
 #[inline(always)]
 pub fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, holder: S::Word, miss: S::Miss) -> Option<S::Word> {
@@ -132,11 +131,11 @@ pub fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, mis
     Some(value)
 }
 
-/// The value a class-keyed held entry at `entry` names for the live cell `object` (`direct_read_in`):
+/// The value a class-keyed held entry at `entry` names for the live cell `object` (`direct_class_read`):
 /// the class key of the receiver matches (`class_matches`), and the holder is the live cell whose
 /// granule the entry stores in `holder_cell`, whose field at `slot` is the value. The class fixes the
-/// prototype link, so there is no link guard, and a departed holder resets the field caches
-/// (`Vm::drop_departed_holder_entries`), so there is no holder guard.
+/// prototype link, so there is no link guard, and a holder whose fields move resets the field caches
+/// (`Vm::drop_moved_holder_entries`), so there is no holder guard.
 #[inline(always)]
 pub fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let granule = super::super::value::direct_object_id(stage, object);
@@ -148,12 +147,3 @@ pub fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word
     Some(cell_field(stage, holder, slot))
 }
 
-/// Whether the entry at `entry` names a class key. The receiver word is stored complemented, so the
-/// key's `CLASS_KEY` bit is clear in the stored word. It is a fact of the entry, never a test of the
-/// object: a class key's read goes to the class cell, a shape key's to the record (`object_record_of`).
-#[inline(always)]
-pub fn entry_keys_class<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
-    let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
-    let bit = stage.and_imm(stored, u64::from(CLASS_KEY));
-    stage.eq_imm(bit, 0u32)
-}

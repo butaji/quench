@@ -41,7 +41,7 @@ impl ClassCellMarks<'_> {
 
 impl ClassSpace {
     /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
-    /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A departed cell
+    /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A class cell
     /// in a cell region is marked with its Value: its granule stays live while the Value does.
     pub(in crate::heap) fn mark_cell(&mut self, g: u32) -> bool {
         let (region, local) = locate(g);

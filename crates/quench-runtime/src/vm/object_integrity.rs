@@ -388,7 +388,7 @@ impl Vm {
         // cache entries apart. Node gives every new Buffer its prototype this way
         // (`FastBuffer`), and its classes their parent constructors (`Readable` from `Stream`).
         let keeps_shape = !data.was_used_as_prototype()
-            && (self.heap.ordinary_object(target).is_some()
+            && (self.heap.ordinary_view(target).is_some()
                 || self.heap.function(target).is_some()
                 || matches!(self.heap.get(target), Some(Cell::TypedArray { .. })));
         let mut cursor = proto;

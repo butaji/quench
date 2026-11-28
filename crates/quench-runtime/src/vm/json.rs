@@ -2138,7 +2138,7 @@ impl Vm {
         value: Value,
         w: &mut JsonWriter,
     ) -> JsonStep {
-        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
+        let is_array = if self.heap.ordinary_view(value).is_some() {
             false
         } else if let Some(array) = self.heap.array(value) {
             // An arguments object is an ordinary object to IsArray, so it serializes as one.
