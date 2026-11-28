@@ -2371,10 +2371,6 @@ pub struct Vm {
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
-    /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
-    /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
-    /// as the atoms.
-    pub intrinsic_natives: Vec<Option<Native>>,
     /// The entry that runs each native's call, by discriminant (`Vm::call_native_dispatch`).
     native_table: &'static native_table::NativeTable,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
@@ -3472,7 +3468,6 @@ impl Vm {
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
-        self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);

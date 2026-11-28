@@ -20578,7 +20578,7 @@ fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_ac
 #[test]
 fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
     // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
-    // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).
+    // atom reads the native its own text stands for (`bytecode::intrinsic_name_native`).
     let source = r#"
       function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
       class A { set x(v) { this.y = v; } }

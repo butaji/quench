@@ -4913,25 +4913,6 @@ impl Heap {
         self.properties.tracks()
     }
 
-    /// The held type a tracked store row through the hint `(layout, slot)` is installed for
-    /// (`slot_store::HELD_*`): the type slot `slot` of the layout's shape holds now, where a row
-    /// keeps a store of it in place (an arena-form hint, `hinted_arena`, while tracking); else
-    /// `HELD_NONE`, the tracked row's store.
-    pub fn tracked_store_held(&self, layout: u32, slot: u16) -> u8 {
-        use crate::staged::slot_store::{hinted_arena, HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-        use crate::typed_ir::SlotType;
-        if !self.properties.tracks() || !hinted_arena(layout, false) { return HELD_NONE; }
-        let shape = crate::staged::ic::layout_shape(layout);
-        if usize::from(slot) >= self.properties.shape_length(shape) { return HELD_NONE; }
-        match self.properties.slot_observation(shape, usize::from(slot)) {
-            SlotType::Int32 => HELD_INT32,
-            SlotType::DirectObject => HELD_OBJECT,
-            SlotType::DirectObjectOrNull => HELD_OBJECT_OR_NULL,
-            SlotType::Tagged => HELD_TAGGED,
-            _ => HELD_NONE,
-        }
-    }
-
     /// The base addresses of the arena's slot owner tables: `shape_chains`, `chain_owners`,
     /// `owner_types` (`ValueArena::owner_table_bases`), valid until the arena next grows them.
     #[inline(always)]

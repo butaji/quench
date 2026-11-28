@@ -18,13 +18,10 @@ pub(crate) enum Path {
     NestedOwnPairAttempt,
     NestedOwnPairFirstHit,
     NestedOwnPairHit,
-    MemoPairAttempt,
-    MemoPairFirstHit,
-    MemoPairHit,
 }
 
 impl Path {
-    const COUNT: usize = Self::MemoPairHit as usize + 1;
+    const COUNT: usize = Self::NestedOwnPairHit as usize + 1;
     const NAMES: [&'static str; Self::COUNT] = [
         "hint_own_read",
         "hint_holder_read",
@@ -39,9 +36,6 @@ impl Path {
         "nested_own_pair_attempt",
         "nested_own_pair_first_hit",
         "nested_own_pair_hit",
-        "memo_pair_attempt",
-        "memo_pair_first_hit",
-        "memo_pair_hit",
     ];
 }
 

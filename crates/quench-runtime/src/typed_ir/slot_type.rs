@@ -208,12 +208,3 @@ mod tests {
         }
     }
 }
-
-// The held types of tracked store rows are these discriminants (`slot_store::HELD_*`): the row
-// compares the slot owner's type byte (`owner_types`) with them.
-const _: () = {
-    use crate::staged::slot_store::{HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-    assert!(SlotType::None as u8 == HELD_NONE && SlotType::Int32 as u8 == HELD_INT32);
-    assert!(SlotType::DirectObject as u8 == HELD_OBJECT && SlotType::DirectObjectOrNull as u8 == HELD_OBJECT_OR_NULL);
-    assert!(SlotType::Tagged as u8 == HELD_TAGGED);
-};

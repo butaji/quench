@@ -44,18 +44,6 @@ pub(crate) const FULL: u8 = 16;
 pub(crate) const ENVIRONMENT: u8 = 17;
 /// `script_call_settles_miss`.
 pub(crate) const SETTLES: u8 = 18;
-/// `script_call_cross_miss`.
-pub(crate) const CROSS: u8 = 19;
-/// `script_call_cross_plain_miss::<0>`.
-pub(crate) const CROSS_PLAIN_0: u8 = 20;
-/// `script_call_cross_plain_miss::<1>`.
-pub(crate) const CROSS_PLAIN_1: u8 = 21;
-/// `script_call_cross_plain_miss::<2>`.
-pub(crate) const CROSS_PLAIN_2: u8 = 22;
-/// `script_call_cross_plain_miss::<3>`.
-pub(crate) const CROSS_PLAIN_3: u8 = 23;
-/// `script_call_cross_plain_miss::<4>`.
-pub(crate) const CROSS_PLAIN_4: u8 = 24;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row!(OP, ACC, { protocol_family::SCRIPT_CALL | parameters })`).
@@ -76,12 +64,6 @@ pub(crate) const fn script_call_miss_of(parameters: u8) -> Handler {
         FULL => script_call_full_miss as Handler,
         ENVIRONMENT => script_call_environment_miss as Handler,
         SETTLES => script_call_settles_miss as Handler,
-        CROSS => script_call_cross_miss as Handler,
-        CROSS_PLAIN_0 => script_call_cross_plain_miss::<0> as Handler,
-        CROSS_PLAIN_1 => script_call_cross_plain_miss::<1> as Handler,
-        CROSS_PLAIN_2 => script_call_cross_plain_miss::<2> as Handler,
-        CROSS_PLAIN_3 => script_call_cross_plain_miss::<3> as Handler,
-        CROSS_PLAIN_4 => script_call_cross_plain_miss::<4> as Handler,
         _ => general_step_in_lane,
     }
 }

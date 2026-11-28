@@ -32,6 +32,13 @@ impl<'a> FunctionFacts<'a> {
         }
     }
 
+    /// The functions the call at `pc` may call where no guess is among them (`call_targets` less a guessed target under
+    /// `guessed_calls`): empty where the call's target is a guess. A load-time choice reads this, never a guess (ruling Q5).
+    pub fn proven_call_targets(&self, pc: u32) -> Vec<u32> {
+        if self.facts.guessed_calls.contains(&(self.function, pc)) { return Vec::new(); }
+        self.call_targets(pc)
+    }
+
     /// The accessor the field access at `pc` runs, where the census proves one (`accessors::accessor_arms`).
     /// Read by the load-time choice of the accessor protocol rows (category F: sites 54, 59).
     pub fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
@@ -77,6 +84,13 @@ impl<'a> FunctionFacts<'a> {
         self.facts.captures.get(&self.function).map_or_else(Vec::new, |slots| {
             slots.iter().map(|&(owner, slot)| (slot, self.facts.captured_slot_cell(owner, slot))).collect()
         })
+    }
+
+    /// The function whose environment holds the depth-0 capture slot `slot` this function reads (`FactKey::Slot { owner, slot }`).
+    /// None where this function reads no depth-0 capture of `slot`. Read by the load-time choice of a capture's root row
+    /// (category M: site 1), which needs the owner to test whether it is the program's root function.
+    pub fn capture_owner(&self, slot: u16) -> Option<u32> {
+        self.facts.captures.get(&self.function)?.iter().find(|&&(_, captured)| captured == slot).map(|&(owner, _)| owner)
     }
 
     /// The cell register `register` holds just before the instruction at `pc` in the settled solve

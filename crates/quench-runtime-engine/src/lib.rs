@@ -251,8 +251,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::DispatchFastVm3 as _;
     pub use crate::dispatch_fast::DispatchFastVm4 as _;
     pub use crate::dispatch_fast::DispatchFastVm5 as _;
-    pub use crate::dispatch_fast::MemoLeafOps1 as _;
-    pub use crate::dispatch_fast::MemoReadOps1 as _;
     pub use crate::dispatch_fast::ForOfTestOps1 as _;
     pub use crate::dispatch_fast::DispatchFastVm6 as _;
     pub use crate::dispatch_fast::PreparedShapeOps1 as _;

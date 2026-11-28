@@ -44,8 +44,9 @@ type ConstantFieldsTest = unsafe fn(*mut (), Value, u16) -> bool;
 /// How a by-name load's record reads its name once resolved (`name_resolution`).
 #[derive(Clone, Copy)]
 pub(crate) enum NameRead {
-    /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
-    Native,
+    /// The active realm's function for the native the name's text stands for, carried from load
+    /// (`name_native_operand`).
+    Native(Native),
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
     /// The global object's own data field the record's hint names.
@@ -456,9 +457,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     plan: Option<RecordPlan>,
     /// The call record a call row runs (`LaneCall`), for the frame's call hooks.
     call: Option<LaneCall>,
-    /// The object a `GetField` of a local slot reads, where the local holds a plain value
-    /// (`plain_local_operand`); `PropertyFrame::local_base` answers it. `None` otherwise.
-    local_object: Option<u64>,
     /// The VM's element steps an element row's host path runs at its site, where the row is one
     /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
     elements: Option<ElementSteps>,
@@ -666,9 +664,6 @@ pub(crate) struct RecordPlan {
     /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
     /// (`StorePlan::Add`); `None` for a read's plan.
     store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
-    /// found inline, before any other family.
-    functions: bool,
     /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout, slot and the storage
     /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
     /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
@@ -696,7 +691,7 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn entry(kind: quench_runtime::staged::property::EntryKind, records: u64) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardLayout(0);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false, nested: None,
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: None,
             host: None, entry: Some(kind), own: None }
     }
 
@@ -713,50 +708,24 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn own_word(layout: u32, slot: u16, records: u64) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false, nested: None, host: None,
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: None, host: None,
             entry: None, own: Some((layout, slot)) }
     }
 
-    /// `own_word` as ops, which a receiver of any object part (`own_other`) or a polymorphic
-    /// read (`polymorphic`) extends.
+    /// `own_word` as ops, which a polymorphic read (`polymorphic`) extends.
     #[inline(always)]
     pub(crate) fn own(layout: u32, slot: u16, records: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: quench_runtime::staged::ic::form_of_layout(layout), storage_len: usize::from(slot) + 1,
             rep: quench_runtime::typed_ir::Representation::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
-    }
-
-    /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
-    /// takes the same layout compare.
-    #[inline(always)]
-    pub(crate) fn own_other(layout: u32, slot: u16, records: u64, heap: *const Vm) -> Self {
-        Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
-    }
-
-    /// The read of one object's own constant (`IcOp::OwnConstant`) from the receiver's word,
-    /// which equals the object's own word (`Vm::own_constant_word_operands`): one compare of the
-    /// register, no record addressed.
-    #[inline(always)]
-    pub(crate) fn own_constant(object: u64, watch: u64, value: u64) -> Self {
-        let read = quench_runtime::staged::ic::IcOp::OwnConstant { record: object, watch, value };
-        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, nested: None, host: None, entry: None, own: None }
     }
 
     /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(crate) fn length(length: quench_runtime::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
-    }
-
-    /// `own_other` of a layout whose storage form `form` the row's site fixed.
-    #[inline(always)]
-    pub(crate) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
-        heap: *const Vm) -> Self {
-        let mut plan = Self::own_other(layout, slot, records, heap);
-        plan.ops[0] = quench_runtime::staged::ic::IcOp::GuardFormed { id: layout, form };
-        plan
+        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
     }
 
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
@@ -766,7 +735,7 @@ impl RecordPlan {
         other: Option<*const Vm>) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [held, held], len: 1, records, other, word: false, store: None, nested: None, host: None, entry: None, own: None }
     }
 }
 
@@ -779,31 +748,15 @@ impl RecordPlan {
         use quench_runtime::staged::property::{StoreJoin, StorePlan};
         let none = IcOp::GuardLayout(layout);
         let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), nested: None, host: None, entry: None, own: None }
     }
 
-    /// The store the hint `(layout, slot)` proves for a tracked (`narrow` false) or narrow store
-    /// (`StorePlan::Hinted`), a refusal leaving to the VM's own-field store.
+    /// The tracked store the hint `(layout, slot)` proves (`StorePlan::Hinted`, not narrow), a refusal leaving
+    /// to the VM's own-field store.
     #[inline(always)]
-    pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64, narrow: bool) -> Self {
+    pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64) -> Self {
         use quench_runtime::staged::property::{StoreJoin, StorePlan};
-        let store = StorePlan::Hinted { id: layout, slot, narrow, join: StoreJoin::Host };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The tracked store the hint `(layout, slot)` proves by a row installed for the slot's held type
-    /// `held` (`StorePlan::Held`), a refusal leaving at the miss edge.
-    #[inline(always)]
-    pub(crate) fn own_held(layout: u32, slot: u16, records: u64, held: u8) -> Self {
-        let store = quench_runtime::staged::property::StorePlan::Held { id: layout, slot, held };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The store the hint `(layout, slot)` and the site's polymorphic entries prove
-    /// (`StorePlan::Polymorphic`).
-    #[inline(always)]
-    pub(crate) fn own_polymorphic(layout: u32, slot: u16, records: u64) -> Self {
-        let store = quench_runtime::staged::property::StorePlan::Polymorphic { id: layout, slot };
+        let store = StorePlan::Hinted { id: layout, slot, narrow: false, join: StoreJoin::Host };
         Self { store: Some(store), ..Self::own_store(layout, slot, records) }
     }
 
@@ -814,20 +767,13 @@ impl RecordPlan {
         Self { store: Some(quench_runtime::staged::property::StorePlan::Host), ..Self::own_store(0, 0, records) }
     }
 
-    /// The adding store of a named store record whose site may add its property (`StorePlan::Add`):
-    /// the VM's proved or cached add completes it (`PropertyFrame::field_add`).
-    #[inline(always)]
-    pub(crate) fn own_add() -> Self {
-        Self { store: Some(quench_runtime::staged::property::StorePlan::Add), ..Self::own_store(0, 0, 0) }
-    }
-
     /// The read of a string receiver through a `String.prototype` hint whose operands are
     /// `watch` and `value` (`IcOp::HeldString`), from the receiver's word.
     #[inline(always)]
     pub(crate) fn held_string(watch: u64, value: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
     }
 
     /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
@@ -836,7 +782,7 @@ impl RecordPlan {
     pub(crate) fn held_number(watch: u64, value: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let held = IcOp::HeldNumber { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
     }
 
     /// The own field a getter's hint returns (`IcOp::GetterOwn`), over the object records the lane
@@ -845,7 +791,7 @@ impl RecordPlan {
     pub(crate) fn getter(guard: u64, watch: u64, slot: u16, records: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let read = IcOp::GetterOwn { guard, watch, slot };
-        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None, own: None }
+        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, nested: None, host: None, entry: None, own: None }
     }
 }
 
@@ -860,8 +806,7 @@ impl RecordPlan {
         use quench_runtime::staged::ic::IcOp;
         let none = IcOp::GuardLayout(first.0);
         let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardShape(second.0), second.1, second.2)];
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some((hops, base)), host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: Some((hops, base)), host: None, entry: None, own: None }
     }
 
     /// `nested` whose second hop is the intermediate object's layout id `layout` in the fixed `form`
@@ -874,8 +819,7 @@ impl RecordPlan {
         let none = IcOp::GuardLayout(first.0);
         let bits = if matches!(form, Form::Packed) { quench_runtime::value_vec::INLINE_FORM } else { 0 };
         let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardFormed { id: layout, form: bits }, slot, form)];
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some((hops, base)), host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: Some((hops, base)), host: None, entry: None, own: None }
     }
 
     /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
@@ -883,7 +827,7 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn host_read(plan: quench_runtime::staged::property::FieldPlan<'static>) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, functions: false, nested: None, host: Some(plan), entry: None, own: None }
+        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, nested: None, host: Some(plan), entry: None, own: None }
     }
 }
 
@@ -926,7 +870,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, trust_this: false, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1918,10 +1862,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> { Some(self.this.to_bits()) }
 
-    /// The plain local a `GetField` of a local slot reads (`row_frame`'s `local_object`).
-    #[inline(always)]
-    fn local_base(&mut self, _stage: &mut Concrete, _slot: u16, _miss: ()) -> Option<u64> { self.local_object }
-
     /// A direct object's record in the table, or, where the plan runs over any object part
     /// (`RecordPlan::other`), the object part of an array, function or builtin, out of line.
     #[inline(always)]
@@ -1930,16 +1870,13 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         if let Some(RecordPlan { word: true, .. }) = self.plan {
             return Some(quench_runtime::staged::ic::Reached::bare(object));
         }
-        let Some(RecordPlan { records, other: Some(heap), functions, .. }) = self.plan else {
+        let Some(RecordPlan { records, other: Some(heap), .. }) = self.plan else {
             if self.trust_this && object == self.this.to_bits() && let Some(records) = quench_runtime::staged::PropertyFrame::object_records(self, stage) {
                 return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
             }
             return quench_runtime::staged::property::receiver(stage, self, object, miss);
         };
         // SAFETY: the heap is the lane's, live for the read.
-        if functions && let Some(record) = unsafe { &*heap }.heap_reads().function_receiver(Value::from_bits(object)) {
-            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
-        }
         if Value::from_bits(object).direct_object_index().is_some() {
             return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
         }
@@ -2323,7 +2260,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
 pub(crate) const FLAG_UNREAD: u8 = 0;
 pub(crate) const FLAG_CLEAR: u8 = 1;
 pub(crate) const FLAG_SET: u8 = 2;
-/// `generated_row`'s `FLAG` for a by-name load (`NameLoad`) whose first run resolved its name to a
+/// `generated_row`'s `FLAG` for a by-name load (`NameLoad`) whose name, resolved at load, is a
 /// native an internal name stands for (`NameRead::Native`).
 pub(crate) const FLAG_NAME_NATIVE: u8 = 3;
 /// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
@@ -2337,9 +2274,9 @@ pub(crate) const FLAG_NAME_INTRINSIC: u8 = 6;
 /// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
 /// but a refresh checks the scopes' declarations first (`global_name_refresh_miss`, `SCOPED`).
 pub(crate) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
-/// `FLAG` of a by-name load of a declared global lexical name: its record's hint locates the binding by
-/// index (`NameRead::Lexical`), which a refresh of a global name requickens to (`global_name_refresh_miss`).
-/// Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
+/// `FLAG` of a by-name load of a name the closed world declares lexically (`AotFacts::global_lexical_names`): its
+/// record's hint locates the binding by index (`NameRead::Lexical`), which its refresh sets (`global_name_refresh_miss`,
+/// `LEXICAL`). Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
 pub(crate) const FLAG_NAME_LEXICAL: u8 = 16;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
@@ -2363,7 +2300,7 @@ pub(crate) const FLAG_PROBE: u8 = 13;
 /// `FLAG` of a loop site's backward jump (`dispatch_fast::loop_jump_row`): the jump row takes the jump while the
 /// site warms up; past that, or out of fuel, the site's body (`loop_jump_miss`) runs.
 pub(crate) const FLAG_LOOP: u8 = 14;
-/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
+/// `FLAG` of a depth-0 `LoadCapture` of a root-owned slot that a root store dominates (`root_capture_row`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(crate) const FLAG_ROOT: u8 = 15;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding that a forwarding call passes on
@@ -2388,8 +2325,7 @@ pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_
 /// that joins gets its handler with no line written here.
 /// Whether opcode `op`'s row defines the carried accumulator: its record's `a` is its result
 /// register, and its miss takes the general step, which carries the result on
-/// (`Carried::stepped`). A capture read's miss walks the scopes and requickens its record to
-/// handlers that carry none, and a local row defines none.
+/// (`Carried::stepped`). A capture read's miss walks the scopes, and a local row defines none.
 pub(crate) const fn row_produces(op: Op) -> bool {
     matches!(op.field_layout(quench_runtime::bytecode::InstructionField::A), quench_runtime::bytecode::FieldLayout::ResultRegister)
         && !matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Local))
@@ -2483,10 +2419,10 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         return LaneFrame::<ACC> { heap: Some(heap), elements, ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { quench_runtime::staged::name_load(LaneFields::<OP>::OPCODE).is_some() } {
-        // A by-name load reads the binding its record's first run resolved (`FLAG`, `name_row`);
-        // an unresolved record holds none, so its row misses to the resolve (`name_load_miss`).
+        // A by-name load reads the binding its record's row was chosen for at load (`FLAG`, `name_row`).
         let binding = match FLAG {
-            FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
+            // The native is the record's immediate, its discriminant (`name_native_operand`), read by index.
+            FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native(Native::ALL[i.imm() as usize]))),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
             FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
             FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
@@ -2659,12 +2595,6 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             alloc: super::wasm_instance::wasm_vector_alloc };
         return LaneFrame::<ACC> { vectors: Some(vectors), ..LaneFrame::<ACC>::new(r, view) };
     }
-    // A `GetField` of a local slot reads the plain local its record names (`plain_local_operand`), which
-    // the row's base is; any other local leaves to the record's miss (`local_field_miss`).
-    if const { FLAG == super::LOCAL_FIELD_SITE } {
-        let local = quench_runtime::bytecode::FieldBase(i.b).local_index().and_then(|slot| super::plain_local_operand(cx, slot));
-        return LaneFrame::<ACC> { local_object: local.map(Value::to_bits), ..LaneFrame::<ACC>::new(r, view) };
-    }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
@@ -2704,9 +2634,8 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture read the lane's walk, which requickens the record to the root binding it finds
-/// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
-/// (`store_name_first_miss`).
+/// a capture read the lane's walk (`load_capture_walk_miss`), for a global store the global object's
+/// store (`store_global_name_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
     if local_result_site(op as u16, FLAG) {
@@ -2721,7 +2650,7 @@ pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
         quench_runtime::staged::Miss::StoreNameFirst => match FLAG {
             // A window's store the scope does not take leaves to the general step.
             FLAG_SCOPE => super::exit_lane as Handler,
-            _ => super::store_name_first_miss as Handler,
+            _ => super::store_global_name_miss as Handler,
         },
         quench_runtime::staged::Miss::NameLoad(load) => name_load_miss::<FLAG>(load),
         quench_runtime::staged::Miss::General | quench_runtime::staged::Miss::CompareChain => general_step_in_lane,
@@ -2739,10 +2668,9 @@ pub(crate) const fn name_row<const FLAG: u8>(load: quench_runtime::staged::NameL
     }
 }
 
-/// Where a by-name load's row leaves when its binding does not answer it: the first run (and a
-/// native's, which is resolved again) resolves the name (`load_name_resolve_miss`); a global's
-/// read takes its refresh (`global_name_refresh_miss`); an undefined or intrinsic read takes
-/// the general path, which the lane exits to.
+/// Where a by-name load's row leaves when its binding does not answer it: a global's read takes
+/// its refresh (`global_name_refresh_miss`); a probe takes its probe (`name_probe_miss`); any
+/// other read takes the general path, which the lane exits to.
 const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) -> Handler {
     match load {
         quench_runtime::staged::NameLoad::Read => name_miss_kind::<FLAG, { super::LOAD_NAME }>(),
@@ -2754,11 +2682,11 @@ const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) 
 /// `name_load_miss` for the by-name load of kind `KIND`.
 const fn name_miss_kind<const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
-        FLAG_NAME_GLOBAL | FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<KIND, false> as Handler,
-        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<KIND, true> as Handler,
-        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::exit_lane as Handler,
+        FLAG_NAME_GLOBAL => super::global_name_refresh_miss::<KIND, false, false> as Handler,
+        FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<KIND, false, true> as Handler,
+        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<KIND, true, false> as Handler,
         FLAG_PROBE => super::probe_handler::<KIND>(),
-        _ => super::load_name_resolve_miss::<KIND> as Handler,
+        _ => super::exit_lane as Handler,
     }
 }
 
@@ -3399,7 +3327,7 @@ fn nullish_constant(operator: u32, ty: Type) -> Option<Value> {
 /// holds for any left value, as the constant's test does. Where the right operand is a constant, a left register that
 /// `typed` types within `null` or `undefined` takes the nullish test of the constant (`nullish_jump_row`), or one typed
 /// within Boolean takes the Boolean test of a constant Boolean (`boolean_jump_row`). Both instances test any value exactly,
-/// so the type only picks the instance the first run would otherwise pick (`row_jump`). `typed` gives a register
+/// so the type only picks the instance the constant would otherwise leave to the formed comparison. `typed` gives a register
 /// operand's cell type, `ANY` where no cell is. `None` otherwise, the record unchanged.
 pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], typed: impl Fn(Operand) -> Type) -> Option<Handler> {
     use quench_runtime::ValueType;
@@ -3432,6 +3360,56 @@ pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], 
     None
 }
 
+/// The nullish or Boolean instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its constant
+/// decides: a register left operand against a constant `null` or `undefined` takes the nullish test (`nullish_jump_row`), and
+/// against a constant Boolean the Boolean test (`boolean_jump_row`). Both test any value exactly, so the constant alone picks
+/// the instance. `None` otherwise, the record unchanged.
+pub(crate) fn constant_compare_jump(record: &LaneInstruction, constants: &[Value]) -> Option<Handler> {
+    use quench_runtime::bytecode::OperandKind::{Constant, Register};
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    if Operand(record.b).kind() != Some(Register) || Operand(record.c).kind() != Some(Constant) { return None }
+    let operator = u32::from(record.a);
+    let constant = constants.get(usize::from(Operand(record.c).payload())).copied()?;
+    if backward {
+        nullish_jump_row::<true>(operator, constant).or_else(|| boolean_jump_row::<true>(operator, constant))
+    } else {
+        nullish_jump_row::<false>(operator, constant).or_else(|| boolean_jump_row::<false>(operator, constant))
+    }
+}
+
+/// The comparison jump instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its operator and
+/// operand kinds name (`compare_jump_row`): a register left operand with a register or constant right one. A constant right
+/// operand is the record's `mode` where the instance reads it (`compare_operands_of`). `None` for any other kinds, and for a
+/// constant the constants table lacks, the record unchanged.
+pub(crate) fn formed_compare_jump(record: &mut LaneInstruction, constants: &[Value]) -> Option<Handler> {
+    use quench_runtime::bytecode::OperandKind::Constant;
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    let operator = u32::from(record.a);
+    let (left, right) = (Operand(record.b), Operand(record.c));
+    let constant = (right.kind() == Some(Constant)).then(|| constants.get(usize::from(right.payload())).copied()).flatten();
+    if right.kind() == Some(Constant) && constant.is_none() { return None }
+    let handler = if backward { compare_jump_row::<true>(operator, left, right) } else { compare_jump_row::<false>(operator, left, right) }?;
+    let fixes_constant = if backward { compare_operands_of::<true>(handler) } else { compare_operands_of::<false>(handler) };
+    if let (Some(constant), Some(true)) = (constant, fixes_constant) {
+        record.mode = constant.to_bits();
+    }
+    Some(handler)
+}
+
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
 fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
     macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
@@ -3457,8 +3435,8 @@ pub(crate) fn guarded_compare_jump(record: &LaneInstruction) -> Option<Handler> 
 script_handler! {
     /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the solve's int32 cells do not
     /// prove (`guarded_compare_jump`). It tests both registers' int32 tags, once per execution: an int32 pair runs the proven
-    /// instance (`proven_compare_row`) over the same record. Any other pair requickens the record to its formed register and
-    /// register instance (`compare_jump_row`) for good.
+    /// instance (`proven_compare_row`) over the same record. Any other pair takes the general comparison step
+    /// (`compare_jump_row`) in place, and the record keeps its instance.
     pub(crate) fn compare_guarded_row<BACKWARD: bool, ENTRY: u8>(cx, r, ip, i, view) {
         // SAFETY: `guarded_compare_jump` installed this form on a record whose two operands are registers, which it keeps.
         let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
@@ -3469,7 +3447,6 @@ script_handler! {
         }
         let general = compare_jump_row::<BACKWARD>(FORMED_COMPARISONS[usize::from(ENTRY)], Operand(i.b), Operand(i.c))
             .unwrap_or(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(BACKWARD));
-        requicken(ip, general);
         sibling!(general, r, ip, view)
     }
 }
@@ -3504,9 +3481,8 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
     table.get(usize::from(compare_slot(operator)?)).copied()
 }
 
-/// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
-/// (`compare_jump_row`, or a `compare_guarded_row` either direction); `None` for any other handler. A record moved back to its plain row
-/// takes its instance again at its next run, so the move undoes only what the run learned.
+/// The plain comparison jump row (`jump_row`) of `handler` where it is an instance the load gave it (`compare_jump_row`, or a
+/// `compare_guarded_row` either direction); `None` for any other handler. The plain row takes the generic comparison step.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
@@ -3535,44 +3511,6 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         // enters the loop's native code where the site enters (`LoopSite::enters`).
         if const { FLAG == FLAG_LOOP } {
             sibling!(crate::dispatch_fast::loop_jump_miss, r, ip, view)
-        }
-        // A comparison jump's operator is a constant of its record: its first run moves the record to
-        // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
-        // constant and its row folds to that operator's test rather than matching every comparison.
-        // The nullish, Boolean and formed instances here are chosen by the first run only for the operands no
-        // cell decides (`typed_compare_jump`, `proven_compare_jump` pick the others at derivation); this path
-        // goes once the solve covers every program.
-        if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
-            && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
-            // The operator is the record's field A (`binary_operator_field`), the field its decode (`decode_compare`)
-            // compares by, so the instance a record takes names the comparison the record decodes to.
-            let operator = u32::from(i.a);
-            // A register-constant form's constant is a static fact of the record: it moves into the
-            // record's `mode` (zero on an unfused record), which the formed instance reads it from.
-            let right = Operand(i.c);
-            let constant = (right.kind() == Some(quench_runtime::bytecode::OperandKind::Constant))
-                .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
-            let formable = right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) || constant.is_some();
-            // A register tested against a constant `null` or `undefined`: its tag decides it (`Comparison::Nullish`).
-            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
-                && let Some(handler) = constant.and_then(|constant| nullish_jump_row::<BACKWARD>(operator, constant)) {
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
-            // A register tested against a constant Boolean (`x === true`, `x !== false`): identity decides it (`Comparison::Boolean`).
-            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
-                && let Some(handler) = constant.and_then(|constant| boolean_jump_row::<BACKWARD>(operator, constant)) {
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
-            if formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
-                if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
-                    // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
-                    unsafe { (*ip.cast_mut()).mode = constant.to_bits() };
-                }
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
         }
         // SAFETY: `compare_jump_row` chose a formed instance from the record's own operand kinds.
         if let Some(constant) = const { compare_operands(FLAG) } {
@@ -3636,9 +3574,9 @@ view_handler! {
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
         let script: *mut LaneContext = view.memory.bytes.cast();
-        // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
-        if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
-            sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
+        // A trusted read's miss (a field the class may leave absent): the general read, which keeps the record.
+        if const { crate::dispatch_fast::trusted_site(FLAG) } {
+            sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::general_site(FLAG) } {
             // The general read the host path did not answer: its activation path, as `lane_get_field` made it.
@@ -3667,10 +3605,6 @@ view_handler! {
             // A method, accessor or missing private field: the general private read.
             sibling!(get_private_field_miss, r, ip, Carried::script_in(script, view))
         }
-        if const { crate::dispatch_fast::cached_field_site(FLAG) } {
-            // A read the cache does not answer: the general read, which runs the getter.
-            sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
-        }
         if const { crate::dispatch_fast::held_site(FLAG) && !crate::dispatch_fast::held_other_site(FLAG) } {
             // A direct object's miss; the read of any other receiver's object part.
             if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
@@ -3689,11 +3623,6 @@ view_handler! {
             // read that refreshes the hint from the steps' entries.
             sibling!(get_field_nested_miss, r, ip, Carried::script_in(script, view))
         }
-        if const { crate::dispatch_fast::own_constant_site(FLAG) } {
-            // Another object, or the object was written: the site reads as its tier decides
-            // and never holds an own constant again.
-            sibling!(crate::dispatch_fast::refuse_own_constant_row, r, ip, Carried::script_in(script, view))
-        }
         if const { crate::dispatch_fast::length_site(FLAG) } {
             // Another receiver, or a form the row does not read: the general length reads.
             sibling!(crate::dispatch_fast::row_length_other, r, ip, Carried::script_in(script, view))
@@ -3705,10 +3634,6 @@ view_handler! {
         if const { FLAG == crate::dispatch_fast::GEOMETRY_SITE } {
             // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
             sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::cell_own_site(FLAG) } {
-            // The record moves on as the site's tier decides, which rebinds the hint.
-            sibling!(row_get_field_miss, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::getter_site(FLAG) } {
             // The getter's refresh makes the hint, or reads through the getter's activation.
@@ -3815,8 +3740,6 @@ pub(crate) mod protocol_family {
     pub(crate) const ENTRY: u16 = 8 << 8;
     /// Returns and returning records (`return_miss_of`).
     pub(crate) const RETURN: u16 = 9 << 8;
-    /// Frame calls and memoized script calls (`frame_call_miss_of`).
-    pub(crate) const FRAME_CALL: u16 = 10 << 8;
     /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
     pub(crate) const LEAF_CALL: u16 = 11 << 8;
     /// Vector (SIMD) records (`vector_miss_of`).
@@ -3844,7 +3767,6 @@ pub(crate) const fn protocol_miss(miss: u16) -> Handler {
         F::CONSTRUCT => super::construct_miss_of(F::parameters(miss)),
         F::ENTRY => super::entry_miss_of(F::parameters(miss)),
         F::RETURN => super::return_miss_of(F::parameters(miss)),
-        F::FRAME_CALL => super::frame_call_miss_of(F::parameters(miss)),
         F::LEAF_CALL => super::leaf_call_miss_of(F::parameters(miss)),
         F::VECTOR => super::vector_miss_of(F::parameters(miss)),
         F::GENERATOR => super::generator_miss_of(F::parameters(miss)),
@@ -4432,7 +4354,7 @@ unsafe fn constant_fields_value(cx: *mut (), receiver: Value, site: u16) -> bool
 
 /// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs
 /// no guest code; `None` where the binding does not answer it (a native no first run recorded,
-/// an intrinsic name the VM cannot evaluate, a hint the global object's shape no longer fits).
+/// a hint the global object's shape no longer fits).
 ///
 /// # Safety
 /// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
@@ -4441,10 +4363,7 @@ unsafe fn constant_fields_value(cx: *mut (), receiver: Value, site: u16) -> bool
 unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext>()) };
     match read {
-        NameRead::Native => {
-            let native = vm.intrinsic_natives.get(atom as usize).copied().flatten()?;
-            Some(vm.native_value(native))
-        }
+        NameRead::Native(native) => Some(vm.native_value(native)),
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
         NameRead::Field(hint) => vm.global_field_hint_hit(hint),
         NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),

@@ -1766,51 +1766,6 @@ impl Vm {
         }
     }
 
-    /// `entry`, which just answered a read of the direct object `object`, as a call memo's step
-    /// (`record_field_formed_hit`): its receiver shape, and its holder's where it names one,
-    /// as layout ids (`Object::hint_shape`), so each compare also proves the storage
-    /// form. An entry the objects do not match stays as recorded. A class cell's entry is
-    /// class-keyed and passes through: no record means no shape to re-form, and the class-keyed
-    /// tiers (`cell_own_field_hit`, `class_held_field_hit`) answer a cell's reads instead.
-    pub fn formed_entry(&self, entry: FieldCache, object: Value) -> FieldCache {
-        let Some(receiver) = self.heap.object_record(object) else {
-            return entry;
-        };
-        if receiver.exact_shape() != entry.receiver {
-            return entry;
-        }
-        if entry.holder == NO_FIELD_HOLDER {
-            return FieldCache { receiver: receiver.hint_shape(), ..entry };
-        }
-        // A class cell prototype holds no record, so its holder entry passes through too.
-        match receiver.proto_link().object_granule().and_then(|granule| self.heap.record_by_granule(granule)) {
-            Some(holder) if cached_holder_matches(holder, entry.holder) =>
-                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_cell: NO_FIELD_HOLDER_LAYOUT, ..entry },
-            _ => entry,
-        }
-    }
-
-    /// `record_field_entry_hit` of a call memo's step (`formed_entry`), whose shapes are whole
-    /// auxiliary words: `None` where either differs, storage form included.
-    #[inline(always)]
-    pub fn record_field_formed_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
-        self.record_field_formed_hit_in(cache, self.heap.object_record(object)?)
-    }
-
-    /// `record_field_formed_hit` of a direct object's record.
-    #[inline(always)]
-    pub fn record_field_formed_hit_in(&self, cache: FieldCache, receiver: &crate::heap::Object) -> Option<Value> {
-        if cache.holder == NO_FIELD_HOLDER {
-            return self.own_field_hint_hit::<{ crate::staged::HINTED_FORM }>(cache, receiver);
-        }
-        let holder = self.heap.record_by_granule(receiver.proto_link().object_granule()?)?;
-        if cache.receiver != receiver.hint_shape() || holder.hint_shape() != cache.holder {
-            return None;
-        }
-        // SAFETY: as for `record_field_entry_hit`: the holder's exact shape holds the slot.
-        Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
-    }
-
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
     /// shape and slot, which `record_field_entry_hit` reads while the shape, dictionary or not,
     /// holds. `None` for any other object, dictionary storage, a shape edited in place
@@ -2557,19 +2512,6 @@ impl Vm {
         self.heap.live_class_key(object).unwrap_or(shape)
     }
 
-    /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
-    /// object records, at `site`: the receiver's layout id and the slot, where the site's own
-    /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
-    pub fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
-        let cache = self.field_cache_entry(site);
-        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        // A spilled slot names a run's word: the generated own read addresses inline words, so no hint.
-        let slot = u16::try_from(cache.slot).ok()?;
-        Some((self.receiver_layout_hint(object)?, slot))
-    }
-
     /// The data field a live class cell's held entry names (`class_held_field_hit`): the read a
     /// class-keyed site answers beside `cell_own_field_hit`.
     #[inline(always)]
@@ -2787,13 +2729,6 @@ impl Vm {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
     }
 
-    /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
-    /// Whether the site cached no entry yet: its first read has not recorded one.
-    pub fn field_site_empty(&self, site: u16) -> bool {
-        let entry = self.field_caches.get(self.field_cache_index(site));
-        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
-    }
-
     /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
@@ -2893,14 +2828,6 @@ impl Vm {
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index().and_then(|r| self.heap.record_id(r)) { return Some(self.heap.object_record_by_id(record_id)); }
         self.heap.held_other_receiver(object)
-    }
-
-    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
-    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
-    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
-    /// proves the shape, form and prototype link of a function's or cell's record too.
-    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
-        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`

@@ -48,21 +48,13 @@ pub(super) struct PrototypeHints {
     /// Own constants (`Vm::own_constant_hint_hit`): a `HolderHint` whose holder is the receiver
     /// itself and whose guard is its record's address.
     pub(super) own: Vec<HolderHint>,
-    /// The own reads probed for an own-constant hint, by record address: the direct object the
-    /// site read first, or `OWN_CONSTANT_REFUSED` for a site that met another object or whose
-    /// hint retired (`Vm::probe_own_constant`).
-    pub(super) probes: rustc_hash::FxHashMap<usize, u64>,
 }
-
-/// A probed site that never takes an own-constant hint again.
-const OWN_CONSTANT_REFUSED: u64 = u64::MAX;
 
 impl PrototypeHints {
     pub(super) fn clear(&mut self) {
         self.holder.clear();
         self.getter.clear();
         self.own.clear();
-        self.probes.clear();
     }
 
     /// Retires the watch of every hint whose prototype `live` no longer holds: a hint names its
@@ -145,60 +137,6 @@ impl Vm {
         let index = u16::try_from(self.holder_hints.own.len()).ok().filter(|&index| index < limit)?;
         self.holder_hints.own.push(hint);
         Some(index)
-    }
-
-    /// The operands of own-constant hint `index` as a generated row reads it from the receiver's
-    /// word (`IcOp::OwnConstant` over the word): the object's value bits, its watch's address and
-    /// its value's bits; `None` where no hint is held at `index`. The object's word names its
-    /// record alone, so equal words prove the hinted object, whatever site made the hint at that
-    /// index: no atom compare. A swept object's hint has its watch retired (`retire_dead`)
-    /// before its record id can name another object.
-    #[inline(always)]
-    pub fn own_constant_word_operands(&self, index: u16) -> Option<(u64, u64, u64)> {
-        let hint = self.holder_hints.own.get(usize::from(index))?;
-        Some((hint.holder.to_bits(), std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
-    }
-
-    /// The own read of the record at `site` probing for an own-constant hint, which met the
-    /// direct object `object` answering `value` for `atom`: the hint's index once the site met
-    /// the same object twice; `None` the first time, and for a site that met another object or
-    /// was refused (`refuse_own_constant`), which never probes again.
-    #[cold]
-    pub fn probe_own_constant(&mut self, site: usize, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
-        let bits = object.to_bits();
-        match self.holder_hints.probes.get(&site).copied() {
-            None => { self.holder_hints.probes.insert(site, bits); None }
-            Some(seen) if seen == bits => {
-                self.holder_hints.probes.insert(site, OWN_CONSTANT_REFUSED);
-                // Only an object already watched as a prototype: admitting any direct object (the
-                // CONSTANT_FORM mark) still sends a read-and-written object's stores to the slow
-                // path (`st.count = st.count + st.step`: 219 -> 931 Ir per iteration).
-                let watched = self.heap.object_record(object)
-                    .is_some_and(|record| record.was_used_as_prototype() && record.watched_subject().is_some());
-                if !watched { return None; }
-                self.hold_own_constant_hint(None, atom, object, value, limit)
-            }
-            Some(_) => { self.holder_hints.probes.insert(site, OWN_CONSTANT_REFUSED); None }
-        }
-    }
-
-    /// Whether the record at `site` has probed: it met an object, or was refused.
-    #[inline(always)]
-    pub fn own_constant_probed(&self, site: usize) -> bool {
-        self.holder_hints.probes.contains_key(&site)
-    }
-
-    /// Makes the record at `site` refuse own-constant hints from now on: it met another object,
-    /// or the object it read was written.
-    #[cold]
-    pub fn refuse_own_constant(&mut self, site: usize) {
-        self.holder_hints.probes.insert(site, OWN_CONSTANT_REFUSED);
-    }
-
-    /// Whether the record at `site` may still probe for an own-constant hint.
-    #[inline(always)]
-    pub fn probes_own_constant(&self, site: usize) -> bool {
-        self.holder_hints.probes.get(&site) != Some(&OWN_CONSTANT_REFUSED)
     }
 
     /// Whether own-constant hint `index` is held and its watch still published.
