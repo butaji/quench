@@ -767,7 +767,7 @@ fn emit_js_cached_field_slot(
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
         let link = proto_link(&mut stage, object);
-        // The link names the prototype's stub granule (R4-B2b, option B): its departed hop is the record id.
+        // The link names the prototype's stub granule (R4-B2b, option B): its stub hop is the record id.
         let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
         let prototype = object_record_at(&mut stage, records, id);
         let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);

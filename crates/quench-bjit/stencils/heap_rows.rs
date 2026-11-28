@@ -153,7 +153,7 @@ fn prototype_row(s: S) -> Out {
 }
 
 /// `GuardClass`: continues where the object at the frame offset in hole 0 is a direct object whose live class cell's class
-/// is hole 1 (`guard::class`); any other object, a departed one included, leaves with nothing written.
+/// is hole 1 (`guard::class`); any other object leaves with nothing written.
 #[inline(always)]
 fn class_row(s: S) -> Out {
     let guard = Operation::GuardClass { source: word_at(s.frame, hole::<0>()), class: hole64::<HOLE_A>() as u32 };
