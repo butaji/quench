@@ -181,8 +181,8 @@ pub(super) fn way(relations: &[Relation], a: Register, b: Register) -> Option<bo
 /// `start + k` where `k`, the iterations before this one, is at least zero, and `k <= len - other - 1 <= len - 1`: the store lies in
 /// `[start, start + len)`. The step this iteration takes of `index` must cancel the offset (`delta(index) + offset = 0`), and
 /// `other` must have stepped down (`delta(other) = -1`), so that the sum is `-1`.
-pub(super) fn store_span(relations: &[Relation], key: Register) -> Option<(u16, u16)> {
-    let through = relations.iter().filter_map(|relation| match *relation {
+pub(in super::super) fn store_span(relations: &[Relation], key: Register) -> Option<(u16, u16)> {
+    let mut through = relations.iter().filter_map(|relation| match *relation {
         Relation::Sum { sum, index, offset } if sum == key => Some((index, offset)),
         _ => None,
     }).chain(std::iter::once((key, 0)));

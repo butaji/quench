@@ -272,7 +272,7 @@ impl<'a> FunctionFacts<'a> {
     }
 
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
-    pub(super) fn index_accessors_absent(&self) -> bool {
+    pub(in super::super) fn index_accessors_absent(&self) -> bool {
         self.facts.index_accessors_absent
     }
 

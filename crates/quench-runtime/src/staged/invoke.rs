@@ -437,10 +437,6 @@ pub fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Regi
     frame.ret(stage, source).map_or(Step::Unresolved, Step::Control)
 }
 
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;
 
 #[cfg(test)]
 mod tests;

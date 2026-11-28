@@ -25,6 +25,7 @@ use super::super::signatures::{self, Argument, CallSite};
 use super::types;
 use super::value;
 use super::AotFacts;
+use super::LENGTH_ROUNDS;
 use super::BodyForm;
 use super::super::body_forms::{body_entry, forwards_args, returning_read};
 use crate::staged::effects::CallForm;
@@ -332,7 +333,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.closures_once.retain(|body| !undominated_bodies.contains(body));
         // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.
         let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
-        facts.global_object_identity = identity::global_object_proof(program, &settled_flows, &facts, &census, &scope, &this_undefined);
+        facts.global_object_identity = identity::global_object_proof(&settled_flows, &facts, &census, &scope, &this_undefined);
         facts.this_undefined = this_undefined;
         // The settled cells keep only the identities the proofs above keep (`identity::proven`): after this, an `Identity`
         // in a cell is the proof a lane reads.
@@ -344,7 +345,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.cells = fact_cells;
         facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
         facts.uncached = globals::uncached_atoms(program, world);
-        facts.global_lexical = globals::global_lexical_names(program, world);
+        facts.global_lexical = globals::GlobalShape::global_lexical_names(program, world);
         // The static name scope of each function (`Function::names_resolve_statically`) is a bytecode property, read in every world.
         facts.names_static = (0..program.function_count() as u32)
             .filter(|&id| program.with_record(id as usize, |function| function.names_resolve_statically(program)))

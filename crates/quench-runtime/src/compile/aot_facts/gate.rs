@@ -229,7 +229,7 @@ pub(super) fn is_property_definer(program: &ResidualProgram, call: &Call, aliase
             Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => Some(atom),
             _ => return aliased,
         },
-        Target::Known(_) => None,
+        Target::Known(_) | Target::Accessor { .. } => None,
     };
     name.is_some_and(|atom| atom_text(program, atom) == PROPERTY_DEFINER)
 }

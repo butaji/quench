@@ -7,6 +7,7 @@
 
 use super::wasm::{WasmStage, Width};
 use super::wasm_concrete::ConcreteWasm;
+use super::machine::MachineStage;
 use crate::wasm::V128_BYTES;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;

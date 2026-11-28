@@ -4,7 +4,7 @@
 use super::super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::super::value::{Key, Origin, PrototypeBase, Word};
 use super::{Ctx, Events, decoded, settled};
-use crate::bytecode::WideInstruction;
+use crate::bytecode::{PropertyDefinitionMode, WideInstruction};
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing;
 use crate::staged::{Operation, Protocol};
@@ -113,7 +113,7 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
     if let Some(Operation::Protocol { step: Protocol::Literal(LiteralStep::DefinePropertyRecord { mode, value }), .. }) = operation {
         let target = state[usize::from(instruction.register_b())];
         let key = state[usize::from(instruction.register_c())];
-        match accessor_mode(mode) {
+        match PropertyDefinitionMode::from_word(mode).and_then(accessor_mode) {
             Some(setter) => accessor_definition(pc, setter, target, key, state[usize::from(value)], events),
             None => {
                 if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {

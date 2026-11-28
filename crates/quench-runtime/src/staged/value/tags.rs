@@ -93,7 +93,7 @@ impl<S: Stage> TagOps for S {
 
 /// A `MachineScalar` read as a `TagOps`: its words are its words, and a comparison is its flag word.
 /// The immediate is the `i64` with the same bits as the `u64` operand.
-pub(super) struct MachineTags<'a, M>(&'a mut M);
+pub(super) struct MachineTags<'a, M>(pub(crate) &'a mut M);
 
 impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
     type Word = M::Word;

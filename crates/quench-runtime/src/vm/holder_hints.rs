@@ -43,15 +43,3 @@ impl PrototypeHints {
             .for_each(|(_, watch)| watch.retire());
     }
 }
-
-thread_local! {
-    /// A watch no write retires (`never_retired`).
-    static NEVER_RETIRED: crate::heap::PrototypeValueWatch = crate::code_dependencies::new_dependency();
-}
-
-/// The address of a watch no write retires, for a held read whose answer no prototype value
-/// decides (an absent inherited name, which the entry's proof alone keeps). It lives as long as
-/// the thread, which outlives every read given it.
-pub(super) fn never_retired() -> *const crate::code_dependencies::PublishedCode<()> {
-    NEVER_RETIRED.with(std::rc::Rc::as_ptr)
-}
