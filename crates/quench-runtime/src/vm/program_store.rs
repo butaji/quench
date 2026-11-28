@@ -794,6 +794,14 @@ impl ProgramStore {
         Self::closure_cells_of(entry).get(body as usize)?.as_ref()?.get().copied()
     }
 
+    /// The address of body `body`'s closure cell in program `id`, where the body has one (`closure_cell`'s cell, not its
+    /// value). The cells are one boxed slice made on first use, never resized, so the address is stable for the program's
+    /// life: a load writes it into a record, which reads the closure there (`CLOSURE_CELL_READ`).
+    pub fn closure_cell_slot(&self, id: ProgramId, body: u32) -> Option<*const std::cell::OnceCell<Value>> {
+        let entry = self.entry(id)?;
+        Self::closure_cells_of(entry).get(body as usize)?.as_ref().map(std::ptr::from_ref)
+    }
+
     /// The key of body `body`'s closure cell in program `id` (`FactKey::ClosureCell`): what code that folds the closure
     /// subscribes to (`FactWatch::subscribe_cell`), and the key the creation edge's write retires.
     pub fn closure_cell_key(id: ProgramId, body: u32) -> crate::typed_ir::FactKey {

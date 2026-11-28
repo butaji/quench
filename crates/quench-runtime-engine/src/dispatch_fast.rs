@@ -2814,11 +2814,10 @@ pub(crate) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
 /// as `n.toFixed`: own-form index 14.
 pub(crate) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
-/// The site facts of a read that met a getter whose hint returns an own field of the receiver
-/// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
-/// getter's refresh, which makes the hint (`row_get_field_getter_refresh`).
-pub(crate) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
-pub(crate) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
+/// The site fact of a read whose result is one proven closure (`named_read_row`, `closure_cell_read`): the record's
+/// operand word addresses the closure cell, and the row loads the closure from it. The read's base is not read, so one
+/// instance serves `this` and a register.
+pub(crate) const CLOSURE_CELL_SITE: u8 = own_site(false, OWN_FORMS.len() + 42);
 
 /// The site fact of a nested read `a.b.c` of two own entries (`get_field_nested_miss`'s steps):
 /// the record's hint is the first step's entry, the site's second entry the second; the row runs

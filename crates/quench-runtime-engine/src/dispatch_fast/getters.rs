@@ -324,39 +324,3 @@ unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &Scrip
         Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
     }
 }
-
-script_handler! {
-    /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
-    /// getter's answer makes (`step_getter_answer_of`), whose getter's own field becomes the
-    /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
-    #[inline(never)]
-    pub(crate) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
-        let base = unsafe { field_base_in_lane(cx, r, quench_runtime::bytecode::FieldBase(i.b)) };
-        let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-            sibling!(get_field_getter_miss, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-/// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
-/// (`Vm::getter_hint_operands`), as `HOLDER_HINT` no object's exact shape.
-const GETTER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
-
-/// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
-/// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
-pub(crate) fn set_getter_hint(vm: &mut Vm, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
-    if holds_loop_site(ip) {
-        return false;
-    }
-    // SAFETY: `ip` is a `GetField` record of a live view.
-    let i = unsafe { &*ip };
-    let owned = (unsafe { i.operand.field.shape } == GETTER_HINT).then(|| i.call_link.get());
-    let Some(index) = vm.hold_getter_hint(owned, atom, base, slot, NO_CALL_LINK) else {
-        return false;
-    };
-    set_record_hint(ip, GETTER_HINT, index);
-    true
-}
