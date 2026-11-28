@@ -77,6 +77,14 @@ fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
+impl Vm {
+    /// Draws a fresh `Math.random` seed: a start that adopted a dump (C5 D2/D4) would otherwise repeat the dump run's
+    /// sequence on every run, which the process's own seed (`fresh_random_seed`) is there to prevent.
+    pub(crate) fn reseed_random(&mut self) {
+        self.random_state = fresh_random_seed();
+    }
+}
+
 pub(super) use crate::units::MAX_SAFE_INTEGER;
 pub(crate) use crate::bytecode::MAX_ARRAY_LENGTH;
 pub const ROOT_FUNCTION_ID: u32 = 0;

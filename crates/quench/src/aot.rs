@@ -201,6 +201,7 @@ pub fn resume_native_process_entry(
         // Kept in place: moving the runtime out of its box would copy it whole.
         let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };
         let (runtime, entry) = &mut *rest;
+        runtime.note_adopted();
         drop(program);
         runtime.host_mut().adopt_process(host);
         runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));

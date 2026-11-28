@@ -15,6 +15,8 @@ pub const UNDUMPED: &[&[&str]] = &[
     &["std"], &["core"], &["alloc"], &["quench_alloc"],
     &["quench_runtime", "trace"], &["quench_runtime", "clock"], &["quench_runtime", "vm", "date", "local_zone"], &["quench_runtime", "native_link", "image_dump"],
     &["tracing_core"], &["parking_lot_core"], &["crossbeam_epoch"], &["rayon_core"], &["chrono"],
+    // The build machine's CPU feature choices: a start re-detects on its own CPU.
+    &["std_detect"], &["memchr"],
 ];
 
 /// The crate root and the identifiers after it of a Rust symbol (v0 or legacy mangling).

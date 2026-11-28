@@ -615,6 +615,11 @@ pub fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
 /// The root the dump of state `wait` holds, mapped from the dump this image carries; none
 /// where it carries none, or any of its addresses is taken, which leaves the process as it was.
 pub fn adopt(wait: usize) -> Option<*mut u8> {
+    // The dump's TLS patch is the fixed-stack worker's (`write` refuses any other thread); a start that fell back to an
+    // ordinary thread (`run_on_fixed_stack`) builds its state instead of copying TLS to the wrong place.
+    if !(quench_alloc::FIXED_STACK_BASE as u64..ARENA_BASE).contains(&thread_pointer()) {
+        return None;
+    }
     let image = File::open("/proc/self/exe").ok()?;
     let length = image.metadata().ok()?.len();
     let mut tail = [0u8; 16];
