@@ -201,7 +201,7 @@ impl Scope {
     pub(super) fn string_builtins(&self, proofs: &Proofs) -> StringBuiltins {
         StringBuiltins {
             global: self.string_global.filter(|&atom| proofs.proves(Quiet::Intrinsic { object: None, name: atom })),
-            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom)).collect(),
+            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom, self.string_global)).collect(),
         }
     }
 

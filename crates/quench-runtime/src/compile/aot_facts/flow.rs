@@ -19,7 +19,7 @@ use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
-use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Representation, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Identity, Representation, WIDENING_ROUNDS};
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)]
 use crate::staged::glue_prelude::*;
@@ -153,6 +153,9 @@ pub(super) struct FunctionFlow {
     pub(super) copies: Option<(u16, u16)>,
     /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (its `Cell::sites`).
     pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
+    /// The global names of the builtins a join of this function's registers no longer holds as one object (`Solver::join_words`):
+    /// a builtin one side of a join held and the joined word does not (`identity::leaked`).
+    pub(super) leaked: std::collections::BTreeSet<u32>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -170,6 +173,8 @@ struct Solver<'a> {
     joined: std::cell::RefCell<std::collections::BTreeSet<(ElementClass, ElementClass)>>,
     /// Per parameter, whether its argument is in a register at entry (`bound_parameters`).
     in_register: &'a [bool],
+    /// The global names of the builtins a join made no longer one object (`FunctionFlow::leaked`).
+    leaked: std::cell::RefCell<std::collections::BTreeSet<u32>>,
 }
 
 /// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
@@ -208,7 +213,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
     let in_register = bound_parameters(function);
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register };
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register, leaked: Default::default() };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
     let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words.clone())).collect();
@@ -227,6 +232,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
     let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
+    flow.leaked = solver.leaked.take();
     flow
 }
 
@@ -332,6 +338,11 @@ impl Solver<'_> {
         for (slot, &fact) in into.iter_mut().zip(incoming) {
             self.joined.borrow_mut().extend(slot.join_links(fact));
             let joined = slot.join(fact);
+            for side in [slot.cell.identity, fact.cell.identity] {
+                if let Identity::Builtin(path) = side && joined.cell.identity != side {
+                    self.leaked.borrow_mut().insert(path.global);
+                }
+            }
             let next = if widen {
                 Word { cell: Cell { ty: typing::widen(&self.thresholds, slot.cell.ty, joined.cell.ty), ..joined.cell }, ..joined }
             } else {
