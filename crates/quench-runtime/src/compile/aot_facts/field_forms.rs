@@ -14,12 +14,8 @@ use crate::typed_ir::{Classes, Type};
 pub enum ClassForm {
     /// Fields past the cell's spill slot, held in the spill run the cell points to.
     Run,
-    /// Behind extras (a record form; not named for a fixed cell).
-    Extras,
     /// Held in the cell's own words, no spill.
     Own,
-    /// A narrow run (a record form; not named for a fixed cell).
-    Narrow,
 }
 
 /// The object a named field is held by, for a read off an instance (`AotFacts::field_holder`).
@@ -44,8 +40,6 @@ pub struct FieldHolder {
 pub enum StoreForm {
     /// The slot takes any value the field's domain allows, with no representation to retire.
     Own,
-    /// The instance's storage is narrow (`ClassForm::Narrow`).
-    Narrow,
     /// The field's domain is narrower than Any: a store of a value outside it retires the store, as
     /// `Heap::tracks_slot_representations` retires an arena-wide store, here per class and field.
     Tracked,
@@ -100,15 +94,12 @@ impl AotFacts {
     }
 
     /// How a store of field `atom` into an instance of `class` is kept (`StoreForm`), where the store is no add
-    /// (`field_always_stored`): Narrow where the class is narrow (`class_form`); Tracked where the field's domain
+    /// (`field_always_stored`) into a fixed cell (narrow runs and extras are record forms, never a fixed cell's): Tracked where the field's domain
     /// (`slot_domain`) is narrower than Any, so a store outside it must retire; else Own. None where the store may add.
     /// Read by the store sites (round2 sites 15, 46 to 52, 61, category G).
     pub fn store_form(&self, class: u32, atom: u32) -> Option<StoreForm> {
         if !self.field_always_stored(class, atom) {
             return None;
-        }
-        if self.class_form(class) == Some(ClassForm::Narrow) {
-            return Some(StoreForm::Narrow);
         }
         let domain = self.slot_domain(class, atom)?;
         Some(if domain.ty == Type::ANY { StoreForm::Own } else { StoreForm::Tracked })
