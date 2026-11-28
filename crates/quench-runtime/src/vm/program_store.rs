@@ -2939,7 +2939,7 @@ mod lane_diagnostic_tests {
 #[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
+        JIT_MAX_ARTIFACTS, JS_JIT_MAX_FUNCTIONS,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };

@@ -51,7 +51,7 @@ pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 #[allow(unused_imports)]
 pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 #[quench_macros::test_visible]
 pub(crate) use global_values::new_table;
 

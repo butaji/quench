@@ -480,7 +480,7 @@ mod tests {
     }
 
     fn atom(program: &ResidualProgram, name: &str) -> u32 {
-        program.atoms.iter().position(|atom| atom.as_ref() == name).expect("an atom of that name") as u32
+        program.atoms.iter().position(|atom| atom == name).expect("an atom of that name") as u32
     }
 
     /// The fact keys the settled cells hold for field `atom`, of any class.

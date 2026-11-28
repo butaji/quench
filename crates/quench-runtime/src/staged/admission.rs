@@ -131,7 +131,7 @@ mod tests {
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,
-            JumpFalse, JumpTrue, IntCaseIndex, WasmBranchTable, LoadThis];
+            JumpFalse, JumpTrue, WasmBranchTable, LoadThis];
         let reading: &[Class] = &[Move, IncDec, Unary, ToNumeric, Binary, NumericAdd, NumericMultiply,
             JumpBinaryFalse, JumpFalse, JumpTrue, GetIndex, SetIndex];
         let boxed: &[Class] = &[GetIndex, GetField, Move, LoadCapture, LoadEnvLocal, LoadName, LoadThis];

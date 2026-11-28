@@ -85,7 +85,7 @@ pub(super) trait RecordFamily {
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId));
     #[cfg(feature = "profile-aggregate")]
     fn high_water(&self) -> usize;
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     fn remembered_count(&self) -> usize;
     #[cfg(debug_assertions)]
     fn snapshot_marks(&self) -> Vec<u64>;
@@ -131,7 +131,7 @@ impl<T: RecordValue, const CAPACITY: usize, const HOLE: usize> RecordFamily for 
     fn high_water(&self) -> usize {
         RecordSpace::high_water(self)
     }
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     fn remembered_count(&self) -> usize {
         RecordSpace::remembered_count(self)
     }
