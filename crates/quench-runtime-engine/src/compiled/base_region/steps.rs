@@ -189,7 +189,7 @@ fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
 /// share `plan_fast`; `chain` is the helper chain a fast arm falls back to.
 fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: Option<Planned>, helpers: LaneHelpers) -> Result<Planned, String> {
     match fast {
-        Heap::Add { .. } => adds::plan(decoded, layout, pc, chain),
+        Heap::Add { .. } | Heap::AddClass => adds::plan(decoded, layout, pc, chain),
         Heap::Name { .. } => names::plan(decoded, layout, pc, chain),
         _ => plan_fast(decoded, fast, layout, pc, chain, helpers),
     }

@@ -17,7 +17,8 @@ pub(crate) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
         // An ahead image's guessed store is admitted where its guard links (`symbols::guarded_shape`):
         // the slot's type holds every int32 it writes.
-        if field.ty == Type::NEVER || field.guessed() { continue; }
+        // A class-keyed store writes its live cell, not the shape's slot (`StoreArm::of_class`): no domain of the shape.
+        if field.ty == Type::NEVER || field.guessed() || field.class.is_some() { continue; }
         if proven(pc, *instruction, field) { continue; }
         match domains.iter_mut().find(|(shape, slot, _)| (*shape, *slot) == (field.shape, field.slot)) {
             Some((_, _, domain)) => *domain = domain.join(field.ty),

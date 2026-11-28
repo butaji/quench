@@ -83,7 +83,7 @@ fn staged_plain_arm(instruction: WideInstruction, code: u8) -> Option<Heap> {
 /// through, the way a store names its array (`Decoded::base`).
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
     match fast {
-        Heap::Add { .. } => adds::operands(instruction),
+        Heap::Add { .. } | Heap::AddClass => adds::operands(instruction),
         Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
         Heap::Staged(numeric::row_names::STAGED_VOID) => (None, None),
@@ -152,7 +152,7 @@ pub(crate) fn lowering(instruction: WideInstruction, known: Known, helpers: Lane
     let in_place = addressed(LaneHelper::Step) && steps_in_place(instruction);
     let fast = fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap));
     match fast {
-        Some(fast @ Heap::Add { .. }) if !in_place => Step::Guard(fast),
+        Some(fast @ (Heap::Add { .. } | Heap::AddClass)) if !in_place => Step::Guard(fast),
         _ if addressed(LaneHelper::Step) && instruction.op().raises() => Step::Throw,
         _ if !in_place => called_out(),
         Some(fast) => Step::Fast(fast),

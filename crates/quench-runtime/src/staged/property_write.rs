@@ -6,7 +6,7 @@
 use super::ic::{self, Reached};
 use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, PropertyFrame, StoreArm, StoreJoin, StorePlan};
 use super::store::{admit_named, own_store, own_store_proved, slot_holds, uncallable};
-use super::Stage;
+use super::{Stage, StagedRecordSpace};
 use crate::bytecode::{FieldBase, Register};
 use crate::typed_ir::{Representation, Type};
 
@@ -141,6 +141,13 @@ fn vm_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, join: S
 fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
     arms: &[StoreArm], value: (S::Word, Type), miss: S::Miss) -> Option<()> {
     let named = frame.store_admission(stage, miss)?;
+    match arms {
+        // A class-keyed arm: the receiver is a live class cell, which holds no record (`class_arm_store`).
+        [arm] if arm.keys_class() => return class_arm_store(stage, object, *arm, value, named, miss),
+        // A site's class arms are one class (`StorePlan`'s arms); several keys leave to the VM's store.
+        _ if arms.iter().any(|arm| arm.keys_class()) => return None,
+        _ => {}
+    }
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
         // An ahead image's layout arm: the record's own word proves the shape and the plain arena
@@ -259,4 +266,27 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
     admit_named(stage, named, (record, arm.slot), value, miss)?;
     let id = super::value::direct_object_id(stage, object);
     own_store_proved(stage, record, id, arm.slot, (value, fact), miss)
+}
+
+/// The store of `value` into the field `arm` names of the live class cell `object` is, of the class its key names
+/// (`entry::class_key_cell`): a quiet store (`named`, the method cache's admission) overwrites no callable, as
+/// `tagged_through_layout` does, and the cell space's gate admits the write before the field is stored. The gate
+/// refuses a tracked slot, so the arm takes no slot type.
+#[inline(always)]
+fn class_arm_store<S: Stage>(stage: &mut S, object: S::Word, arm: StoreArm, (value, _fact): (S::Word, Type),
+    named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
+    let key = stage.constant(u64::from(arm.shape));
+    let (granule, cell) = super::entry::class_key_cell(stage, object, key, miss)?;
+    let slot = stage.constant(u64::from(arm.slot));
+    if let Some(named) = named {
+        let old = super::entry::cell_field(stage, cell, slot);
+        let (fresh, kept) = (uncallable(stage, value), uncallable(stage, old));
+        let quiet = stage.all(fresh, kept);
+        let admitted = stage.any(named, quiet);
+        stage.guard(admitted, miss)?;
+    }
+    let open = stage.store_gate(StagedRecordSpace::Class, granule, value);
+    stage.guard(open, miss)?;
+    super::entry::class_store(stage, cell, slot, value);
+    Some(())
 }

@@ -17,7 +17,7 @@ use crate::value_vec::range_has_room;
 /// the link and the integrity bits, and one id store moves the record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Transition {
-    pub(crate) before: u32,
+    pub before: u32,
     pub(crate) after: u32,
     pub slot: u16,
     pub layouts: [u32; 2],
@@ -40,7 +40,7 @@ impl Transition {
     /// Whether the transition is keyed by a live cell's class (`before` is `class | CLASS_KEY`,
     /// `Heap::live_class_key`): its add runs in the cell in place, not on a record.
     #[inline(always)]
-    pub(crate) fn is_class_keyed(self) -> bool {
+    pub fn is_class_keyed(self) -> bool {
         is_class_key(self.before)
     }
 

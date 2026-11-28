@@ -5301,13 +5301,21 @@ impl Lowering<'_, '_> {
     fn site_store_plan(&self, site: u16, ty: Type) -> (Vec<StoreArm>, StoreJoin) {
         let own: Vec<&NativeFieldLoad> = site_loads(self.fields, site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
-        let arms = own.iter().filter(|load| load.valid())
-            .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)
-                .map(|arm| if load.image_layout() { arm.as_layout() } else { arm }))
-            // An arm whose test no value of `ty` passes would take its shape's store and miss: a
-            // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
-            // class the value may be.
-            .filter(|arm: &StoreArm| arm.holds.is_none_or(|holds| holds.is_subtype(ty))).collect();
+        let arms = match own.as_slice() {
+            // One class-keyed load stores in place into its live cell's field (`StoreArm::of_class`): the cell's gate
+            // admits the write, so the slot's type is no test here.
+            [load] if load.class.is_some() => load.class.filter(|_| load.valid())
+                .map(|class| StoreArm::of_class(quench_runtime::staged::field_cache_layout::CLASS_KEY | class, load.slot)).into_iter().collect(),
+            // A class beside another load, or several classes, is the VM's store: no arm names their keys.
+            loads if loads.iter().any(|load| load.class.is_some()) => Vec::new(),
+            loads => loads.iter().filter(|load| load.valid())
+                .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)
+                    .map(|arm| if load.image_layout() { arm.as_layout() } else { arm }))
+                // An arm whose test no value of `ty` passes would take its shape's store and miss: a
+                // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
+                // class the value may be.
+                .filter(|arm: &StoreArm| arm.holds.is_none_or(|holds| holds.is_subtype(ty))).collect(),
+        };
         let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
             else if bound { StoreJoin::Bound } else { StoreJoin::Host };
         (arms, join)
