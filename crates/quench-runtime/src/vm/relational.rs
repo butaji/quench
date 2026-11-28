@@ -400,12 +400,9 @@ impl Vm {
         // One cell lookup per link: a proxy anywhere on the chain needs the full algorithm.
         let mut current = value;
         loop {
-            let next = match self.heap.object_record(current) {
-                Some(object) => object.proto(),
-                None => match self.heap.get(current) {
-                    Some(Cell::Proxy { .. }) => return None,
-                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
-                },
+            let next = match self.heap.get(current) {
+                Some(Cell::Proxy { .. }) => return None,
+                _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
             };
             if next.is_null() {
                 return Some(false);

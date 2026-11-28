@@ -12,7 +12,6 @@ pub enum GlobalNameRead {
 /// The receiver an inherited field entry's test reads (`Vm::inherited_receiver`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum InheritedReceiver {
-    Record,
     Function,
     Builtin,
 }
@@ -26,9 +25,6 @@ impl Vm {
     /// reads them.
     #[inline(always)]
     pub(super) fn inherited_receiver(&self, value: Value) -> Option<(&Object, InheritedReceiver)> {
-        if let Some(record_id) = value.direct_object_index().and_then(|r| self.heap.record_id(r)) {
-            return Some((self.heap.object_record_by_id(record_id), InheritedReceiver::Record));
-        }
         if let Some(function) = self.heap.function(value) {
             return Some((&function.object, InheritedReceiver::Function));
         }
@@ -66,12 +62,6 @@ impl Vm {
         if self.realm.global_lexical_declarations.contains(&atom) {
             return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
                 .map_or(GlobalNameRead::Uninitialized, |value| GlobalNameRead::Value(value, None));
-        }
-        if self.global_name_hintable(atom)
-            && let Some(hint) = self.own_data_field_hint::<false>(globals, atom)
-            && let Some(value) = self.record_field_entry_hit(hint, globals)
-        {
-            return GlobalNameRead::Value(value, Some(hint));
         }
         match self.cached_field_hit(code, globals, site) {
             object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value, None),

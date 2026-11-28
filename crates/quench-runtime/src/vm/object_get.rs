@@ -549,7 +549,7 @@ impl Vm {
                     KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked_view(data, word.slot()) }),
                     KIND_INHERITED if inherits => {
                         let holder = match self.symbol_load_proofs.holder(data.layout_id(), key32) {
-                            Some(id) if id != 0 => ObjectRef::Record(self.heap.object_record_by_id(id - 1)),
+                            Some(id) if id != 0 => return None,
                             _ => self.proof_holder(data, word.hops())?,
                         };
                         // SAFETY: the entry's subjects keep the holder and the shape its slot was recorded in.
@@ -618,7 +618,7 @@ impl Vm {
                     if let Ok(slot) = u32::try_from(slot) {
                         let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
                         // Only an entry the chain's subjects hold is refined.
-                        if self.prove_symbol_chain(layout, key, prototype, depth, getter, current) {
+                        if self.prove_symbol_chain(layout, key, prototype, depth, getter) {
                             self.refine_getter_fact(layout, key, depth, slot, current);
                         }
                     }
@@ -650,7 +650,7 @@ impl Vm {
         };
         // The walk's answer stands whether or not it is recorded; an unrecorded one is walked
         // again at its next miss.
-        self.prove_symbol_chain(layout, key, prototype, depth, answer, current);
+        self.prove_symbol_chain(layout, key, prototype, depth, answer);
         Some(match answer {
             SymbolLoadAnswer::Absent => ProvedLoad::Absent,
             _ => ProvedLoad::Value(value),
@@ -667,7 +667,6 @@ impl Vm {
         prototype: Value,
         depth: u8,
         answer: super::symbol_load_proof::SymbolLoadAnswer,
-        holder: Value,
     ) -> bool {
         // A chain met for the first time is only noted: the receiver's own shape lacks the key
         // (`record_absent_own`, which no read answers by). Its second walk proves it. A
@@ -682,10 +681,8 @@ impl Vm {
             return false;
         }
         let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
-        // A holder up the chain that is an object record: its id, plus one; any other holder
-        // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
-        let holder = if depth > 0 { holder.direct_object_index().and_then(|r| self.heap.record_id(r)).map_or(0, |id| id + 1) } else { 0 };
-        match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
+        // A holder is found by its hops (`Vm::proof_holder`): a class cell names no record id.
+        match self.symbol_load_proofs.record_with_holder(layout, key, answer, 0) {
             Some(entry) => {
                 self.hold_fact(entry, &subjects);
                 true
@@ -770,7 +767,8 @@ impl Vm {
         };
         if kind != KIND_GETTER {
             // An own accessor's holder is each receiver itself, never the one recorded.
-            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().and_then(|r| self.heap.record_id(r)).map_or(0, |id| id + 1) };
+            // A class cell names no record id, so its holder is found by its hops (`proof_holder`).
+            let holder_id = 0;
             self.symbol_load_proofs.record_accessor(layout, key32, depth, slot, kind, holder_id);
         }
     }

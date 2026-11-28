@@ -89,7 +89,7 @@ impl Vm {
             }
             Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
                 let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => ObjectRef::Record(self.heap.object_record_by_id(id - 1)),
+                    Some(id) if id != 0 => return None,
                     _ => self.proof_holder(data, hops)?,
                 };
                 // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
@@ -105,7 +105,7 @@ impl Vm {
             // without the walk.
             Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits || hops == 0 => {
                 let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => ObjectRef::Record(self.heap.object_record_by_id(id - 1)),
+                    Some(id) if id != 0 => return None,
                     _ => self.proof_holder(data, hops)?,
                 };
                 if let Some(attributes) = self.slot_attributes(holder, slot as usize)

@@ -273,6 +273,17 @@ impl ClassSpace {
         unsafe { cell_fields_at(self.base, g) }
     }
 
+    /// Visits the granule of every live class cell, region by region (1 to 5). Region 0 holds stubs, which are
+    /// no class cell, so it is not walked. A restored heap registers its cell prototypes through this.
+    pub(super) fn for_each_live_granule(&self, mut visit: impl FnMut(u32)) {
+        let regions = &self.regions;
+        regions.1.for_each_live(|local, _| visit(granule(1, local)));
+        regions.2.for_each_live(|local, _| visit(granule(2, local)));
+        regions.3.for_each_live(|local, _| visit(granule(3, local)));
+        regions.4.for_each_live(|local, _| visit(granule(4, local)));
+        regions.5.for_each_live(|local, _| visit(granule(5, local)));
+    }
+
     /// The header word of granule `g`'s cell, by reference (`CellView`). The space must be reserved.
     #[inline(always)]
     pub(super) fn cell_header(&self, g: u32) -> &u64 {
