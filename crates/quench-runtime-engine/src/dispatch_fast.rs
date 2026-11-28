@@ -3165,11 +3165,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// The generated `length` row's miss (`ARRAY_LENGTH_SITE`, `STRING_LENGTH_SITE`): an array in a
+    /// The generated `length` row's miss (`ARRAY_LENGTH_SITE`, `STRING_LENGTH_SITE`, `TYPED_LENGTH_SITE`): an array in a
     /// form the row does not read (`Vm::array_length_value`), then a string primitive's length
-    /// (`Vm::string_length`), whose site takes the string row. Any other receiver `length_read`
-    /// answers (an arguments object's or a user function's own `length`, a typed view's geometry)
-    /// takes the host read row (`TYPED_LENGTH_SITE`); the rest reads `row_length_plain`.
+    /// (`Vm::string_length`), then any other receiver `length_read` answers (an arguments object's or a user
+    /// function's own `length`, a typed view's geometry). The receiver's row was chosen at load (`named_read_row`),
+    /// so each answer is given in place and the record keeps its row; the rest reads `row_length_plain`.
     #[inline(never)]
     fn row_length_other<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -3179,14 +3179,10 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         if let Some(length) = vm.string_length(receiver) {
-            // A site that reads a string's length mostly reads strings, as a scan over one does.
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE));
             r.set(i.a, Value::length(length));
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         if let Some(length) = length_read(vm, receiver) {
-            // A site that reads such a `length` mostly reads these receivers, as a loop over a typed array does.
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE));
             r.set(i.a, length);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }

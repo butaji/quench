@@ -326,7 +326,7 @@ pub(crate) fn derive_lane_view<'live>(
                 // The installed row of the opcode and accumulator; where that is the first-run field read, the load
                 // chooses its row from the atom and base instead (`named_read_row`), keeping the row's `produces`.
                 handler_in_lane(backward_jump, acc, op as usize).map(|row| {
-                    match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
+                    match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction, facts, function_id, pc as u32)).flatten() {
                         Some(handler) => LaneHandler { handler, ..row },
                         None => row,
                     }
@@ -1415,10 +1415,10 @@ fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
 
 /// The first-run row of a `GetField` whose base is no local slot, chosen at load from its atom and base. A private
 /// name reads through its private row (`Vm::is_private_name`: the atom's text decides it). A `length` read takes the
-/// array-length row for a register base, else the general read (`Vm::reads_function_info`: the VM's fixed atoms decide
-/// it). Any other read takes the own-field row, whose misses reach the general read. `None` for a local base, which
-/// `row_get_field_first` reads, and for any other opcode.
-fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction) -> Option<Handler> {
+/// length row of its register base (`length_row`), else the general read (`Vm::reads_function_info`: the VM's fixed
+/// atoms decide it). Any other read takes the own-field row, whose misses reach the general read. `None` for a local
+/// base, which `row_get_field_first` reads, and for any other opcode.
+fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32) -> Option<Handler> {
     let base = instruction.b();
     let atom = instruction.imm();
     if !quench_runtime::staged::field_read_family(instruction.op()) || quench_runtime::bytecode::FieldBase(base).local_index().is_some() {
@@ -1432,17 +1432,31 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction) -> 
             protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>()));
     }
     if vm.reads_function_info(atom) && atom == vm.length_atom {
-        // A register's `length` is most often an array's, which no function information can answer.
-        return Some(if quench_runtime::bytecode::FieldBase(base).register_index().is_some() && base != quench_runtime::bytecode::FieldBase::NESTED {
-            generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
-        } else {
-            general_handler(base)
+        return Some(match quench_runtime::bytecode::FieldBase(base).register_index() {
+            Some(register) if base != quench_runtime::bytecode::FieldBase::NESTED => length_row(facts, function_id, pc, register),
+            _ => general_handler(base),
         });
     }
     // The generated own read of the form of no particular hint, which binds the lane's object records on its first
     // miss where they are not yet bound.
     let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
     Some(single_base_handler(base, this, register, row_get_field_miss))
+}
+
+/// The row of a register's `length` read at `pc`, chosen at load from the solve. A base the solve proves a string (its
+/// type is string only) takes the string row; a base holding typed arrays of one native kind (`view_kind`) takes the
+/// typed-length row. Any other base takes the array row, whose misses reach the general length reads
+/// (`row_length_other`). Without facts, the array row.
+fn length_row(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32, register: u16) -> Handler {
+    let Some(facts) = facts else { return generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE) };
+    let function = facts.function_facts(function_id);
+    if function.cell_at(pc, register).is_some_and(|cell| cell.ty.string_fact().is_some()) {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE)
+    } else if function.view_kind(pc, register).is_some() {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE)
+    } else {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
+    }
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at
