@@ -667,18 +667,30 @@ impl Heap {
         object.set_shape(shape, &mut self.properties);
     }
 
-    /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
-    /// Two objects never share arena storage: sweeping either would free the other's values.
-    pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
-        self.admit_object_contents(source);
-        // Module namespace storage is record-only extras data (S6a's promise.rs caller): a cell target departs first.
-        self.depart_for_mutation(target);
-        let Some((object, properties)) = self.object_and_arena_mut(target) else {
+    /// Gives `target` its own copy of `source`'s properties: the source's shape and slot values, which the target
+    /// stores as its own (no storage is shared, so sweeping either cannot free the other's values). Either may be a
+    /// class cell or a record. A live class cell target takes the values in place, as a class transition
+    /// (`class_cell_initialize`; for a dictionary source, `cell_to_dictionary` then `dictionary_cell_initialize`), so
+    /// it does not depart.
+    pub(crate) fn copy_property_storage(&mut self, source: Value, target: Value) -> bool {
+        let Some(view) = self.object(source) else {
             return false;
         };
-        let storage = properties.duplicate(source.properties());
-        let previous = object.copy_property_storage_from(source, storage, properties);
-        properties.release(previous);
+        let shape = view.shape();
+        let dictionary = view.exact_shape() & crate::value_vec::DICTIONARY_STORAGE != 0;
+        let values: Vec<Value> = (0..self.properties.shape_length(shape))
+            .map(|slot| self.property_get_ref(view, slot).unwrap_or(Value::DELETED))
+            .collect();
+        if let Some(granule) = self.live_class_cell(target)
+            && dictionary
+        {
+            self.cell_to_dictionary(granule, shape);
+            if let Some(id) = self.dictionary_id_of_cell(granule) {
+                self.dictionary_cell_initialize(granule, id, shape, &values);
+                return true;
+            }
+        }
+        self.initialize_object_properties(target, shape, &values);
         true
     }
 

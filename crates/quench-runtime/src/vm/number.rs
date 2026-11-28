@@ -237,7 +237,9 @@ impl Vm {
                 setter: None,
             },
         );
-        self.heap.object_record_mut(prototype)
+        self.heap.ensure_cell_extras(prototype);
+        self.heap
+            .object_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
@@ -289,7 +291,9 @@ impl Vm {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        self.heap.object_record_mut(prototype)
+        self.heap.ensure_cell_extras(prototype);
+        self.heap
+            .object_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
         self.install_realm_native_rows(prototype, Holder::NumberPrototype, global)?;

@@ -102,7 +102,7 @@ impl Heap {
         if value.heap_index().is_some() {
             self.class_space.barrier(granule);
         }
-        self.note_cell_write(granule);
+        self.note_cell_value_write(granule, slot);
         self.properties.dictionary_mut(id).insert(slot as u32, value);
     }
 

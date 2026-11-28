@@ -10,12 +10,16 @@
 
 #![allow(dead_code)]
 
-use super::cell::{ElementFacts, Object, ObjectExtras, ProtoLink};
+use super::cell::{ElementFacts, Object, ObjectBrand, ObjectExtras, ProtoLink, StackData, StructuredSerialization};
 use super::dependencies::Watch;
 use super::class_space::{header_class, header_with_class};
 use super::Heap;
+use crate::bytecode::Atom;
 use crate::value::Value;
 use crate::value_vec::DictionaryTable;
+use crate::vm::program_store::ProgramId;
+
+mod extras;
 
 /// A class cell's view: its header word (the class id in the low half, zero above), its inline fields in
 /// constructor order, the slack fields holding `Value::DELETED`, and the words of its spill run, which follow the
@@ -217,6 +221,7 @@ impl<'a> ObjectRef<'a> {
             ObjectRef::Cell(cell) => cell.extras.and_then(ObjectExtras::watched_subject),
         }
     }
+
 }
 
 /// A record is the view of its own object, so a caller holding a record passes it where a view is taken.
@@ -427,6 +432,7 @@ impl<'a> ObjectMut<'a> {
             ObjectMut::Cell(cell) => cell.edit_class(|object| object.note_constant_write()),
         }
     }
+
 }
 
 impl Heap {
@@ -437,6 +443,16 @@ impl Heap {
         let table = self.cell_dictionary(granule);
         let extras = self.extras.get(self.class_space.extras_id(granule));
         ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields, run, table, extras })
+    }
+
+    /// The view of an ordinary object: a class cell, an object record, or a promise (`Heap::ordinary_object`'s
+    /// forms). Any other record (an array, a function, a collection) is `None`, as `ordinary_object` makes it.
+    #[inline(always)]
+    pub(crate) fn ordinary_view(&self, value: Value) -> Option<ObjectRef<'_>> {
+        if value.direct_object_index().is_some() {
+            return self.object(value);
+        }
+        self.promise(value).map(|promise| ObjectRef::Record(&promise.object))
     }
 
     /// The exclusive view of live class cell `granule`, whose header and fields it edits in place. A dictionary

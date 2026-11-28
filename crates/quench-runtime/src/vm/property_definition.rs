@@ -180,7 +180,7 @@ impl Vm {
                 && atom == self.length_atom
                     && !self
                         .heap.object(object)
-                        .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
+                        .is_some_and(|object| object.is_arguments_object())
                 {
                     return self.define_array_length(p, object, descriptor);
                 }
