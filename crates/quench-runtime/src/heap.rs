@@ -3163,7 +3163,7 @@ impl Heap {
                 });
                 // After the records: a departed cell dies with its record (its stub released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
-                class_space.sweep_cells(&mut *properties, extras, full, age, |values, class| {
+                class_space.sweep_cells(&mut *properties, &mut *extras, full, age, |values, class| {
                     layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))
                 });
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
