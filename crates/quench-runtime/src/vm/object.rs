@@ -4661,7 +4661,7 @@ impl Vm {
         value: Value,
     ) {
         debug_assert_eq!(field_index_of(slot) as usize, self.shapes[shape as usize].storage_len());
-        self.heap.record_property_add_at(object, field_index_of(slot) as usize, value, target_shape);
+        self.heap.property_add(object, value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -5235,7 +5235,7 @@ impl Vm {
         }
         let classes = SlotType::ALL.iter().map(|class|
             format!("\"{}\":{}", class.label(), reps[*class as usize])).collect::<Vec<_>>().join(",");
-        let reps = format!("QUENCH_FIELD_REPS {{{classes},\"unrepresented_slots\":{}}}", self.heap.unrepresented_slots());
+        let reps = format!("QUENCH_FIELD_REPS {{{classes}}}");
         reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
