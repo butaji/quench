@@ -181,6 +181,14 @@ impl Heap {
         }
     }
 
+    /// The add of `value` as field `slot` of live cell `granule` along the shape edge `before` -> `after`, for a cell with
+    /// no class key (a constant-marked cell, `live_class_key`): the mark clears first (`note_cell_write` retires the
+    /// readers of the mark), then the add is `class_cell_add`, which takes the after-shape's class in place.
+    pub(crate) fn constant_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) {
+        self.note_cell_write(granule);
+        self.class_cell_add(granule, before, after, slot, value);
+    }
+
     /// A store or add of `value` at slot `slot` of live cell `granule`, whose spill slot is `from` before and `to`
     /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the constant mark's clear, then
     /// the word. A moved run (allocated or grown) fires the holder edge. A field holds the one Value word, which is

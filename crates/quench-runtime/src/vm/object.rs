@@ -587,12 +587,8 @@ impl Vm {
         entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
-        // A class cell stays one (departure-free S3 and S4), whatever the trigger.
+        // A class cell stays one (departure-free S3 and S4), whatever the trigger; a record takes the shape in place.
         let cell = self.heap.live_class_cell(object);
-        if cell.is_none() {
-            self.heap.depart_class_object(object);
-            self.drop_departed_holder_entries();
-        }
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
@@ -2350,8 +2346,11 @@ impl Vm {
                 self.heap.dictionary_cell_add(granule, id, transition.after, usize::from(transition.slot), value);
                 return;
             }
-            self.heap.depart_class_object(object);
-            self.drop_departed_holder_entries();
+            // The remaining cell is constant-marked, which has no class key: its mark clears, then the add takes the
+            // class edge from its shape (`constant_cell_add`). No departure.
+            let transition = transition.record_form();
+            self.heap.constant_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value);
+            return;
         }
         // The record path takes the transition's shapes (`record_form`), whose layouts it guards.
         let transition = transition.record_form();

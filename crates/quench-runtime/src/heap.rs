@@ -4996,9 +4996,16 @@ impl Heap {
             self.dictionary_cell_add(granule, id, shape, slot, value);
             return;
         }
+        if let Some(granule) = self.live_class_cell(object) {
+            // An ordinary cell's add is its class edge (`class_cell_add`): the new slot follows its shape's last, and
+            // the cell takes `shape`'s class in place (a field past its region spills into its run).
+            let before = class_shape(class_space::header_class(self.class_space.header(granule)));
+            let slot = self.properties.shape_length(before);
+            self.class_cell_add(granule, before, shape, slot, value);
+            return;
+        }
         let _slot = if let Some(object_ref) = object.direct_object_index() {
-            // An add appends to the record's arena run: a live class cell departs first.
-            self.depart_for_mutation(object);
+            // An add appends to a record's arena run (a departed cell is a record).
             let record_id = self.stub_record(object_ref.granule());
             let Self {
                 object_records,
@@ -5037,11 +5044,10 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
-        if self.live_dictionary_cell(object).is_some() {
+        if self.live_class_cell(object).is_some() {
             return self.property_add(object, value, shape);
         }
-        // An add appends to the record's arena run: a live class cell departs first.
-        self.depart_for_mutation(object);
+        // An add appends to the record's arena run (a departed cell is a record).
         let record_id = self.stub_record(object_ref.granule());
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
