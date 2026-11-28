@@ -1187,3 +1187,24 @@ fn an_int_array_with_a_delete_is_not_a_plain_int32_backing() {
     let function = facts.function_facts(function_named(&program, "f") as u32);
     assert!(!(0..registers).any(|register| function.backing_plain(last, register as u16)));
 }
+
+#[test]
+fn a_class_only_built_by_direct_new_is_a_fixed_cell_from_birth() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
+    let facts = analyze(&program);
+    assert!(facts.class_fixed_cell(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn a_parent_of_a_derived_class_is_no_fixed_cell_since_super_constructs_it() {
+    let program = program("function Scheduler() { this.count = 0; } class Timer extends Scheduler { constructor() { super(); } } var t = new Timer();");
+    let facts = analyze(&program);
+    assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "super() constructs the parent with new_target Timer");
+}
+
+#[test]
+fn a_program_naming_reflect_construct_has_no_fixed_cell() {
+    let program = program("function Scheduler() { this.count = 0; } var s = Reflect.construct(Scheduler, []);");
+    let facts = analyze(&program);
+    assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "Reflect.construct takes any new_target");
+}

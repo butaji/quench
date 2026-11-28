@@ -372,15 +372,16 @@ impl Vm {
         constructed
     }
 
+    /// The shape of a construction by `constructor`: the chain of `shape` with its `Constructed` transition. Keyed by the
+    /// constructor value alone, so an anonymous constructor gets its root too (the allocator's union cell is keyed by the
+    /// class, not its name); the name is read lazily where provenance reads it (`constructed_name`).
     fn derive_constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,
         new_target_is_base: bool,
     ) -> u32 {
-        if self.original_function_name(constructor).is_none()
-            || shape_names(&self.shapes, shape).1 == Some((constructor, new_target_is_base))
-        {
+        if shape_names(&self.shapes, shape).1 == Some((constructor, new_target_is_base)) {
             return shape;
         }
         self.append_cached_shape_transition(
@@ -470,9 +471,11 @@ impl Vm {
             return None;
         }
         if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+            // An anonymous constructor's root names nothing: its empty name reads as no name, as it did before the root was made.
             return new_target_is_base
                 .then(|| self.debug_function_name(constructor))
-                .flatten();
+                .flatten()
+                .filter(|name| !name.units().is_empty());
         }
         if let Some(constructor) = self.function_factory_constructor(value) {
             return self.debug_function_name(constructor);
