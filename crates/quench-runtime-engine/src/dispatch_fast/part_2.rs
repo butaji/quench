@@ -383,6 +383,34 @@ pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined
     }
 }
 
+/// Gives each construct record whose target the facts prove the row its construction takes (`protocol_misses::construct`),
+/// chosen here, once. A site the facts name a planned construction of (`construct_class` is a fixed cell whose class
+/// is the proven body, and the body only initializes `this`) takes `PLANNED_CONSTRUCT`, or `PLANNED_CONSTRUCT_RETURNED`
+/// where its result is returned; its plan is run-time state the row reads, and a site with no plan takes the generic
+/// step in place. Any other proven target that forwards its arguments (`forwards_args`) takes `SCRIPT_CONSTRUCT_KEEPING`.
+/// A record with no proven target keeps `SCRIPT_CONSTRUCT`.
+pub(super) fn specialize_constructs(records: &mut [LaneInstruction], function: u32, code: Option<&quench_runtime::bytecode::ResidualProgram>,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>) {
+    let Some(facts) = facts else { return };
+    let general = protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>() as *const ();
+    let facts_of = facts.function_facts(function);
+    for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
+        let Some(body) = facts_of.construct_target(pc as u32) else { continue };
+        let planned = facts.construct_class(function, pc as u32).is_some_and(|class| facts.class_fixed_cell(class) && facts.class_body(class) == body)
+            && code.is_some_and(|code| code.function_get(body as usize).is_some_and(|callee| callee.only_initializes_this_fields(&code.constants)));
+        let handler = if planned && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0 {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>() as *const ()
+        } else if planned {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>() as *const ()
+        } else if facts.forwards_args(body) {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>() as *const ()
+        } else {
+            continue
+        };
+        record.handler = handler;
+    }
+}
+
 /// The `this` a plain call of `target` binds for `receiver`: an arrow's lexical one
 /// (`ScriptCallTarget::lexical_this`), else `call_this_value`'s without its boxing of
 /// primitives, which allocates, so `None` for a sloppy callee's primitive.

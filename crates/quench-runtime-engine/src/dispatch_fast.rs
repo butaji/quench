@@ -6056,16 +6056,13 @@ script_handler! {
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
-            // Later runs of the site try the plan first. The site notes its callee, which a body
-            // reads to keep the receiver as its field values.
+            // The site notes its callee, which a body reads to keep the receiver as its field values.
             vm.note_site_callee(unsafe { &(*ip).call_link }, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 {
-                requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>());
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>());
             if let Some(resumed) = complete_activation_in_lane(cx, ip, this) {
                 resume!(cx, resumed)
             }
@@ -6073,9 +6070,6 @@ script_handler! {
         }
         let target = *target;
         if target.forwards() {
-            // The site constructs a forwarding target: later runs enter the keeping
-            // construction directly, which moves the record back for any other target.
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>());
             sibling!(script_construct_keeping_miss, r, ip, Carried::script_in(cx, view))
         }
         let built = if target.initializes() {
@@ -6121,11 +6115,11 @@ script_handler! {
 
 script_handler! {
     /// `script_construct_miss` at a site into a register whose construction was planned
-    /// (`planned_construction_in_lane`), which `script_construct_miss` moves it to: the plan of
+    /// (`planned_construction_in_lane`), installed at load (`specialize_constructs`): the plan of
     /// the callee alone, without resolving its call target. A plan exists only for a callee
     /// whose target constructs by its initializer stores, which its function fixes, and while
     /// it holds the finished object is what the activation would make. Any other construction
-    /// moves the record back to `script_construct_miss`.
+    /// takes the generic step, `script_construct_miss`, in place.
     fn planned_construct_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
@@ -6150,7 +6144,6 @@ script_handler! {
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) } else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -6172,10 +6165,10 @@ script_handler! {
 
 script_handler! {
     /// `planned_construct_miss` at a site whose construction is returned (`RETURN_REGISTER`),
-    /// which `script_construct_miss` moves it to: the planned receiver completes the
+    /// installed at load for a planned site (`specialize_constructs`): the planned receiver completes the
     /// activation that returns it, or the frame's own returning construct where
-    /// `finishes_construction_in_lane` admits it. Any other construction moves the record back
-    /// to `script_construct_miss`.
+    /// `finishes_construction_in_lane` admits it. Any other construction takes the generic step,
+    /// `script_construct_miss`, in place.
     fn planned_construct_returned_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
@@ -6185,7 +6178,6 @@ script_handler! {
             .then(|| unsafe { planned_site_in_lane(vm, cx, ip, r, i) })
             .flatten();
         let Some(this) = planned else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -6214,10 +6206,10 @@ script_handler! {
 
 script_handler! {
     /// `script_construct_miss` of a target that keeps its passed values
-    /// (`ScriptCallTarget::forwards`), which `script_construct_miss` moves a site to: the
-    /// keeping activation (`construct_keeping_activation_in_lane`). Any other construction moves
-    /// the record back to `script_construct_miss`. Out of line, so ordinary constructions
-    /// keep their code.
+    /// (`ScriptCallTarget::forwards`), installed at load for a proven target that forwards its arguments
+    /// (`specialize_constructs`): the keeping activation (`construct_keeping_activation_in_lane`). Any
+    /// other construction takes the generic step, `script_construct_miss`, in place. Out of line, so
+    /// ordinary constructions keep their code.
     #[inline(never)]
     fn script_construct_keeping_miss<>(cx, r, ip, i, view) {
         // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
@@ -6242,10 +6234,7 @@ script_handler! {
                 frame_return(unsafe { vm(cx) }, ip, this)
             }
             Err(Some(next)) => next,
-            Err(None) => {
-                requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
-                sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
-            }
+            Err(None) => sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view)),
         }
     }
 }
