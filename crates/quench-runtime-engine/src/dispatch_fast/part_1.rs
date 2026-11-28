@@ -308,9 +308,8 @@ pub(super) fn getter_activation_in_lane(
         && vm.cached_field_getter(base, atom, vm.field_cache_index(cache)).is_none()
     {
         quench_runtime::vm::lane_exits::record_detail(format!(
-            "getter decline uncached {} recorded={}",
-            &code.atoms[atom as usize],
-            vm.field_site_getter(cache)
+            "getter decline uncached {}",
+            &code.atoms[atom as usize]
         ));
     } else if read.is_none() {
         quench_runtime::vm::lane_exits::record_detail("getter decline base".into());
