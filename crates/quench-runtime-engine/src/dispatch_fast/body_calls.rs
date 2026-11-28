@@ -311,22 +311,25 @@ fn body_construct(cx: *mut LaneContext, call: &BodyCall, moved: &mut bool) -> u6
     // A construction's callee is a register: no receiver loads it.
     let Some(callee) = call.callee(vm, Value::UNDEFINED) else { return miss(vm, Miss::Callee) };
     if let Err(refused) = construct_admitted(cx, vm) { return refused; }
+    // The site's class: the body's construct site at the call's record (`site_class_in_lane`).
+    // SAFETY: `call.ip` is a record of the running body.
+    let class = unsafe { site_class_in_lane(cx, call.ip, callee) };
     // The quick case, as the lane's own record makes it (`planned_construct_miss`): nothing out of
     // line, no base moved where no collection became due.
-    if let Some(this) = super::construct_plan::planned_inline_quick(vm, callee, call.argument()) {
+    if let Some(this) = super::construct_plan::planned_inline_quick(vm, callee, class, call.argument()) {
         call.registers.set(call.site.result, this);
         if vm.collection_due() { note_allocation(vm); } else { *moved = false; }
         return LANE_CALL_COMPLETED;
     }
     // The callee's plan first, the common `new C(...)`, which needs no call target; a returned
     // construction completes by it alone.
-    if let Some(this) = constructed_in_place(vm, call, callee) {
+    if let Some(this) = constructed_in_place(vm, call, callee, class) {
         call.registers.set(call.site.result, this);
         return LANE_CALL_COMPLETED;
     }
     // A returning construction takes the plan only: the lane completes it with its callee's result.
     if call.site.returns { return miss(vm, Miss::Returning); }
-    construct_activated(cx, call, callee)
+    construct_activated(cx, call, callee, class)
 }
 
 /// Whether the lane admits a body's construction: it activates script calls and constructs in
@@ -345,9 +348,9 @@ fn construct_admitted(cx: *mut LaneContext, vm: &Vm) -> Result<(), u64> {
 /// fields), else, for `new Array(...)` of the realm's own `Array`, the array the lane's own
 /// construction makes (`Vm::intrinsic_array_construction`: `new Array(n)`'s holes, or the
 /// values), which calls nothing; an invalid length is a miss, whose RangeError the VM throws.
-fn constructed_in_place(vm: &mut Vm, call: &BodyCall, callee: Value) -> Option<Value> {
-    let this = planned_construction(vm, callee, call.argument())
-        .or_else(|| forwarded_fields_in_lane(vm, callee, call.argument()))
+fn constructed_in_place(vm: &mut Vm, call: &BodyCall, callee: Value, class: u32) -> Option<Value> {
+    let this = planned_construction(vm, callee, class, call.argument())
+        .or_else(|| forwarded_fields_in_lane(vm, callee, class, call.argument()))
         .or_else(|| {
             if !vm.realm_array_constructor(callee) { return None; }
             if call.argc() == 0 { return Some(vm.hole_array(0)); }
@@ -363,11 +366,11 @@ fn constructed_in_place(vm: &mut Vm, call: &BodyCall, callee: Value) -> Option<V
 /// A body's construction of `callee` by its constructor's own activation: the receiver its target
 /// allocates (or its initializer finishes) and, where its body does more than store fields, the
 /// activation.
-fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value) -> u64 {
+fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value, class: u32) -> u64 {
     let vm = unsafe { vm(cx) };
     let Some(target) = construct_target_in_lane(cx, vm, callee) else { return miss(vm, Miss::Callee) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
-    if target.forwards() { return construct_forwarded(vm, call, callee); }
+    if target.forwards() { return construct_forwarded(vm, call, callee, class); }
     if !target.constructs() { return miss(vm, Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`script_construct_miss`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
@@ -378,7 +381,7 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value) -> 
     if how.plain && !activation_room_in_lane(vm, &target) { return miss(vm, Miss::NoActivationRoom); }
     // Before the receiver is allocated: a declined constructor's construction is the interpreter's, with no effect here.
     if let Some(missed) = declined_callee_miss(cx, &target) { return missed; }
-    let Some((this, initialized)) = construct_receiver(cx, call, callee, &target) else { return miss(vm, Miss::Receiver) };
+    let Some((this, initialized)) = construct_receiver(cx, call, callee, class, &target) else { return miss(vm, Miss::Receiver) };
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
     if initialized {
@@ -390,13 +393,13 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value) -> 
 
 /// The receiver of a construction by `target`, with whether its initializer's cached adds finished
 /// its fields: the allocation of `callee`'s prototype, or the finished receiver.
-fn construct_receiver(cx: *mut LaneContext, call: &BodyCall, callee: Value, target: &ScriptCallTarget) -> Option<(Value, bool)> {
+fn construct_receiver(cx: *mut LaneContext, call: &BodyCall, callee: Value, class: u32, target: &ScriptCallTarget) -> Option<(Value, bool)> {
     let vm = unsafe { vm(cx) };
     if target.initializes() {
         // SAFETY: the context's program outlives the lane run.
-        initialize_fields_in_lane(vm, unsafe { &*(*cx).code }, callee, callee, target.function, call.argument())
+        initialize_fields_in_lane(vm, unsafe { &*(*cx).code }, callee, class, callee, target.function, call.argument())
     } else {
-        vm.inline_construct_receiver(callee).map(|this| (this, false))
+        vm.inline_construct_receiver(callee, class).map(|this| (this, false))
     }
 }
 
@@ -414,8 +417,8 @@ fn construct_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value) ->
 }
 
 /// A forwarding constructor's fields, built by its forwarded initializer's plan.
-fn construct_forwarded(vm: &mut Vm, call: &BodyCall, callee: Value) -> u64 {
-    let Some(this) = forwarded_fields_in_lane(vm, callee, call.argument()) else { return miss(vm, Miss::NoPlan) };
+fn construct_forwarded(vm: &mut Vm, call: &BodyCall, callee: Value, class: u32) -> u64 {
+    let Some(this) = forwarded_fields_in_lane(vm, callee, class, call.argument()) else { return miss(vm, Miss::NoPlan) };
     note_allocation(vm);
     call.registers.set(call.site.result, this);
     LANE_CALL_COMPLETED

@@ -34,12 +34,14 @@ impl Lowering<'_, '_> {
                 && instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER => Some(record),
             _ => return None,
         };
+        let site = self.construct_site(pc)?;
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let arguments = self.construct_arguments(state, window);
         let callee = self.tagged(state, instruction.register_b());
+        let site = self.raw_const(Lane::I64, site as i64);
         let argc = self.raw_const(Lane::I64, i64::from(window.count));
         let payload = self.payload;
-        let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
+        let this = self.helper_call(LaneHelper::Construct, &[payload, callee, site, arguments, argc]);
         let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, built, exit);
         self.reshaped(state);

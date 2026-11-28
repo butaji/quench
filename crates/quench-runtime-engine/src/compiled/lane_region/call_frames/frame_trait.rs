@@ -57,14 +57,17 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// `lane_body_construction` makes it: the plan's fields, or the initializer's cached adds. Its
     /// body is not entered (`call_enter`), so the helper is the whole construction.
     fn call_receiver(&mut self, stage: &mut Emit<'_, '_>, constructor: ir::Value) -> Option<ir::Value> {
-        if let Some(CallSite { initializing: Some((first, count)), registers, .. }) = self.call_site() {
-            let arguments = stage.add_imm(registers, quench_runtime::staged::word_bytes(first));
+        let call = self.call_site()?;
+        // The construct site names the class the receiver is built under (`compiled::constructions`).
+        let site = stage.constant(call.construct?);
+        if let Some((first, count)) = call.initializing {
+            let arguments = stage.add_imm(call.registers, quench_runtime::staged::word_bytes(first));
             let argc = stage.constant(u64::from(count));
             let helper = self.helpers.target(&mut stage.builder, LaneHelper::Construct);
-            return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, arguments, argc]));
+            return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, site, arguments, argc]));
         }
         let helper = self.helpers.target(&mut stage.builder, LaneHelper::ConstructReceiver);
-        Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor]))
+        Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, site]))
     }
 
     /// An indirect callee's window is its record's words, read at run time.
