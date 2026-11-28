@@ -23,6 +23,21 @@ pub(crate) fn length_fits_int32(ty: Type) -> bool {
     ty.string_fact().is_some_and(|fact| fact.length().max <= i32::MAX as u32)
 }
 
+/// Whether the lane's own type of `register` in `state` is a flat string (`StringFact::flat`): the lowering's
+/// known-types law, for a site with no unit PC to ask the solve at (`proven_flat` is the solve's answer).
+pub(crate) fn state_flat(state: &State, register: Register) -> bool {
+    state.values[usize::from(register)].value.ty.string_fact().is_some_and(|fact| fact.flat())
+}
+
+/// Whether `comparison_decision` answers a Boolean, never `DELETED`, for two flat strings under `operator`: the equality
+/// operators (`identity_equality` and `strict_equal` compare two strings by their contents) and the relational operators
+/// (`string_relation` orders them). `in` and `instanceof` are not: they leave a string pair to the full step.
+pub(crate) fn decides_flat_strings(operator: u32) -> bool {
+    quench_runtime::vm::operations::equality_operator(operator).is_some()
+        || quench_runtime::vm::operations::NumberRelation::from_operator(operator)
+            .is_some_and(|relation| relation.of_ordering(std::cmp::Ordering::Less).is_some())
+}
+
 impl Lowering<'_, '_> {
     /// Whether the unit's only write of `register` is the one at `defined`, and every run that reaches `pc` has passed
     /// `defined`: the register then holds the value that write defined at `pc`. The entries of the unit are its start, its
@@ -92,5 +107,21 @@ impl Lowering<'_, '_> {
     pub(crate) fn is_body_closure_identity(&self, pc: usize, register: Register, body: u32) -> bool {
         let Some(facts) = self.vm.facts else { return false };
         facts.closure_identity(body) && self.proven_result(pc, register).and_then(|ty| ty.body_index()) == Some(body)
+    }
+
+    /// Whether unit register `register` holds a flat string just before the unit instruction at `unit_pc`, as the solve
+    /// proves it (`FunctionFacts::string_flat`). No facts, or no origin: false.
+    pub(crate) fn proven_flat(&self, unit_pc: usize, register: Register) -> bool {
+        let Some(facts) = self.vm.facts else { return false };
+        let Some((function, pc, local)) = self.origin_local(unit_pc, register) else { return false };
+        facts.function_facts(function).string_flat(pc, local)
+    }
+
+    /// Whether unit register `register` holds a plain int32 backing just before the unit instruction at `unit_pc`, as the
+    /// solve proves it (`FunctionFacts::backing_plain`), whose count of other values is zero. No facts, or no origin: false.
+    pub(crate) fn proven_plain_backing(&self, unit_pc: usize, register: Register) -> bool {
+        let Some(facts) = self.vm.facts else { return false };
+        let Some((function, pc, local)) = self.origin_local(unit_pc, register) else { return false };
+        facts.function_facts(function).backing_plain(pc, local)
     }
 }
