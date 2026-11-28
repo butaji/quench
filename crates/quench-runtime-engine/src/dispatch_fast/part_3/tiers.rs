@@ -123,28 +123,6 @@ pub(in super::super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, 
     None
 }
 
-/// The bodies the call at `pc` of function `function` may call, as the closed world proves them
-/// (`FunctionFacts::proven_call_targets`), each bound as a plain function of the running program:
-/// what a lane body inlines (`lane_unit::unit`). Where no target is proven, the body's own inlined
-/// calls (`lane_unit::InlinedCall`) are the targets, else none: the general call.
-pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
-    let proven: Vec<crate::compiled::CallTarget> = vm.programs.aot_facts(vm.active_program).map_or_else(Vec::new, |facts| {
-        facts.function_facts(function).proven_call_targets(pc).into_iter()
-            .map(|body| crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Function, function: body })
-            .take(crate::compiled::tier_policy::POLYMORPHISM)
-            .collect()
-    });
-    if !proven.is_empty() {
-        return proven;
-    }
-    view.body_view_in_lane().map_or_else(Vec::new, |method| {
-        method.inlined.iter()
-            .filter(|frame| frame.parent.is_none() && frame.call == pc)
-            .map(|frame| frame.target)
-            .collect()
-    })
-}
-
 /// The dense capture slots of `callee`'s environment (`Vm::callee_capture_slots`).
 pub(in super::super) fn callee_captures_in_lane(cx: *mut LaneContext, callee: Value) -> (usize, usize) {
     unsafe { vm(cx) }.callee_capture_slots(callee)
