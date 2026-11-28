@@ -22,6 +22,7 @@ mod class_layout;
 mod copies;
 mod effects;
 mod escapes;
+mod field_forms;
 mod flow;
 mod frozen;
 mod function;
@@ -62,6 +63,7 @@ pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
 pub use crate::typed_ir::BuiltinPath;
+pub use field_forms::{ClassForm, FieldHolder, Holder, StoreForm};
 pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
@@ -157,6 +159,11 @@ pub struct AotFacts {
     /// The union layouts of the constructed classes the closed world proves one for (`class_layout::unions_of`), read by
     /// `AotFacts::class_union_layout`.
     unions: BTreeMap<u32, UnionLayout>,
+    /// Per class, the parent its prototype chain links it to (`accessors::parents_of`): the `extends` chain `field_holder` walks.
+    parents: BTreeMap<u32, u32>,
+    /// The names some accessor definition defines on some object (`accessors::names_of`): a read of one is no prototype field,
+    /// so `field_holder` names no holder for it.
+    accessor_atoms: std::collections::BTreeSet<u32>,
     /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
     /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
     root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
@@ -216,6 +223,8 @@ impl AotFacts {
             signatures: None,
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
+            parents: BTreeMap::new(),
+            accessor_atoms: std::collections::BTreeSet::new(),
             root_stores: BTreeMap::new(),
             fixed_cells: std::collections::BTreeSet::new(),
             writable_cells: std::collections::BTreeSet::new(),

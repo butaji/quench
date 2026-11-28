@@ -181,8 +181,7 @@ impl<'a> FunctionFacts<'a> {
     /// The slot of named field `atom` in instances of `class` (its index in `AotFacts::class_layout`), where the layout is
     /// proven: a fixed offset a lowering reads in place of the field's name.
     pub fn field_slot(&self, class: u32, atom: u32) -> Option<u16> {
-        let slot = self.facts.class_layout(class)?.iter().position(|&field| field == atom)?;
-        u16::try_from(slot).ok()
+        self.facts.field_slot(class, atom)
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
