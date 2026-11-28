@@ -620,8 +620,6 @@ pub struct ProgramStore {
     js_jit_lane_methods_enabled: bool,
     #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
-    js_jit_dataview_float64_get_entries: u64,
-    js_jit_dataview_float64_set_entries: u64,
     /// What the tiers did in this VM (`Vm::tier_events`).
     tier_events: super::tier_events::TierEvents,
 }
@@ -661,8 +659,6 @@ impl Default for ProgramStore {
             js_jit_lane_methods_enabled: false,
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
-            js_jit_dataview_float64_get_entries: 0,
-            js_jit_dataview_float64_set_entries: 0,
             tier_events: Default::default(),
         }
     }
@@ -1912,17 +1908,6 @@ impl ProgramStore {
             .as_ref()?
             .get(&(id.raw(), function))
             .map(|counters| counters.field_cache_probes)
-    }
-
-    pub fn note_js_jit_dataview_float64(&mut self, setter: bool) {
-        if self.js_jit_diagnostics.is_none() {
-            return;
-        }
-        if setter {
-            self.js_jit_dataview_float64_set_entries += 1;
-        } else {
-            self.js_jit_dataview_float64_get_entries += 1;
-        }
     }
 
     /// Whether an entry of `function` of program `id` compiles it now (`JitTierManager::note_js_entry`).
