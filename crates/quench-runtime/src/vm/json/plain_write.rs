@@ -339,10 +339,10 @@ impl Vm {
     /// The value in `slot` of a planned object, read while no guest code has run since its
     /// plan was read; `None` where the slot holds none.
     fn json_planned_value(&self, object: Value, slot: u32) -> Option<Value> {
-        let data = self.heap.object_record(object)?;
+        let data = self.heap.direct_object_view(object)?;
         // SAFETY: the plan's slots are its shape's, which the object keeps while no guest code
         // runs.
-        unsafe { self.heap.property_get_shaped(data, slot as usize) }.filter(|value| !value.is_deleted())
+        unsafe { self.heap.property_get_shaped_view(data, slot as usize) }.filter(|value| !value.is_deleted())
     }
 
     /// Writes the container `value` by `body`: SerializeJSONObject's and SerializeJSONArray's
@@ -396,7 +396,7 @@ impl Vm {
         if w.options.property_list.is_some() {
             return None;
         }
-        let data = self.heap.object_record(value)?;
+        let data = self.heap.direct_object_view(value)?;
         // Shape facts decide the plan; these per-object facts do not.
         if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
             return None;

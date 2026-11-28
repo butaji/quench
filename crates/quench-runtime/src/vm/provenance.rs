@@ -237,7 +237,7 @@ impl Vm {
             && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| candidate == key)
             // The prototype-lookup flag is record data.
-            && (!object.was_used_as_prototype() || object.record_only().is_some_and(|record| record.prototype_lookup_ready()))
+            && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
@@ -296,7 +296,7 @@ impl Vm {
                         let mut current = receiver;
                         while let Some(data) = self.heap.object(current) {
                             // The prototype-lookup flag is record data.
-                            if self.proxy_parts(current).is_some() || data.record_only().is_some_and(|record| record.prototype_lookup_ready()) { break; }
+                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
                             let next = data.proto();
                             self.heap.object_mut(current).expect("lookup object").prepare_prototype_lookup();
                             current = next;

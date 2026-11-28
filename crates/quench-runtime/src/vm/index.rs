@@ -293,8 +293,7 @@ impl Vm {
         let index = usize::try_from(key.as_int()?).ok()?;
         let mut current = base;
         loop {
-            // record-only: indexed descriptors and boxed state
-            let data = self.heap.object(current)?.record_only()?;
+            let data = self.heap.object(current)?;
             if data.has_indexed_descriptors()
                 || data.is_arguments_object()
                 || data.boxed_primitive().is_some()
@@ -311,7 +310,7 @@ impl Vm {
                 }
                 Some(_) => {}
                 None => {
-                    self.heap.ordinary_object(current)?;
+                    self.heap.ordinary_view(current)?;
                 }
             }
             let base_checked = current == base;

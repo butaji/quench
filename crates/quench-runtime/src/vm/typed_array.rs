@@ -99,7 +99,7 @@ impl Vm {
         let key = PropertyKey::string(atom);
         let mut link = prototype;
         for depth in 1.. {
-            let data = self.heap.ordinary_object(link)?;
+            let data = self.heap.ordinary_view(link)?;
             if data.has_side_descriptors() && self.descriptors.contains_key(&(link, key)) {
                 return None;
             }

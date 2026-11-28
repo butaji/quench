@@ -49,21 +49,21 @@ impl Vm {
             if current.is_null() {
                 return None;
             }
-            data = self.heap.ordinary_object(current)?;
+            data = self.heap.ordinary_view(current)?;
         }
     }
 
     /// The object data of a collection or buffer view, whose intrinsic accessors answer the
     /// virtual field names (`AtomClass::VIRTUAL_FIELD`); `None` for any other value.
-    pub(super) fn virtual_field_view(&self, object: Value) -> Option<&Object> {
+    pub(super) fn virtual_field_view(&self, object: Value) -> Option<ObjectRef<'_>> {
         if self.heap.is_map(object) || self.heap.is_set(object) {
-            return self.heap.object(object).and_then(|view| view.record_only());
+            return self.heap.object(object);
         }
         let cell = self.heap.get(object)?;
         if !matches!(cell, Cell::TypedArray { .. } | Cell::DataView { .. }) {
             return None;
         }
-        cell.object()
+        cell.object().map(ObjectRef::Record)
     }
 
     fn keep_alive(&mut self, value: Value) {

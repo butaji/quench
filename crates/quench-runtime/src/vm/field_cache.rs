@@ -124,16 +124,17 @@ impl Vm {
     }
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
-    pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
+    pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<ObjectRef<'_>> {
         let class = self.atom_class(atom);
-        if let Some(object) = self.heap.object_record(value) {
+        // A class cell answers as its record did: its view is ordinary, and its shape is its class's.
+        if let Some(object) = self.heap.direct_object_view(value) {
             return self.shape_answers(object, class, ReceiverKind::Ordinary);
         }
         if let Some(object) = self.heap.array(value) {
             if class.contains(AtomClass::ARRAY_INDEX) {
                 return None;
             }
-            return self.shape_answers(object, class, ReceiverKind::Exotic);
+            return self.shape_answers(&**object, class, ReceiverKind::Exotic);
         }
         if let Some(function) = self.heap.function(value) {
             return self.shape_property_lookup_function(function, atom, class);
@@ -145,7 +146,7 @@ impl Vm {
         // virtual `size`, as a cell's does (`shape_property_lookup_cell`). Without this arm a
         // collection record's reads (`m.get`, `s.has`) were never cached.
         if value.direct_collection_index().is_some() {
-            return self.shape_answers(self.heap.object(value)?.record_only()?, class, ReceiverKind::Exotic);
+            return self.shape_answers(self.heap.object(value)?, class, ReceiverKind::Exotic);
         }
         // A promise's internal slots change no object operation, as for its cell form below.
         if let Some(promise) = self.heap.promise(value) {
@@ -165,7 +166,7 @@ impl Vm {
         function: &'a FunctionRecord,
         atom: Atom,
         class: AtomClass,
-    ) -> Option<&'a Object> {
+    ) -> Option<ObjectRef<'a>> {
         if atom == self.length_atom || class.contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
             return None;
         }
@@ -182,7 +183,7 @@ impl Vm {
         &self,
         cell: &'a Cell,
         class: AtomClass,
-    ) -> Option<&'a Object> {
+    ) -> Option<ObjectRef<'a>> {
         let kind = match cell {
             Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
@@ -200,10 +201,11 @@ impl Vm {
     /// object stores them like any other property.
     fn shape_answers<'a>(
         &self,
-        object: &'a Object,
+        object: impl Into<ObjectRef<'a>>,
         class: AtomClass,
         kind: ReceiverKind,
-    ) -> Option<&'a Object> {
+    ) -> Option<ObjectRef<'a>> {
+        let object: ObjectRef<'a> = object.into();
         let excluded = match kind {
             ReceiverKind::Ordinary => AtomClass::PRIVATE,
             ReceiverKind::Exotic => AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD,

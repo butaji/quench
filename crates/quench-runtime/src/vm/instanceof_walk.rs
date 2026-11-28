@@ -16,7 +16,7 @@ impl Vm {
             return Some(holds);
         }
         let mut object = match value.direct_object_index() {
-            Some(_) => self.heap.object_record(value)?,
+            Some(_) => self.heap.direct_object_view(value)?,
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
             // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
             None => self.ordinary_link_holder(value)?,
@@ -31,7 +31,7 @@ impl Vm {
                 return Some(false);
             }
             object = match link.object_granule() {
-                Some(granule) => self.heap.object_record_by_granule(granule),
+                Some(granule) => self.heap.object_view_by_granule(granule),
                 None => self.ordinary_link_holder(object.proto())?,
             };
         }

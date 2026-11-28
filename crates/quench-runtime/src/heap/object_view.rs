@@ -19,6 +19,7 @@ use crate::value::Value;
 use crate::value_vec::DictionaryTable;
 use crate::vm::program_store::ProgramId;
 
+mod direct;
 mod extras;
 
 /// A class cell's view: its header word (the class id in the low half, zero above), its inline fields in

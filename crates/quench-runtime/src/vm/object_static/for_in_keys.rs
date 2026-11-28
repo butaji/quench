@@ -285,8 +285,8 @@ impl Vm {
     /// `object` as an ordinary object whose own keys and attributes its shape alone decides:
     /// no side descriptors, module namespace or boxed primitive.
     #[inline(always)]
-    fn shape_keyed_object(&self, object: Value) -> Option<&Object> {
-        self.heap.ordinary_object(object).filter(|data| {
+    fn shape_keyed_object(&self, object: Value) -> Option<ObjectRef<'_>> {
+        self.heap.ordinary_view(object).filter(|data| {
             !data.has_side_descriptors()
                 && !data.is_module_namespace()
                 && data.boxed_primitive().is_none()
@@ -484,7 +484,7 @@ impl Vm {
             return self.heap.live_class_field(base, slot as usize);
         }
         // SAFETY: the snapshot recorded this slot of `shape`, the receiver's shape.
-        Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
+        Some(unsafe { self.heap.property_get_unchecked_view(data, slot as usize) })
     }
 
     /// `base[key]` of a string `key` that names no array index, where the shapes alone answer:
