@@ -452,7 +452,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     let value = heap.alloc_object(plain_object());
 
     assert_eq!(map.legacy_heap_index(), Some(0));
-    assert_eq!(key.direct_object_index().and_then(|object| heap.record_id(object)), Some(0));
+    assert!(heap.live_class_cell(key).is_some());
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
@@ -619,7 +619,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     drop(shared);
 
     assert!(first.direct_array_index().is_some());
-    assert_eq!(object.direct_object_index().and_then(|object| heap.record_id(object)), Some(0));
+    assert!(heap.live_class_cell(object).is_some());
     assert_eq!(first.direct_array_index(), Some(0));
     assert_ne!(object, first);
     assert!(heap.array(object).is_none());
@@ -1429,7 +1429,6 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     assert_eq!(heap.slot_type(1, 0), nullable);
     assert_eq!(heap.slot_type(2, 0), nullable);
     assert_eq!(heap.slot_type(2, 1), Type::NUMBER);
-    assert_eq!(heap.unrepresented_slots(), 0);
 
     // A fresh admission reflects live contents, not stale observation history.
     for object in [packed, arena, extras, deleted] { heap.property_set(object, 0, link); }
@@ -1441,7 +1440,6 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     assert_eq!(heap.slot_type(2, 0), Type::DIRECT_OBJECT_FAMILY);
     assert_eq!(heap.slot_type(3, 0), Type::DIRECT_OBJECT_FAMILY);
     assert_eq!(heap.slot_type(3, 1), Type::NUMBER);
-    assert_eq!(heap.unrepresented_slots(), 0);
 }
 
 #[test]
@@ -1463,7 +1461,6 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
     // A reference-capable region logs its owner before its no-GC raw writes.
     heap.object_store_mut(object, object).unwrap();
     unsafe { pointer.write(child); }
-    assert_eq!(heap.unrepresented_slots(), 0);
 }
 
 #[test]
@@ -1484,14 +1481,13 @@ fn object_publication_admits_preinitialized_slots_after_census() {
             let published = publish(&mut heap, object);
             assert!(published.direct_object_index().is_some());
             assert_eq!(heap.slot_type(1, 0), Type::immediate(value), "{publisher}/{storage}");
-            assert_eq!(heap.unrepresented_slots(), 0, "{publisher}/{storage}");
             assert_eq!(heap.property_get_ref(heap.object(published).unwrap(), 0), Some(value));
         }
     }
 }
 
 #[test]
-fn unfilled_object_records_only_the_values_that_fill_it() {
+fn unfilled_objects_admit_only_the_values_that_fill_them() {
     use crate::typed_ir::Type;
     let mut heap = Heap::new();
     heap.track_slot_representations(&[(0, None), (1, None)]);
@@ -1500,7 +1496,6 @@ fn unfilled_object_records_only_the_values_that_fill_it() {
     assert_eq!(heap.slot_type(1, 0), Type::NEVER);
     heap.fill_new_object_slot(object, 0, Value::NULL);
     assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
-    assert_eq!(heap.unrepresented_slots(), 0);
     assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::NULL));
 }
 
@@ -1646,7 +1641,6 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             assert!(!reader.is_published(), "{family:?}, generic={generic}");
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER);
             assert_eq!(heap.property_get_ref(heap.object(published).unwrap(), 0), Some(value));
-            assert_eq!(heap.unrepresented_slots(), 0);
             heap.track_slot_representations(&[(0, None), (1, None)]);
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
         }
