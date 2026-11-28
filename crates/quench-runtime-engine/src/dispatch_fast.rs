@@ -2767,15 +2767,6 @@ const THIS_FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::This, tru
 
 
 
-/// The storage forms a store's own-field instance fixes, as `own_site` form indexes that `own_site_form`
-/// decodes: the flat run (`0`) and packed inline values (`INLINE_FORM`). Their sites (41 to 44) are below
-/// the returning sites and clash with no `FLAG_*` value, and no other site fact uses these indexes.
-const STORE_FLAT: usize = OWN_FORMS.len() + 11;
-const STORE_INLINE: usize = OWN_FORMS.len() + 12;
-
-
-
-
 /// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
 /// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
 /// `HINTED_FORM` reads the hint layout's own bits. Every slot word is the one `Value` word, so
@@ -2898,16 +2889,6 @@ pub(crate) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
 /// Tracked), chosen at load: the row stores through the record's hint in place of the untracked own store
 /// (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`); a refusal takes the general step.
 pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
-
-/// The site facts of a tracked store installed for its slot's held type (`StorePlan::Held`,
-/// `slot_store::HELD_*`), one per type a store keeps in place: a tagged slot's row stores with no
-/// class test, an int slot's with one, an object slot's and an object-or-null slot's with one or two.
-/// A store the slot's type refuses takes the general step. Free own-form indexes. No load-time chooser
-/// picks these yet: a class's layout id is known only from its first construction (`record_class_edge`).
-pub(crate) const TRACKED_TAGGED_SITE: u8 = own_site(false, OWN_FORMS.len() + 13);
-pub(crate) const TRACKED_INT_SITE: u8 = own_site(false, OWN_FORMS.len() + 19);
-pub(crate) const TRACKED_OBJECT_SITE: u8 = own_site(false, OWN_FORMS.len() + 43);
-pub(crate) const TRACKED_OBJECT_OR_NULL_SITE: u8 = own_site(false, OWN_FORMS.len() + 49);
 
 /// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
 /// cached store or add inside the row, a private name's or a refusal's activation path after it

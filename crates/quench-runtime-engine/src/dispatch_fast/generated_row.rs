@@ -34,16 +34,6 @@ view_handler! {
         // rewrites the record; it takes the general step in place.
         macro_rules! store_miss { () => {{
             let script: *mut LaneContext = view.memory.bytes.cast();
-            // A held-type store missed (its slot's type widened, or another receiver): the tracked row stores it
-            // with the VM's stores.
-            if const { crate::dispatch_fast::store_held_site(FLAG) } {
-                sibling!(generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE), r, ip, Carried::script_in(script, view))
-            }
-            // A store instance missed: the plain row stores it, with the VM's stores the instance does not carry
-            // (`frame.stores`).
-            if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                sibling!(generated_row!(OP, ACC_NONE, FLAG_UNREAD), r, ip, Carried::script_in(script, view))
-            }
             if this_store {
                 sibling!(crate::dispatch_fast::row_set_this_field_miss, r, ip, Carried::script_in(script, view))
             }
@@ -162,29 +152,19 @@ view_handler! {
             // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
             // a plain own-field store row keeps the record's `this` and no call on its path.
             if this_store {
-                frame.this = if const { FLAG == FLAG_UNREAD || crate::dispatch_fast::store_formed_site(FLAG) || crate::dispatch_fast::store_held_site(FLAG) } { r.this() }
+                frame.this = if const { FLAG == FLAG_UNREAD } { r.this() }
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
             // its siblings), at every plain store row.
-            // A store instance (`store_formed_site`) carries none: what its plan refuses, the plain row
-            // completes (`store_miss!`), so the instance makes no call and keeps its values in registers.
-            // A held-type store (`store_held_site`) carries none either: its miss is the tracked row's.
-            if const { !crate::dispatch_fast::store_formed_site(FLAG) && !crate::dispatch_fast::store_held_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
+            frame.stores = Some(FieldStores::of(script));
             frame.plan = Some(if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
                 RecordPlan::general_store(records)
-            } else if const { crate::dispatch_fast::store_held_site(FLAG) } {
-                let hint = i.field_hint();
-                RecordPlan::own_held(hint.receiver, hint.record_slot(), records, const { crate::dispatch_fast::held_of(FLAG) })
             } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
                 let hint = i.field_hint();
                 RecordPlan::own_hinted(hint.receiver, hint.record_slot(), records)
             } else {
                 let hint = i.field_hint();
-                // A store instance's form is its hint layout's own (`own_site_form`).
-                if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                    unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == const { crate::dispatch_fast::own_site_form(FLAG) }) }
-                }
                 RecordPlan::own_store(hint.receiver, hint.record_slot(), records)
             });
         } else if property {

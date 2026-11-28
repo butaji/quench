@@ -44,8 +44,9 @@ type ConstantFieldsTest = unsafe fn(*mut (), Value, u16) -> bool;
 /// How a by-name load's record reads its name once resolved (`name_resolution`).
 #[derive(Clone, Copy)]
 pub(crate) enum NameRead {
-    /// The active realm's function for the native the name's text stands for (`intrinsic_name_native`).
-    Native,
+    /// The active realm's function for the native the name's text stands for, carried from load
+    /// (`name_native_operand`).
+    Native(Native),
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
     /// The global object's own data field the record's hint names.
@@ -788,14 +789,6 @@ impl RecordPlan {
     pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64) -> Self {
         use quench_runtime::staged::property::{StoreJoin, StorePlan};
         let store = StorePlan::Hinted { id: layout, slot, narrow: false, join: StoreJoin::Host };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The tracked store the hint `(layout, slot)` proves by a row installed for the slot's held type
-    /// `held` (`StorePlan::Held`), a refusal leaving at the miss edge.
-    #[inline(always)]
-    pub(crate) fn own_held(layout: u32, slot: u16, records: u64, held: u8) -> Self {
-        let store = quench_runtime::staged::property::StorePlan::Held { id: layout, slot, held };
         Self { store: Some(store), ..Self::own_store(layout, slot, records) }
     }
 
@@ -2469,7 +2462,8 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
     if const { quench_runtime::staged::name_load(LaneFields::<OP>::OPCODE).is_some() } {
         // A by-name load reads the binding its record's row was chosen for at load (`FLAG`, `name_row`).
         let binding = match FLAG {
-            FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
+            // The native is the record's immediate, its discriminant (`name_native_operand`), read by index.
+            FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native(Native::ALL[i.imm() as usize]))),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
             FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
             FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
@@ -4423,7 +4417,7 @@ unsafe fn constant_fields_value(cx: *mut (), receiver: Value, site: u16) -> bool
 
 /// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs
 /// no guest code; `None` where the binding does not answer it (a native no first run recorded,
-/// an intrinsic name the VM cannot evaluate, a hint the global object's shape no longer fits).
+/// a hint the global object's shape no longer fits).
 ///
 /// # Safety
 /// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
@@ -4432,12 +4426,7 @@ unsafe fn constant_fields_value(cx: *mut (), receiver: Value, site: u16) -> bool
 unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext>()) };
     match read {
-        NameRead::Native => {
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx.cast::<LaneContext>()).code };
-            let native = quench_runtime::bytecode::intrinsic_name_native(&code.atoms[atom as usize])?;
-            Some(vm.native_value(native))
-        }
+        NameRead::Native(native) => Some(vm.native_value(native)),
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
         NameRead::Field(hint) => vm.global_field_hint_hit(hint),
         NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
