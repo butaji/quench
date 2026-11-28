@@ -4,6 +4,7 @@
 //! buffer, whose length cannot change during the call.
 use super::super::typed_array_access::TypedArrayElement;
 use super::super::*;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// The `indexOf` result when no element matches.
 const NOT_FOUND: f64 = -1.0;
@@ -114,7 +115,7 @@ impl Vm {
             return None;
         };
         let kind = object.native.kind();
-        if kind.is_bigint() {
+        if typed_array_kind_is_bigint(kind) {
             return None;
         }
         let length = length.get()?;

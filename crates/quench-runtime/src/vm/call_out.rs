@@ -7,6 +7,7 @@
 use super::*;
 use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// `result`'s value, or `None` with its error kept in `raised`: how a VM frame's row (`HostFrame`,
 /// `InterpreterFrame`) answers a VM check that may raise, which the row's runner then throws.

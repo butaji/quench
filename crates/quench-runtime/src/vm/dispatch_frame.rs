@@ -76,6 +76,7 @@ impl HotLoop {
 }
 
 use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub struct PendingGeneralCall {
     pub caller: usize,

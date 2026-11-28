@@ -5,6 +5,7 @@ use crate::staged::typed_elements::{
     element_number, element_word, field_bits, store_field_bits, NATIVE_LITTLE_ENDIAN,
 };
 use std::time::Instant;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 pub struct Test262AgentState {
     /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
@@ -347,7 +348,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !kind.is_waitable()
+        if !typed_array_kind_is_waitable(kind)
             || self.typed_array_shared(view) != Some(true)
         {
             return Err(self.type_error(
@@ -463,7 +464,7 @@ impl Vm {
     fn atomics_notify(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !kind.is_waitable() {
+        if !typed_array_kind_is_waitable(kind) {
             return Err(self.type_error(
                 p,
                 "Atomics.notify requires Int32Array or BigInt64Array".into(),
@@ -586,7 +587,7 @@ impl Vm {
         use crate::shared_backing::{Rmw, WaitResult};
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if waits_or_notifies(native) && !kind.is_waitable()
+        if waits_or_notifies(native) && !typed_array_kind_is_waitable(kind)
         {
             return Err(self.type_error(
                 p,
@@ -597,7 +598,7 @@ impl Vm {
         let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
         self.atomic_validate_index(p, length, index)?;
-        let big = kind.is_bigint();
+        let big = typed_array_kind_is_bigint(kind);
         let mut store_result = None;
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
             if big {
@@ -899,13 +900,13 @@ let current = vm
     .unwrap_or(Value::UNDEFINED);
 if native == Native::AtomicsLoad
     && vm.test262_agent.active_callback
-    && kind.is_waitable()
+    && typed_array_kind_is_waitable(kind)
     && vm.atomic_is_zero(kind, current)
 {
     let has_waiter = !vm.test262_agent.waiters.is_empty();
     if has_waiter || vm.agent_spin_escape() {
         return Ok(
-            if kind.is_bigint() {
+            if typed_array_kind_is_bigint(kind) {
                 vm.heap.alloc(Cell::bigint(1_u8.into()))
             } else {
                 Value::number(1.0)
@@ -923,7 +924,7 @@ match native {
     | Native::AtomicsXor
     | Native::AtomicsExchange
     | Native::AtomicsCompareExchange => {
-        if kind.is_bigint() {
+        if typed_array_kind_is_bigint(kind) {
             vm.atomic_bigint(p, native, view, index, current, args)
         } else {
             vm.atomic_number(p, native, kind, view, index, current, args)

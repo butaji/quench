@@ -13,6 +13,7 @@ pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
 pub use number_rows::*;
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 // The operator codes the shared rows name (`number_rows::binary_operator`, `unary_operator`) are the parser's.
 const _: () = assert!(binary_operator::Equality == BinaryOperator::Equality as u32

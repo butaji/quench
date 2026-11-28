@@ -10,6 +10,7 @@ use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
 pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// The thresholds every tier controller reads.
 pub struct Tiers {
