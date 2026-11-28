@@ -240,6 +240,11 @@ pub(super) fn returning_own_row(handler: *const ()) -> bool {
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)) as *const ()
 }
 
+/// Whether site `site` is a trusted own-field read of a fixed class's cell (`TRUSTED_OWN_*`, `TRUSTED_RUN_*`).
+pub(crate) const fn trusted_site(site: u8) -> bool {
+    site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER
+}
+
 pub(crate) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
         || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
@@ -338,11 +343,29 @@ pub(super) fn set_prototype_hint(ip: Ip, hold: impl FnOnce(Option<u16>) -> Optio
     }
 }
 
-/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header
-/// (`holds_loop_site`).
+/// Whether the field record at `ip` runs a trusted own-field row (`trusted_site`): its operand word holds the field's
+/// slot the load chose (`trusted_named_read`), so no hint may overwrite it. Its general misses write no hint either.
+#[inline(always)]
+pub(super) fn holds_trusted_slot(ip: Ip) -> bool {
+    // SAFETY: `ip` is a field read record of a live view.
+    holds_trusted_record(unsafe { &*ip })
+}
+
+/// `holds_trusted_slot` of the record `record`, whichever way it is addressed.
+#[inline(always)]
+pub(crate) fn holds_trusted_record(record: &LaneInstruction) -> bool {
+    let handler = record.handler;
+    handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER) as *const ()
+}
+
+/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header (`holds_loop_site`) or a trusted
+/// record, whose operand word is its slot (`holds_trusted_slot`).
 #[inline(always)]
 pub(super) fn set_record_hint(ip: Ip, shape: u32, link: u16) {
-    if !holds_loop_site(ip) {
+    if !holds_loop_site(ip) && !holds_trusted_slot(ip) {
         // SAFETY: as `requicken`; `ip` is a field read/store record of a live view.
         unsafe {
             (*ip.cast_mut()).operand.field.shape = shape;

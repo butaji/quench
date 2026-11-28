@@ -371,6 +371,10 @@ pub(crate) fn derive_lane_view<'live>(
                     chosen
                 }
             });
+            // The trusted row a fact chose (`named_read_row`) reads its slot from the record's operand word: its
+            // field operand keeps the atom and holds the slot word (`trusted_named_read`), where that row was chosen.
+            let trusted_word = trusted_named_read(facts, function_id, pc as u32, instruction)
+                .filter(|(handler, _)| selected.is_some_and(|chosen| chosen.handler as usize == *handler as usize));
             producer = selected
                 .filter(|selected| selected.produces)
                 .map(|_| instruction.a());
@@ -388,7 +392,10 @@ pub(crate) fn derive_lane_view<'live>(
             let name_native = named_program.as_ref().and_then(|(residual, _)| name_native_operand(residual, op, handler, instruction.imm()));
             LaneInstruction {
                 handler,
-                operand: typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(operand).unwrap_or(LaneOperand { imm: 0 }),
+                operand: match trusted_word {
+                    Some((_, word)) => LaneOperand { field: quench_runtime::vm::engine_types::FieldOperand { imm: instruction.imm(), shape: word } },
+                    None => typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(operand).unwrap_or(LaneOperand { imm: 0 }),
+                },
                 a: instruction.a(),
                 b: instruction.b(),
                 // A kept argument read finds the values after the function's registers, whose
@@ -1443,11 +1450,66 @@ fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
     }
 }
 
+/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's class `C`: the
+/// base's cell is a proven {C} (`cell_at` of a register, `this_classes` of `this`), `C`'s instances are fixed cells
+/// (`class_form`), and `C`'s layout holds the field (`field_slot`). Returns the row and the operand word it reads
+/// (`FieldOperand::shape`): the field's slot in `C`'s cell, a spilled slot word past the cell's spill slot
+/// (`spill_from`), with `TRUSTED_HOLE` where `C` may leave the field absent. `None` for a local or nested base, and
+/// where no fact proves the class.
+pub(super) fn trusted_named_read(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    let facts = facts?;
+    let base = quench_runtime::bytecode::FieldBase(instruction.b());
+    if !quench_runtime::staged::field_read_family(instruction.op()) || base.0 == quench_runtime::bytecode::FieldBase::NESTED
+        || base.local_index().is_some() {
+        return None;
+    }
+    let this = base == quench_runtime::bytecode::FieldBase::THIS;
+    let function = facts.function_facts(function_id);
+    // The base must hold a direct object in every run (`receiver_trusted` for `this`, the cell's type for a register): a
+    // class alone names no object, and an unbound or undefined base has none.
+    let classes = if this {
+        if !receiver_trusted(Some(facts), function_id) {
+            return None;
+        }
+        facts.this_classes(function_id)
+    } else {
+        let cell = function.cell_at(pc, base.register_index()?)?;
+        if cell.ty == quench_runtime::typed_ir::Type::NEVER || !cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY) {
+            return None;
+        }
+        cell.classes
+    };
+    let (class, proven) = classes.single()?;
+    if !proven {
+        return None;
+    }
+    let atom = instruction.imm();
+    let slot = u32::from(function.field_slot(class, atom)?);
+    let word = match facts.spill_from(class) {
+        Some(spill) if slot >= spill => quench_runtime::staged::field_cache_layout::spilled_slot(spill, slot - spill),
+        _ => slot,
+    };
+    // A word with the hole bit set is one the operand cannot carry; no fact of a realistic class reaches it.
+    if word & TRUSTED_HOLE != 0 {
+        return None;
+    }
+    let hole = if facts.field_always_stored(class, atom) { 0 } else { TRUSTED_HOLE };
+    let handler = match (facts.class_form(class)?, this) {
+        (quench_runtime::compile::aot_facts::ClassForm::Own, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS),
+        (quench_runtime::compile::aot_facts::ClassForm::Own, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER),
+        (quench_runtime::compile::aot_facts::ClassForm::Run, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS),
+        (quench_runtime::compile::aot_facts::ClassForm::Run, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER),
+    };
+    Some((handler, word | hole))
+}
+
 /// The first-run row of a `GetField` whose base is no local slot, chosen at load from its atom and base. A private
 /// name reads through its private row (`Vm::is_private_name`: the atom's text decides it). A `length` read takes the
-/// length row of its register base (`length_row`), else the general read (`Vm::reads_function_info`: the VM's fixed
-/// atoms decide it). Any other read takes the own-field row, whose misses reach the general read. `None` for a local
-/// base, which `row_get_field_first` reads, and for any other opcode.
+/// trusted row where a fact proves its class (`trusted_named_read`), else the length row of its register base
+/// (`length_row`), else the general read (`Vm::reads_function_info`: the VM's fixed atoms decide it). Any other read
+/// takes the trusted row where a fact proves its class, else the own-field row, whose misses reach the general read.
+/// `None` for a local base, which `row_get_field_first` reads, and for any other opcode.
 fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32) -> Option<Handler> {
     let base = instruction.b();
     let atom = instruction.imm();
@@ -1460,6 +1522,9 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction, fac
             generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
             generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
             protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>()));
+    }
+    if let Some((handler, _)) = trusted_named_read(facts, function_id, pc, instruction) {
+        return Some(handler);
     }
     if vm.reads_function_info(atom) && atom == vm.length_atom {
         return Some(match quench_runtime::bytecode::FieldBase(base).register_index() {

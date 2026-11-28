@@ -251,10 +251,6 @@ const INHERITED_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 1;
 /// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
 const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 
-/// The `FieldOperand::shape` of a read's record whose hint is an own constant
-/// (`Vm::own_constant_operands`), as `INHERITED_HINT` no object's exact shape.
-const OWN_CONSTANT_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
-
 #[quench_macros::ext(LaneInstructionOps1)]
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
@@ -658,7 +654,10 @@ impl LaneView {
         let pc = u32::try_from(pc).ok()?;
         if !self.field_records.contains(&pc) { return None; }
         // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
-        let shape = unsafe { (*self.records[pc as usize].get()).operand.field.shape };
+        let record = unsafe { &*self.records[pc as usize].get() };
+        // A trusted record's operand word is its field's slot, not a hint (`holds_trusted_record`).
+        if holds_trusted_record(record) { return None; }
+        let shape = unsafe { record.operand.field.shape };
         (shape < HOLDER_HINT).then_some(shape)
     }
 
@@ -2306,8 +2305,6 @@ view_handler! {
 pub(crate) mod lane_frame;
 pub(crate) mod protocol_misses; use protocol_misses::*;
 pub(crate) mod derived_frames;
-pub(crate) mod local_fields;
-use local_fields::{local_field_handler, local_field_miss};
 pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
@@ -2701,26 +2698,9 @@ script_handler! {
             // SAFETY: a successful direct-object lookup proves the range is reserved.
             unsafe { (*cx).binding.object_base = vm.heap_reads().object_record_base().unwrap_unchecked() };
         }
-        // A register read probes for an own constant (an enum member, a namespace export): the
-        // first object it meets stays unhinted, so the next read comes back here; the same
-        // object again is held as the read's value under a watch on its values.
-        if !THIS && !holds_loop_site(ip) && vm.probes_own_constant(ip.addr()) {
-            let first = !vm.own_constant_probed(ip.addr());
-            if let Some(index) = vm.probe_own_constant(ip.addr(), i.imm(), object, value, NO_CALL_LINK) {
-                set_record_hint(ip, OWN_CONSTANT_HINT, index);
-                requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, OWN_CONSTANT_REGISTER));
-                r.set(i.a, value);
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-            if first {
-                r.set(i.a, value);
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-        }
-        // The hit proved the entry an own one of the receiver's shape.
+        // The hit's entry names the receiver's shape: the record keeps its installed row, which reads the hint it binds here.
         let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
         set_field_hint(ip, hint);
-        requicken(ip, own_formed_handler::<THIS>(Some(hint.receiver)));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -2824,12 +2804,23 @@ pub(crate) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
 pub(crate) const CELL_EXTRAS_THIS: u8 = own_site(true, OWN_FORMS.len() + 33);
 pub(crate) const CELL_EXTRAS_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 33);
 
-/// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
-/// plain local, whose hint the record binds like an own read's. Own-form index 30, a
-/// free one below the returning sites.
-pub(crate) const LOCAL_FIELD_SITE: u8 = own_site(false, OWN_FORMS.len() + 30);
-/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the
-/// record's hint names an own-constant hint (`OWN_CONSTANT_HINT`, `Vm::own_constant_operands`).
+/// The trusted own-field sites: the load proved the base's class `C` (`trusted_named_read`), so the record reads its
+/// field from `C`'s cell with no class or layout guard. The slot is the record's operand word (`FieldOperand::shape`, set by `derive_lane_view`).
+/// `TRUSTED_OWN_*` is a class whose fields sit in the cell's own words, `TRUSTED_RUN_*` one with fields past its spill
+/// slot; the form is in the slot word itself (`spilled_slot`), so both rows read through `FieldPlan::Fixed` alike.
+/// One instantiation per base: `this` and a register.
+pub(crate) const TRUSTED_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 26);
+pub(crate) const TRUSTED_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 26);
+pub(crate) const TRUSTED_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 27);
+pub(crate) const TRUSTED_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 27);
+
+/// The bit of a trusted operand's slot word that marks a field the class may leave absent (`!field_always_stored`):
+/// its read leaves at the miss, which takes the general read. Bit 30 is clear in every slot word of a spill slot below
+/// `1 << 14` (`spilled_slot` puts `spill_from` at bits 16 to 30), and `trusted_named_read` declines any other word.
+pub(crate) const TRUSTED_HOLE: u32 = 1 << 30;
+
+/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the record's call link names
+/// the own-constant entry (`Vm::own_constant_word_operands`). No site installs it now.
 pub(crate) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
 
 /// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
@@ -3100,14 +3091,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `GetField` of a local slot's first run: the local field row its site's entries name, else the
-    /// general read. A base that is no local slot takes its row at load (`named_read_row`), so this row is
-    /// installed for local bases only.
+    /// A `GetField` of a local slot: the general read. A base that is no local slot takes its row at load
+    /// (`named_read_row`), and no local base has a fact that names a fixed class, so no local row is chosen.
     #[inline(never)]
     fn row_get_field_first<>(cx, r, ip, i, view) {
-        if let Some(handler) = local_field_handler(cx, i) {
-            requicken(ip, handler);
-        }
+        let _ = i;
         sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
@@ -3151,12 +3139,6 @@ script_handler! {
         let Some(value) = vm.primary_own_field_hit(code, receiver, i.c) else {
             sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
         };
-        // A site that read a plain object's own `length` mostly reads such objects: it takes the
-        // own-field handler, whose misses still reach the general read.
-        if quench_runtime::bytecode::FieldBase(i.b).register_index().is_some() && i.b != quench_runtime::bytecode::FieldBase::NESTED {
-            let own = own_formed_handler::<false>(None);
-            requicken(ip, own);
-        }
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -3176,10 +3158,6 @@ script_handler! {
         let string_base = base.is_some_and(|base| {
             (unsafe { vm(cx) }).heap_reads().is_string(base)
         });
-        if let Some(handler) = local_field_handler(cx, i) {
-            requicken(ip, handler);
-            sibling!(row_get_field_general, r, ip, Carried::script(cx))
-        }
         let geometry_base = base.is_some_and(|base| geometry_read_in_lane(unsafe { vm(cx) }, base, i.imm()).is_some());
         let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
             // A site that read a typed array's, DataView's, Map's or Set's geometry mostly
@@ -3249,42 +3227,8 @@ script_handler! {
                 generated_row!(FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER),
                 general_handler(i.b),
             )),
-            // A receiver outside the object records, such as a function, reads its own slot by the
-            // receiver's layout id, which the record's hint holds (a loop header's keeps none).
-            FieldSiteTier::Own
-                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
-            {
-                match base.and_then(|object| (unsafe { vm(cx) }).cell_own_hint(object, i.c)) {
-                    Some((layout, slot)) if !holds_loop_site(ip) => {
-                        set_record_hint(ip, layout, slot);
-                        // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
-                        use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-                        let form = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM);
-                        let run = form == 0;
-                        Some(if run {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER), general_handler(i.b))
-                        } else if form == EXTRAS_FORM {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_REGISTER), general_handler(i.b))
-                        } else {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER), general_handler(i.b))
-                        })
-                    }
-                    // A site that cached nothing yet (its first read, before the general read
-                    // below records an entry) keeps its record: the next miss decides by the entry,
-                    // a prototype's method (`a.includes`) the held row.
-                    _ if (unsafe { vm(cx) }).field_site_empty(i.c) => None,
-                    // A function's own field the layout does not hold: the cached read.
-                    _ => Some(single_base_handler(
-                        i.b,
-                        generated_row!(FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_THIS),
-                        generated_row!(FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_REGISTER),
-                        general_handler(i.b),
-                    )),
-                }
-            }
+            // An own read takes no row here: a fixed class's read is installed at load (`trusted_named_read`), and any
+            // other own read is the general read, which keeps its record.
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
