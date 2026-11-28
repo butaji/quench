@@ -134,9 +134,10 @@ impl Lowering<'_, '_> {
         }
         match (cell, live_cell) {
             (_, Some((register, object))) => {
-                // A receiver the solve proves a builtin (`Identity::Builtin`) is that global's value in every run, so the live
-                // compare with the cell is no guard.
-                if !self.is_builtin_identity(pc, register) {
+                // The receiver the solve proves is the builtin its global load names is that global's value in every run, so the
+                // live compare with the cell is no guard.
+                let named = super::native_calls::definition_before(self.unit, pc, register).and_then(|defined| self.named_builtin(defined));
+                if !named.is_some_and(|expected| self.proves_builtin(pc, register, expected)) {
                     let bits = self.tagged(state, register);
                     let same = self.is_identity(bits, object);
                     emit_js_guard(&mut self.builder, same, exit);

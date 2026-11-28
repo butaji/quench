@@ -3,6 +3,13 @@
 //! test is made only where the type cannot prove the tag. A direct object's solver type proves its family (a non-nullable
 //! object record, never a function), so the family and presence tests on it are redundant too.
 use super::*;
+use quench_runtime::typed_ir::{BuiltinPath, Identity};
+
+/// Whether `instruction` loads a binding of the global scope by name: the solver's `is_global_load`, the name a builtin path
+/// is named by (`named_builtin`).
+fn loads_global_name(instruction: WideInstruction) -> bool {
+    instruction.op().loads_name() && instruction.op().traits().has(quench_runtime::bytecode::Traits::GLOBAL_NAME_ACCESS)
+}
 
 /// Whether register `register` holds `tag`'s language types at this point, by its solver type in `state`. A tag site
 /// asks this before it emits its tag test.
@@ -39,11 +46,26 @@ pub(crate) fn decides_flat_strings(operator: u32) -> bool {
 }
 
 impl Lowering<'_, '_> {
-    /// Whether unit register `register` holds a builtin just before the unit instruction at `pc`: the cell the solve proves for
-    /// the register names one (`Identity::Builtin`, proven in every run by the closed world). A site that would compare the
-    /// register's identity with that builtin emits no compare.
-    pub(crate) fn is_builtin_identity(&self, pc: usize, register: Register) -> bool {
-        matches!(self.cell_before(pc, register).identity, quench_runtime::typed_ir::Identity::Builtin(_))
+    /// Whether the solve proves unit register `register` holds the builtin `expected` just before the unit instruction at `pc`
+    /// (`Identity::Builtin(expected)`, proven in every run by the closed world). A site that would compare the register's
+    /// identity with that builtin's value emits no compare. Some other builtin does not prove it.
+    pub(crate) fn proves_builtin(&self, pc: usize, register: Register, expected: BuiltinPath) -> bool {
+        self.cell_before(pc, register).identity == Identity::Builtin(expected)
+    }
+
+    /// The builtin the value the unit instruction at `defined` reads by name stands for, named from the program's own atoms
+    /// in the solver's naming (`BuiltinPath`, `aot_facts::effects`): a name load of global `g` is `{g, None}`, and a field
+    /// read `m` off the register a name load of `g` defined is `{g, Some(m)}`. None where the read names no builtin so.
+    /// A wrong name only keeps a guard: `proves_builtin` must match the solve's identity exactly.
+    pub(crate) fn named_builtin(&self, defined: usize) -> Option<BuiltinPath> {
+        let instruction = self.unit.instructions[defined];
+        if loads_global_name(instruction) {
+            return Some(BuiltinPath { global: instruction.atom_index(), member: None });
+        }
+        let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return None };
+        let owner = super::native_calls::definition_before(self.unit, defined, base.register_index()?)?;
+        let global = self.unit.instructions[owner];
+        loads_global_name(global).then(|| BuiltinPath { global: global.atom_index(), member: Some(atom) })
     }
 
     /// Whether the solve proves unit register `register` holds a direct object's record just before the unit instruction at
