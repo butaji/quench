@@ -273,8 +273,8 @@ impl Vm {
     /// `k` is the name the chain's `k`-th transition adds, and its slot takes the field's settled domain (`seed_slot_type`).
     /// Called once per `Constructed{C, true}` root, where the root is made (`provenance::constructed_shape`), so every path that
     /// gives an object that root gets the seed. Only that root is seeded: it is keyed by the class and reached only by `new C()`
-    /// with `new.target` C, so its slot owners hold no other class's stores. A derived constructor, a dictionary start, an
-    /// anonymous constructor (no named root) and a `new.target` other than the constructor get no such root, so no seed.
+    /// with `new.target` C, so its slot owners hold no other class's stores. A derived constructor, a dictionary start and a
+    /// `new.target` other than the constructor get no such root, so no seed. An anonymous constructor has its root too.
     pub(super) fn seed_union_domains(&mut self, constructor: Value, start: u32) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
         if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) { return; }
