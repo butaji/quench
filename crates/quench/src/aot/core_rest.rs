@@ -42,6 +42,9 @@ use std::process::Command;
 pub struct ClosedTables {
     pub(super) builtins: &'static BuiltinTable,
     pub(super) execution: &'static ExecutionTable,
+    /// Whether the realm reaches Intl or Temporal (`ReachableRealm::needs_intl`): the support links the layer, and
+    /// the probe and the image install it (`REACHES_INTL`).
+    pub(super) intl: bool,
 }
 
 /// What the build-time probe of a core entry found (`probe`).
@@ -61,9 +64,9 @@ pub(super) enum Reach {
 pub(super) fn write_closed_world(catalog: &mut std::fs::File, realm: &ReachableRealm, spec: &ExecutionTableSpec) -> Result<ClosedTables, String> {
     let (builtins, builtins_text) = builtin_table(realm);
     let (execution, execution_text) = execution_table(spec);
-    writeln!(catalog, "{builtins_text}\n{execution_text}").map_err(|error| error.to_string())?;
+    writeln!(catalog, "{builtins_text}\n{execution_text}\nconst REACHES_INTL: bool = {};", realm.needs_intl).map_err(|error| error.to_string())?;
     // The compile process runs its workers once and exits, so the tables it keeps live for its run.
-    Ok(ClosedTables { builtins: Box::leak(Box::new(builtins)), execution: Box::leak(Box::new(execution)) })
+    Ok(ClosedTables { builtins: Box::leak(Box::new(builtins)), execution: Box::leak(Box::new(execution)), intl: realm.needs_intl })
 }
 
 /// The builtin table the closed world keeps, with its catalog text: the families the realm reaches
@@ -142,6 +145,10 @@ fn linked<T>(group: bool, entry: Option<T>, name: &str, unlinked: &mut String) -
 /// a fold makes no output.
 pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, String> {
     let program = ResidualProgram::read_binary(program)?;
+    // The probe runs the image's realm: with the Intl and Temporal layer where the image links it.
+    if tables.intl {
+        quench_runtime::install_intl();
+    }
     let mut runtime = Runtime::new_static_with_builtins(prefix::Probe, tables.builtins, tables.execution);
     // Watch from before the first instruction: the gate notes every input the run reads.
     quench_runtime::clock::watch_inputs(runtime.execution_interrupt_handle());

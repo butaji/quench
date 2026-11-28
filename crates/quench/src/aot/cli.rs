@@ -185,10 +185,12 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
 /// The features a static image's support is built with: `native-execution`, plus the intl layer
 /// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
 /// links the standard build's default features instead.
-fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport) -> String {
+/// The support's features. Intl links where the source names it or the closed realm reaches it (`ReachableRealm::needs_intl`:
+/// a computed key may name any global), the same fact the probe and the image install the layer on.
+fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport, realm_intl: bool) -> String {
     if support.allows_dynamic_source() { return "default".into(); }
     let mut features = String::from("native-execution");
-    if graph.needs_intl() { features.push_str(",intl"); }
+    if graph.needs_intl() || realm_intl { features.push_str(",intl"); }
     if graph.needs_wasm() { features.push_str(",wasm"); }
     features
 }
@@ -250,7 +252,7 @@ fn compile(options: Options) -> Result<(), String> {
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
         "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": profile, "support_variant": variant.name(),
-        "support_features": support_features(&graph, support),
+        "support_features": support_features(&graph, support, false),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -301,6 +303,8 @@ fn compile(options: Options) -> Result<(), String> {
     let images = work.0.join("images");
     let (inputs, demand, realm, closed) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
     report["closed_world"] = super::compiler::demand_report(&demand);
+    let realm_intl = realm.as_ref().is_some_and(|realm| realm.needs_intl);
+    report["support_features"] = json!(support_features(&graph, support, realm_intl));
     if let Some(realm) = &realm {
         report["builtin_families"] = json!(realm.families.bits());
         report["reachable_realm"] = super::compiler::realm_report(realm);
@@ -355,7 +359,7 @@ fn compile(options: Options) -> Result<(), String> {
             }
             cargo.args(["build", "--locked", "--profile", &profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                let features = support_features(&graph, support);
+                let features = support_features(&graph, support, realm_intl);
                 cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);
