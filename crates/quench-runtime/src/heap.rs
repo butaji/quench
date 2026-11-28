@@ -254,7 +254,7 @@ pub use view_holders::{subscribe_typed_views, typed_views_stable};
 pub(crate) use view_holders::live_view_changed;
 
 /// The most fields a class cell holds: the capacity of the largest region (`class_space`).
-const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
+pub(crate) const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
 
 /// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
 /// holds them (an empty object's is region 1). `None` past the largest region, where the object keeps its record.
@@ -2155,6 +2155,26 @@ impl Heap {
         let words = self.properties.stored_words(shape, values);
         self.class_space.claim_cell(region, class, &words, &mut self.allocated)
     }
+
+    /// The class cell of a fixed class's instance (R4-F, decision 4.2): claimed from the region of `values.len()`,
+    /// its header the class `intern_class(shape, link, 0)` and its fields `values` in slot order, `Value::DELETED`
+    /// for an absent union field. `values.len()` is the length of `shape`. No record is made: the region holds
+    /// its cells in its address span, so only exhaustion of that span panics, as the record space does.
+    pub(crate) fn claim_fixed_cell(&mut self, shape: u32, link: u32, values: &[Value]) -> Value {
+        debug_assert_eq!(self.properties.shape_length(shape), values.len(), "a fixed cell's fields are its shape's");
+        let link = ProtoLink::from_bits(link);
+        let region = cell_region_for(values.len()).expect("a fixed class's union fits a class cell");
+        self.mark_prototype(link.prototype());
+        self.properties.note_shape_values(shape, values);
+        self.rewrite_widened_numbers();
+        let words = self.properties.stored_words(shape, values);
+        let granule = self
+            .class_space
+            .claim_cell(region, link.class(shape), &words, &mut self.allocated)
+            .unwrap_or_else(|| panic!("class cells exhausted: the class space holds its address range"));
+        Value::direct_object(granule)
+    }
+
     /// `alloc_array` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
     /// `initialize_object_properties` takes on the published cell (arena storage, as an

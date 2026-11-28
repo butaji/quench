@@ -812,12 +812,9 @@ impl Vm {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
                     let mut object = Self::empty_object(proto);
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
-                    let start = object.shape();
-                    let object = vm.heap.alloc_object(object);
-                    // `callee`'s body runs next on it: its constant layout and the storage
-                    // `new_target`'s receivers reach (`preshaped_receiver`).
-                    vm.preshape_receiver(object, start, callee, new_target);
-                    object
+                    // `callee`'s body runs next on it: its union cell for a fixed class (R4-F), else its constant
+                    // layout and the storage `new_target`'s receivers reach (`preshaped_receiver`).
+                    vm.alloc_preshaped_receiver(object, callee, new_target)
                 };
                 let previous_target = vm.construct_target;
                 vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
