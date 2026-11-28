@@ -174,10 +174,10 @@ impl Vm {
         // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
         // share one prototype, the realm's `next` fuse.
         let (kind, holder, iterator, next) = match self.heap.object(source) {
-            Some(object) if self.heap.is_set(source) && object.record_only().is_none_or(|record| !record.has_side_descriptors()) => {
+            Some(object) if self.heap.is_set(source) && !object.has_side_descriptors() => {
                 (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Some(object) if self.heap.is_map(source) && object.record_only().is_none_or(|record| !record.has_side_descriptors()) => {
+            Some(object) if self.heap.is_map(source) && !object.has_side_descriptors() => {
                 (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,

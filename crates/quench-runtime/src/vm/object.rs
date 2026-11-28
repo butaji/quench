@@ -587,12 +587,8 @@ impl Vm {
         entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
-        // A class cell stays one (departure-free S3 and S4), whatever the trigger.
+        // A class cell stays one (departure-free S3 and S4), whatever the trigger; a record takes the shape in place.
         let cell = self.heap.live_class_cell(object);
-        if cell.is_none() {
-            self.heap.depart_class_object(object);
-            self.drop_departed_holder_entries();
-        }
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
@@ -650,7 +646,7 @@ impl Vm {
     #[inline(always)]
     pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
         // record-only: side descriptors
-        if self.heap.object(object).is_some_and(|data| data.record_only().is_none_or(|record| !record.has_side_descriptors())) {
+        if self.heap.object(object).is_some_and(|data| !data.has_side_descriptors()) {
             return None;
         }
         self.descriptors.get(&(object, key)).copied()
@@ -670,7 +666,9 @@ impl Vm {
             }
             _ => (false, false),
         };
-        if let Some(data) = self.heap.object_record_mut(object) {
+        // The marks are the object's element facts: a cell's live in its extras, made here (`ensure_cell_extras`).
+        self.heap.ensure_cell_extras(object);
+        if let Some(mut data) = self.heap.object_mut(object) {
             data.mark_side_descriptors();
             if index {
                 data.mark_indexed_descriptors();
@@ -882,7 +880,7 @@ impl Vm {
                 return false;
             };
             if data.has_exotic_access()
-                || data.record_only().is_some_and(|record| record.boxed_primitive().is_some())
+                || data.boxed_primitive().is_some()
                 || !self.lacks_own_index(holder, index)
             {
                 return false;
@@ -934,8 +932,8 @@ impl Vm {
                 return false;
             };
             if data.has_exotic_access()
-                || data.record_only().is_some_and(|record| record.boxed_primitive().is_some())
-                || data.record_only().is_some_and(|record| record.has_indexed_descriptors())
+                || data.boxed_primitive().is_some()
+                || data.has_indexed_descriptors()
                 || self.shape_has_index_key(data.shape())
                 || self.heap.sparse_length(holder).is_some()
                 || self
@@ -1443,7 +1441,7 @@ impl Vm {
             return None;
         }
         let object = self.heap.object(value)?;
-        if object.record_only().is_none_or(|record| record.has_side_descriptors()) || self.shapes[object.shape() as usize].facts.slot_getters() {
+        if object.has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(object.shape(), self.length_atom)?;
@@ -1484,11 +1482,6 @@ impl Vm {
             _ => None,
         }
     }
-    /// The record of `value` for a record-only edit: a live class cell departs first (`Heap::object_record_mut`).
-    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
-        self.heap.object_record_mut(value)
-    }
-
     #[inline] pub fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))
@@ -2352,8 +2345,11 @@ impl Vm {
                 self.heap.dictionary_cell_add(granule, id, transition.after, usize::from(transition.slot), value);
                 return;
             }
-            self.heap.depart_class_object(object);
-            self.drop_departed_holder_entries();
+            // The remaining cell is constant-marked, which has no class key: its mark clears, then the add takes the
+            // class edge from its shape (`constant_cell_add`). No departure.
+            let transition = transition.record_form();
+            self.heap.constant_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value);
+            return;
         }
         // The record path takes the transition's shapes (`record_form`), whose layouts it guards.
         let transition = transition.record_form();
@@ -4502,7 +4498,7 @@ impl Vm {
         if atom == self.length_atom
             && !self
                 .heap.object(receiver)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
+                .is_some_and(|object| object.is_arguments_object())
         {
             return self.set_array_length(p, receiver, value).map(Some);
         }
@@ -5015,7 +5011,7 @@ impl Vm {
             && self.heap.array(object).is_some()
             && !self
                 .heap.object(object)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
+                .is_some_and(|object| object.is_arguments_object())
         {
             let succeeded = self.set_array_length(p, object, value)?;
             return if succeeded || !strict {

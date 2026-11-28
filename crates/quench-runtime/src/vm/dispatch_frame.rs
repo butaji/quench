@@ -1119,14 +1119,17 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.heap.object_record_mut(arguments)
+            self.heap.ensure_cell_extras(arguments);
+            self.heap
+                .object_mut(arguments)
                 .expect("arguments object is an array")
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.heap.object_record_mut(arguments) {
+        self.heap.ensure_cell_extras(arguments);
+        if let Some(mut object) = self.heap.object_mut(arguments) {
             object.set_arguments_object();
         }
         let length = self.length_atom;

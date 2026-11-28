@@ -2210,8 +2210,7 @@ impl Heap {
             self.class_cell_initialize(granule, shape, values);
             return;
         }
-        // Otherwise replacing storage is a record edit: the cell departs first, so the owner is a record.
-        self.depart_for_mutation(owner);
+        // Otherwise the owner is a record (or a departed cell, which is one): its storage is replaced in the record.
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)
@@ -4997,9 +4996,11 @@ impl Heap {
             self.dictionary_cell_add(granule, id, shape, slot, value);
             return;
         }
+        if let Some(granule) = self.live_class_cell(object) {
+            return self.class_cell_append(granule, value, shape);
+        }
         let _slot = if let Some(object_ref) = object.direct_object_index() {
-            // An add appends to the record's arena run: a live class cell departs first.
-            self.depart_for_mutation(object);
+            // An add appends to a record's arena run (a departed cell is a record).
             let record_id = self.stub_record(object_ref.granule());
             let Self {
                 object_records,
@@ -5038,11 +5039,10 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
-        if self.live_dictionary_cell(object).is_some() {
+        if self.live_class_cell(object).is_some() {
             return self.property_add(object, value, shape);
         }
-        // An add appends to the record's arena run: a live class cell departs first.
-        self.depart_for_mutation(object);
+        // An add appends to the record's arena run (a departed cell is a record).
         let record_id = self.stub_record(object_ref.granule());
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.

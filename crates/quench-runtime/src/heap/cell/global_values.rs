@@ -223,10 +223,35 @@ impl GlobalValues {
     }
 }
 
+impl super::ObjectExtras {
+    /// This global object's table (`global_values`), made on first use.
+    pub(crate) fn global_values_table(&mut self) -> u32 {
+        self.rare_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
+    }
+
+    /// The table code that read this global object's values made, if any (`Object::global_values`).
+    #[inline]
+    pub(crate) fn global_values(&self) -> Option<u32> {
+        self.rare()?.global_values.as_ref().map(|values| values.table)
+    }
+
+    /// The value-write notes of `Object::note_value_write`, for a live cell whose class is `object` and whose extras
+    /// these are: a marked prototype's readers retire, and a global object's table notes the write.
+    pub(crate) fn note_value_write(&mut self, object: &super::Object, slot: usize) {
+        if self.prototype_marked() {
+            super::prototype_values::retire(object.exact_shape());
+            self.watch.note_slot_write(slot);
+        }
+        if let Some(values) = self.rare_mut_existing().and_then(|rare| rare.global_values.as_mut()) {
+            values.note_slot_write(slot);
+        }
+    }
+}
+
 impl super::Object {
     /// This global object's table (`global_values`), made on first use.
     pub(crate) fn global_values_table(&mut self) -> u32 {
-        self.extras_mut().rare_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
+        self.extras_mut().global_values_table()
     }
 
     /// The table code that read this global object's values made, if any.

@@ -32,6 +32,7 @@ impl Heap {
             || !source_vector.has_compact_range()
             || source_vector.is_narrow()
             || self.object(target).is_none()
+            || self.live_class_cell(target).is_some()
         {
             return false;
         }

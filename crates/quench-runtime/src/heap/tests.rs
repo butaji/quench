@@ -1508,6 +1508,8 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             // No departure: a repeated shape and storage descriptor preserve the
             // shape assumption (physical storage needs its own proof).
             heap.set_object_shape(object, 1);
+            // Record storage is what this check reads: the object is a record here (a test of the record's arena).
+            heap.depart_for_mutation(object);
             let (data, arena) = heap.object_and_arena_mut(object).unwrap();
             let properties = data.properties();
             data.set_properties(properties, arena);
@@ -1517,8 +1519,7 @@ fn shape_departures_retire_readers_through_each_storage_path() {
                 Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
                 Change::Copy => {
                     let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
-                    let source = heap.object(source).unwrap().record_only().unwrap().clone();
-                    assert!(heap.copy_property_storage(&source, object));
+                    assert!(heap.copy_property_storage(source, object));
                 }
                 Change::Append => heap.property_add(object, Value::integer(3), 3),
                 Change::Remap => heap.remap_live_object_shapes(&[0, 2, 1, 3],

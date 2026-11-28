@@ -181,6 +181,34 @@ impl Heap {
         }
     }
 
+    /// The append of `value` to live cell `granule` (not dictionary storage), which moves it to `shape`: the new slot is
+    /// the one after its shape's last, and the cell takes `shape`'s class in place (`class_cell_add`).
+    pub(crate) fn class_cell_append(&mut self, granule: u32, value: Value, shape: u32) {
+        let before = layouts::class_shape(header_class(self.class_space.header(granule)));
+        let slot = self.properties.shape_length(before);
+        self.class_cell_add(granule, before, shape, slot, value);
+    }
+
+    /// The add of `value` as field `slot` of live cell `granule` along the shape edge `before` -> `after`, for a cell with
+    /// no class key (a constant-marked cell, `live_class_key`): the mark clears first (`note_cell_write` retires the
+    /// readers of the mark), then the add is `class_cell_add`, which takes the after-shape's class in place.
+    pub(crate) fn constant_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) {
+        self.note_cell_write(granule);
+        self.class_cell_add(granule, before, after, slot, value);
+    }
+
+    /// The notes of a write to slot `slot` of live cell `granule` (`Object::note_value_write`, for a cell): the
+    /// constant mark clears (`note_cell_write`), a marked prototype's readers retire, and a global object's table
+    /// notes the write. Only the cell's extras hold the last two, so a cell without extras has neither.
+    pub(super) fn note_cell_value_write(&mut self, granule: u32, slot: usize) {
+        self.note_cell_write(granule);
+        let object = Object::of_class(header_class(self.class_space.header(granule)));
+        let extras = self.class_space.extras_id(granule);
+        if let Some(extras) = self.extras.get_mut(extras) {
+            extras.note_value_write(&object, slot);
+        }
+    }
+
     /// A store or add of `value` at slot `slot` of live cell `granule`, whose spill slot is `from` before and `to`
     /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the constant mark's clear, then
     /// the word. A moved run (allocated or grown) fires the holder edge. A field holds the one Value word, which is
@@ -189,7 +217,7 @@ impl Heap {
         if value.heap_index().is_some() {
             self.class_space.barrier(granule);
         }
-        self.note_cell_write(granule);
+        self.note_cell_value_write(granule, slot);
         if self.class_space.put_word(granule, from, to, slot, value) {
             self.holder_fields_moved(granule);
         }

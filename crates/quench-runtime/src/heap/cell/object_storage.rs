@@ -387,13 +387,4 @@ impl Object {
 
     /// Takes `source`'s property values, given `properties`, the arena's duplicate of
     /// `source.properties()`, and returns the storage this object held before.
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec, arena: &mut ValueArena) -> ValueVec {
-        let previous = self.properties();
-        self.set_properties(properties, arena);
-        if properties.has_inline_property_storage() {
-            self.store_inline_values(source.inline_values());
-        }
-        previous
-    }
-
 }

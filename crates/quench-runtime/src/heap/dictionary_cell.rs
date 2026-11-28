@@ -84,12 +84,14 @@ impl Heap {
         self.holder_fields_moved(granule);
     }
 
-    /// Sets the shape of dictionary cell `granule`'s table-backed object to `shape`, when `value` names one: the table
-    /// keeps its values, and only the class's shape changes. Returns whether it did.
-    pub(crate) fn dictionary_set_shape(&mut self, value: Value, shape: u32) -> bool {
-        let Some((granule, _)) = self.live_dictionary_cell(value) else {
+    /// `Heap::set_object_shape` for a live class cell, dictionary or not: its constant mark clears (the readers of the mark
+    /// retire), and its class word takes `shape` in place. The fields do not move, so a dictionary table keeps its values.
+    /// Returns whether `value` is a live cell.
+    pub(crate) fn class_cell_set_shape(&mut self, value: Value, shape: u32) -> bool {
+        let Some(granule) = self.live_class_cell(value) else {
             return false;
         };
+        self.note_cell_write(granule);
         self.cell_takes_shape(granule, shape);
         true
     }
@@ -100,7 +102,7 @@ impl Heap {
         if value.heap_index().is_some() {
             self.class_space.barrier(granule);
         }
-        self.note_cell_write(granule);
+        self.note_cell_value_write(granule, slot);
         self.properties.dictionary_mut(id).insert(slot as u32, value);
     }
 
