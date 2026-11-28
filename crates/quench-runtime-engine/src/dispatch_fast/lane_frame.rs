@@ -1761,6 +1761,17 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> { Some(self.this.to_bits()) }
 
+    /// The object of a trusted local read (`TRUSTED_LOCAL`): the local slot's word, which is the frame's own local
+    /// (`with_locals`, in an activation with no environment). Only a fixed-cell plan reads a local base this way; any
+    /// other plan leaves at its miss, which reads the local as the general read does. An uninitialized local is the miss.
+    #[inline(always)]
+    fn local_base(&mut self, stage: &mut Concrete, slot: u16, _miss: ()) -> Option<u64> {
+        if !matches!(self.plan.and_then(|plan| plan.host), Some(quench_runtime::staged::property::FieldPlan::Fixed { .. })) {
+            return None;
+        }
+        self.load_local(stage, slot, None).map(|(word, _)| word)
+    }
+
     /// A direct object's record in the table, or, where the plan runs over any object part
     /// (`RecordPlan::other`), the object part of an array, function or builtin, out of line.
     #[inline(always)]
@@ -2285,7 +2296,9 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         let heap: *const Vm = unsafe { vm(cx) };
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
-    let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Local)) };
+    // A trusted local read (`TRUSTED_LOCAL`) reads its object from the frame's locals, as a local record does.
+    let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Local))
+        || (matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Property)) && crate::dispatch_fast::trusted_local_site(FLAG)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let script = view.memory.bytes.cast::<LaneContext>();

@@ -160,7 +160,12 @@ pub(crate) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNI
 
 /// Whether site `site` is a trusted own-field read of a fixed class's cell (`TRUSTED_OWN_*`, `TRUSTED_RUN_*`).
 pub(crate) const fn trusted_site(site: u8) -> bool {
-    site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER
+    site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER || trusted_local_site(site)
+}
+
+/// Whether site `site` is a trusted own-field read of a frame local's object (`TRUSTED_LOCAL`), whose base is no register.
+pub(crate) const fn trusted_local_site(site: u8) -> bool {
+    site == TRUSTED_LOCAL
 }
 
 /// Whether site `site` is a nested read of two proven fixed cells (`NESTED_TRUSTED`): the first hop's word is the
@@ -236,6 +241,7 @@ pub(crate) fn holds_trusted_record(record: &LaneInstruction) -> bool {
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_LOCAL) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_THIS) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_REGISTER) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_TRUSTED) as *const ()

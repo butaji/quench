@@ -2750,6 +2750,10 @@ pub(crate) const TRUSTED_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 26);
 pub(crate) const TRUSTED_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 26);
 pub(crate) const TRUSTED_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 27);
 pub(crate) const TRUSTED_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 27);
+/// The trusted own-field site of a frame local base (`trusted_base`, a `FieldBase::local` slot): the object is the running
+/// frame's local slot, then the field is read as `TRUSTED_OWN_*` and `TRUSTED_RUN_*` read it, from the operand word. The form
+/// is in the word, so one row serves both storage forms. Its base names no register or `this`.
+pub(crate) const TRUSTED_LOCAL: u8 = own_site(false, OWN_FORMS.len() + 28);
 
 /// The bit of a trusted operand's slot word that marks a field the class may leave absent (`!field_always_stored`):
 /// its read leaves at the miss, which takes the general read. Bit 30 is clear in every slot word of a spill slot below
