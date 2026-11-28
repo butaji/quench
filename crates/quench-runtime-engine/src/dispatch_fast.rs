@@ -438,6 +438,8 @@ use closure_targets::target_entry;
 pub(crate) mod window_records;
 use window_records::{window_local_handler, window_record, WindowRecord};
 pub(crate) mod lane_stack_growth;
+pub(crate) mod forwarded_methods;
+pub(crate) use forwarded_methods::forwarded_method_of;
 pub(crate) mod lane_generations;
 pub(crate) mod native_frames;
 use quench_runtime::vm::lane_values::{self, HEAP_WINDOW};
@@ -1336,7 +1338,6 @@ const GATHERED_INLINE_VALUES: usize = 8;
 const SCRIPT_CALL_TARGET_BYTES: usize = 64;
 const _: () = assert!(std::mem::size_of::<ScriptCallTarget>() <= SCRIPT_CALL_TARGET_BYTES);
 
-use quench_runtime::vm::engine_types::NO_FORWARDED_METHOD;
 
 use quench_runtime::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET;
 
@@ -1701,21 +1702,6 @@ impl LaneStack {
         } else {
             self.function_targets[index] = target;
             self.remember_script_target(target, policy);
-        }
-    }
-
-    /// The index of `method` in `forwarded_methods`, recording it when new, or
-    /// `NO_FORWARDED_METHOD` once the index space is spent.
-    fn forwarded_method_index(&mut self, method: quench_runtime::bytecode::ForwardedThisMethod) -> u16 {
-        if let Some(index) = self.forwarded_methods.iter().position(|known| *known == method) {
-            return index as u16;
-        }
-        match u16::try_from(self.forwarded_methods.len()) {
-            Ok(index) if index != NO_FORWARDED_METHOD => {
-                self.forwarded_methods.push(method);
-                index
-            }
-            _ => NO_FORWARDED_METHOD,
         }
     }
 
@@ -4814,13 +4800,7 @@ impl Vm {
             // only its program's caches index.
             entry: target_entry(body, &plan, &shape, (settles, environment, cross)),
             capture,
-            forwarded_method: match (plan.forwards_arguments && shape.constructs)
-                .then(|| body.forwarded_this_method(&code.constants))
-                .flatten()
-            {
-                Some(method) => self.lane_stack.forwarded_method_index(method),
-                None => NO_FORWARDED_METHOD,
-            },
+            forwards_method: plan.forwards_arguments && shape.constructs,
         };
         self.remember_target(target, numeric, cross);
         Some(target)
