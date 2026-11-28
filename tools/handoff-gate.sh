@@ -9,6 +9,10 @@
 #      non-zero exit or wrong output blocks.
 #   G6 a closed-world gap reached at run time ("not linked into the compiled image", an
 #      unproven entry) blocks, whatever the exit status.
+#   G1 fixed-work richards no-jit Ir per run (callgrind, 6 runs minus 2, /4) may not rise more than 5% over
+#      tools/gate-baseline.txt (richards_nojit_ir_per_run); load-time Ir (the 2-run total) is printed beside it.
+#   G8 an AOT compile (the image link) over 300 s fails the build gate.
+#   G9 the comparison table (tools/bench-board.py: no-jit, default, AOT vs Node, Bun, C on score and peak RSS).
 #   G7 score order interpreter < default < AOT on richards, median of RUNS harness runs each,
 #      with the run count and build type printed. Fixed-work Ir (tools/nojit-richards.sh) decides
 #      a disputed order; a wall-clock score alone never passes a lattice change (rule 1).
@@ -55,11 +59,14 @@ echo 'console.log(1+1)' > "$WORK/one.js"
 } > "$WORK/richards.js"
 E="env XDG_CACHE_HOME=$WORK/xdg QUENCH_STARTUP_SNAPSHOT=off"
 
-# Compile both images once (AOT mode).
+# Compile both images once (AOT mode), the user's own command; each link is timed.
 for prog in one richards; do
-  if ! $E QUENCH_TRACE=build-dir "$Q" compile "$WORK/$prog.js" -o "$WORK/$prog.aot" > "$WORK/$prog.compile.log" 2>&1; then
+  started=$(date +%s)
+  if ! $E "$Q" compile "$WORK/$prog.js" -o "$WORK/$prog.aot" > "$WORK/$prog.compile.log" 2>&1; then
     fail "G3 AOT compile of $prog (see $WORK/$prog.compile.log)"
   fi
+  took=$(( $(date +%s) - started ))
+  if [ $took -le 300 ]; then pass "G8 AOT compile of $prog: ${took}s"; else fail "G8 AOT compile of $prog: ${took}s, over 300 s"; fi
 done
 
 # runs MODE PROG: the program's output, its exit status in $WORK/status.
@@ -95,6 +102,26 @@ if [ $FAST -eq 0 ]; then
   if awk -v a="${SCORE[no-jit]:-0}" -v b="${SCORE[default]:-0}" -v c="${SCORE[aot]:-0}" 'BEGIN {exit !(a < b && b < c)}'; then
     pass "G7 score order: $ORDER"
   else fail "G7 score order: $ORDER"; fi
+fi
+
+# G1: fixed-work no-jit Ir per runRichards against the baseline.
+if [ $FAST -eq 0 ] && command -v valgrind > /dev/null; then
+  { cat "$V/base.js" "$V/richards.js"; echo "const n = +process.argv[process.argv.length - 1]; for (let i = 0; i < n; i++) runRichards();"; } > "$WORK/rn.js"
+  for n in 2 6; do
+    $E valgrind --tool=callgrind --dump-instr=no --smc-check=all --callgrind-out-file="$WORK/rn$n.cg" "$Q" --no-jit "$WORK/rn.js" $n > /dev/null 2> "$WORK/rn$n.err"
+  done
+  ir() { grep -oE 'Collected : [0-9]+' "$1" | awk '{print $3}'; }
+  LOAD=$(ir "$WORK/rn2.err"); PER=$(( ($(ir "$WORK/rn6.err") - LOAD) / 4 ))
+  IRBASE=$(awk '/^richards_nojit_ir_per_run/ {print $2}' tools/gate-baseline.txt 2>/dev/null); IRBASE=${IRBASE:-0}
+  if [ "$IRBASE" -eq 0 ] || [ $(( PER * 100 )) -le $(( IRBASE * 105 )) ]; then
+    pass "G1 no-jit Ir per runRichards: $PER (baseline $IRBASE, +5% allowed); load-time Ir (2-run total): $LOAD"
+  else fail "G1 no-jit Ir per runRichards: $PER, over baseline $IRBASE by more than 5%; load-time Ir: $LOAD"; fi
+fi
+
+# G9: the comparison table.
+if [ $FAST -eq 0 ]; then
+  echo "G9 comparison table ($BUILD):"
+  python3 tools/bench-board.py "$Q" --benches richards --runs "$RUNS" --work "$WORK/board" | sed 's/^/  /'
 fi
 
 echo "files in $WORK"

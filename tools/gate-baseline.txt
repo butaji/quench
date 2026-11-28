@@ -1,3 +1,5 @@
 # Gate baselines (tools/handoff-gate.sh). Raise a number when a hand-off raises it; never lower it.
 # solver_tests_passing: tests/aot_facts passing count, source: NO-JIT 9ebc5df083 hand-off (99 of 155).
 solver_tests_passing 99
+# richards_nojit_ir_per_run: fixed-work Ir per runRichards in no-jit (G1, 6 runs minus 2), measured by the gate itself on its own build; 0 until the first gate run sets it (NO-JIT 9ebc5df083 measured 608,365,792 on a smoke build, a different binary).
+richards_nojit_ir_per_run 0
