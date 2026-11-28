@@ -206,13 +206,13 @@ impl Object {
 
     /// This prototype's subject in its heap's dependency table (`Heap::mark_prototype`).
     pub(crate) fn watch_as(&mut self, watch: super::dependencies::Watch) {
-        self.extras_mut().watch = watch;
+        self.extras_mut().set_watch(watch);
     }
 
     #[quench_macros::test_visible]
     /// This watched prototype's subject, if a heap's dependency table gave it one.
     pub(crate) fn watched_subject(&self) -> Option<u32> {
-        self.extras().and_then(|extras| extras.watch.subject())
+        self.extras().and_then(ObjectExtras::watched_subject)
     }
 
     /// Whether this object is an array's, which keeps named properties in the arena.

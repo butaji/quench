@@ -34,6 +34,7 @@ mod native_kinds;
 mod object_layout;
 #[cfg(test)]
 mod object_payload_tests;
+mod extras_api;
 mod object_state;
 pub(crate) use object_state::trace_extras;
 mod object_storage;

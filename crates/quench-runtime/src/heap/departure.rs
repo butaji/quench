@@ -214,6 +214,7 @@ impl Heap {
         if let Some(id) = self.dictionary_id_of_cell(granule) {
             return self.dictionary_cell_initialize(granule, id, shape, &words);
         }
+        self.note_cell_layout_change(granule);
         if words.iter().any(|word| word.heap_index().is_some()) {
             self.class_space.barrier(granule);
         }
@@ -236,6 +237,7 @@ impl Heap {
         }
         // The add observes its value under the after-shape, the shape the add's slot belongs to, before the
         // field's word is taken: a widening rewrites the words already held, then this one is converted.
+        self.note_cell_layout_change(granule);
         self.properties.note_shape_value(after, slot, value);
         self.rewrite_widened_numbers();
         let word = self.properties.stored_word(after, slot, value);

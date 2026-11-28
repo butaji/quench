@@ -57,6 +57,7 @@ impl Heap {
     /// Rewrites the class word of live cell `granule` to the dictionary shape `shape`, keeping its link, region and flags,
     /// and retires the readers of the shape it leaves (`set_class`).
     fn cell_takes_shape(&mut self, granule: u32, shape: u32) {
+        self.note_cell_layout_change(granule);
         let class = header_class(self.class_space.header(granule));
         let before = layouts::class_shape(class);
         let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
@@ -68,6 +69,7 @@ impl Heap {
     /// appended, over the cell's shape). The cell's fields move into a new table in the arena, its spill run is freed,
     /// and its class takes `DICTIONARY_STORAGE`. A marked holder's fields moved, so the holder edge fires (`holder_fields_moved`).
     pub(crate) fn cell_to_dictionary(&mut self, granule: u32, shape: u32) {
+        self.note_cell_layout_change(granule);
         let class = header_class(self.class_space.header(granule));
         let length = self.properties.shape_length(layouts::class_shape(class));
         let spill = self.class_spill_from(class);
@@ -119,6 +121,7 @@ impl Heap {
     /// The initialization of dictionary cell `granule` (table `id`) with the stored `words` of shape `shape`: the table
     /// is replaced by the words, and the class takes `shape`. The caller passed the words through `stored_words`.
     pub(crate) fn dictionary_cell_initialize(&mut self, granule: u32, id: u32, shape: u32, words: &[Value]) {
+        self.note_cell_layout_change(granule);
         if words.iter().any(|word| word.heap_index().is_some()) {
             self.class_space.barrier(granule);
         }

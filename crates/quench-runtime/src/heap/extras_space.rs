@@ -4,7 +4,8 @@
 //! Entry 0 is reserved as `NO_EXTRAS`, so a zero id names no extras. Records keep their own extras box until every
 //! object's extras move here (C5 D4), so each object's extras have exactly one home at any time.
 
-use super::cell::{ObjectExtras, trace_extras};
+use super::cell::{Object, ObjectExtras, trace_extras};
+use super::class_space::header_class;
 use crate::value::Value;
 
 /// The id of a cell with no extras: the reserved entry 0.
@@ -85,5 +86,25 @@ impl ExtrasSpace {
     /// The space a snapshot restored: `entries` (entry 0 first) and `free`.
     pub(crate) fn from_snapshot(entries: Vec<ObjectExtras>, free: Vec<u32>) -> Self {
         Self { entries, free }
+    }
+}
+
+impl super::Heap {
+    /// The layout change of live cell `granule`, made before its class takes effect: a marked prototype's watchers
+    /// retire (`ObjectExtras::note_prototype_layout_change`). A cell without extras has no mark, so nothing retires.
+    pub(crate) fn note_cell_layout_change(&self, granule: u32) {
+        let Some(extras) = self.extras.get(self.class_space.extras_id(granule)) else { return };
+        let class = header_class(self.class_space.header(granule));
+        extras.note_prototype_layout_change(Object::of_class(class).exact_shape());
+    }
+
+    /// Makes sure the live class cell `value` names has extras: an empty entry, on first need. A value that names no
+    /// live cell (a record, a departed cell, a non-object) is left alone.
+    pub(crate) fn ensure_cell_extras(&mut self, value: Value) {
+        let Some(granule) = self.live_class_cell(value) else { return };
+        if self.class_space.extras_id(granule) == NO_EXTRAS {
+            let id = self.extras.alloc(ObjectExtras::default());
+            self.class_space.set_extras_id(granule, id);
+        }
     }
 }

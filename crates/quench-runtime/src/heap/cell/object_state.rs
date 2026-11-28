@@ -61,7 +61,7 @@ impl Object {
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
     #[inline]
     pub(crate) fn boxed_primitive(&self) -> Option<Value> {
-        self.extras()?.rare()?.boxed_primitive
+        self.extras()?.boxed_primitive()
     }
 
     pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
@@ -94,8 +94,7 @@ impl Object {
 
     #[quench_macros::test_visible]
     #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
+        self.extras().is_some_and(ObjectExtras::prototype_marked)
     }
 
     #[quench_macros::test_visible]
@@ -104,18 +103,17 @@ impl Object {
             // A prototype's elements answer its dependents' reads: no proof replaces them.
             super::array_proofs::retire_array_storage_proofs();
             self.note_global_layout_change();
-            self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
+            self.extras_mut().set_prototype_setup();
         }
     }
 
     pub(crate) fn prototype_lookup_ready(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+        self.extras().is_some_and(ObjectExtras::prototype_ready)
     }
 
     pub(crate) fn prepare_prototype_lookup(&mut self) {
         if self.was_used_as_prototype() {
-            self.extras_mut().prototype_lookup = PrototypeLookupState::Ready;
+            self.extras_mut().prepare_prototype();
         }
     }
 
@@ -194,14 +192,14 @@ impl Object {
     }
     #[inline(always)]
     pub(super) fn brand(&self) -> ObjectBrand {
-        self.extras().and_then(ObjectExtras::rare).map_or(ObjectBrand::Ordinary, |rare| rare.brand)
+        self.extras().map_or(ObjectBrand::Ordinary, ObjectExtras::brand)
     }
     #[inline(always)]
     pub(super) fn element_facts(&self) -> ElementFacts {
-        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
+        self.extras().map_or(ElementFacts(0), ObjectExtras::element_facts)
     }
     pub(super) fn mark_element_fact(&mut self, bit: u8) {
-        self.extras_mut().element_facts.0 |= bit;
+        self.extras_mut().mark_element_fact(bit);
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta() & VALUE_VEC_INTEGRITY_BITS, 0);

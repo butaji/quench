@@ -1271,15 +1271,15 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
-        // A prototype is a record: a class cell departs before it is read or marked (R4-C4).
-        self.depart_for_mutation(prototype);
+        // A prototype's mark and watch are its extras: a live class cell keeps them by id, made here (R4-C4).
+        self.ensure_cell_extras(prototype);
         // A prototype marked and watched before, as most allocations' prototypes are, only
         // takes the recent entry when its run is still wide: no exclusive access, which
-        // widens and barriers.
+        // widens and barriers. A cell has no run to widen.
         if self.object(prototype).is_some_and(|object| {
             object.was_used_as_prototype()
                 && object.watched_subject().is_some()
-                && object.record_only().is_some_and(|record| !record.properties().is_narrow())
+                && object.record_only().is_none_or(|record| !record.properties().is_narrow())
         }) {
             self.marked_prototypes.rotate_right(1);
             self.marked_prototypes[0] = Some(prototype);
@@ -1292,7 +1292,7 @@ impl Heap {
         // prototypes watch nothing) takes one, which its extras keep.
         let watch = unwatched.then(|| self.dependencies.watch());
         let subject = watch.as_ref().and_then(dependencies::Watch::subject);
-        let object = self.prototype_object_mut(prototype).expect("the prototype just read");
+        let mut object = self.prototype_object_mut(prototype).expect("the prototype just read");
         object.mark_as_prototype();
         if let Some(watch) = watch {
             object.watch_as(watch);
@@ -1304,11 +1304,13 @@ impl Heap {
         self.marked_prototypes[0] = Some(prototype);
     }
 
-    /// The record `mark_prototype` marks. A prototype takes extras (`Object::mark_as_prototype`), so a live
-    /// class cell departs first and its record is the object.
+    /// The view `mark_prototype` marks and watches: a live class cell's (its extras are made first,
+    /// `ensure_cell_extras`), or a record's. A prototype record takes extras, which hold wide runs.
     #[inline]
-    fn prototype_object_mut(&mut self, prototype: Value) -> Option<&mut Object> {
-        self.depart_for_mutation(prototype);
+    fn prototype_object_mut(&mut self, prototype: Value) -> Option<ObjectMut<'_>> {
+        if let Some(granule) = self.live_class_cell(prototype) {
+            return Some(self.live_cell_mut(granule));
+        }
         match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             Some(object_ref) => {
@@ -1317,9 +1319,9 @@ impl Heap {
                 let object: &mut Object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
                 // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
                 access::widen_narrow_run(object, &mut self.properties);
-                Some(object)
+                Some(ObjectMut::Record(object))
             }
-            None => self.object_mut(prototype)?.record_only_mut(),
+            None => self.object_mut(prototype),
         }
     }
 
@@ -5245,8 +5247,8 @@ impl Heap {
 
     /// The edges of live class cell `owner` (of class `class`, with fields `fields`), pushed as an object's are
     /// (`object_children_marking`): the class's prototype once per run of siblings, the class's shape roots,
-    /// then each heap field that `mark_leaf` does not mark. A cell is never a prototype (its first use departs
-    /// it), so the shape roots carry no prototype flag. Slack fields hold `Value::DELETED`, which is no edge.
+    /// then each heap field that `mark_leaf` does not mark. The shape roots carry the prototype flag of the
+    /// cell's extras. Slack fields hold `Value::DELETED`, which is no edge.
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn cell_children_marking(
@@ -5269,7 +5271,9 @@ impl Heap {
                 work.push(proto);
             }
         }
-        object_roots(trace_kind, owner, class_shape(class), false, work);
+        // A prototype's mark is its extras' (`ObjectExtras::prototype_marked`), as a record's is its own.
+        let prototype = extras.is_some_and(cell::ObjectExtras::prototype_marked);
+        object_roots(trace_kind, owner, class_shape(class), prototype, work);
         if let Some(extras) = extras {
             cell::trace_extras(extras, |value| work.push(value));
         }
