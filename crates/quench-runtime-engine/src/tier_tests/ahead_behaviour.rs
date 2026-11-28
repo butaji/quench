@@ -289,7 +289,7 @@ fn bounded_entries_split_stop_control_and_keep_generator_parameters() {
     }
 }
 
-fn started(
+pub(crate) fn started(
     context: &mut quench_runtime::NativeContext<'_>, _: quench_runtime::RootId, _: &[quench_runtime::RootId],
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
     context.host_as::<quench_runtime::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();

@@ -1,7 +1,7 @@
 //! Tests of programs that run through the engine (and the Intl layer), each held to the
 //! interpreter's run or to the core's rooting rules (moved from the core's library tests, whose
 //! binary does not link the layers).
-mod ahead_behaviour;
+pub(crate) mod ahead_behaviour;
 mod compiled_wasm1;
 mod compiled_wasm2;
 mod compiled_wasm3;

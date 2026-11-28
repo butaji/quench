@@ -58,7 +58,7 @@ mod native_frame_tests;
 #[cfg(test)]
 mod osr_retirement_tests;
 #[cfg(test)]
-mod tier_tests;
+pub(crate) mod tier_tests;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
