@@ -8,7 +8,7 @@ use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE}
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
 use crate::words::hole64;
 use crate::places::{LEFT, Places, finish_fast};
-use crate::codes::{MEM, ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT};
+use crate::codes::{MEM, ADD_AFTER_AT, ADD_ARENA_ROW, ADD_CLASS_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT};
 use crate::stage::StencilStage;
 use crate::staged::object::Form;
 use crate::staged::{Frame, Operation, Step, add, op_kind, step_of};
@@ -46,6 +46,22 @@ fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Fo
     add_row::<A, CHAINED>(s, payload, form, |_| receiver)
 }
 
+/// The class-keyed add row (`ADD_CLASS_ROW`): the value operand (hole 1) joins the live class cell of the object register
+/// at the frame offset hole 2 carries, by the class transition holes 0 and 2 carry (`add::class_add`, whose before-key is
+/// the low word of hole 0 and after-class its high word). A hit continues at TAKEN.
+#[inline(always)]
+fn class_add_row<const A: u8>(s: S, payload: usize) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let mut frame = Places::new::<MEM, A, MEM>(s);
+    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
+    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
+    let object = word_at(frame.s.frame, (site >> ADD_OBJECT_AT) as usize);
+    let value = frame.tagged(&mut stage, LEFT);
+    let done = add::class_add(&mut stage, object, edge, value, ()).is_some();
+    finish_fast(frame, done)
+}
+
 /// The naming row of `form`: the function in the frame slot hole 2 names takes the name word hole 1 holds
 /// in the slot hole 2 carries, along the shapes hole 0 carries (`Operation::NamingSite`, `naming::site_name`);
 /// a hit continues at TAKEN.
@@ -74,6 +90,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const A: u8>(s: S, payload:
         THIS_ADD_PACKED_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Packed),
         THIS_ADD_ARENA_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Arena),
         THIS_ADD_EITHER_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Either),
+        ADD_CLASS_ROW => class_add_row::<A>(s, payload),
         NAME_EITHER_ROW => name_row(s, payload, Form::Either),
         _ => name_row(s, payload, Form::Arena),
     }

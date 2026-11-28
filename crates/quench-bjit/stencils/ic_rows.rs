@@ -33,7 +33,7 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
+use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
@@ -41,12 +41,13 @@ use crate::places::deliver_number;
 use crate::places::{Places, finish_chained, site_object};
 use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set};
 use crate::stage::StencilStage;
+use crate::staged::entry::{class_held_field, class_key_cell, class_own_field, class_store};
 use crate::staged::ic::{self, IcOp};
 use crate::staged::ic_flat::own_field_flat;
 use crate::staged::object::{Form, direct_object_record, object_record_of};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::typed_ir::Representation;
-use crate::staged::{Stage, Step, op_kind, step_property_of};
+use crate::staged::{Stage, StagedRecordSpace, Step, op_kind, step_property_of};
 use crate::words::{hole, hole64};
 
 /// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
@@ -172,6 +173,49 @@ fn known_store<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: b
     Some(word)
 }
 
+/// A class-keyed get (`IC_GET_CLASS_ROW`, `IC_GET_HELD_CLASS_ROW`): the receiver (above the destination in hole 0) is a
+/// direct object whose live class cell is the class hole 2 names, and the word is that cell's field at hole 3 (a field
+/// index); the held read takes the field of the holder cell whose granule is hole 4 (`entry::class_held_field`). A miss
+/// leaves as `get_row`'s does. The word goes to `D`.
+#[inline(always)]
+fn class_get_row<const HELD: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let object = site_object(&s);
+    let key = stage.site(0);
+    let slot = stage.site(0);
+    let word = if HELD {
+        let holder = stage.site(0);
+        class_held_field(&mut stage, object, key, slot, holder, ())
+    } else {
+        class_own_field(&mut stage, object, key, slot, ())
+    };
+    finish_chained::<CHAINED>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| deliver::<D>(s, word))
+}
+
+/// The Number in the value place stored to the field at hole 3 of the live class cell the receiver (hole 0) is, whose class
+/// key is hole 2 (`IC_SET_CLASS_ROW`): the store gate admits the write (`StoreGate` of the class space, as
+/// `add::add_cell_property`), then the field is stored. `None` where the row leaves with nothing written.
+#[inline(always)]
+fn class_set_value<const A: u8>(s: &S, payload: usize) -> Option<u64> {
+    let word = number_word::<A, HOLE_A>(s)?;
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let object = word_at(s.frame, hole::<SET_RECEIVER>());
+    let key = stage.site(0);
+    let slot = stage.site(0);
+    let (granule, cell) = class_key_cell(&mut stage, object, key, ())?;
+    let open = stage.store_gate(StagedRecordSpace::Class, granule, word);
+    stage.guard(open, ())?;
+    class_store(&mut stage, cell, slot, word);
+    Some(word)
+}
+
+/// `class_set_value` as the row's outcome: a hit continues at TAKEN where chained, else leaves through exit 0.
+#[inline(always)]
+fn class_set_row<const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
+    let stored = class_set_value::<A>(&s, payload);
+    finish_chained::<CHAINED>(s, stored.map_or(Step::Unresolved, Step::Value), |s, _| Out::Next(s))
+}
+
 /// Continues where the object register at hole 0 is a direct object and the VM has an object table
 /// (`receiver`), else leaves through exit 0.
 #[inline(always)]
@@ -192,6 +236,9 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_ROW => get_row::<false, CHAINED, D>(s, payload),
         IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
+        IC_GET_CLASS_ROW => class_get_row::<false, CHAINED, D>(s, payload),
+        IC_GET_HELD_CLASS_ROW => class_get_row::<true, CHAINED, D>(s, payload),
+        IC_SET_CLASS_ROW => class_set_row::<CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s, payload),
         // A known get is always followed by its site row, so its entry flag says instead whether the
         // fact store proved the slot a Number (`false`: proved; `base_region::plan::ic_plan`).

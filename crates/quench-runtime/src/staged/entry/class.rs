@@ -21,7 +21,7 @@ pub(super) fn class_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word)
 /// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store. The gate
 /// leaves no constant mark standing: a constant-marked class has no key (`Heap::live_class_key`).
 #[inline(always)]
-pub(in super::super) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
+pub(crate) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
     let address = class_field_address(stage, cell, slot);
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
 }
@@ -42,6 +42,48 @@ pub(super) fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Wo
     let difference = stage.sub(stored, wanted);
     let same = stage.eq_imm(difference, 0u32);
     stage.guard(same, miss)
+}
+
+/// Guards that the live class cell `cell` holds the class key `key` a row's hole names (`class | CLASS_KEY`):
+/// `class_matches` with the key as an operand, where the entry's complemented word is not read. A departed
+/// cell's `DEPARTED_CLASS` gives a word past u32, which equals no key.
+#[inline(always)]
+pub(crate) fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::Word, miss: S::Miss) -> Option<()> {
+    let class = super::super::object::cell_class(stage, cell);
+    let held = stage.add_imm(class, u64::from(CLASS_KEY));
+    let difference = stage.sub(held, key);
+    let same = stage.eq_imm(difference, 0u32);
+    stage.guard(same, miss)
+}
+
+/// The live cell of the direct object `object` whose class is the one `key` names (`class_key_matches`), with
+/// its granule: the receiver of a class-keyed row. `None` (leaving at `miss`) where the word is no direct
+/// object or its cell is of another class.
+#[inline(always)]
+pub(crate) fn class_key_cell<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let direct = super::super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let granule = super::super::value::direct_object_id(stage, object);
+    let cell = super::super::object::cell_at_granule(stage, granule);
+    class_key_matches(stage, cell, key, miss)?;
+    Some((granule, cell))
+}
+
+/// The own field at `slot` (a field index) of the class-keyed receiver `object` (`class_key_cell`): one load.
+#[inline(always)]
+pub(crate) fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let (_, cell) = class_key_cell(stage, object, key, miss)?;
+    Some(cell_field(stage, cell, slot))
+}
+
+/// The held field at `slot` of the class-keyed receiver `object`, whose holder is the live cell at `holder` (its
+/// granule): the class fixes the prototype link and a departed holder resets the field caches, as
+/// `class_held_value`, so the value is one load after the cell lookup.
+#[inline(always)]
+pub(crate) fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, holder: S::Word, miss: S::Miss) -> Option<S::Word> {
+    class_key_cell(stage, object, key, miss)?;
+    let holder = super::super::object::cell_at_granule(stage, holder);
+    Some(cell_field(stage, holder, slot))
 }
 
 /// The field at `slot` of the live class cell `cell`: its fields are one flat run at `fields_offset`,
