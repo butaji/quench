@@ -146,11 +146,6 @@ pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fas
     }
 }
 
-/// The IR a lane body of `bytecodes` unit instructions lowers to before its plan: `Loops::ir_per_bytecode` each.
-pub(crate) fn unplanned_ir(loops: &tier_policy::Loops, bytecodes: u64) -> usize {
-    usize::try_from(bytecodes.saturating_mul(loops.ir_per_bytecode)).unwrap_or(usize::MAX)
-}
-
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).
 pub(crate) struct Census {
     pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,

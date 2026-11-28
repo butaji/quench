@@ -1,5 +1,4 @@
-//! What a loop site's entries pay back, and how long the interpreter runs it before the model
-//! weighs its compile (`compiled::loop_model`).
+//! What a loop site's entries pay back, and when a refused loop asks its compile again.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -12,11 +11,6 @@ pub(crate) const NO_REFUSAL: u32 = u32::MAX;
 
 #[quench_macros::ext(LoopSiteRunsOps)]
 impl super::LoopSite {
-    /// The bytecodes of one iteration, from the header to the backward jump.
-    pub(crate) fn span(&self) -> u64 {
-        u64::from(self.backedge - self.header + 1)
-    }
-
     /// Whether a loop enclosing this one is admitted by the region analysis and still enters native code
     /// (`enclosing`): this loop then runs as plain jumps inside it, and does not warm up or enter its own
     /// region, which the enclosing loop's region covers. Once that loop stops entering (it retires, or its
@@ -35,16 +29,6 @@ impl super::LoopSite {
         });
         self.enclosed.set(inside);
         inside
-    }
-
-    /// Whether the body's dispatch counts this header dispatch down to its plan (`body_wait`),
-    /// counting it as an iteration of the loop either way.
-    pub(crate) fn body_waits(&self) -> bool {
-        self.body_seen.set(self.body_seen.get().saturating_add(1));
-        let wait = self.body_wait.get();
-        if wait == 0 { return false; }
-        self.body_wait.set(wait - 1);
-        true
     }
 
     /// Refuses the site's compile while its function's body state is `epoch`: its back edges

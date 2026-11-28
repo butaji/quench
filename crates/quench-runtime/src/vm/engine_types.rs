@@ -1063,12 +1063,6 @@ pub struct LoopSite {
     pub tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     pub body: std::cell::RefCell<LoopBody>,
-    /// The header dispatches that found the body idle (`plan_loop_body`), each an iteration
-    /// of the interpreter's or a region's entry, and the iterations the loop takes before its
-    /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
-    pub body_seen: std::cell::Cell<u64>,
-    /// The header dispatches an idle body still waits for before its plan (`LoopSite::body_waits`).
-    pub body_wait: std::cell::Cell<u64>,
     /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
     pub body_offered: std::cell::Cell<bool>,
     /// The body epoch (`LaneView::body_epoch`) a refused compile was refused under, and the back

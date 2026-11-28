@@ -212,8 +212,6 @@ pub(crate) struct PendingLaneMethod {
     pub watch: Rc<quench_runtime::code_dependencies::PublishedCode<()>>,
     /// What it compiles from (`LanePlan::key`).
     pub key: LaneKey,
-    /// The site its planned size is noted for (`ProgramStore::note_planned_lane_ir`).
-    pub site: (u32, u32, Option<u32>),
     /// What the plan took from the VM, which must still hold when its code arrives.
     pub taken: Box<TakenFacts>,
 }
@@ -223,7 +221,7 @@ pub(crate) struct PendingLaneMethod {
 pub(crate) enum Lowered {
     /// Nothing of the unit lowers natively.
     Nothing,
-    Compiled { lowered: lane_region::LoweredLane, ir: usize, code: LaneCode },
+    Compiled { lowered: lane_region::LoweredLane, code: LaneCode },
 }
 
 impl Lowered {
@@ -236,7 +234,7 @@ impl Lowered {
         if let Some(census) = census {
             eprintln!("{}", Census { ir, ..census }.report(code.as_ref().map_or(0, |image| image.code.len())));
         }
-        Self::Compiled { lowered, ir, code }
+        Self::Compiled { lowered, code }
     }
 }
 
@@ -267,20 +265,16 @@ struct TakenFacts {
 
 /// What a pending body's compile came to.
 enum LaneCompile {
-    /// Its body lowered (to IR of the size given) and its code compiled; it publishes where
+    /// Its body lowered and its code compiled; it publishes where
     /// what it took from the VM still holds (`Vm::lowering_holds`).
-    Lowered(Box<PendingLaneMethod>, lane_region::LoweredLane, usize, image::LaneImage),
+    Lowered(Box<PendingLaneMethod>, lane_region::LoweredLane, image::LaneImage),
     Done(Option<LaneMethod>),
 }
 
 /// What a function's lane body asks of the VM at an entry past its warm-up.
 pub(crate) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code.
-    Start { generic: &'a [LaneExit], called: bool, caller: &'a crate::dispatch_fast::LaneView,
-        /// A loop's body: the loop's span and the iterations it has taken, which weigh its
-        /// compile (`loop_model::body_taken`).
-        looped: Option<(u64, u64)>,
-    },
+    Start { generic: &'a [LaneExit], called: bool, caller: &'a crate::dispatch_fast::LaneView },
     /// Look for the code of the body compiling.
     Poll(Box<dyn std::any::Any>),
 }
@@ -493,12 +487,12 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates], generic: &[LaneExit], entry: Option<u32>,
-        looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
+        called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         #[cfg(feature = "jit")]
-        { self.start_lane_method_compiled(program, function, captures, direct, generic, entry, looped, called, caller) }
+        { self.start_lane_method_compiled(program, function, captures, direct, generic, entry, called, caller) }
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, captures, direct, generic, entry, looped, called, caller);
+            let _ = (program, function, captures, direct, generic, entry, called, caller);
             Err(Unstarted::Declined)
         }
     }
@@ -507,20 +501,13 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates], generic: &[LaneExit], entry: Option<u32>,
-        looped: Option<(u64, u64)>, called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
+        called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
         // A function whose compiles from this entry are spent plans nothing; one whose last plan
         // from it did not pay at its size is not planned again until its entries would pay for that size.
         let site = (self.active_program.raw(), function, entry);
         let tiers = self.programs.tiers();
-        // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
-        // each, the loop region's measure): inlining only adds to it.
-        let own_ir = |bytecodes: u64| super::lane_facts::unplanned_ir(&tiers.loops, bytecodes);
-        let planned = self.programs.planned_lane_ir(&site);
-        // A function the loaded image gave a body was paid for ahead of time: a plan after that body
-        // left (a fact it took weakened) respecializes at once, as the image's install did.
-        let ahead = self.programs.ahead_images(self.active_program, program).is_some();
         // The body's tier is its predicted tier through the policy (`lane_body_tier`): the interpreter's pick compiles
         // nothing, whoever calls the function.
         let level = super::jit_backend::CompileLevel::run_default();
@@ -530,11 +517,10 @@ impl Vm {
         // A function that calls itself back through other functions runs a call tree per entry,
         // as a loop does, before any of its calls is direct (`CallGraph::in_cycle`).
         let recursive = entry.is_none() && graph.in_cycle(function);
-        let looped_taken = ahead || looped.is_none_or(|(span, taken)| taken >= super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true));
-        // Phase A: the compile bound and the looped iterations, in that order (`admission::LanePlan`).
+        // Phase A: the compile bound (`admission::LanePlan`).
         let compiles_left = self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some()));
         let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,
-            facts: super::admission::UnitFacts { compiles_left, called_by_regions: caller.called_by_regions(), looped_taken, ..Default::default() } }) {
+            facts: super::admission::UnitFacts { compiles_left, called_by_regions: caller.called_by_regions(), ..Default::default() } }) {
             super::admission::Decision::Compile(unit) => unit,
             super::admission::Decision::Declined => { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
             super::admission::Decision::Unpaid => return Err(Unstarted::Unpaid),
@@ -580,7 +566,7 @@ impl Vm {
         // Phase B after planning: the install gate on the plan's unit (`LaneInstall`). The callees bind, and the
         // installed and admission checks run, only with that unit.
         let install_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_regions: caller.called_by_regions(),
-            looped_none: looped.is_none(), recursive, amortizes_entry: entry.is_some() || recursive || amortizes_entry(tiers, &unit, function, &direct, tier), ..Default::default() };
+            recursive, amortizes_entry: entry.is_some() || recursive || amortizes_entry(tiers, &unit, function, &direct, tier), ..Default::default() };
         let Some(_install) = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneInstall(plan_unit), facts: install_facts }).compiled() else {
             refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short);
         };
@@ -605,7 +591,7 @@ impl Vm {
             Lowered::of(&job, census, level)
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
-        Ok(PendingLaneMethod { plan, watch, code, key, site, taken: Box::new(taken) })
+        Ok(PendingLaneMethod { plan, watch, code, key, taken: Box::new(taken) })
     }
 
     /// The unit PCs of stores whose sites added their property to some receiver (they hold
@@ -636,8 +622,8 @@ impl Vm {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        let (generic, looped, called, caller) = match work {
-            LaneBodyWork::Start { generic, looped, called, caller } => (generic.to_vec(), looped, called, caller),
+        let (generic, called, caller) = match work {
+            LaneBodyWork::Start { generic, called, caller } => (generic.to_vec(), called, caller),
             LaneBodyWork::Poll(pending) => return self.body_poll_in_lane(program, pending),
         };
         // A function with an ahead-of-time body takes it where a first compile would.
@@ -645,7 +631,7 @@ impl Vm {
             return LaneBodyOutcome::Published(published);
         }
         let direct = direct(self);
-        let started = match self.start_lane_method(program, function, captures, &direct, &generic, entry, looped, called, caller) {
+        let started = match self.start_lane_method(program, function, captures, &direct, &generic, entry, called, caller) {
             Ok(started) => started,
             Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
             Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
@@ -667,8 +653,7 @@ impl Vm {
         let key = pending.key;
         match pending.poll() {
             Err(pending) => LaneBodyOutcome::Compiling(pending),
-            Ok(LaneCompile::Lowered(mut pending, lowered, ir, code)) => {
-                self.programs.note_planned_lane_ir(pending.site, ir);
+            Ok(LaneCompile::Lowered(mut pending, lowered, code)) => {
                 // The facts it folds are subscribed from now on; what changed while it lowered
                 // makes it stale here, as a change after this retires it.
                 if !self.lowering_holds(program, &pending, &lowered) { return LaneBodyOutcome::Stale; }
@@ -734,7 +719,7 @@ impl PendingLaneMethod {
     fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(Lowered::Compiled { lowered, ir, code: Ok(code) })) => LaneCompile::Lowered(self, lowered, ir, code),
+            std::task::Poll::Ready(Some(Lowered::Compiled { lowered, code: Ok(code) })) => LaneCompile::Lowered(self, lowered, code),
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
         })
     }

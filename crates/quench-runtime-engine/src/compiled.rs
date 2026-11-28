@@ -157,8 +157,6 @@ pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fing
 #[path = "compiled/lane_body_abi.rs"] pub(crate) mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(crate) mod lane_facts;
-#[path = "compiled/tier_model.rs"] pub(crate) mod tier_model;
-#[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
 #[path = "compiled/loop_tier_up.rs"] pub(crate) mod loop_tier_up;
 pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]

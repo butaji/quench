@@ -1319,7 +1319,7 @@ pub(super) fn count_backedge(cx: *mut LaneContext) {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
+pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value]) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -1343,7 +1343,7 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     // The JIT's routes link only into a binary whose runtimes it serves (`jit_routes`): without
     // them, a function with no ahead image declines its lane body, as under `--no-jit`.
     let jit = crate::jit_routes::jit().map(|routes| routes.lane);
-    let specialize = |work: crate::compiled::LaneBodyWork| jit.map_or(crate::compiled::LaneBodyOutcome::Declined, |jit| jit(cx, own, function, parameters, looped, work));
+    let specialize = |work: crate::compiled::LaneBodyWork| jit.map_or(crate::compiled::LaneBodyOutcome::Declined, |jit| jit(cx, own, function, parameters, work));
     let published = own.entry_published();
     let warming = own.specialize_lane_body(body_entry_row(), quench_runtime::vm::tier_policy::lane_body_tier(pick), specialize);
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
@@ -1356,17 +1356,11 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
 
 /// Works toward `function`'s lane body on the JIT's routes: the stencil tier, a wait for callees
 /// still compiling, or the lane body tier (`admission::route_for_lane`).
-pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value], looped: Option<(u64, u64)>, work: crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome {
+pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32, parameters: &[Value], work: crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let work = match work {
-        // A looping caller's trips pay for the body as its own iterations do (`looped`).
-        crate::compiled::LaneBodyWork::Start { generic, looped: seen, called, caller } =>
-            crate::compiled::LaneBodyWork::Start { generic, looped: looped.or(seen), called, caller },
-        poll => poll,
-    };
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
@@ -1404,7 +1398,7 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
     {
-        specialize_in_lane(cx, own, site.function, &[], Some((site.span(), site.body_iterations())));
+        specialize_in_lane(cx, own, site.function, &[]);
         // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
         // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
         if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }

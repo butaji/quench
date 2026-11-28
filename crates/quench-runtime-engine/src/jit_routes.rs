@@ -9,7 +9,7 @@ use crate::ext_traits::*;
 
 /// The JIT's route of `specialize_in_lane` for a function with no ahead image.
 pub(crate) type LaneJit = fn(*mut quench_runtime::vm::engine_types::LaneContext, &quench_runtime::vm::engine_types::LaneView, u32, &[quench_runtime::Value],
-    Option<(u64, u64)>, crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome;
+    crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome;
 
 /// The routes `Vm::new` installs.
 pub(crate) struct JitRoutes {

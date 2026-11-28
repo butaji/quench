@@ -513,7 +513,7 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         return leave(start, Value::UNDEFINED)
     };
     let respecializes = own.respecializes();
-    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[], None); }
+    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[]); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         // Each call of it from native code leaves that code until it has a body (`note_native_caller`).
@@ -592,7 +592,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     // One the image holds no lane body for gives its prologue back, once: its entries run its records,
     // not this path and the image lookup again (as `tier_enter_in_lane` releases a declined body).
     if own.cell_body().is_none() && own.body_view_in_lane().is_none() && !own.declined_in_lane() && vm.programs.ahead_images(program, code).is_some()
-        && !specialize_in_lane(cx, own, function, &[], None)
+        && !specialize_in_lane(cx, own, function, &[])
     {
         own.release_from_tier();
         return Resumed::At(r, base, Carried::script_in(cx, view));
