@@ -58,13 +58,6 @@ pub(crate) struct Body {
     /// The prototype chains its folded reads, membership tests and adding stores read through (a
     /// Stable fact): a layout change of a prototype on one retires the body (`StableFacts::chains`).
     pub(crate) chains: Box<[quench_runtime::code_dependencies::PrototypeChain]>,
-    /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
-    /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
-    /// (`StableFacts::instanceofs`).
-    pub(crate) instanceofs: Box<[InstanceofFact]>,
-    /// The constructors those arms guard their operands against by identity, which a collection must not free
-    /// while the body lives (`LaneMethod::constructors`).
-    pub(crate) constructors: Box<[Value]>,
     /// Whether it reads no heap row, makes no step and proves no realm: a loop region that does not
     /// needs from its payload only the entry record's address (`Crossing::Bare`).
     pub(crate) bare: bool,
@@ -332,7 +325,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code: linked.code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
-        chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
+        chains: held_chains(&decoded), bare,
         layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes, number_guards: linked.number_guards,
         uses_this: quench_runtime::bytecode::activation_reads_this(spec.known.program, function),
         symbols: linked.symbols.into(), entries: linked.entries.into(), generic })

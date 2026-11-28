@@ -118,30 +118,6 @@ pub struct PrototypeChain {
     pub depth: u8,
 }
 
-/// What an `instanceof` of one constructor depends on when its code takes the constructor's
-/// `prototype` as a Stable fact (`Vm::instanceof_fact`): the encoded link of that prototype and the
-/// slot of the constructor's own `prototype` property in its exact shape (a write retires the
-/// code, as does a departure of that shape, which an own `@@hasInstance` would be), the exact
-/// shape of the holder the constructor inherits the native `@@hasInstance` from (a change of its
-/// values retires the code), and the chain from the constructor itself to that holder, whose
-/// lookup a new prototype or an `@@hasInstance` added on the way would change (a layout change of
-/// one retires the code).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct InstanceofFact {
-    pub link: u32,
-    pub shape: u32,
-    pub(crate) slot: u16,
-    pub holder: u32,
-    pub chain: PrototypeChain,
-}
-
-impl InstanceofFact {
-    /// The slot dependency on the constructor's `prototype`, an object.
-    pub fn slot_dependency(self) -> SlotDependency {
-        SlotDependency { shape: self.shape, slot: self.slot, ty: Type::DIRECT_OBJECT_FAMILY }
-    }
-}
-
 type Link = Option<NonZeroU32>;
 struct Reader {
     code: Option<Weak<dyn DependentCode>>,

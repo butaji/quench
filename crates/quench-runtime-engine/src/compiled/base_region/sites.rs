@@ -107,19 +107,6 @@ pub(crate) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
     distinct(decoded.iter().filter_map(|row| row.atom))
 }
 
-/// The exact shapes of the holders the rows' `instanceof`s inherit the native `@@hasInstance` from, with the slots and
-/// shapes of their constructors' `prototype`s (`Decoded::instanceof`): the Stable facts the code takes, which a write
-/// of a `prototype`, a departure of a constructor's shape or a change of a holder's values retires it.
-pub(crate) fn held_instanceofs(decoded: &[Decoded]) -> Box<[InstanceofFact]> {
-    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(_, fact)| fact)))
-}
-
-/// The constructors whose identity the rows' `instanceof`s name (`Decoded::instanceof`): the code holds each
-/// one, which a collection that frees it retires the code over (`LaneMethod::constructors`).
-pub(crate) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
-    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(constructor, _)| constructor.to_bits()))).iter().map(|bits| Value::from_bits(*bits)).collect()
-}
-
 /// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
 /// key (`Known::presences`): the boolean it answered to the register `dst`, while the object has that exact shape and prototype
 /// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the layouts of the prototypes

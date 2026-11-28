@@ -15,7 +15,6 @@ crates/quench-runtime-engine/src/compiled/lane_region/frame_fields.rs::FieldFact
 crates/quench-runtime-engine/src/compiled/osr_compile.rs::LoopFacts
 crates/quench-runtime/src/bytecode.rs::DerivedFact
 crates/quench-runtime/src/bytecode/closure_reads.rs::FunctionReadFacts
-crates/quench-runtime/src/code_dependencies.rs::InstanceofFact
 crates/quench-runtime/src/compile/aot_facts.rs::AotFacts
 crates/quench-runtime/src/compile/aot_facts.rs::FunctionFacts
 crates/quench-runtime/src/compile/capture_layout.rs::FunctionFacts

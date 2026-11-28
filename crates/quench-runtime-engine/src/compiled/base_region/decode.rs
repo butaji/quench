@@ -136,10 +136,6 @@ pub(crate) struct Decoded {
     /// The instruction carried the return flag: the activation completes with the result the row
     /// writes (`steps::completing`), so control reaches nothing after it.
     pub(crate) completes: bool,
-    /// The constructor an `instanceof` fast arm stands on, with what the VM proved of it (`Known::instanceofs`): its
-    /// identity is the row's `hole`, which the constructor register must hold, and the prototype link the walk looks for
-    /// is the fact's, a Stable fact the code depends on (`held_instanceofs`).
-    pub(crate) instanceof: Option<(Value, InstanceofFact)>,
     /// The global object's slot the row holds under the object's layout and the slot's observed type
     /// (`globals`): Stable facts the code takes.
     pub(crate) global: Option<Access>,
@@ -202,7 +198,7 @@ pub(crate) struct Decoded {
 
 impl Decoded {
     pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
     }
 
     pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -214,10 +210,10 @@ impl Decoded {
     }
 
     /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an
-    /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
+    /// a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(crate) fn holds_stable(&self) -> bool {
-        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
+        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.global.is_some() || self.lexical.is_some()
     }
 
     /// The observed type of the slot a store row writes in place: a global object's slot or a field's.
