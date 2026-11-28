@@ -17,6 +17,7 @@ use crate::typed_ir::{Cell, Classes, FactKey};
 
 use super::aot_facts::AotFacts;
 use super::signatures::Signatures;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// One arm of a call plan: the function a call reaches for one class of its receiver's closed union
 /// (`class: Some`), or the single function a call with one target reaches (`class: None`).
