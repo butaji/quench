@@ -3,7 +3,7 @@
 
 use super::*;
 use super::object::decode_narrow;
-use crate::heap::{Cell, Heap, Object};
+use crate::heap::{ArrayObject, Cell, Heap, Object};
 use crate::value::NarrowLayout;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use crate::Value;
@@ -27,8 +27,11 @@ fn observed(object: &Object) -> Observed {
     }
 }
 
-/// Objects of every storage form, each with its values: narrow integers, narrow references,
-/// a double (no narrow form), and enough values to spill past the inline ones.
+/// Arrays of every value set, each with its values as named properties: narrow integers, narrow references,
+/// a double (no narrow form), and enough values to spill past the inline ones. An ordinary object is a class cell
+/// with no record, so the record layout is read on arrays. An array keeps its named properties in the arena
+/// (`ArrayObject::new`), so its form is `Observed::Arena`; the packed and displaced-inline forms were ordinary
+/// records', and no live record takes them now.
 fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
     let wide = INLINE_PROPERTY_COUNT + 2;
     for shape in 1..=wide {
@@ -44,22 +47,21 @@ fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
     let mut objects = Vec::new();
     for prototype in [false, true] {
         for values in &value_sets {
-            let object = heap.alloc_object(Object::new(Value::NULL));
+            let array = heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), Vec::<Value>::new()));
             for (slot, value) in values.iter().enumerate() {
-                heap.property_add(object, *value, slot as u32 + 1);
+                heap.property_add(array, *value, slot as u32 + 1);
             }
             if prototype {
-                heap.ensure_cell_extras(object);
-                heap.object_mut(object).unwrap().mark_as_prototype();
+                heap.object_mut(array).unwrap().mark_as_prototype();
             }
-            objects.push((object, values.clone()));
+            objects.push((array, values.clone()));
         }
     }
     objects
 }
 
 #[test]
-fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form() {
+fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_record_form() {
     let mut heap = Heap::new();
     let objects = objects_of_every_form(&mut heap);
     let mut forms = std::collections::HashSet::new();
@@ -75,9 +77,7 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
             assert_eq!(staged, *expected, "{:?} slot {slot}", observed(data));
         }
     }
-    for form in [Observed::Packed, Observed::Arena, Observed::DisplacedInline, Observed::DisplacedArena] {
-        assert!(forms.contains(&form), "the corpus covers {form:?}: {forms:?}");
-    }
+    assert!(forms.contains(&Observed::Arena), "the corpus covers the arena form: {forms:?}");
 }
 
 #[test]

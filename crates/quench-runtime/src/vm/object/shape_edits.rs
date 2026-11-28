@@ -88,7 +88,7 @@ impl Vm {
     /// Deletes `key`, whose slot of the object's shape is already `Value::DELETED` (`delete_shape_slot`). The object's
     /// shape moves on: back to the shape before the key's add when it was the last-added key, else along a `Delete`
     /// transition. A class cell takes either change in place: its class moves, or it turns dictionary
-    /// (`DictionaryTrigger::DeletionPattern`) and the key goes from its table. No delete departs an object.
+    /// (`DictionaryTrigger::DeletionPattern`) and the key goes from its table. A delete never moves an object out of its cell.
     pub(in crate::vm) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {

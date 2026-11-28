@@ -54,7 +54,7 @@ impl Object {
     }
 
     /// The object a live class cell presents to its readers: a record whose layout is the cell's class and
-    /// whose payload is zero. A live cell holds no extras and no arena run (both take the departure edge),
+    /// whose payload is zero. A live cell holds no extras and no arena run,
     /// so every class fact it has is in its class word.
     #[inline(always)]
     pub(crate) fn of_class(class: u32) -> Self {

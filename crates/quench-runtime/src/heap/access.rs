@@ -595,7 +595,7 @@ impl Heap {
     }
 
     /// The record of `value` with the property arena, borrowed apart so a caller can grow an owner's storage in
-    /// one lookup. Storage is record data: a live class cell has none, so it answers `None` and never departs.
+    /// one lookup. Storage is record data: a live class cell has none, so it answers `None`.
     /// A caller that replaces an owner's storage takes the cell's class transition for a cell (`initialize_object_properties`,
     /// `set_object_shape`). A legacy owner passes the generational write barrier first.
     pub(crate) fn object_and_arena_mut(&mut self, value: Value) -> Option<(&mut Object, &mut ValueArena)> {
@@ -654,7 +654,7 @@ impl Heap {
     #[quench_macros::test_visible]
     /// Changes a published object's shape, retiring target-shape readers first.
     pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
-        // A live class cell, dictionary or not, takes the shape in its class word; no departure (`dictionary_cell`).
+        // A live class cell, dictionary or not, takes the shape in its class word (`dictionary_cell`).
         if self.class_cell_set_shape(value, shape) {
             return;
         }
@@ -671,7 +671,7 @@ impl Heap {
     /// stores as its own (no storage is shared, so sweeping either cannot free the other's values). Either may be a
     /// class cell or a record. A live class cell target takes the values in place, as a class transition
     /// (`class_cell_initialize`; for a dictionary source, `cell_to_dictionary` then `dictionary_cell_initialize`), so
-    /// it does not depart.
+    /// it keeps its class.
     pub(crate) fn copy_property_storage(&mut self, source: Value, target: Value) -> bool {
         let Some(view) = self.object(source) else {
             return false;

@@ -53,7 +53,7 @@
 //! length of the last one when the next is allocated, the most of a few per young cycle. The
 //! receiver's class cell is sized for the larger of that count, its constant layout, and the closed
 //! world's union layout of its class (`construct_receiver_capacity`), so its adds within that
-//! capacity are in-place class edges (`Heap::class_cell_add`) and the rest depart.
+//! capacity are in-place class edges (`Heap::class_cell_add`) and the rest change its class (a spill, `heap::spill`).
 //!
 //! Invariant: only storage is learned, never a shape. The receiver keeps the template's shape and
 //! prototype (or the constant layout's shape over them), and every add still runs the full [[Set]]
@@ -275,7 +275,7 @@ impl Vm {
         let (program, _, _) = self.same_realm_user_target(constructor)?;
         let facts = self.programs.aot_facts(program)?;
         // `AotFacts::class_writable_cell` decides it: slots are stable and no flag transition reaches an instance,
-        // so nothing departs it. A union past one cell region spills into its run (`heap::spill`), so its fields
+        // so no change moves it out of its class. A union past one cell region spills into its run (`heap::spill`), so its fields
         // have a cell of their own, whatever their count.
         if !facts.class_writable_cell(class) { return None; }
         let layout = facts.class_union_layout(class)?;

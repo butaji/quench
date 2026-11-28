@@ -4003,8 +4003,8 @@ impl Heap {
                 self.mark_class_cell(value, object_ref.granule(), class, ctx);
                 return;
             }
-            // Marking a direct object marks its record: the stub has no mark bit of its own. A departed cell
-            // keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`, a no-op for a stub).
+            // Marking a direct object marks its record: the stub has no mark bit of its own, and marking the
+            // granule (`ClassSpace::mark_cell`) is a no-op for a stub.
             self.class_space.mark_cell(object_ref.granule());
             let record_id = self.stub_record(object_ref.granule());
             if !self.object_records.mark(record_id) {
@@ -4614,7 +4614,7 @@ impl Heap {
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let record = match self.object_store_mut(object, stored).expect("property owner is an object") {
-            // The class cell stored in place above, or it departed when a store broke its representation.
+            // The class cell took the store in place above: a store that breaks its representation changes its class.
             ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
             ObjectMut::Record(record) => record,
         };
@@ -4707,7 +4707,7 @@ impl Heap {
         }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // The class cell stored in place above, or it departed when a store broke its representation.
+                // The class cell took the store in place above: a store that breaks its representation changes its class.
                 ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
                 ObjectMut::Record(record) => record,
             };
@@ -4761,7 +4761,7 @@ impl Heap {
         }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // The class cell stored in place above, or it departed when a store broke its representation.
+                // The class cell took the store in place above: a store that breaks its representation changes its class.
                 ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
                 ObjectMut::Record(record) => record,
             };
@@ -4986,7 +4986,7 @@ impl Heap {
             return self.class_cell_append(granule, value, shape);
         }
         let _slot = if let Some(object_ref) = object.direct_object_index() {
-            // An add appends to a record's arena run (a departed cell is a record).
+            // An add appends to a record's arena run; a class cell takes its add in place (`class_cell_append`).
             let record_id = self.stub_record(object_ref.granule());
             let Self {
                 object_records,
@@ -5028,7 +5028,7 @@ impl Heap {
         if self.live_class_cell(object).is_some() {
             return self.property_add(object, value, shape);
         }
-        // An add appends to the record's arena run (a departed cell is a record).
+        // An add appends to the record's arena run; a class cell takes its add in place, above.
         let record_id = self.stub_record(object_ref.granule());
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.

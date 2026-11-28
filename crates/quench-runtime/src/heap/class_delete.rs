@@ -1,6 +1,6 @@
 //! The delete of a class cell's last-added key (departure-free S4): an in-place class transition back to the shape the
 //! object had before that key's add. Any other delete makes the cell a dictionary cell in place instead
-//! (`Heap::cell_to_dictionary`), so no delete departs a cell.
+//! (`Heap::cell_to_dictionary`), so the cell stays a cell.
 
 use super::Heap;
 use super::class_space::header_class;

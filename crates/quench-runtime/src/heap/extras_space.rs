@@ -62,7 +62,7 @@ impl ExtrasSpace {
         (id != NO_EXTRAS).then(|| &mut self.entries[id as usize])
     }
 
-    /// Releases entry `id`, returning its extras (dropped by a dead cell's sweep, moved into a record by a departure).
+    /// Releases entry `id`, returning its extras (dropped by a dead cell's sweep).
     /// The id is free for reuse afterwards. The caller passes a live id, not `NO_EXTRAS`.
     pub(crate) fn release(&mut self, id: u32) -> ObjectExtras {
         debug_assert!(id != NO_EXTRAS, "the reserved entry holds no extras");

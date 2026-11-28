@@ -2337,13 +2337,13 @@ impl Vm {
                 self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value);
                 return;
             }
-            // A dictionary cell's add is its table's, a shape-keyed add too (`dictionary_cell`): no departure.
+            // A dictionary cell's add is its table's, a shape-keyed add too (`dictionary_cell`).
             if let Some((granule, id)) = self.heap.live_dictionary_cell(object) {
                 self.heap.dictionary_cell_add(granule, id, transition.after, usize::from(transition.slot), value);
                 return;
             }
             // The remaining cell is constant-marked, which has no class key: its mark clears, then the add takes the
-            // class edge from its shape (`constant_cell_add`). No departure.
+            // class edge from its shape (`constant_cell_add`).
             let transition = transition.record_form();
             self.heap.constant_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value);
             return;

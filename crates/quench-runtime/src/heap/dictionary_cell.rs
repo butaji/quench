@@ -1,9 +1,8 @@
 //! Dictionary storage of class cells (departure-free S3). An ordinary object that goes to dictionary mode while it is a
 //! live class cell stays one: its class takes `DICTIONARY_STORAGE` and the dictionary shape, and its slot 0 holds the
 //! dictionary word, the id of its table in the value arena's dictionary store (`ValueArena::insert_dictionary`), the
-//! one store records keep theirs in. Every write and add to such a cell goes to that table, and no departure is made
-//! for it. A delete of a key other than the last added makes a cell dictionary in place (`cell_to_dictionary`), so no
-//! delete departs a cell.
+//! one store records keep theirs in. Every write and add to such a cell goes to that table, and the cell keeps its class.
+//! A delete of a key other than the last added makes a cell dictionary in place (`cell_to_dictionary`); the cell stays a cell.
 
 use super::Heap;
 use super::class_space::header_class;

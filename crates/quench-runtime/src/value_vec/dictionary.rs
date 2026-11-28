@@ -18,7 +18,7 @@ impl ValueArena {
     }
 
     /// The storage of an object in dictionary mode whose table is dictionary `id` (`insert_dictionary`). A dictionary-mode
-    /// class cell names the same table by its id, so a departure hands that id to its record (`heap::departure`).
+    /// class cell names the same table by its id (`heap::dictionary_cell`).
     pub(crate) fn with_dictionary(shape: u32, id: u32) -> ValueVec {
         let mut vector = ValueVec { start: EMPTY_START, auxiliary: shape };
         vector.use_dictionary(id);
