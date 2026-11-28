@@ -193,6 +193,18 @@ impl Dump {
         self.runs.iter().map(|run| run.1.len()).sum()
     }
 
+    /// The bytes of the runs a start maps from the image (the dump arena's, `from_file`), which stay lazy and file-backed.
+    pub fn arena_bytes(&self) -> usize {
+        self.runs.iter().filter(|run| run.2).map(|run| run.1.len()).sum()
+    }
+
+    /// The bytes of the runs a start copies into anonymous reservations, plus the statics and TLS patches: the start's
+    /// copy work (C5 D4's cost model, `c5-d4-heap-as-linker-data.md` A3).
+    pub fn copied_bytes(&self) -> usize {
+        let runs: usize = self.runs.iter().filter(|run| !run.2).map(|run| run.1.len()).sum();
+        runs + self.statics.iter().chain(&self.tls).map(|patch| patch.1.len()).sum::<usize>()
+    }
+
     /// Reads `encode`'s bytes back.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let header = Header::parse(bytes)?;
