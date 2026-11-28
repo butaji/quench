@@ -251,20 +251,31 @@ impl Vm {
         if entry.constructor != constructor || entry.start != start {
             let mut derived = self.derive_preshaped_receiver(constructor, start);
             derived.union = u8::try_from(self.union_capacity(constructor)).unwrap_or(u8::MAX);
-            self.seed_union_domains(constructor, start);
             self.preshaped_receivers[index] = derived;
         }
         index
     }
 
-    /// Seeds the observation of each union field's slot (`AotFacts::slot_domain`) along the receiver template chain of
-    /// `constructor` from `start`: union field `k` is the name the chain's `k`-th transition adds, as the constructor's
-    /// defines add it, and its slot takes the field's settled domain (`seed_slot_type`). Only a template named by
-    /// `constructor` itself, as `new constructor` makes it (`ShapeTransition::Constructed` with `new_target` the constructor),
-    /// is seeded: that root is keyed by the class, so its transitions are reached only by the class's own constructions
-    /// and the slot owners they share hold no other class's stores. A template of another root (an anonymous constructor,
-    /// or a `new.target` that is not the constructor) is shared, and is left unseeded.
-    fn seed_union_domains(&mut self, constructor: Value, start: u32) {
+    /// Starts slot-representation tracking (`Heap::track_slot_representations`) and seeds every `Constructed{C, true}` root
+    /// that exists already (`seed_union_domains`): a root made before tracking was on was not seeded, so the invariant
+    /// "a `Constructed{C, true}` root is seeded" holds whatever the order of tracking and root creation.
+    pub(super) fn track_slots(&mut self) {
+        let layouts = self.shape_layouts();
+        self.heap.track_slot_representations(&layouts);
+        for shape in 0..self.shapes.len() {
+            if let ShapeTransition::Constructed { constructor, new_target_is_base: true } = self.shapes[shape].transition {
+                self.seed_union_domains(constructor, shape as u32);
+            }
+        }
+    }
+
+    /// Seeds the observation of each union field's slot (`AotFacts::slot_domain`) along the chain from `start`: union field
+    /// `k` is the name the chain's `k`-th transition adds, and its slot takes the field's settled domain (`seed_slot_type`).
+    /// Called once per `Constructed{C, true}` root, where the root is made (`provenance::constructed_shape`), so every path that
+    /// gives an object that root gets the seed. Only that root is seeded: it is keyed by the class and reached only by `new C()`
+    /// with `new.target` C, so its slot owners hold no other class's stores. A derived constructor, a dictionary start, an
+    /// anonymous constructor (no named root) and a `new.target` other than the constructor get no such root, so no seed.
+    pub(super) fn seed_union_domains(&mut self, constructor: Value, start: u32) {
         let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
         if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) { return; }
         if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 { return; }
