@@ -2,16 +2,6 @@
 
 use super::*;
 
-/// The record of the direct object `object`; anything else, and a live object (which has no record), leaves at `miss`.
-#[inline(always)]
-pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
-    miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
-    let records = frame.object_records(stage)?;
-    let direct = value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    Some(Reached::bare(object_record_of(stage, records, object, miss)?))
-}
-
 /// The object part a plan's ops read from: a class-keyed plan (its first op guards a class, constant or an ahead image's) starts from the
 /// live class cell, every other from the object's record. The key decides it, so no run-time test chooses.
 #[inline(always)]

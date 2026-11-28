@@ -61,13 +61,6 @@ impl Lowering<'_, '_> {
         let storage = self.environment_word();
         self.builder.def_var(environment, storage);
         let mut miss = None;
-        let object_table = accesses_fields
-            .then(|| {
-                let base = emit_js_record_base(&mut self.builder, self.payload,
-                    std::mem::offset_of!(JsStepDispatch, head.object_record_base));
-                let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                CheckedObjectTable::prove(&mut self.builder, base, exit)
-            });
         let mut calls = BitSet::with_capacity(self.unit.frames.len());
         let mut call_receivers = BitSet::with_capacity(self.unit.frames.len());
         if !self.completion.numeric() {
@@ -173,7 +166,7 @@ impl Lowering<'_, '_> {
                 }
                 for (site, repeated, writes) in uses {
                     let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit, object_table);
+                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit);
                     let slot = binding.slot.read(&mut self.builder);
                     binding.slot = FieldSlot::Bound(slot);
                     // A slot whose writes the run does not admit leaves only at its stores
@@ -190,7 +183,7 @@ impl Lowering<'_, '_> {
             fields
         };
         self.admit_store_domains(instructions, &mut miss);
-        let records = self.entry_field_records(instructions, &receiver, this, object_table, &mut miss);
+        let records = self.entry_field_records(instructions, &receiver, this, &mut miss);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
             self.goto(admitted, &[]);
@@ -205,7 +198,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
+        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
     }
 
     /// Per receiver shape a field site folds, whether the receiver has it.
@@ -259,9 +252,9 @@ impl Lowering<'_, '_> {
     /// record there (an object on every run of a method): the reads of a register it hoisted ran
     /// under a branch (`packet != null`) and the run declined at its start.
     fn entry_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver, this: Variable,
-        object_table: Option<CheckedObjectTable>, miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+        miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
         let receiver_only = self.generic.contains(&entry_leave(self.unit));
-        self.invariant_field_records(instructions, receiver, this, object_table, miss, receiver_only)
+        self.invariant_field_records(instructions, receiver, this, miss, receiver_only)
     }
 
     /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or

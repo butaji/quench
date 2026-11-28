@@ -104,7 +104,7 @@ impl Vm {
             return Some(hit);
         }
         let (value, hit) = self.polymorphic_field_entry_hit(p, object, site)?;
-        if let PolymorphicHit::Own(entry) | PolymorphicHit::Holder(entry) = hit
+        if let PolymorphicHit::Own(entry) = hit
             && !self.is_private_name(atom)
         {
             self.field_stubs.insert(atom, entry);
@@ -135,15 +135,7 @@ impl Vm {
             self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 0);
             return Some((value, PolymorphicHit::Own(entry)));
         }
-        let holder = self.heap.record_prototype(receiver)?;
-        if holder.exact_shape() != entry.holder {
-            return None;
-        }
-        // SAFETY: as for a site's prototype entry (`polymorphic_field_entries_hit`): the
-        // receiver's exact shape lacks the name and the holder's exact shape holds a data
-        // property at the slot.
-        let value = unsafe { self.heap.holder_property_get_flat(holder, entry.slot as usize) };
-        self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 1);
-        Some((value, PolymorphicHit::Holder(entry)))
+        // A holder entry names a record prototype, which no object has: the stub misses.
+        None
     }
 }

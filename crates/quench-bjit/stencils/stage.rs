@@ -5,7 +5,7 @@
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
 use crate::layout::{
-    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
+    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
     JS_STEP_STORES_SPECIALIZED, JS_STEP_CLASS_BASE, JS_STEP_CLASS_MARK_LISTS, JS_STEP_SPILL_BASE,
     LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
@@ -258,7 +258,6 @@ impl Stage for StencilStage {
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
         let payload = self.payload;
         let list = match space {
-            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
             StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
             StagedRecordSpace::Class => return class_store_unlogged(self, payload, JS_STEP_STORE_WATCH, JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
         };
@@ -268,7 +267,6 @@ impl Stage for StencilStage {
     fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
         let payload = self.payload;
         let list = match space {
-            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
             StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
             StagedRecordSpace::Class => return class_held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
         };
@@ -338,10 +336,6 @@ impl Stage for StencilStage {
             // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a stencil row stores through the VM"),
         }
-    }
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
-        crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
     }
     /// `fill_by_rows` with volatile stores: the window's prefix, the arguments it holds room for,
     /// then `undefined`. The stores are volatile so LLVM cannot make the loop a `memcpy` or `memset`

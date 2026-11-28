@@ -104,7 +104,7 @@ fn private_backing<S: Stage>(stage: &mut S, arrays: S::Word, word: S::Word, miss
 /// writes the cursor (`WRITE`) also proves the state's backing its own (`writable_backing`); a
 /// read of the state needs no such proof.
 #[inline(always)]
-fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, arrays: S::Word, state: S::Word, epoch: S::Word,
     miss: S::Miss) -> Option<elements::Backing<S::Word>> {
     let backing = elements::array_backing(stage, arrays, state, miss)?;
     if WRITE { elements::writable_backing(stage, backing, miss)?; }
@@ -114,8 +114,6 @@ fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): 
     stage.guard(whole, miss)?;
     let remembered = state_word(stage, backing.values, FOR_IN_EPOCH);
     same_word(stage, remembered, epoch, miss)?;
-    let present = stage.ne_imm(objects, 0u32);
-    stage.guard(present, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
     let listed = state_word(stage, backing.values, FOR_IN_SHAPE);
     let keyed = listed_keys_class(stage, listed);
@@ -131,15 +129,8 @@ fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): 
         same_word(stage, key, listed, miss)?;
         Some(stage.constant(0))
     }, #[inline(always)] |stage| {
-        let present = stage.ne_imm(objects, 0u32);
-        stage.guard(present, miss)?;
-        let (_, record) = entry::direct_record(stage, objects, object, miss)?;
-        let exact = super::object::exact_shape(stage, record);
-        same_word(stage, exact, listed, miss)?;
-        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-        let plain = super::object::plain_payload(stage, payload);
-        stage.guard(plain, miss)?;
-        Some(stage.constant(0))
+        super::guard::no_record(stage, miss)?;
+        None
     })?;
     Some(backing)
 }
@@ -152,9 +143,9 @@ fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): 
 /// before any write) otherwise, where the full step decides: any other object, a deleted or
 /// non-enumerable key, and an exhausted snapshot, which jumps.
 #[inline(always)]
-pub fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+pub fn for_in_next<S: Stage>(stage: &mut S, arrays: S::Word, state: S::Word, epoch: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    let backing = current_state::<S, true>(stage, (arrays, objects), state, epoch, miss)?;
+    let backing = current_state::<S, true>(stage, arrays, state, epoch, miss)?;
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
     let int_tag = stage.constant(crate::value::ValueLayout::INT_TAG);
     let index = stage.sub(cursor, int_tag);
@@ -179,9 +170,9 @@ pub fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word
 /// `miss`, where the general element read decides.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, base: S::Word,
+pub fn for_in_keyed_get<S: Stage>(stage: &mut S, arrays: S::Word, state: S::Word, base: S::Word,
     key: S::Word, epoch: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let backing = current_state::<S, false>(stage, (arrays, objects), state, epoch, miss)?;
+    let backing = current_state::<S, false>(stage, arrays, state, epoch, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
     same_word(stage, object, base, miss)?;
     let shape_word = state_word(stage, backing.values, FOR_IN_SHAPE);
@@ -211,11 +202,8 @@ pub fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S:
         let cell = super::object::cell_at_granule(stage, granule);
         Some(entry::cell_field(stage, cell, slot))
     }, #[inline(always)] |stage| {
-        let (_, record) = entry::direct_record(stage, objects, base, miss)?;
-        let inline = super::object::inline_storage(stage, record);
-        let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
-            super::object::PackedAccess::Reload, miss)?;
-        Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
+        super::guard::no_record(stage, miss)?;
+        None
     })
 }
 

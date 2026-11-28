@@ -32,7 +32,7 @@ use quench_bjit::{padded_holes, HOLES};
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
-/// record id the object is named by.
+/// granule of the global object's class cell, which the slot word is addressed in (`class_slot_address`).
 #[derive(Clone, Copy)]
 pub(crate) struct Access {
     pub(crate) slot: GlobalSlot,
@@ -42,15 +42,13 @@ pub(crate) struct Access {
 impl Access {
     fn of(slot: GlobalSlot) -> Option<Self> {
         Some(Self {
-            id: slot.record,
+            id: slot.granule,
             slot,
         })
     }
 
-    /// The byte offset of the slot's value in the arena run behind the object's extras.
-    fn offset(self) -> u64 {
-        u64::from(self.slot.slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64
-    }
+    /// The field-cache slot word of the slot (`GlobalSlot::slot`), which the lane addresses in the global's class cell
+    /// (`staged::entry::class_slot_address`); a row holds the word itself, not a byte offset into an arena.
 
     /// Whether the slot's observed type is Numbers only, which a load of it yields.
     pub(crate) fn numeric(self) -> bool {
@@ -90,7 +88,7 @@ pub(crate) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
     if read_op(instruction).is_some() {
         Some(Decoded {
-            hole: access.offset(),
+            hole: access.slot_word(),
             global: Some(access),
             also: receiver(instruction),
             ..Decoded::heap(
@@ -161,7 +159,7 @@ fn store_row(known: Known, instruction: WideInstruction, access: Access) -> Opti
     known.stores_in_place(atom).then(|| {
         let value = Some(Source::Register(instruction.register_a()));
         Decoded {
-            hole: access.offset(),
+            hole: access.slot_word(),
             global: Some(access),
             atom: Some(atom),
             ..Decoded::heap(Heap::GlobalStore, None, value, None)
@@ -170,7 +168,7 @@ fn store_row(known: Known, instruction: WideInstruction, access: Access) -> Opti
 }
 
 /// The hole values of a global slot row, given its holes of destination and first operand: `None` for
-/// any other row. The slot's byte offset is hole 2 of the slot rows, the word of a constant row hole 1.
+/// any other row. The slot word is hole 2 of the slot rows, the word of a constant row hole 1.
 pub(crate) fn global_holes(
     decoded: &Decoded,
     heap: Heap,

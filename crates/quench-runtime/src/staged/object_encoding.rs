@@ -53,7 +53,6 @@ pub const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + PROTO_RECORD
 /// layouts generated code reads (`layout_offsets`) take. The spaces reserve address space only
 /// (`MAP_NORESERVE`), so a large capacity costs no memory until records are used. Every capacity is
 /// a power of two and a multiple of `RECORDS_PER_BLOCK`.
-pub const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
 pub const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
 pub const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
 pub const PROMISE_RECORD_CAPACITY: usize = 1 << 28;

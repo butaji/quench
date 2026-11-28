@@ -11,37 +11,6 @@ use crate::compiled::regions;
 use quench_runtime::tier_surface::PlainPropertyStorage;
 use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 
-/// A non-null table reservation admitted for this native run. This proves no
-/// receiver identity, ID range, record liveness or property-storage lifetime.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CheckedObjectTable(ir::Value);
-
-impl CheckedObjectTable {
-    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, base: ir::Value, miss: ir::Block) -> Self {
-        let present = emit(builder).raw_compare_imm(Relation::NotEqual, base, 0);
-        emit_js_guard(builder, present, miss);
-        Self(base)
-    }
-
-    pub(crate) fn base(self) -> ir::Value { self.0 }
-}
-
-/// Legacy operation-local admission and region-entry admission use the same
-/// projector; only the latter has already discharged the table-present guard.
-#[derive(Clone, Copy)]
-pub(crate) enum ObjectTable {
-    Unchecked(ir::Value),
-    Checked(CheckedObjectTable),
-}
-
-impl From<ir::Value> for ObjectTable {
-    fn from(base: ir::Value) -> Self { Self::Unchecked(base) }
-}
-
-impl From<CheckedObjectTable> for ObjectTable {
-    fn from(table: CheckedObjectTable) -> Self { Self::Checked(table) }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectHeader {
     pub(crate) record: ObjectRecord,
@@ -61,29 +30,19 @@ pub(crate) struct ObjectHeader {
     pub(crate) shape_fact: Option<ShapeFact>,
 }
 
-/// The record id of the stub at granule `granule` (the Cranelift projection of `staged::object::stub_record_id`):
-/// the granule's region is the guard, so a granule outside region 0 names a live class cell, which has no record,
-/// and branches to `miss`; the high half of the stub's header is the record id. `granule` is an `I64`, and the
-/// class space is at `class_base` (`emit` carries no dispatch payload to read it from). Mirrors the staged test.
-pub(crate) fn stub_record_id(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value, miss: ir::Block) -> ir::Value {
-    use quench_runtime::staged::layout_offsets::{CLASS_CELL_GRANULE_BYTES, NATIVE_CLASS_CELL_LAYOUT};
-    use quench_runtime::staged::object_encoding::REGION_SHIFT;
-    let region = emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, granule, i64::from(REGION_SHIFT));
-    let stub = emit(builder).raw_compare_imm(Relation::Equal, region, 0);
-    emit_js_guard(builder, stub, miss);
-    let cell_offset = emit(builder).raw_binary_imm(Binary::Mul, granule, CLASS_CELL_GRANULE_BYTES as i64);
-    let cell = emit(builder).raw_binary(Binary::Add, class_base, cell_offset);
-    let header = emit(builder).raw_load(Lane::I64, MemFlagsData::trusted(), cell, NATIVE_CLASS_CELL_LAYOUT.header_offset as i32);
-    emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, header, i64::from(u32::BITS))
+/// S7f DESIGN: the object record table is gone and every ordinary object is a class cell. A probe that needed a
+/// record id, or a table address, declines to `miss` unconditionally (`decline_record_table`) until the class cell
+/// is addressed directly; no native read reaches a record.
+pub(crate) fn decline_record_table(builder: &mut FunctionBuilder<'_>, miss: ir::Block) {
+    let never = emit(builder).raw_const(Lane::I32, 0);
+    emit_js_guard(builder, never, miss);
 }
 
-/// A verified direct-object locator. Indexed records keep the admitted base and
-/// byte offset; address values are derived only for their consumers.
+/// A verified direct-object locator. Address values are derived only for their consumers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ObjectRecord {
     /// A record address already admitted by the region's receiver entry.
     Address(ir::Value),
-    Indexed { base: ir::Value, offset: ir::Value },
     /// The class cell of a fixed class (`AotFacts::class_fixed_cell`): every instance is this cell from birth, so no record
     /// exists, and no presence or class test is made. The cell is `class_base + granule * 8`, whose fields are the
     /// union slots (`offset_address`); the granule is the cell's record id in the class space (`Stage::store_gate`).
@@ -101,34 +60,18 @@ impl ObjectRecord {
         Self::FixedCell { cell: emit(builder).raw_binary(Binary::Add, class_base, offset), granule }
     }
 
-    /// The Cranelift projection of staged `object::object_record_of`: the granule the direct object's
-    /// bits name is a stub (region 0), whose header's high half is the record id, and the record is
-    /// `records + id * record_size` (R4-B2b decision 6).
-    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: impl Into<ObjectTable>, class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        let records = match records.into() {
-            ObjectTable::Unchecked(base) => base,
-            ObjectTable::Checked(table) => table.base(),
-        };
-        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
-        let granule = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
-        // Only a dominating verified definition/edge can supply this fact.
-        // No safepoint or layout-changing operation may cross its lifetime.
-        if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
-            let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
-            emit_js_guard(builder, object, miss);
-        }
-        let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
-        let id = stub_record_id(builder, class_base, granule, miss);
-        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
-        Self::Indexed { base: records, offset }
+    /// The record probe of a direct object (staged `object::object_record_of`). The record table it addressed is
+    /// gone, so the probe declines (`decline_record_table`); the address that follows is unreachable.
+    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, _bits: ir::Value, class_base: ir::Value,
+        _known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
+        decline_record_table(builder, miss);
+        Self::Address(class_base)
     }
 
     /// The record's address, or a fixed class's cell (which holds no record).
     pub(crate) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
             Self::Address(address) | Self::FixedCell { cell: address, .. } => address,
-            Self::Indexed { base, offset } => emit(builder).raw_binary(Binary::Add, base, offset),
         }
     }
 
@@ -136,7 +79,7 @@ impl ObjectRecord {
     pub(crate) fn granule(self) -> Option<ir::Value> {
         match self {
             Self::FixedCell { granule, .. } => Some(granule),
-            Self::Address(_) | Self::Indexed { .. } => None,
+            Self::Address(_) => None,
         }
     }
 
@@ -144,11 +87,10 @@ impl ObjectRecord {
     /// an address, so the record's summed pointer need not span the guards. A fixed class's
     /// displacement is from its cell, whose fields are the union slots.
     pub(crate) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
-        let (base, offset) = match self {
-            Self::Address(address) | Self::FixedCell { cell: address, .. } => (address, displacement),
-            Self::Indexed { base, offset } => (base, emit(builder).raw_binary(Binary::Add, offset, displacement)),
+        let base = match self {
+            Self::Address(address) | Self::FixedCell { cell: address, .. } => address,
         };
-        emit(builder).raw_binary(Binary::Add, base, offset)
+        emit(builder).raw_binary(Binary::Add, base, displacement)
     }
 
     pub(crate) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
@@ -168,31 +110,22 @@ impl ObjectRecord {
 
 impl ObjectHeader {
     pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: impl Into<ObjectTable>, class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        ObjectRecord::prove(builder, bits, records, class_base, known, miss).header(builder, known)
+        class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
+        ObjectRecord::prove(builder, bits, class_base, known, miss).header(builder, known)
     }
 
     /// `prove` for a read, which a function's own fields answer too: a direct function's
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
+    /// A direct object's record is gone (`decline_record_table`), so only a function's record is read here.
     /// A store must not take this proof: its barrier reads object record marks.
     pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value, known: Option<typed_ir::VerifiedFact>,
-        records: ir::Value, class_base: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
-        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
+        functions: ir::Value, class_base: ir::Value, miss: ir::Block) -> Self {
         let function = quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT;
-        let (object_block, function_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
-        // A function's own read is the rare one; the object path stays the straight line.
-        builder.set_cold_block(function_block);
-        let record = builder.append_block_param(join, types::I64);
         let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
         let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
-        emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
-        builder.switch_to_block(object_block);
-        let record = stub_record_id(builder, class_base, id, miss);
-        let offset = emit(builder).raw_binary_imm(Binary::Mul, record, layout.record_size as i64);
-        let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
-        emit(builder).goto(join, &[object_record]);
-        builder.switch_to_block(function_block);
+        let not_object = emit(builder).raw_compare_imm(Relation::Equal, object, 0);
+        emit_js_guard(builder, not_object, miss);
         // A solver type that proves a function proves the function tag too: only the table's reservation is tested.
         let reserved = emit(builder).raw_compare_imm(Relation::NotEqual, functions, 0);
         let readable = if known.is_some_and(|fact| proves_function(fact.ty)) { reserved } else {
@@ -202,9 +135,7 @@ impl ObjectHeader {
         emit_js_guard(builder, readable, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, id, function.record_size as i64);
         let function_record = emit(builder).raw_binary(Binary::Add, functions, offset);
-        let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
-        emit(builder).goto(join, &[function_object]);
-        builder.switch_to_block(join);
+        let record = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
         let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
         Self { record: ObjectRecord::Address(record), address: record, shape: Some(shape), inline: Some(inline), word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
     }

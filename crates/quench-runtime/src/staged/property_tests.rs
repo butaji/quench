@@ -146,7 +146,8 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     (object, shape)
 }
 
-pub fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| base as u64) }
+/// The object record table is gone (S7f): no table base, so a record plan reads none.
+pub fn records(_heap: &Heap) -> u64 { 0 }
 
 /// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {

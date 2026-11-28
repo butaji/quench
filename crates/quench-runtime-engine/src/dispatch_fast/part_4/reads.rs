@@ -11,9 +11,11 @@ pub(in super::super) fn returning_field_hit<const KIND: u8>(
     cache: u16,
 ) -> Option<Value> {
     match KIND {
-        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, cache),
+        // S7f DESIGN: the primary own read (`primary_own_field_hit`) served an object record only. A cell's own read
+        // is class-keyed (`cell_own_field_hit`), which the lane cannot reach, so the own kind declines to the general read.
+        RETURNING_FIELD_OWN => None,
         RETURNING_FIELD_POLYMORPHIC => vm.inline_polymorphic_field_hit(code, object, cache),
-        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, cache),
+        RETURNING_FIELD_HOLDER => vm.class_holder_field_hit(code, object, cache),
         _ => vm.inherited_field_hit(code, object, cache),
     }
 }

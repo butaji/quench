@@ -11,7 +11,7 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_STRING_RECORD_BASE};
 use crate::staged::{Concrete, Constant, Float64, Int32, IntFact, NumberFact, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::{Representation, Type};
 use crate::words::*;
@@ -526,14 +526,12 @@ impl Frame<Concrete> for Places {
         Some((word_at(locals, 0), Representation::Tagged))
     }
 
-    /// The array and object record tables and the collection epoch the dispatch payload holds, where
-    /// both tables are reserved (the lane frame's `heap_records`); `None` where one is absent.
+    /// The array and object record tables and the collection epoch the for-in fast arm reads (the lane
+    /// frame's `heap_records`). The object table left the payload with the object records.
+    // S7f DESIGN: the fast for-in arm declines (`None`, the call-out); the trait now carries the array table
+    // and epoch alone, so restoring the arm is reading those two payload words here.
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
-        let payload = payload(&self.s);
-        let (arrays, objects) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-        (arrays != 0 && objects != 0).then(|| (arrays, objects, word_at(payload, JS_STEP_EPOCH)))
-    }
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64)> { None }
 
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {

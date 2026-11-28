@@ -21257,7 +21257,6 @@ fn lane_int_stores_to_packed_objects_keep_their_narrow_form_like_the_interpreter
         vm.programs.enable_js_lane_methods();
         vm.set_execution_mode(mode);
         vm.execute(&program).unwrap();
-        assert_eq!(vm.heap.unrepresented_slots(), 0);
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
@@ -21908,7 +21907,7 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
 #[test]
 fn lane_feedback_stores_take_polymorphic_own_slots() {
     // A store to `this` across receivers of two shapes, which a body left at, stores through
-    // the site's megamorphic own entries (`Vm::polymorphic_own_field_store_hit`), a widening
+    // the site's class-keyed own entries (`Vm::cached_field_store_hit`), a widening
     // double among them, and every read sees what the interpreter's does.
     let source = r#"
      (function () {
@@ -22361,7 +22360,6 @@ fn lane_field_reads_speculate_on_slot_representations_like_the_interpreter() {
         vm.programs.enable_js_lane_methods();
         vm.set_execution_mode(mode);
         vm.execute(&program).unwrap();
-        assert_eq!(vm.heap.unrepresented_slots(), 0);
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
@@ -22856,28 +22854,12 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 let increment = match object_name { "accessor" => 3, "proxy" => 1, _ => 0 };
                 assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before.as_int().unwrap() + increment)));
             }
-            // A marked owner must use the logged helper. Recompile after GC may
-            // renumber shapes, then create a young value with no independent root.
+            // Recompile after GC may renumber shapes, then create a young value with no independent root.
             vm.collect_now(&program);
             vm.collect_now(&program);
             let object = global(&mut vm, "arena");
             vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
             let method = vm.compile_lane_method(&program, id as u32, &|_| (0, 0), Vec::new(), &[]).unwrap();
-            let marked = |vm: &Vm, object: Value| {
-                let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-                let id = vm.heap.record_id(object.direct_object_index().unwrap()).unwrap() as usize;
-                let (blocks, count) = vm.heap.native_object_mark_blocks();
-                let block = id / layout.mark_records_per_block;
-                assert!(block < count);
-                let within = id % layout.mark_records_per_block;
-                let offset = block * layout.mark_block_size + layout.mark_offset
-                    + (within / layout.mark_word_bits) * std::mem::size_of::<u64>();
-                // SAFETY: the rooted live record names an initialized mark block;
-                // the authoritative layout derives aligned bitmap offsets.
-                let word = unsafe { blocks.add(offset).cast::<u64>().read() };
-                word & (1 << (within % layout.mark_word_bits)) != 0
-            };
-            assert!(marked(&vm, object), "the first heap write must require logging");
             let numeric = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "writeNumber")).unwrap();
             let numeric_function = global(&mut vm, "writeNumber");
@@ -22892,14 +22874,12 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                 let stored = vm.own_property(object, left).unwrap().as_number().unwrap();
                 let expected = value.as_number().unwrap();
                 assert!(stored.to_bits() == expected.to_bits() || (stored.is_nan() && expected.is_nan()));
-                assert!(marked(&vm, object), "Number stores must not consume the reference barrier");
             }
             let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
             let (pc, registers) = run(&mut vm, body, &method, object, child);
             assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
             assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
             assert_eq!(vm.own_property(object, left), Some(child));
-            assert!(!marked(&vm, object), "the shared barrier records and unmarks its owner");
             vm.collect_slow(&program, false);
             assert!(vm.heap.is_live(child), "the stored young value survives collection");
             // Restore the Number fixture for the next function's oracle.

@@ -4,13 +4,11 @@
 //! (`staged/{steps,generic,control,names,heap}.rs`). The frame methods those steps call on `Places`
 //! live in `places_names.rs` (`typeof_entry`, `call_out_fast`).
 
-use crate::codes::{MEM, SITE_OBJECT_AT, HELD_LINK_AT, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW};
-use crate::heap_rows::word_at;
-use crate::numeric::{HOLE_A, HOLE_B, Out, S};
+use crate::codes::{MEM, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW};
+use crate::numeric::{HOLE_B, Out, S};
 use crate::places::{DEST, LEFT, Places, finish_fast};
 use crate::stage::StencilStage;
-use crate::staged::{Frame, Operation, Stage, Step, object, op_kind, step_generic_of, step_names_of, step_of, step_value_of};
-use crate::words::hole64;
+use crate::staged::{Frame, Operation, Stage, Step, op_kind, step_generic_of, step_names_of, step_of, step_value_of};
 
 /// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
 /// (`iteration::require_iterator_result`, `step_value`).
@@ -61,17 +59,9 @@ fn typeof_string_row(s: S) -> Out {
 /// are the registers `Frame::tagged` reads) cannot name them; the row runs the walk `InstanceOf` runs on the same words.
 #[inline(always)]
 fn instanceof_row(s: S) -> Out {
-    let (value, constructor) = (hole64::<0>() >> SITE_OBJECT_AT, hole64::<HOLE_A>());
-    let mut frame = Places::new::<MEM, MEM, MEM>(s);
-    let mut stage = StencilStage::from_hole(0);
-    let held = word_at(frame.s.frame, (constructor & u64::from(u32::MAX)) as usize) == hole64::<HOLE_B>();
-    let records = frame.object_records();
-    let words = (word_at(frame.s.frame, value as usize), constructor >> HELD_LINK_AT);
-    let done = held && object::instanceof_by_words(&mut stage, records, words.0, words.1, ()).map(|holds| {
-        let (boolean, fact) = frame.boolean(&mut stage, holds);
-        frame.write(&mut stage, DEST, boolean, fact);
-    }).is_some();
-    finish_fast(frame, done)
+    // S7f DESIGN: the walk ran over object records (`instanceof_by_words`), which are gone; the row declines to the VM
+    // until the walk reads class cells.
+    finish_fast(Places::new::<MEM, MEM, MEM>(s), false)
 }
 
 /// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is

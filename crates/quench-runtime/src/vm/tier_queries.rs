@@ -214,9 +214,6 @@ heap_reads! {
     fn class_space_base() -> usize;
     /// The class space's spill arena base (`Heap::native_spill_base`), which `JsStepHead::spill_base` takes.
     fn native_spill_base() -> usize;
-    /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index;
-    /// `None` for a live class cell, which has no record.
-    fn record_id(object: crate::value::ObjectRef32) -> Option<u32>;
     /// The weight allocated since the last collection (`Heap::allocated_weight`).
     fn allocated_weight() -> usize;
     /// An object held as a record (`Heap::record_object_value`).
@@ -243,8 +240,6 @@ heap_reads! {
     fn live_class_key(value: Value) -> Option<u32>;
     /// The native array allocation cursor (`Heap::native_array_cursor`).
     fn native_array_cursor() -> usize;
-    /// The native objects' mark blocks (`Heap::native_object_mark_blocks`).
-    fn native_object_mark_blocks() -> (*const u8, usize);
     /// A class cell region's mark blocks and their count (`Heap::native_class_mark_blocks`).
     fn native_class_mark_blocks(region: u32) -> (*const u8, usize);
     /// The native functions' mark blocks (`Heap::native_function_mark_blocks`).
@@ -281,14 +276,6 @@ heap_reads! {
     fn property_get_ref(object: ObjectRef<'_>, slot: usize) -> Option<Value>;
     /// An ordinary object's record (`Heap::ordinary_object`).
     fn ordinary_object(value: Value) -> Option<&'a Object>;
-    /// An object held in the record arena (`Heap::object_record`).
-    fn object_record(value: Value) -> Option<&'a Object>;
-    /// The record of arena id `record_id` (`Heap::object_record_by_id`).
-    fn object_record_by_id(record_id: u32) -> &'a Object;
-    /// The record arena's base, for a tier that addresses records in place (`Heap::object_record_base`).
-    fn object_record_base() -> Option<*const Object>;
-    /// The live record arena (`Heap::live_object_records`).
-    fn live_object_records() -> *const Object;
     /// The property value arena's base (`Heap::arena_values_base`).
     fn arena_values_base() -> *const Value;
     /// The native property values (`Heap::native_property_values`).

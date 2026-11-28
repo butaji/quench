@@ -15,7 +15,7 @@ mod slots;
 use slots::{formed_slot, kept_slot, word_formed_slot};
 
 use super::ic::{self, IcOp, Reached};
-use super::object::{object_record_of, Form, Layout};
+use super::object::{Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::typed_ir::Type;

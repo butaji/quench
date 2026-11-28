@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, OrdinaryRecord, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -23,7 +23,6 @@ use std::sync::atomic::AtomicU64;
 pub(super) type RecordId = u32;
 
 
-pub(super) type ObjectRecordSpace = RecordSpace<OrdinaryRecord, OBJECT_RECORD_CAPACITY>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;
@@ -57,8 +56,7 @@ const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
 
 /// The `Value` of a record of one family, named by the family's element type. A family names its
-/// records by id, except the ordinary object, whose `Value` is its stub granule, which its record
-/// holds (`OrdinaryRecord::stub`).
+/// records by id (an ordinary object is a class cell, named by its granule, and has no record space).
 pub(super) trait RecordValue: Sized {
     /// The `Value` of record `id` of `space`. The id names a live record of `space` (`RecordFamily::value_of`).
     fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value;
@@ -169,21 +167,21 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 /// The capacities live in `staged::object_encoding`, beside the link layout they fit in.
 pub(super) use crate::staged::object_encoding::{
     ARRAY_RECORD_CAPACITY, AWAIT_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY,
-    ITERATOR_RECORD_CAPACITY, OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
+    ITERATOR_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
     WASM_GC_RECORD_CAPACITY,
 };
 
 #[cfg(test)]
 pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;
 
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_power_of_two() && ARRAY_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(ARRAY_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(WASM_GC_RECORD_CAPACITY.is_power_of_two() && WASM_GC_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 // Ids are `u32`, and the id after a space's last one must still fit.
-const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
+const _: () = assert!(FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());

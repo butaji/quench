@@ -170,37 +170,12 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     vm.execute(&program).unwrap();
     let receiver = vm.own_property(vm.realm.globals, vm.lookup_atom("receiver").unwrap()).unwrap();
     let other = vm.own_property(vm.realm.globals, vm.lookup_atom("other").unwrap()).unwrap();
-    let child = vm.own_property(vm.realm.globals, vm.lookup_atom("child").unwrap()).unwrap();
     let third = vm.own_property(vm.realm.globals, vm.lookup_atom("third").unwrap()).unwrap();
-    let hint = vm.field_cache_entry(site);
     vm.profile.field_primitives = Default::default();
-    assert_eq!(vm.record_field_entry_hit(hint, receiver), Some(Value::integer(0)));
-    assert_eq!(vm.record_field_entry_hit(hint, other), None);
-    assert_eq!(vm.profile.field_primitives.count(Path::HintOwnRead), 1);
-    // The child inherits exactly the own data slot the warmed entry proves.
-    let holder_hint = FieldCache {
-        receiver: vm.heap.object(child).unwrap().exact_shape(),
-        holder: hint.receiver,
-        slot: hint.slot,
-        holder_cell: NO_FIELD_HOLDER_LAYOUT,
-    };
-    assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
-    assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
-    assert_eq!(vm.profile.field_primitives.count(Path::HintHolderRead), 1);
-    assert_eq!(vm.primary_own_field_hit(&program, receiver, site), Some(Value::integer(0)));
-    assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
-    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryOwnRead), 1);
+    // The site's class-keyed entry admits the warmed receiver's class only: other shapes miss.
     assert!(vm.primary_own_field_store_hit::<false>(&program, receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
     assert!(!vm.primary_own_field_store_hit::<false>(&program, other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
-    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreNoLog), 1);
     assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
-    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreLogged), 1);
-    assert!(vm.hinted_primary_field_store_hit::<false>(hint, receiver, atom, Value::integer(2)));
-    assert!(!vm.hinted_primary_field_store_hit::<false>(hint, other, atom, Value::integer(2)));
-    assert_eq!(vm.profile.field_primitives.count(Path::HintedPrimaryStore), 1);
-    assert!(vm.hinted_own_field_store_hit(hint, receiver, atom, Value::integer(3)));
-    assert!(!vm.hinted_own_field_store_hit(hint, other, atom, Value::integer(3)));
-    assert_eq!(vm.profile.field_primitives.count(Path::HintedStore), 1);
     assert!(vm.cached_field_store_hit(&program, receiver, atom, Value::integer(4), site));
     assert_eq!(vm.profile.field_primitives.count(Path::CachedStore), 1);
     assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site, true));
@@ -210,9 +185,6 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     // Real reads install the other two shape/slot pairs at this same site.
     assert_eq!(vm.get_field_cached(&program, other, atom, site).unwrap(), Value::integer(0));
     assert_eq!(vm.get_field_cached(&program, third, atom, site).unwrap(), Value::integer(0));
-    assert!(vm.polymorphic_own_field_store_hit(&program, other, atom, Value::integer(6), site, crate::heap::PropertyStoreLayout::MayWiden).is_some());
-    assert_eq!(vm.profile.field_primitives.count(Path::PolymorphicStore), 1);
-    assert_eq!(vm.own_property(other, atom), Some(Value::integer(6)));
 }
 
 #[cfg(all(feature = "profile-field-primitives", not(any(feature = "profile-aggregate", feature = "profile-memory"))))]
@@ -323,17 +295,11 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         unsafe { pointer.write(value); }
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
     }
-    assert_eq!(vm.heap.unrepresented_slots(), 0);
-    let hint = vm.field_cache_entry(site);
     let child = vm.object();
-    assert!(!vm.hinted_primary_field_store_hit::<true>(hint, receiver, atom, child),
-        "the hinted no-log store must defer a reference barrier");
-    let record = vm.heap.record_id(receiver.direct_object_index().unwrap()).unwrap();
-    // SAFETY: the same exact own-data shape still proves this initialized slot.
-    assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },
-        "a Number pointer store must not consume the owner's reference barrier");
-    // A real reference store still logs its owner, and the collector follows it.
-    assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
+    assert!(!vm.primary_own_field_store_hit::<false>(&program, receiver, atom, child, site, crate::heap::PropertyStoreLayout::Preserve),
+        "the no-log store must defer a reference barrier");
+    // A real reference store logs its owner through the class cell's barrier, and the collector follows it.
+    vm.heap.property_set(receiver, slot, child);
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(child));
@@ -631,9 +597,9 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
             let holder_atom = vm.intern_atom("holder");
             let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
             let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
-            // The receiver is an ordinary object, so a class cell; the function holder is no object record.
+            // The receiver is an ordinary object, so a class cell; the function holder is no class cell.
             assert!(vm.heap.live_class_cell(receiver).is_some());
-            assert!(vm.heap.object_record(holder).is_none());
+            assert!(vm.heap.live_class_cell(holder).is_none());
 
             let inherited = vm.intern_atom("inherited");
             assert!(

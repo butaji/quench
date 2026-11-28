@@ -191,12 +191,9 @@ pub(crate) fn retire_running_lane_context() {
     unsafe { (cx.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(cx) };
 }
 
-pub(super) unsafe fn resume_lane_binding(context: *mut ()) {
-    let cx = context.cast::<LaneContext>();
-    // SAFETY: the prefix's callback was installed for this context's Host.
-    let base = unsafe { vm(cx) }.heap_reads().object_record_base().unwrap_or(std::ptr::null());
-    unsafe { (*cx).binding.object_base = base };
-}
+/// The resume callback of the lane prefix. The object record base it used to reread is gone (S7f), so there
+/// is nothing to reread on resume.
+pub(super) unsafe fn resume_lane_binding(_context: *mut ()) {}
 
 /// The storage of the running frame's captured environment (`LaneContext::frame_storage`),
 /// for a frame run of a function other than the root whose frame holds one; `None` leaves

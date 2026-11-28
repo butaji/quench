@@ -1,5 +1,6 @@
-//! The reads `GetField` records keep as their hints beside the site caches: a prototype's
-//! method (`HolderHint`).
+//! The reads `GetField` records keep as their hints beside the site caches: a prototype's method (`HolderHint`).
+//! A getter's own-field and an own constant's hints named an object record; every ordinary object is a class
+//! cell now, so they are gone (S7g).
 use super::*;
 
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
@@ -35,8 +36,11 @@ impl PrototypeHints {
     /// Retires the watch of every hint whose prototype `live` no longer holds: a hint names its
     /// prototype by record id, which an allocation may give another object once it is swept.
     pub(super) fn retire_dead(&mut self, live: impl Fn(Value) -> bool) {
-        self.holder.iter().map(|hint| (hint.holder, &hint.watch))
-            .filter(|(holder, _)| !live(*holder)).for_each(|(_, watch)| watch.retire());
+        self.holder
+            .iter()
+            .map(|hint| (hint.holder, &hint.watch))
+            .filter(|(holder, _)| !live(*holder))
+            .for_each(|(_, watch)| watch.retire());
     }
 }
 

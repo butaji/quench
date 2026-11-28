@@ -137,7 +137,7 @@ impl Vm {
     #[inline(always)]
     fn forwarded_read(&self, forward: AccessorForward, object: Value) -> Option<Value> {
         match forward {
-            AccessorForward::Field(answer) => self.record_field_entry_hit(answer, object),
+            AccessorForward::Field(_) => None,
             AccessorForward::Constant(value) => Some(value),
             AccessorForward::Receiver => Some(object),
             AccessorForward::None | AccessorForward::Store { .. } => None,

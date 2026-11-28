@@ -1,6 +1,5 @@
-//! The view of an object named by a direct `Value` or a prototype link's granule, for readers that held a record
-//! before every ordinary object became a class cell (S7a). `object_record` and `object_record_by_granule` now name
-//! only the record of a non-cell object, so an ordinary-object reader takes its view here instead.
+//! The view of an ordinary object named by a direct `Value` or a prototype link's granule. Every ordinary object is a
+//! class cell (S7f: no object record exists), so the view of a granule is its live cell.
 
 use super::*;
 
@@ -14,22 +13,11 @@ impl Heap {
         self.object(value)
     }
 
-    /// The view of the ordinary object a prototype link names by `granule` (`ProtoLink::object_granule`). A live
-    /// class cell is its own view at its granule; a region 0 stub names its record through the header hop.
+    /// The view of the ordinary object a prototype link names by `granule` (`ProtoLink::object_granule`): a live
+    /// class cell, its own view at its granule.
     #[inline(always)]
     pub(crate) fn object_view_by_granule(&self, granule: u32) -> ObjectRef<'_> {
-        if self.class_space.live_class(granule).is_some() {
-            return self.live_cell(granule);
-        }
-        ObjectRef::Record(self.object_record_by_granule(granule))
-    }
-
-    /// The record a prototype link names by `granule`, where the granule is a stub: `None` for a class cell,
-    /// which holds no record. A reader of record storage (`holder_property_get_flat`) takes it and misses on a
-    /// cell prototype, whose own tier answers.
-    #[inline(always)]
-    pub(crate) fn record_by_granule(&self, granule: u32) -> Option<&Object> {
-        self.class_space.live_class(granule).is_none().then(|| self.object_record_by_granule(granule))
+        self.live_cell(granule)
     }
 
     /// `property_get_shaped` of a view: a record's shaped read, or a cell's word at `slot` (a shaped read tests no

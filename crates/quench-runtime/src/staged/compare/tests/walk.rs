@@ -1,7 +1,5 @@
-//! Prototype walks in the comparison jumps. A walk follows an object record's prototype link to the next object
-//! record (the stub hop, `object::proto_object_record_id`). An ordinary object is a class cell with no record, and an
-//! array's prototype link is an array-record link, so no live chain is one the object-record walk follows; its
-//! unrolled and looped agreement and the `instanceof` word test went with the records they read.
+//! Prototype walks in the comparison jumps. The object-record walk went with the records it followed (an ordinary
+//! object is a class cell, and no link names a record now), so only the null link's encoding is checked here.
 
 /// The walk ends at the heap's null link, which is the object layout's `proto_mask`.
 #[test]

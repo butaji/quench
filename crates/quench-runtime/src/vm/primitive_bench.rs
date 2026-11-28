@@ -18,7 +18,6 @@ use test::Bencher;
 
 use crate::number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 mod fields;
-mod field_reads;
 mod captures;
 mod strings;
 mod updates;

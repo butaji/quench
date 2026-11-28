@@ -310,10 +310,10 @@ fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
 #[inline(always)]
 fn enumerated_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     [state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
-    if let Some((arrays, objects, epoch)) = frame.heap_records(stage) {
+    if let Some((arrays, epoch)) = frame.heap_records(stage) {
         let (state_word, base_word, key_word) = (frame.tagged(stage, state), frame.tagged(stage, base), frame.tagged(stage, key));
         let miss = frame.miss();
-        if let Some(value) = super::iteration::for_in_keyed_get(stage, (arrays, objects), state_word, base_word, key_word, epoch, miss) {
+        if let Some(value) = super::iteration::for_in_keyed_get(stage, arrays, state_word, base_word, key_word, epoch, miss) {
             return Step::Value(value);
         }
     }

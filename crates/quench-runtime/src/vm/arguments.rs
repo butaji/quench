@@ -1,6 +1,15 @@
 use super::*;
 
 impl Vm {
+    /// Records `depth`, the lane window activation that holds the mapped `arguments` object, in its extras (an
+    /// array record's, or a class cell's by extras id), where an element's write finds its parameter.
+    pub fn note_arguments_window_depth(&mut self, arguments: Value, depth: usize) {
+        self.heap.ensure_cell_extras(arguments);
+        if let Some(mut object) = self.heap.object_mut(arguments) {
+            object.set_window_depth(depth);
+        }
+    }
+
     pub(super) fn mapped_argument_load(
         &self,
         p: &ResidualProgram,

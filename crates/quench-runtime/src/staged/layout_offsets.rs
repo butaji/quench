@@ -20,16 +20,13 @@ use super::object_encoding::{
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
-    OBJECT_RECORD_CAPACITY, ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
+    ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
     VALUE_VEC_INTEGRITY_BITS, WASM_GC_RECORD_CAPACITY,
 };
 use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeObjectLayout {
-    pub record_capacity: usize,
-    pub record_size: usize,
-    pub record_align: usize,
     pub layout_offset: usize,
     pub meta_offset: usize,
     pub auxiliary_offset: usize,
@@ -59,18 +56,7 @@ pub struct NativeObjectLayout {
     pub property_value_align: usize,
 }
 
-/// The stride of an ordinary object's record in the record table (R4-B2b): an `OrdinaryRecord` of an `Object`
-/// (its `ObjectHead`, 12 bytes) and the record's stub granule, padded to 16. A record's address is
-/// `records + id * OBJECT_RECORD_BYTES`, and `id` is the high half of the stub's class-cell header.
-pub const OBJECT_RECORD_BYTES: usize = 16;
-const _: () = assert!(size_of::<super::record_heads::ObjectHead>() <= OBJECT_RECORD_BYTES);
-/// Where an ordinary object's record keeps its stub granule (`OrdinaryRecord::stub`).
-pub const OBJECT_RECORD_STUB: usize = core::mem::offset_of!(super::record_heads::OrdinaryRecordHead, stub);
-
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: OBJECT_RECORD_CAPACITY,
-    record_size: OBJECT_RECORD_BYTES,
-    record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
     meta_offset: META_OFFSET,
     auxiliary_offset: 0,
@@ -336,10 +322,6 @@ pub const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(
 /// The activation's local slots and their count (`native_locals`, `local_count`).
 pub const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
 pub const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);
-/// The heap bases a field read through a site's cache entry reads: the object record
-/// reservation, the allocator header of the property values (whose base is at
-/// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
-pub const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
 /// The class space's base (`heap::class_space`): a direct object's cell is at this plus its granule times
 /// `CLASS_HEADER_BYTES`, and its header's low half is its class.
 pub const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);

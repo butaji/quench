@@ -5,36 +5,13 @@
 
 use crate::heap_rows::{context_word, payload, word_at};
 use crate::layout::shared_words::{capture_len, capture_stores, capture_values};
-use crate::layout::{CONTEXT_BODY, JS_STEP_ENV_STORAGE, JS_STEP_OBJECT_RECORD_BASE};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ENV_STORAGE};
 use crate::typed_ir::Representation;
 use crate::places::{Places};
 use crate::stage::StencilStage;
-use crate::staged::object::{self, Layout, Slots};
-use crate::staged::region::Region;
-use crate::staged::{environment, Frame, GlobalFrame, Stage};
-use crate::typed_ir::Type;
-use crate::words::{hole, HOLE_A};
-use crate::bytecode::Register;
+use crate::staged::environment;
 
 type Concrete = StencilStage;
-
-/// The values of the global object's shape a row's layout proof counts: the one slot the row names,
-/// which the stage's per-site byte offset selects. The shape itself is held by a dependency (the
-/// global layout fact), so the row proves only the record's representation.
-const GLOBAL_SLOT_COUNT: usize = 1;
-
-/// The layout of the global object `id` names in the record table at the payload: `None` where the
-/// table is absent or the object's values are not behind its extras in the arena.
-#[inline(always)]
-fn global_layout(stage: &mut Concrete, payload: usize, id: u64) -> Option<Layout<u64, bool>> {
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE) as u64;
-    if records == 0 {
-        return None;
-    }
-    let record = object::object_record_at(stage, records, id);
-    let inline = object::inline_storage(stage, record);
-    object::arena_extras_layout(stage, record, inline, GLOBAL_SLOT_COUNT, ())
-}
 
 impl Places {
     /// `Frame::capture_slot`: the depth-0 dense run's slot, from the window's capture word (its values and
@@ -78,30 +55,5 @@ impl Places {
         } else {
             environment::environment_slot_store(stage, storage, slot, value, ())
         }
-    }
-}
-
-impl GlobalFrame<Concrete> for Places {
-    /// The global object's slot (the id is hole 1, the byte offset the stage's next site) read into
-    /// `destination`, as the lane's global read.
-    #[inline(always)]
-    fn global_read(&mut self, stage: &mut Concrete, destination: Register, _atom: u32, _site: u16, _ty: Type, _proof: ()) -> Option<()> {
-        let layout = global_layout(stage, payload(&self.s), hole::<HOLE_A>() as u64)?;
-        let word = object::read_slot(stage, layout, 0, Representation::Tagged);
-        Frame::write(self, stage, destination, word, Representation::Tagged);
-        Some(())
-    }
-
-    /// The store of `value` to the global object's slot (the record id is hole 0, the byte offset the
-    /// stage's next site). The caller passes the store gate (`store_gate`) where the value may be a
-    /// heap reference.
-    #[inline(always)]
-    fn global_write(&mut self, stage: &mut Concrete, _source: Register, _atom: u32, _site: u16, value: u64, _initialize: bool) -> Option<()> {
-        let layout = global_layout(stage, payload(&self.s), hole::<0>() as u64)?;
-        let Slots::Flat(base) = layout.slots else { return None };
-        let offset = stage.site(0);
-        let address = stage.add_imm(base, offset);
-        stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
-        Some(())
     }
 }

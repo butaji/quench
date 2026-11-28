@@ -5,7 +5,7 @@
 
 use super::Stage;
 use super::region::Region;
-use super::object::{Form, PackedAccess, formed_own_layout, object_record_at, recorded_shape, proto_link, proto_object_record_id, read_slot};
+use super::object::{Form, PackedAccess, formed_own_layout, recorded_shape, read_slot};
 
 pub use super::ic_read::*;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -177,12 +177,8 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
             debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
             at.formed = Some(form);
         }
-        IcOp::Prototype => {
-            let link = proto_link(stage, at.record);
-            let Some(id) = proto_object_record_id(stage, link, miss) else { return Break(None) };
-            let records = records.expect("a read through a prototype has the record table");
-            *at = Reached::bare(object_record_at(stage, records, id));
-        }
+        // No prototype link names an object record (an ordinary object's prototype is a class cell): the read leaves.
+        IcOp::Prototype => return Break(None),
         IcOp::LoadSlot { slot, form, storage_len, rep } => return Break(load_slot(stage, at, (slot, rep), form, storage_len, miss)),
         IcOp::LoadPrototypeSlot(slot) => return Break(prototype_slot(stage, at.shaped.expect("a prototype slot read follows the guard of the holder's shape"), slot, miss)),
         IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),

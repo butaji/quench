@@ -25,7 +25,7 @@ use crate::compiled::regions;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
 use quench_runtime::typed_ir::{repr, BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
-use super::object_slots::{emit, CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
+use super::object_slots::{emit, CheckedObject, Emit, ObjectHeader, ObjectRecord};
 use quench_runtime::typed_ir::Division;
 use quench_runtime::staged::typed_elements::{NativeKind, ViewKind};
 use quench_runtime::staged::typed_view::{prove_typed_view, ViewAccess};

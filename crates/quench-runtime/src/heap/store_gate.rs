@@ -22,7 +22,6 @@ impl Heap {
     #[inline(always)]
     fn space_store_logs(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
         match space {
-            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
             StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
             StagedRecordSpace::Class => self.class_space.store_logs(record_id, value),
         }
@@ -81,16 +80,6 @@ impl Heap {
     #[inline(always)]
     pub fn arena_values_base(&self) -> *const Value {
         self.properties.values_base()
-    }
-
-    /// Object record `record_id` for a store that `store_unlogged` admitted.
-    ///
-    /// # Safety
-    /// `record_id` names a live object record, and `&mut self` is exclusive.
-    #[inline(always)]
-    pub(crate) unsafe fn unlogged_object_record(&mut self, record_id: u32) -> *mut Object {
-        // SAFETY: the caller's contract; the barrier logs nothing for the admitted store.
-        unsafe { &raw mut self.object_records.get_live_mut_unbarriered(record_id).object }
     }
 
     /// The `Object` part of function record `record_id` for a store that `store_unlogged` admitted.

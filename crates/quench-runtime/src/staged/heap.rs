@@ -32,8 +32,8 @@ pub fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 fn site_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let (word, done) = match operation {
-        Operation::AddSite { records, object, edge, link, form, value } =>
-            if const { super::op_kind::admits(KIND, &[super::op_kind::ADD_SITE]) } { (value, add::site_add(stage, records, object, (edge, link), form, value, frame.miss())) } else { unreachable!() },
+        Operation::AddSite { object, edge, value, .. } =>
+            if const { super::op_kind::admits(KIND, &[super::op_kind::ADD_SITE]) } { (value, add::site_add(stage, object, edge, value, frame.miss())) } else { unreachable!() },
         Operation::NamingSite { records, function, naming, form, name } =>
             if const { super::op_kind::admits(KIND, &[super::op_kind::NAMING_SITE]) } { (name, naming::site_name(stage, records, function, naming, form, name, frame.miss())) } else { unreachable!() },
         Operation::InstanceOf { destination, value, constructor } => if const { super::op_kind::admits(KIND, &[super::op_kind::INSTANCE_OF]) } { {
