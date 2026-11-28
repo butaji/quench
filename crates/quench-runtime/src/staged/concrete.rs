@@ -13,6 +13,7 @@ pub use glue::{concrete_over_arena, concrete_over_vm};
 unsafe extern "Rust" {
     fn quench_staged_arena_values_base(heap: *const ()) -> u64;
     fn quench_staged_class_space_base(heap: *const ()) -> u64;
+    fn quench_staged_spill_base(heap: *const ()) -> u64;
     fn quench_staged_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
     fn quench_staged_held_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
     fn quench_staged_owner_table_bases(heap: *const ()) -> [u64; 3];
@@ -242,6 +243,12 @@ impl Stage for Concrete {
             Table::ClassSpace => {
                 debug_assert!(!self.heap.is_null(), "the class space is read by a stage over its heap");
                 self.tables[1]
+            }
+            // Read live, never cached in `tables`: a store row's spill can move the arena within a run.
+            Table::SpillBase => {
+                debug_assert!(!self.heap.is_null(), "the spill arena is read by a stage over its heap");
+                // SAFETY: a stage that reads the spill arena holds its live heap (`over`).
+                unsafe { quench_staged_spill_base(self.heap) }
             }
             // The owner tables are the heap's: a stage that reads them is a store's (`storing`).
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => {

@@ -36,6 +36,14 @@ pub unsafe fn quench_staged_class_space_base(heap: *const ()) -> u64 {
 }
 
 /// # Safety
+/// `heap` is the live `Heap` a stage was `over`.
+#[unsafe(no_mangle)]
+pub unsafe fn quench_staged_spill_base(heap: *const ()) -> u64 {
+    // SAFETY: the caller's contract.
+    unsafe { (*heap.cast::<Heap>()).native_spill_base() as u64 }
+}
+
+/// # Safety
 /// `heap` is the live `Heap` of a stage that stores.
 #[unsafe(no_mangle)]
 pub unsafe fn quench_staged_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool {
