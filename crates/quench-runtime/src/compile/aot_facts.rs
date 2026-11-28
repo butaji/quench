@@ -420,11 +420,12 @@ impl AotFacts {
     /// The first slot of class `class`'s union that lives in its spill run, or None where the union fits the cell region. The
     /// region is chosen from the union at allocation, so a proven class spills exactly here: the cell keeps slots below it
     /// (one load) and reserves its last slot for the spill pointer, so a slot at or past it takes two loads. Union order is slot
-    /// order, so each field's case is known at compile time. Derived from the union's length against the region capacity
-    /// (`heap::MAX_CELL_FIELDS`, referenced, not copied).
+    /// order, so each field's case is known at compile time. One formula with the allocator: the region it picks for the union
+    /// (`heap::cell_region_for`, the largest region past every capacity) and that region's spill slot (`layouts::spill_from`).
     pub fn spill_from(&self, class: u32) -> Option<u32> {
         let fields = self.unions.get(&class)?.fields.len();
-        (fields > crate::heap::MAX_CELL_FIELDS).then(|| crate::heap::MAX_CELL_FIELDS as u32 - 1)
+        let largest = crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1;
+        crate::heap::layouts::spill_from(crate::heap::cell_region_for(fields).unwrap_or(largest), fields)
     }
 
     /// Whether every instance of class `class` holds field `atom` before any code can read it: the class is a fixed cell

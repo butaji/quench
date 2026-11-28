@@ -18,6 +18,9 @@ use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
 use crate::staged::{Allocation, Comparison, DecodeContext, NumberOperation, Operation, Protocol};
 use oxc_syntax::operator::BinaryOperator;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The function an instruction belongs to, and where its parameters end.
 pub(super) struct Ctx<'a> {

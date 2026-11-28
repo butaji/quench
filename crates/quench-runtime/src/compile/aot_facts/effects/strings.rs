@@ -8,6 +8,9 @@ use crate::bytecode::WideInstruction;
 use crate::staged::typing;
 use crate::typed_ir::{Cell, IntRange, Type};
 use crate::ValueType;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The Number a read of `length` off `owner` is, where `owner` is a string: the integer range of its length
 /// (`StringFact::length`). `None` for any other read.

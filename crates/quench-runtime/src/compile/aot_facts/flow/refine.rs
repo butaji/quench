@@ -9,6 +9,9 @@ use crate::staged::{Comparison, Operation};
 use crate::staged::typing;
 use crate::typed_ir::{Cell, Classes, Elements, Identity, Sites, Type, language_bit};
 use crate::ValueType;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// What a conditional jump's test proves about the value it tests, on one of its edges.
 #[derive(Clone, Copy)]

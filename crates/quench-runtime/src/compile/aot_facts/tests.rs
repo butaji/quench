@@ -9,6 +9,9 @@ use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Identity, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
 use crate::ValueType;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 fn program(source: &str) -> ResidualProgram {
     Engine::specialize(source, "aot-facts.js").unwrap()
