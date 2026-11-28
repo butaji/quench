@@ -78,8 +78,6 @@ pub struct Layout<W, C> {
 mod header;
 #[path = "object/proto.rs"]
 mod proto;
-#[path = "object/walk.rs"]
-mod walk;
 #[path = "object/records.rs"]
 mod records;
 #[path = "object/arena.rs"]
@@ -92,7 +90,6 @@ mod read;
 mod narrow;
 pub use header::*;
 pub use proto::*;
-pub use walk::*;
 pub use records::*;
 pub use arena::*;
 pub use own_layout::*;

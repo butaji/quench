@@ -33,9 +33,11 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     /// shape and inline flag). A direct object, else a leave at `miss`; where `readable`, a
     /// function's record answers too, for a frame that proves one.
     #[inline(always)]
-    fn receiver_record(&mut self, stage: &mut S, _owner: Owner, object: S::Word, _readable: bool,
+    fn receiver_record(&mut self, stage: &mut S, _owner: Owner, _object: S::Word, _readable: bool,
         miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> where Self: Sized {
-        receiver(stage, self, object, miss)
+        // A direct object is a live class cell with no record (`receiver_cell`), so the default has no record to name.
+        super::guard::no_record(stage, miss)?;
+        None
     }
 
     /// The live class cell of `owner`'s `object` (`object::cell_of`), where a class-keyed plan reads it: a direct

@@ -1,6 +1,6 @@
 use super::class_space::{
-    ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, granule, header_class, header_record,
-    live_header, locate, region_capacity, region_cells, stub_header,
+    ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, granule, header_class,
+    live_header, locate, region_capacity, region_cells,
 };
 use super::layouts::LAYOUT_CAPACITY;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -54,14 +54,6 @@ fn a_live_header_holds_only_its_class_id() {
     let header = live_header(0x1234);
     assert_eq!(header >> 32, 0);
     assert_eq!(header_class(header), 0x1234);
-}
-
-#[test]
-fn a_stub_header_holds_no_class_and_the_record_id() {
-    let header = stub_header(77);
-    assert_eq!(header as u32, NO_CLASS);
-    assert_eq!(header >> 32, 77);
-    assert_eq!(header_record(header), 77);
 }
 
 #[test]
