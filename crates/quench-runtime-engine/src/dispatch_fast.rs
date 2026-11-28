@@ -709,13 +709,10 @@ impl LaneView {
 
 
 
-/// The generated rows of the hot `this` sites (a `this` own read, a formed `this` store, a `this`
-/// nested read's first hop) and their trusted forms (`lane_frame::trusted_this_rows`).
-const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
-    (generated_row!(53, ACC_NONE, 14), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 14>),
-    (generated_row!(62, ACC_NONE, 42), lane_frame::trusted_this_rows::generated_row::<62, ACC_NONE, 42>),
-    (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
-];
+/// The plain-to-trusted row pairs of the `this` sites. No load pass installs any of them: the own read of
+/// `this` is `own_formed_handler::<true>(None)`, and `SetThisField` takes only the unread, general and
+/// tracked store rows (`field_store_row_at`). So no record is rewritten and the table is empty.
+const TRUSTED_THIS_ROWS: [(Handler, Handler); 0] = [];
 
 /// Whether `function`'s `this` is a direct object in every activation, by the solve's receiver cell
 /// (`FactKey::Receiver`): the function's rows and code take it as one, with no tag test. A live receiver
@@ -4373,8 +4370,7 @@ impl Vm {
                     // lane runs while the report reads them.
                     let handler = unsafe { (*fresh.records[pc].get()).handler };
                     let settled = settled.map_or_else(|| "-".to_owned(), |view| format!("{:x}", unsafe { (*view.records[pc].get()).handler }.addr()));
-                    eprintln!("LANEPLAN {index} {function} {pc} {:x} {settled} | {}", handler.addr(), instruction.text()); // merge: HEAD-only fused_width column dropped.
-                }
+                    eprintln!("LANEPLAN {index} {function} {pc} {:x} {settled} | {}", handler.addr(), instruction.text());                }
             }
         }
     }
@@ -6445,12 +6441,6 @@ const JUMP: u16 = quench_runtime::staged::JUMP_ROW;
 /// `specialize_load_branch_pairs`) and whose read a fused update falls back to.
 const CAPTURE_READ: u16 = quench_runtime::staged::LOAD_CAPTURE_ROW;
 const CAPTURE_WRITE: u16 = quench_runtime::staged::STORE_CAPTURE_ROW;
-
-
-
-// merge: theirs' fused capture update (`specialize_capture_updates`, `lane_update_capture_int32`)
-// is not ported: it fuses `lane_operator_int32` and `lane_store_capture_load`, which ours does not
-// have. Its records run unfused, with the same semantics.
 
 
 

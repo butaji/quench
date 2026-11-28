@@ -54,7 +54,6 @@ pub(in super::super) const fn other_handler(opcode: Op) -> Option<Handler> {
         // A derived constructor's `this` binding in its own frame (`derived_frames`).
         _ if opcode.binds_this() => Some(derived_frames::bind_this_in_frame),
         _ if quench_runtime::staged::field_read_family(opcode) => Some(row_get_field_first),
-        // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => match opcode.field_store() { Some(store) => Some(field_store_row(store)), None => None },
         _ if quench_runtime::staged::property_record_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }) as Handler),
         _ if quench_runtime::staged::field_definition_family(opcode) => Some(protocol_row!({ quench_runtime::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }) as Handler),

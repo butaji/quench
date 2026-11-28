@@ -171,8 +171,7 @@ impl Decisions {
     fn of(cx: *mut LaneContext) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
-            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
-                .map(|fact| fact.link),
+            prototype: |_, _| None,
             instance: instance_decision }
     }
 }
@@ -4172,14 +4171,6 @@ unsafe fn iterator_pop_in_lane(cx: *mut ()) -> bool {
 }
 
 // `generated_row`'s body, once per shard (`generated_row_shard`).
-/// The generated rows of the `this` sites the lane trusts (`trusted_this_row`): the same body, whose frame
-/// trusts the activation's `this` as a direct object, which its receiver fact makes it (`dispatch_fast::receiver_trusted`).
-/// An edge rewrite it takes stays trusted; a sibling row is an untrusted row's.
-pub(crate) mod trusted_this_rows {
-    use super::*;
-    const TRUSTS_THIS: bool = true;
-    include!("generated_row.rs");
-}
 mod generated_rows_0 {
     use super::*;
     const TRUSTS_THIS: bool = false;
