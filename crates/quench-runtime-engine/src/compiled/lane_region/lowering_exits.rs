@@ -120,7 +120,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.fresh.contains(word))).collect();
         state.proofs.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
             .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
-        state.proofs.global = first.global.filter(|kept| rest.iter().all(|other| other.global == Some(*kept)));
         state.proofs.receivers = first.receivers.iter().filter(|register| rest.iter()
             .all(|other| other.receivers.contains(register))).copied().collect();
         state.proofs.fields = first.fields.iter().copied().filter(|field| rest.iter()

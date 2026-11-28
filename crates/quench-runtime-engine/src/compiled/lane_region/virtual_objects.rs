@@ -417,7 +417,6 @@ impl Lowering<'_, '_> {
     /// proofs than the registers' tagged views and facts.
     fn bind_allocated(&mut self, state: &mut State, registers: &[Register], this: ir::Value) {
         state.proofs.layouts.clear();
-        state.proofs.global = None;
         self.reload_property_arena_if_entered();
         self.unready_constructions();
         for register in registers {

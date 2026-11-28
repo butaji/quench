@@ -331,10 +331,6 @@ pub const CLASS_SPACE_GRANULES: u32 = (CAPACITY_CLASSES as u32) << REGION_SHIFT;
 pub const CLASS_CELL_GRANULE_BYTES: usize = super::object_encoding::CLASS_HEADER_BYTES;
 
 pub const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
-/// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
-/// count, and what watches a store (`store_watch`), which an unobserved store requires zero.
-pub const JS_STEP_OBJECT_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_blocks);
-pub const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_block_count);
 /// The array records' mark blocks and their count, which an element store's barrier reads
 /// (`ElementFrame::array_store_gate`).
 pub const JS_STEP_ARRAY_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_blocks);
@@ -343,6 +339,7 @@ pub const JS_STEP_ARRAY_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::j
 pub const JS_STEP_CLASS_MARK_LISTS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_mark_lists);
 /// The class space's spill arena base (`JsStepHead::spill_base`), which a spilled class field's run word is read at.
 pub const JS_STEP_SPILL_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, spill_base);
+/// What watches a store (`store_watch`), which an unobserved store's barrier requires zero.
 pub const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
 /// The `store_watch` bit set while the property arena records its slots' value classes.
 pub const STORE_WATCH_TRACKS: u64 = 1;
@@ -355,8 +352,7 @@ pub const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsSt
 /// The string record range's base, which a string `length` read finds the record from.
 pub const JS_STEP_STRING_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, string_record_base);
 /// What a store into a function's own properties reads (`StagedRecordSpace::Function`): the function
-/// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
-/// empty string's word, which a function's inferred name replaces (`staged::naming`).
+/// records' mark blocks and their count; and the empty string's word, which a function's inferred name replaces (`staged::naming`).
 pub const JS_STEP_FUNCTION_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_blocks);
 pub const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_block_count);
 pub const JS_STEP_EMPTY_STRING: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_string);

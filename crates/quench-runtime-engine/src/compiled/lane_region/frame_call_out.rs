@@ -197,7 +197,5 @@ pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     site_step(frame, stage, frame.call_out?, false, None)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(done);
-    // The VM's store may have moved the property arena.
-    frame.state.proofs.global = None;
     Some(())
 }

@@ -848,7 +848,7 @@ fn emit_lane_helper_call(
 
 /// The mark list a store into record space `space` reads its owner's mark blocks from. A class cell's
 /// mark is read through `class_mark_lists` instead (`class_mark_table`), and an ordinary object is a class
-/// cell too, so neither `Class` nor `Object` (no record table, `S7f`) reaches here.
+/// cell too, so `Class` does not reach here.
 fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_runtime::staged::barrier::MarkList {
     use quench_runtime::staged::barrier::MarkList;
     match space {
@@ -856,7 +856,7 @@ fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_r
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
-        quench_runtime::staged::StagedRecordSpace::Object | quench_runtime::staged::StagedRecordSpace::Class => {
+        quench_runtime::staged::StagedRecordSpace::Class => {
             unreachable!("a class cell's mark is read through `class_mark_table`; no object record exists")
         }
     }
@@ -3917,7 +3917,7 @@ impl JsStepDispatch {
                 loop_entry: 0,
                 array_record_base: 0, collection_record_base: 0, string_record_base: 0, function_record_base: 0,
                 class_base: 0,
-                object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+                function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),

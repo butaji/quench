@@ -3358,7 +3358,6 @@ pub struct LaneBinding {
     /// Drops what the context resolved under the collection epoch before
     /// (`retire_lane_binding`), for its owning Host.
     pub retire: unsafe fn(*mut ()),
-    pub object_base: *const Object,
 }
 
 /// What a lane run starts from.
