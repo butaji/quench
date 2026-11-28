@@ -193,11 +193,12 @@ macro_rules! catalog {
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
     /// miss leaves through EXIT0 into it.
     FOR_IN_ROW: uses(Unread, Unread, Unread, Never) twin: kernel(v_for_in) = Heap::ForIn,
-    /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
-    /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
-    /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
+    /// The shape-keyed inline-cache rows (`ic_rows.rs`), for the non-cell receivers a shape key names: a read of the
+    /// receiver's own flat slot, and a store of a Number into it, whose slot type is `ANY` or `NUMBER` (`IC_SET_ROW`)
+    /// or `INT32` (`IC_SET_INT_ROW`). A prototype-held read is `IC_GET_HELD_CLASS_ROW` (class-keyed) or `HELD_ROW`.
     IC_GET_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcGet,
-    IC_GET_HOLDER_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field),
+    // The shape-keyed prototype-held read is retired (no producer; the class-keyed held row takes its place): the numbering keeps it free.
+    reserve 1,
     IC_SET_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: false },
     IC_SET_INT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: true },
     /// A read (`ENV_ROW`) and a store (`ENV_SET_ROW`) of a local slot the running activation's environment window holds
