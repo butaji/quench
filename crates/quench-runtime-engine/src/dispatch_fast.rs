@@ -2709,22 +2709,10 @@ script_handler! {
     /// becomes the hint; any other read goes through `row_get_field_miss`.
     #[inline(never)]
     fn row_get_field_own_refresh<THIS: bool, BOUND: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let Some((object, value)) = (unsafe { known_field_base_in_lane::<THIS>(cx, r, i.b) })
-            .and_then(|object| own_entry_hit(vm, code, object, i.c).map(|value| (object, value)))
-        else {
-            sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-        };
-        // S7f DESIGN: the own-constant probe (`Vm::probes_own_constant`) was record-only and is deleted;
-        // no register read probes, so none is requickened to `OWN_CONSTANT_REGISTER`.
-        // The hit proved the entry an own one of the receiver's shape.
-        let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
-        set_field_hint(ip, hint);
-        requicken(ip, own_formed_handler::<THIS>(Some(hint.receiver)));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        // S7f DESIGN: the record-hint own row's hit (`own_entry_hit`: a record's primary own entry) is deleted with the
+        // object-record family; an ordinary receiver is a class cell, whose class-keyed entry the miss path reads.
+        let _ = (i, THIS, BOUND);
+        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -7005,8 +6993,9 @@ impl LeafRead {
             }
             Self::Nested { site } => {
                 // SAFETY: a nested record of the running program names its site.
-                let site = unsafe { code.field_sites.get_unchecked(site as usize) };
-                nested_own_field_hit(vm, code, site, read_base_in_lane(site.base, arguments, this)?)
+                // S7f DESIGN: the nested own chain (`nested_own_field_hit`, record-only) is deleted; the read takes the general path.
+                let _ = (site, code);
+                None
             }
             // The callee runs frameless, capturing from its closure's environment.
             Self::Private { base: field_base, atom, site, environment, function } => {
@@ -7145,14 +7134,11 @@ impl MemoLeaf {
         this_record: Option<&quench_runtime::tier_surface::Object>,
     ) -> Option<Value> {
         match *self {
-            Self::Field { base: field_base, field } if shape == MEMO_FIELD => memo_first_step(vm, field, field_base, arguments, this, this_record),
-            Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
-                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                vm.direct_dense_element(array, arguments.get(index)?)
-            }
-            Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
-                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                vm.array_length_field(array, vm.length_atom)
+            // S7f DESIGN: a memo's first step (`memo_first_step`) read a record's own entry and is deleted with the
+            // object-record family; every memo declines and its read takes the general path.
+            Self::Field { .. } | Self::Element { .. } | Self::Length { .. } => {
+                let _ = (shape, vm, arguments, this, this_record);
+                None
             }
             // S7f DESIGN: the second step's formed read (`Vm::record_field_formed_hit`) is deleted with the
             // record tier; a nested memo declines and its read takes the general path.
@@ -7229,7 +7215,7 @@ script_handler! {
                     let vm = vm(cx);
                     let value = single_field_base_in_lane(cx, r, i.b).and_then(|object| {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            polymorphic_read(vm, code, ip, object).map(|(value, _)| value)
+                            polymorphic_read(vm, code, ip, object)
                         } else {
                             returning_field_hit::<KIND>(vm, code, object, i.c)
                         }
@@ -8493,7 +8479,6 @@ use on_demand_metadata::lane_completes_return;
 pub(crate) mod numeric_pair_tests;
 
 #[cfg(all(test, feature = "profile-field-primitives"))]
-pub(crate) mod field_pair_census_tests;
 
 #[cfg(test)]
 pub(crate) mod leaf_call_tests;
