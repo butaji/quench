@@ -12,6 +12,17 @@ pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, obj
     Some(Reached::bare(object_record_of(stage, records, object, miss)?))
 }
 
+/// The object part a plan's ops read from: a class-keyed plan (its first op guards a class) starts from the
+/// live class cell, every other from the object's record. The key decides it, so no run-time test chooses.
+#[inline(always)]
+pub(super) fn plan_receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
+    object: S::Word, ops: &[IcOp<'_>], miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
+    match ops {
+        [IcOp::GuardClass(_), ..] => frame.receiver_cell(stage, object, miss),
+        _ => frame.receiver_record(stage, owner, object, readable, miss),
+    }
+}
+
 /// The base of a field access: the activation's bound `this`, or a register's tagged word;
 /// a local or nested base is the tier's own.
 #[inline(always)]
@@ -31,7 +42,7 @@ pub(in super::super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
     object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
     match plan {
         FieldPlan::Ops(ops) => {
-            let at = frame.receiver_record(stage, owner, object, readable, miss)?;
+            let at = plan_receiver(stage, frame, (owner, readable), object, ops, miss)?;
             let records = frame.object_records(stage);
             run_owned(stage, frame, (owner, !readable), object, ops, (at, records), miss)
         }

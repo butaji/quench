@@ -55,6 +55,8 @@ impl Fast {
             [] => Self::Host,
             [load] if load.holder.is_none() && !load.valid() => Self::Host,
             [load] => Self::Single(*load),
+            // A class-keyed load reads a live cell, which no shape family's guard reaches: its site reads the VM's.
+            loads if loads.iter().any(|load| load.class.is_some()) => Self::Host,
             loads => match field_load_groups(loads) {
                 Some(groups) if groups.iter().all(|(load, _)| load.holder.is_some() || load.valid()) => Self::Family(groups),
                 _ => Self::Host,
@@ -128,6 +130,18 @@ fn holder_cell(load: &NativeFieldLoad) -> Option<u32> {
 /// layout id a single-shape load was guarded by (`formed_id`), whose form the slot is read in;
 /// a family's shapes are guarded one by one, so their slots keep the form the site observed.
 fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<u32>) -> Vec<IcOp<'a>> {
+    if load.class.is_some() {
+        // A class-keyed read: its own field of the cell, or the held one of the holder cell its entry names by
+        // granule. The class guard before these (`link_ops`) proves the cell.
+        return match (load.holder, load.holder_cell) {
+            (None, _) => vec![IcOp::LoadField { slot: load.slot, rep: Representation::Tagged }],
+            (Some(_), Some(granule)) => vec![IcOp::LoadHeldField { holder: granule, slot: load.slot }],
+            (Some(_), None) => {
+                debug_assert!(false, "a class-keyed held read names its holder cell");
+                Vec::new()
+            }
+        };
+    }
     match load.holder {
         None => vec![IcOp::LoadSlot { slot: load.slot,
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
@@ -170,13 +184,15 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
             // An own read whose receivers' layout the site observed guards the whole layout word; one whose
             // receivers keep a plain arena run guards the whole auxiliary word, so the form is proved once
             // and the slot read tests none of it (`IcOp::GuardShapeFormed`).
-            let guard = match formed_id(load) {
-                Some(id) => IcOp::GuardLayout(id),
+            let guard = match (load.class, formed_id(load)) {
+                // A class-keyed read guards the live cell's class: one compare of its header (`IcOp::GuardClass`).
+                (Some(class), _) => IcOp::GuardClass(class),
+                (None, Some(id)) => IcOp::GuardLayout(id),
                 // An ahead image's guess of a construction's arena run: the layout id its loader
                 // resolves proves the shape, the form and the link in one compare.
-                None if load.image_layout() => IcOp::GuardImageLayout(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
-                None if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
-                None => IcOp::GuardShape(load.shape),
+                (None, None) if load.image_layout() => IcOp::GuardImageLayout(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
+                (None, None) if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
+                (None, None) => IcOp::GuardShape(load.shape),
             };
             lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
         }

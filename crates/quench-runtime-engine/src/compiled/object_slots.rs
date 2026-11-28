@@ -312,9 +312,10 @@ impl InheritedConstant {
 #[quench_macros::ext(NativeFieldLoadOps1)]
 impl NativeFieldLoad {
     /// Whether a read of it proves its receiver a direct object of its shape: an own slot of
-    /// a shape no function record held. A guessed shape proves nothing (`guessed`).
+    /// a shape no function record held. A guessed shape proves nothing (`guessed`). A class-keyed read
+    /// proves a live cell, which no record-path consumer of the shape may take for a record: no proof.
     pub(crate) fn own_direct(self) -> bool {
-        self.holder.is_none() && !self.function_shape && !self.guessed()
+        self.holder.is_none() && !self.function_shape && !self.guessed() && self.class.is_none()
     }
 
     /// Whether the shape is an ahead image's guess (`ic::SYMBOLIC_SHAPE`), never an observation:

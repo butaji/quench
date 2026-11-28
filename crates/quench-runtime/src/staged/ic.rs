@@ -44,6 +44,10 @@ pub enum IcOp<'a> {
     /// The value at `slot` of the class cell the guard before it proved (`object::cell_fields`): tagged, at
     /// `cell + 8 + 8 * slot`. It ends the read.
     LoadField { slot: u16, rep: Representation },
+    /// The tagged value at `slot` of the live class cell at granule `holder`, the holder of a class-keyed held
+    /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a departed holder
+    /// resets the field caches before any read (`Vm::drop_departed_holder_entries`), so it tests none. It ends the read.
+    LoadHeldField { holder: u32, slot: u16 },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
@@ -185,6 +189,7 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         IcOp::GuardClass(class) => at.shaped = Some(guarded!(guard_class(stage, at, class, miss))),
         IcOp::GuardImageClass(key) => at.shaped = Some(guarded!(guard_image_class(stage, at, key, miss))),
         IcOp::LoadField { slot, rep } => return Break(Some(load_field(stage, at, (slot, rep)))),
+        IcOp::LoadHeldField { holder, slot } => return Break(Some(load_held_field(stage, holder, slot))),
         IcOp::GuardFormed { id, form } => {
             at.shaped = Some(guarded!(guard_layout(stage, at, id, miss)));
             debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");

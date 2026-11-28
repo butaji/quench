@@ -166,6 +166,17 @@ pub(super) fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
     read_slot_value(stage, layout, slot, rep)
 }
 
+/// `IcOp::LoadHeldField`: the tagged value at `slot` of the live class cell at granule `holder`, the holder
+/// `entry::class_held_value` reads. No guard of its own: the class guard before it proved the receiver, and the
+/// holder's departure resets the caches before any read.
+#[inline(always)]
+pub(super) fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
+    let granule = stage.constant(u64::from(holder));
+    let cell = super::object::cell_at_granule(stage, granule);
+    let slot = stage.constant(u64::from(slot));
+    super::entry::cell_field(stage, cell, slot)
+}
+
 /// `IcOp::GuardImageLayout`: continues where the reached record's layout id is the one an ahead
 /// image's loader resolves for field guard key `key` (`ImageWord::Layout`).
 #[inline(always)]
