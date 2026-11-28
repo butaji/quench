@@ -39,29 +39,24 @@ pub(crate) fn body_shim_signature(pointer: ir::Type) -> Signature {
 /// receives as its fifth argument. Every native caller enters a body through it (`CallContext::body_shim`),
 /// so a body's convention is the shim's alone. Zero where the host has no native code.
 pub(crate) fn body_shim() -> usize {
-    static SHIM: std::sync::OnceLock<Option<(CodeMemory, usize)>> = std::sync::OnceLock::new();
-    SHIM.get_or_init(|| published(build_body_shim))
-        .as_ref()
-        .map_or(0, |(_, address)| *address)
+    static SHIM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *SHIM.get_or_init(|| published(build_body_shim))
 }
 
 /// The address of the entry stub: the entry of every unpublished cell (`EntryCell::stub`). It has the lane body
 /// convention, as a body does, and calls `entry_stub_in_lane`, which enters nothing so its caller restarts the call.
 /// Zero where the host has no native code.
 pub(crate) fn entry_stub() -> usize {
-    static STUB: std::sync::OnceLock<Option<(CodeMemory, usize)>> = std::sync::OnceLock::new();
-    STUB.get_or_init(|| published(build_entry_stub))
-        .as_ref()
-        .map_or(0, |(_, address)| *address)
+    static STUB: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *STUB.get_or_init(|| published(build_entry_stub))
 }
 
-/// Compiles the function `build` makes for the host and publishes its code, which the returned memory keeps alive.
-fn published(build: fn(&dyn cranelift_codegen::isa::TargetIsa) -> ir::Function) -> Option<(CodeMemory, usize)> {
-    let isa = quench_runtime::vm::jit_backend::target_isa()?;
-    let code = super::compile_entry(&*isa, build(&*isa))?;
-    let memory = CodeMemory::new(&code)?;
-    let address = memory.pointer().addr();
-    Some((memory, address))
+/// Compiles the function `build` makes for the host and publishes its code for the life of the process: the
+/// memory is leaked, so the returned address stays callable. Zero where the host has no native code.
+fn published(build: fn(&dyn cranelift_codegen::isa::TargetIsa) -> ir::Function) -> usize {
+    let Some(isa) = quench_runtime::vm::jit_backend::target_isa() else { return 0 };
+    let Some(memory) = super::compile_entry(&*isa, build(&*isa)).and_then(|code| CodeMemory::new(&code)) else { return 0 };
+    Box::leak(Box::new(memory)).pointer().addr()
 }
 
 /// The entry stub's function: it takes a lane body's arguments and calls `entry_stub_in_lane` with them, which the
