@@ -1932,7 +1932,9 @@ fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::Residu
 /// `FLAG_NAME_GLOBAL_SLOT` row (`name_global_operand`). A closed world fixes the object's layout, so the word holds while
 /// the program runs; `None` where the world is open, the name is not declared, or the realm holds no such slot yet.
 fn global_slot_word(vm: &quench_runtime::vm::Vm, facts: &quench_runtime::compile::aot_facts::AotFacts, atom: u32) -> Option<u32> {
-    let declared = facts.closed() && facts.global_shape().is_some_and(|shape| shape.declared().contains(&atom));
+    // The closed world fixes the global object's shape (`global_shape`): a declared name's slot and a builtin's (read, never
+    // changed) stay where they are.
+    let declared = facts.closed() && facts.global_shape().is_some_and(|shape| shape.declared().contains(&atom) || shape.builtins().contains(&atom));
     declared.then(|| vm.global_slot(atom, false)).flatten().map(|slot| slot.slot)
 }
 
