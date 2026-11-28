@@ -51,6 +51,8 @@ use std::collections::BTreeMap;
 pub use crate::staged::effects::{Affine, Base};
 
 use crate::bytecode::ResidualProgram;
+use crate::vm::engine_types::CallEntry;
+use super::body_forms::ReturningRead;
 use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
 use super::signatures::{CallSite, Signatures};
@@ -197,6 +199,22 @@ pub struct AotFacts {
     /// The functions whose names resolve statically (`Function::names_resolve_statically`), read by
     /// `FunctionFacts::names_static`. A bytecode property, so it holds in every world.
     names_static: std::collections::BTreeSet<u32>,
+    /// Per body (function id), the body forms `body_forms` classifies from the function and its bytecode, computed once by the
+    /// pipeline (`pipeline::body_forms`). The readers `body_entry`, `returning_read`, `read_shape` and `forwards_args` index it.
+    bodies: Box<[BodyForm]>,
+}
+
+/// The body forms of one function, as the pipeline classifies them (`body_forms`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct BodyForm {
+    /// The entry a call of the body takes (`body_forms::body_entry`), None where the native publication decides it.
+    entry: Option<CallEntry>,
+    /// The `return this.f` or `return p.f` read the body is (`body_forms::returning_read`).
+    returning: Option<ReturningRead>,
+    /// The memo shape of the body's frameless read (`body_forms::read_shape`).
+    read: Option<u8>,
+    /// Whether a call of the body forwards its arguments (`body_forms::forwards_args`).
+    forwards: bool,
 }
 
 impl AotFacts {
@@ -244,6 +262,7 @@ impl AotFacts {
             global_shape: None,
             global_lexical: Vec::new(),
             names_static: std::collections::BTreeSet::new(),
+            bodies: Box::default(),
         }
     }
 
@@ -495,6 +514,31 @@ impl AotFacts {
         self.classes.body(class)
     }
 
+    /// The entry a call of body `body` takes (`body_forms::body_entry`): the form its signature gives it, then the body's own
+    /// answer. The VM classifies a target's entry at link time with the same function (`dispatch_fast`'s `body_entry`). None where
+    /// the native publication decides the entry: a frameless body that no other frameless answer takes is `Frameless::Native` when
+    /// its code is published and `Framed::Activates` when not, which the bytecode does not say.
+    pub fn body_entry(&self, body: u32) -> Option<CallEntry> {
+        self.bodies.get(body as usize)?.entry
+    }
+    /// The read body `body` returns, `return this.f` or `return p.f` (`body_forms::returning_read`): the field's atom and base.
+    /// The VM's `Frameless::Reads` entry (`body_forms::body_entry`) takes the same returning first instruction, for any base;
+    /// this reader is narrower, a base of `this` or a parameter and no handler, so it names the field alone.
+    pub fn returning_read(&self, body: u32) -> Option<ReturningRead> {
+        self.bodies.get(body as usize)?.returning
+    }
+    /// The memo shape `MemoRead::shape` takes for the frameless read body `body` answers with (`body_forms::read_shape`):
+    /// `MEMO_FIELD` for a returning field of `this` or a parameter, `MEMO_ELEMENT` for an element of one. None for a nested or
+    /// local field (its shape is the program's field sites') and for a forwarded read (its shape is the forwarded callee's).
+    pub fn read_shape(&self, body: u32) -> Option<u8> {
+        self.bodies.get(body as usize)?.read
+    }
+    /// Whether a call of body `body` forwards its arguments (`body_forms::forwards_args`), the static form of
+    /// `ScriptCallTarget::forwards`: a rest body or one whose plan keeps its arguments, where no settling, environment or frame form
+    /// takes its place. False for a body that does not forward, and for one whose other forms may override it.
+    pub fn forwards_args(&self, body: u32) -> bool {
+        self.bodies.get(body as usize).is_some_and(|form| form.forwards)
+    }
     /// The facts of function `function`, for its lowering.
     pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }

@@ -3913,7 +3913,7 @@ script_handler! {
 
 
 /// The strict operators `lane_jump_strict_constant_false` decides.
-const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+use quench_runtime::compile::body_forms::STRICT_INEQUALITY_OPERATOR;
 
 
 
@@ -7143,11 +7143,7 @@ use quench_runtime::vm::engine_types::MemoLeaf;
 /// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
 /// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
 /// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
-const MEMO_FIELD: u8 = 0;
-const MEMO_ELEMENT: u8 = 1;
-const MEMO_LENGTH: u8 = 2;
-const MEMO_NESTED: u8 = 3;
-const MEMO_FORWARD: u8 = 4;
+use quench_runtime::compile::body_forms::{MEMO_ELEMENT, MEMO_FIELD, MEMO_FORWARD, MEMO_LENGTH, MEMO_NESTED};
 
 #[quench_macros::ext(MemoLeafOps1)]
 impl MemoLeaf {

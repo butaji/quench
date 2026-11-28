@@ -3851,16 +3851,16 @@ pub enum Frameless {
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
-    /// parameter, and returns it (`element_read_body`), which a call answers likewise.
+    /// parameter, and returns it (`body_forms::element_read_body`), which a call answers likewise.
     ReadsElement,
     /// Its body returns a call of a method of a field of `this` or a parameter with its
-    /// parameters in order (`forwarding_read_body`), which a call answers where that method
+    /// parameters in order (`body_forms::forwarding_read_body`), which a call answers where that method
     /// is a `Reads` or `ReadsElement` target whose read hits.
     ForwardsRead,
-    /// Its body returns one of its captures (`capture_read_body`), as a bundler's export
+    /// Its body returns one of its captures (`body_forms::capture_read_body`), as a bundler's export
     /// getter `() => binding` compiles, which a call answers by reading the capture.
     ReadsCapture,
-    /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
+    /// Its body returns its `this` (`body_forms::this_read_body`), as `get self() { return this; }`
     /// compiles, which a call answers with the receiver it binds.
     ReadsThis,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
