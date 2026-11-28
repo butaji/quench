@@ -1,6 +1,7 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The value the primary own entry of site `site` reads in `object`, in whatever storage form
 /// the object keeps it: the site row (`primary_own_field_hit`) reads arena runs and packed

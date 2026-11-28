@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a leaf of `form` runs with its receiver bound (`THIS_LEAF`, `CONTEXT_LEAF`).
 #[inline(always)]

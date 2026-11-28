@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether the iteration step at `pc` (`iteration_step_in_lane`) is a destructuring step as
 /// `binding_iterator_step` emits it once its test is threaded: a plain read of the result's

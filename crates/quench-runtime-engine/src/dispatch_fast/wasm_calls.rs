@@ -9,6 +9,7 @@ use quench_runtime::staged::wasm_activation::{self as activation, offer_entry, C
 use quench_runtime::vm::program_store::HandoffTiers;
 use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The known call's handler, for the shared handler table.
 pub(crate) const fn known_call_handler() -> Handler {

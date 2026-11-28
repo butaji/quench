@@ -12,6 +12,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{DelegationStep, Suspending, Suspension, YieldConversion};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where control goes after a row on the lane's frame: the edge a jump takes, or where the lane
 /// continues after a suspension or an in-place step.

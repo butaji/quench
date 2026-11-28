@@ -11,6 +11,7 @@ use super::*;
 use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};
 use quench_runtime::staged::{SuspendEffect, Suspending, Suspension};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 script_handler! {
     /// `yield` of a generator activation that suspends in place (`Suspender::of_yield`): a

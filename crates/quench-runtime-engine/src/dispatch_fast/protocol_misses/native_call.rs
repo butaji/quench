@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `native_call_miss`: a `Call` record whose callee is a native.
 pub(crate) const NATIVE: u8 = 0;

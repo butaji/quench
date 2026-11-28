@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Kinds of the RETURN family's parameter codes: a returning record's kind (`RETURNING_*`, 0..=12),
 /// then a `Return` (`RETURN_KIND`) and a `LoadConst` fused into its `Return` (`CONSTANT_KIND`).

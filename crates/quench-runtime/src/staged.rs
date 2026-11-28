@@ -270,6 +270,8 @@ pub mod wasm_simd_lanes;
 pub mod wasm_step;
 pub mod wasm_atomic;
 pub(crate) mod wasm_emit;
+#[cfg(not(stencil_build))]
+pub mod glue_prelude;
 pub use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
