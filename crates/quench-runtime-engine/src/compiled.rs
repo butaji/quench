@@ -2938,10 +2938,10 @@ unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: Value, 
 ///
 /// # Safety
 /// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
-unsafe fn cached_field_read(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
+unsafe fn cached_field_read(vm: u64, _residual: u64, receiver: Value, read: u64) -> u64 {
     let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: as the caller promises; the probe reads caches and never allocates.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
     if let Some(length) = vm.array_length_field(receiver, atom) {
@@ -2984,10 +2984,10 @@ unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shap
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
 /// store to the lane at its original PC after retiring dependent native entries.
-unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
+unsafe extern "C" fn field_set_in_lane(vm: u64, _residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
     // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
     // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
     let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
@@ -3038,9 +3038,9 @@ unsafe extern "C" fn take_raised_in_lane(vm: u64, _residual: u64) -> u64 {
 }
 
 /// A lane body's global name read (`Vm::global_read_in_lane`): its value, or `Value::DELETED` for one the lane's own read would not take.
-unsafe extern "C" fn global_get_in_lane(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
+unsafe extern "C" fn global_get_in_lane(vm: u64, _residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the read runs no guest code and allocates nothing.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
     vm.global_read_in_lane(atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
@@ -3094,10 +3094,10 @@ unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: Value)
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
-unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
+unsafe extern "C" fn field_add_in_lane(vm: u64, _residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running one.
-    let (vm, residual, dispatch) = unsafe {
-        (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    let (vm, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch))
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
     if vm.primary_own_field_store_hit::<true>(receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {

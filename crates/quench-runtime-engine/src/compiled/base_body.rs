@@ -278,16 +278,16 @@ impl Vm {
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
-            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: folds.then(|| self.method_cache_atoms.bits()),
-            reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
-            adds: folds.then_some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
+            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: Some(self.method_cache_atoms.bits()),
+            reads: Some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            adds: Some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
-            presences: folds.then_some(presences.as_slice()),
-            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
+            presences: Some(presences.as_slice()),
+            fields: Some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
-            classes: if folds { classes.as_slice() } else { &[] },
+            classes: classes.as_slice(),
         };
         // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
         let facts = self.aot_facts_of(program);
