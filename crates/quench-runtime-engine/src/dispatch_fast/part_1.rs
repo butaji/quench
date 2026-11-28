@@ -84,27 +84,6 @@ pub(super) const fn field_store_row_at<const FLAG: u8>(store: FieldStore) -> Han
     }
 }
 
-/// Whether site `site` is a store's own-field instance, of either form and receiver.
-pub(crate) const fn store_formed_site(site: u8) -> bool {
-    site == own_site(false, STORE_FLAT) || site == own_site(true, STORE_FLAT)
-        || site == own_site(false, STORE_INLINE) || site == own_site(true, STORE_INLINE)
-}
-
-/// Whether site `site` is a tracked store installed for its slot's held type (`TRACKED_TAGGED_SITE` and its siblings).
-pub(crate) const fn store_held_site(site: u8) -> bool {
-    site == TRACKED_TAGGED_SITE || site == TRACKED_INT_SITE || site == TRACKED_OBJECT_SITE || site == TRACKED_OBJECT_OR_NULL_SITE
-}
-
-/// The held type (`HELD_*`) the tracked store site `site` is installed for; `HELD_NONE` at any other site.
-pub(crate) const fn held_of(site: u8) -> u8 {
-    use quench_runtime::staged::{HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-    if site == TRACKED_TAGGED_SITE { HELD_TAGGED }
-    else if site == TRACKED_INT_SITE { HELD_INT32 }
-    else if site == TRACKED_OBJECT_SITE { HELD_OBJECT }
-    else if site == TRACKED_OBJECT_OR_NULL_SITE { HELD_OBJECT_OR_NULL }
-    else { HELD_NONE }
-}
-
 /// The site fact (`generated_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
 /// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
 pub(super) const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
@@ -287,8 +266,6 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { 0 }
     else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM }
-    else if index == STORE_FLAT { 0 }
-    else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
     else { HINTED_FORM }
 }
 

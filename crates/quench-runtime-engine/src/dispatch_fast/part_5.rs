@@ -385,9 +385,10 @@ pub(crate) fn derive_lane_view<'live>(
             let typed_element = typed_element.filter(|&index| selected.is_some_and(|selected| selected.handler as usize
                 == element_typed_row(quench_runtime::staged::element_read_family(op), index) as usize));
             let handler = selected.map_or(exit_lane as Handler, |selected| selected.handler) as *const ();
+            let name_native = named_program.as_ref().and_then(|(residual, _)| name_native_operand(residual, op, handler, instruction.imm()));
             LaneInstruction {
                 handler,
-                operand: typed_element.map(|index| LaneOperand { imm: index }).or(operand).unwrap_or(LaneOperand { imm: 0 }),
+                operand: typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(operand).unwrap_or(LaneOperand { imm: 0 }),
                 a: instruction.a(),
                 b: instruction.b(),
                 // A kept argument read finds the values after the function's registers, whose
@@ -1560,6 +1561,18 @@ fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::Residu
         return (!lexical).then(|| by_name_default(op)).flatten();
     }
     window.then(lane_frame::scoped_store_row)
+}
+
+/// The operand of a by-name load whose row is `FLAG_NAME_NATIVE` (`named_name_row`): the discriminant of the native its
+/// intrinsic name stands for, which `name_value_in_lane` reads by index with no search. It is the field form with no hint
+/// (`NO_FIELD_RECEIVER`), so `clear_hints` leaves the immediate, the field's first word, in place.
+fn name_native_operand(residual: &quench_runtime::ResidualProgram, op: quench_runtime::bytecode::Op, handler: *const (), atom: u32) -> Option<LaneOperand> {
+    let load = quench_runtime::staged::name_load(op)?;
+    if handler != name_row::<FLAG_NAME_NATIVE>(load) as *const () {
+        return None;
+    }
+    let native = quench_runtime::bytecode::intrinsic_name_native(&residual.atoms[atom as usize])?;
+    Some(LaneOperand { field: FieldOperand { imm: native as u32, shape: quench_runtime::vm::NO_FIELD_RECEIVER } })
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at
