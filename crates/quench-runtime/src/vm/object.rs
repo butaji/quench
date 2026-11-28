@@ -587,9 +587,12 @@ impl Vm {
         entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
-        // A class cell departs first (R4-C4), so the record it becomes takes the dictionary class here.
-        self.heap.depart_class_object(object);
-        self.drop_departed_holder_entries();
+        // A class cell stays one (departure-free S3), except for a delete, which departs it first (R4-C4, S4 owns it).
+        let cell = self.heap.live_class_cell(object).filter(|_| trigger != DictionaryTrigger::ClassDeparture);
+        if cell.is_none() {
+            self.heap.depart_class_object(object);
+            self.drop_departed_holder_entries();
+        }
         let Some(shape) = self.heap.object(object).map(|object| object.shape()) else {
             return;
         };
@@ -599,7 +602,10 @@ impl Vm {
         let storage_len = self.shapes[shape as usize].storage_len();
         let dictionary_shape =
             self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
-        self.heap.set_object_shape(object, dictionary_shape);
+        match cell {
+            Some(granule) => self.heap.cell_to_dictionary(granule, dictionary_shape),
+            None => self.heap.set_object_shape(object, dictionary_shape),
+        }
         self.profile.dictionary_transition(trigger);
     }
     #[inline(always)]
@@ -1751,6 +1757,11 @@ impl Vm {
     /// `hinted_polymorphic_field_hit`). An entry the object does not match stays as recorded.
     #[inline(always)]
     pub fn form_hint(&self, entry: FieldCache, object: Value) -> FieldCache {
+        // A hint holds a `u16` field index (`LaneInstruction::field_hint`), which a spilled slot word does not fit: a
+        // spilled entry forms no hint, so its site keeps reading through the entry (`class_slot_address`).
+        if is_spilled_slot(entry.slot) {
+            return FieldCache::own(NO_FIELD_RECEIVER, 0);
+        }
         match self.heap.record_object_value(object) {
             Some(receiver) if entry.holder == NO_FIELD_HOLDER && receiver.exact_shape() == entry.receiver =>
                 FieldCache { receiver: receiver.hint_shape(), ..entry },
@@ -2334,6 +2345,11 @@ impl Vm {
         if let Some(granule) = self.heap.live_class_cell(object) {
             if transition.is_class_keyed() {
                 self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value);
+                return;
+            }
+            // A dictionary cell's add is its table's, a shape-keyed add too (`dictionary_cell`): no departure.
+            if let Some((granule, id)) = self.heap.live_dictionary_cell(object) {
+                self.heap.dictionary_cell_add(granule, id, transition.after, usize::from(transition.slot), value);
                 return;
             }
             self.heap.depart_class_object(object);
