@@ -155,7 +155,7 @@ impl Vm {
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
-            binding: LaneBinding { object_base: self.heap_reads().object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding, retire: retire_lane_binding },
+            binding: LaneBinding { object_base: std::ptr::null(), resume: resume_lane_binding, retire: retire_lane_binding },
             vm: self,
             code,
             program,
@@ -267,14 +267,6 @@ impl Vm {
     /// restores the floor this run raised (`entered`).
     fn leave_lane(&mut self, outer: *mut (), entered: LaneFloor) {
         LANE_CONTEXT.with(|current| current.set(outer));
-        if !outer.is_null() {
-            // SAFETY: every active context has this repr(C) prefix. Its callback owns the
-            // actual Host type, which may differ from this nested run's Host.
-            let binding = unsafe { &*outer.cast::<LaneBinding>() };
-            if binding.object_base.is_null() {
-                unsafe { (binding.resume)(outer) };
-            }
-        }
         self.leave_lane_floor(entered);
     }
 

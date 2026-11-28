@@ -592,7 +592,6 @@ struct FieldSlotBinding {
     receiver: ir::Value,
     holder: ir::Value,
     slot: FieldSlot,
-    records: ir::Value,
     arena: FieldArena,
     writes: Option<quench_runtime::typed_ir::Type>,
     /// Whether the run's entry admitted `writes` for the slot (`Lowering::entry_facts`): a
@@ -649,13 +648,11 @@ impl FieldSlot {
 }
 
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
+    site: u16, miss: ir::Block) -> FieldSlotBinding
 {
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.field_entries));
-    let records = table.map(|table| table.base()).unwrap_or_else(||
-        emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
     let mut stage = object_slots::emit(builder);
     // ObjectHeader owns record-base admission, including reused region proofs.
@@ -671,7 +668,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     };
     let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(CACHE.holder_offset, CACHE.holder_complement);
-    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
+    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry),
         arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
 
@@ -698,8 +695,8 @@ fn emit_js_cached_field_slot(
     let base = receiver;
     let record_id = quench_runtime::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
 
-    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
-    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
+    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
+    let FieldSlotBinding { holder, receiver: receiver_shape, slot, arena, .. } = binding;
     let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
@@ -708,7 +705,7 @@ fn emit_js_cached_field_slot(
     let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
         .unwrap_or_else(|| {
             let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
-            object_slots::ObjectHeader::prove(builder, base, records, class_base, None, fallback)
+            object_slots::ObjectHeader::prove(builder, base, class_base, None, fallback)
         });
     // A cached field read names a record, whose shape and storage form its header holds (a fixed class's cell takes `fixed_cells`).
     let (Some(shape), Some(inline)) = (shape, inline) else { unreachable!("a cached field read's header names a record") };
@@ -765,40 +762,10 @@ fn emit_js_cached_field_slot(
         object_slots::emit(builder).goto(join, &[address]);
 
         builder.switch_to_block(holder_block);
-        let mut stage = object_slots::emit(builder);
-        let link = proto_link(&mut stage, object);
-        // The link names the prototype's stub granule (R4-B2b, option B): its departed hop is the record id.
-        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = object_record_at(&mut stage, records, id);
-        let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
-        let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
-        stage.guard(same_holder, fallback);
-        let inline = inline_storage(&mut stage, prototype);
-        let proto_storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let extras = has_extras(&mut stage, proto_storage);
-        stage.guard(extras, fallback);
-        let extras_pointer = extras_pointer(&mut stage, proto_storage);
-        let present = stage.raw_compare_imm(Relation::NotEqual, extras_pointer, 0);
-        stage.guard(present, fallback);
-        let displaced = stage.builder.create_block();
-        let in_arena = stage.builder.create_block();
-        stage.branch_if(inline, (displaced, &[]), (in_arena, &[]));
-        stage.builder.switch_to_block(displaced);
-        let index = slot.read(stage.builder);
-        let fits = stage.raw_compare_imm(Relation::UnsignedLess, index, OBJECT.inline_property_count as i64);
-        stage.guard(fits, fallback);
-        // Exact holder shape admits the data slot. Extras hold full Values;
-        // keep this projection inside the same no-GC access as the live prototype.
-        let stride = stage.raw_const(Lane::I64, OBJECT.property_value_size as i64);
-        let offset = stage.raw_binary(Binary::Mul, index, stride);
-        let address = stage.raw_binary(Binary::Add, extras_pointer, offset);
-        let values_at = stage.raw_const(Lane::I64, OBJECT.extras_inline_values_offset as i64);
-        let address = stage.raw_binary(Binary::Add, address, values_at);
-        stage.goto(join, &[address]);
-        stage.builder.switch_to_block(in_arena);
-        let start = stage.load_u32(Region::Payload.mutable(), extras_pointer, OBJECT.extras_arena_start_offset as i32);
-        let address = arena.address(stage.builder, start, slot, fallback);
-        stage.goto(join, &[address]);
+        // S7f DESIGN: the prototype hop read the prototype's object record (the link's record id in the record table),
+        // which no ordinary object has. The holder read declines to the fallback until the hop reads the prototype's
+        // class cell (the lowered read's replacement for `object_record_at`).
+        object_slots::emit(builder).goto(fallback, &[]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
         builder.seal_block(join);
@@ -977,7 +944,6 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
         inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
-    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
@@ -994,26 +960,18 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let granule = stage.raw_unary(Unary::Narrow(Lane::I32), this);
     let granule = stage.raw_unary(Unary::ZeroExtend(Lane::I64), granule);
     let in_range = stage.raw_compare_imm(Relation::UnsignedLess, granule, i64::from(quench_runtime::staged::layout_offsets::CLASS_SPACE_GRANULES));
-    let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
     let has_classes = stage.raw_compare_imm(Relation::NotEqual, class_base, 0);
     let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
     let ok = if trusted { in_range } else {
         let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
         stage.raw_binary(Binary::And, object, in_range)
     };
-    let ok = stage.raw_binary(Binary::And, ok, has_records);
     let ok = stage.raw_binary(Binary::And, ok, has_classes);
     let ok = stage.raw_binary(Binary::And, ok, has_properties);
     stage.branch_if(ok, (found, &[]), (done, &[]));
     stage.builder.switch_to_block(found);
-    // A live receiver has no record: the receiver stays `NO_FIELD_RECEIVER`, which the slow path decides.
-    let address = quench_runtime::staged::object::object_record_of(&mut stage, records, this, done).expect("a departed receiver's record continues");
-    // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
-    let inline = quench_runtime::staged::object::inline_storage(&mut stage, address);
-    stage.builder.def_var(receiver.object, address);
-    stage.builder.def_var(receiver.shape, shape);
-    stage.builder.def_var(receiver.inline, inline);
+    // S7f DESIGN: the object record table is gone and a receiver names no record, so the receiver stays
+    // `NO_FIELD_RECEIVER`, which the slow path decides (the class cell's receiver read replaces this walk).
     stage.goto(done, &[]);
     builder.switch_to_block(done);
     receiver
@@ -3294,15 +3252,8 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
         use quench_runtime::vm::native_op_profile::StoreStorage;
         match receiver.direct_object_index() {
             None => StoreStorage::NonRecord,
-            Some(id) => match vm.heap_reads().record_id(id) {
-                None => StoreStorage::NonRecord,
-                Some(record) => {
-                    let object = vm.heap_reads().object_record_by_id(record);
-                    if object.plain_storage_start().is_some() { StoreStorage::Arena }
-                    else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
-                    else { StoreStorage::OtherRecord }
-                }
-            },
+            // S7f DESIGN: the object record table is gone; a direct object has no record to classify.
+            Some(_) => StoreStorage::NonRecord,
         }
     };
     // A receiver of another shape the site met stores through its polymorphic entries, as
@@ -3985,7 +3936,7 @@ impl JsStepDispatch {
         Self {
             head: JsStepHead {
                 loop_entry: 0,
-                array_record_base: 0, collection_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
+                array_record_base: 0, collection_record_base: 0, string_record_base: 0, function_record_base: 0,
                 class_base: 0,
                 object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
@@ -4068,7 +4019,6 @@ impl JsStepDispatch {
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
         self.array_cursor = vm.heap_reads().native_array_cursor();
-        self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
         self.class_base = vm.heap_reads().class_space_base();
         self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
@@ -4363,19 +4313,8 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         if cache.holder != NO_FIELD_HOLDER {
             if cache.receiver != object.exact_shape() {
                 "prototype-receiver-shape-miss"
-            } else if let Some(holder) = object.proto_link().object_granule().and_then(|granule| vm.heap_reads().object_record(quench_runtime::Value::direct_object(granule))) {
-                if holder.exact_shape() != cache.holder {
-                    "prototype-holder-shape-miss"
-                } else if holder.record_only().and_then(|record| record.inline_properties()).is_some() {
-                    "prototype-holder-inline"
-                } else if holder.record_only().and_then(|record| record.extras_storage_start()).is_some() {
-                    "prototype-holder-extras"
-                } else if holder.plain_storage_start().is_some() {
-                    "prototype-holder-plain"
-                } else {
-                    "prototype-holder-other-storage"
-                }
             } else {
+                // S7f DESIGN: a prototype holder's record is gone, so every prototype read is non-record here.
                 "prototype-non-record"
             }
         } else if cache.receiver != object.exact_shape() {
@@ -9924,8 +9863,7 @@ mod tests {
             receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
             holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
             slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
-            records: parameters[0],
-            arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
+            arena: FieldArena::Unbound { values: parameters[0], length: parameters[1] },
             writes: None, admitted: None,
         };
         let slot = binding.slot.read(&mut builder);
@@ -9947,7 +9885,8 @@ mod tests {
         let run = unsafe { std::mem::transmute::<*mut u8,
             unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
         let (values, length) = vm.heap_reads().native_property_values();
-        let records = vm.heap_reads().object_record_base().unwrap() as usize;
+        // S7f: the first word of the entry's ABI was the object record table, which is gone; it is passed as 0.
+        let records = 0_usize;
         assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
         // A receiver that has not proved the cached shape cannot read this slot.
         assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
@@ -10205,54 +10144,6 @@ mod tests {
 
     /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
     /// executable memory, and its entry.
-    #[test]
-    fn native_object_table_binding_tracks_heap_lifetime() {
-        let source = "globalThis.tableProbe=0; throw 7;";
-        let mut vm = semantic_vm(source);
-        let original = vm.heap_reads().object_record_base().unwrap() as usize;
-        let probe = vm.lookup_atom("tableProbe").unwrap();
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let assert_binding = |vm: &mut Vm, expected| {
-            JsStepDispatch::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
-                assert_ne!(expected, 0);
-                assert_eq!(activation.object_record_base, expected);
-                assert_eq!(vm.heap_reads().object_record_base().unwrap() as usize, expected);
-            }).unwrap();
-        };
-        assert_binding(&mut vm, original);
-        // A normal semantic store may allocate/widen property storage; neither
-        // it nor a full collection replaces the record-table reservation.
-        vm.set_property(vm.realm.globals, probe, Value::number(1.5)).unwrap();
-        vm.collect_now(&program);
-        assert_binding(&mut vm, original);
-        assert_eq!(vm.own_property(vm.realm.globals, probe), Some(Value::number(1.5)));
-
-        let mut other = semantic_vm(source);
-        let other_base = other.heap_reads().object_record_base().unwrap() as usize;
-        // Reentry in another VM admits that VM's table, without changing the
-        // outer activation's admitted base or retaining it for later entries.
-        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
-            assert_binding(&mut other, other_base);
-            assert_eq!(activation.object_record_base, original);
-        }).unwrap();
-
-        // Realm initialization destroys the old heap reservation. Rebuild the
-        // caller frame as semantic_program does, then admit the current table;
-        // allocators may reuse the address, so pointer inequality is no proof.
-        vm.initialize_for_snapshot(&program).unwrap();
-        let current = vm.programs.get(ProgramId::MAIN).unwrap();
-        let body = current.function(0);
-        let mut frame = Box::new(Frame::empty(ProgramId::MAIN, 0));
-        frame.registers.resize(usize::from(body.registers), Value::UNDEFINED);
-        frame.locals.resize(usize::from(body.locals), Value::UNDEFINED);
-        frame.initialized_registers = frame.registers.len();
-        vm.frames.push(frame);
-        vm.active_registers = vm.frames[0].registers.as_mut_ptr();
-        let reset_base = vm.heap_reads().object_record_base().unwrap() as usize;
-        assert_binding(&mut vm, reset_base);
-        assert_binding(&mut other, other_base);
-    }
-
     #[test]
     fn native_activation_owns_metadata_without_retaining_it_between_entries() {
         let vm_source = "throw 7;";

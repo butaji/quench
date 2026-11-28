@@ -322,10 +322,6 @@ pub const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(
 /// The activation's local slots and their count (`native_locals`, `local_count`).
 pub const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
 pub const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);
-/// The heap bases a field read through a site's cache entry reads: the object record
-/// reservation, the allocator header of the property values (whose base is at
-/// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
-pub const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
 /// The class space's base (`heap::class_space`): a direct object's cell is at this plus its granule times
 /// `CLASS_HEADER_BYTES`, and its header's low half is its class.
 pub const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);

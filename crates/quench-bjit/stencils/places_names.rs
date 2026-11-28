@@ -6,7 +6,7 @@
 //! `vm_step` to `call_out_fast`, `typeof_string` to `typeof_entry` (the lead adds the forwarders).
 
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_EMPTY_STRING, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE};
+use crate::layout::{JS_STEP_EMPTY_STRING, JS_STEP_FUNCTION_RECORD_BASE};
 use crate::numeric::HOLE_B;
 use crate::typed_ir::Representation;
 use crate::places::{Places};
@@ -15,10 +15,12 @@ use crate::staged::{CallOut, Concrete, Frame, Stage, iteration};
 use crate::words::hole64;
 
 impl Places {
-    /// The object record table the object-walking rows read (`JS_STEP_OBJECT_RECORD_BASE`).
+    /// The object record table the object-walking rows read. The table left the payload with the object
+    /// records (S7f), so the rows that need it decline.
+    // S7f DESIGN: absent (`None`) until the staged walks (`instanceof_by_words`, `AddSite`) drop their records argument.
     #[inline(always)]
-    pub(crate) fn object_records(&self) -> u64 {
-        word_at(payload(&self.s), JS_STEP_OBJECT_RECORD_BASE)
+    pub(crate) fn object_records(&self) -> Option<u64> {
+        None
     }
 
     /// The function record table the naming site reads (`JS_STEP_FUNCTION_RECORD_BASE`).

@@ -178,7 +178,8 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            records: |context| unsafe { vm(context.cast::<LaneContext>()) }.heap_reads().object_record_base().map(|base| base as u64),
+            // S7f DESIGN: the object record table is gone; no record table is ever offered.
+            records: |_context| None,
             instance: instance_decision }
     }
 }
@@ -1327,10 +1328,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
+    // S7f DESIGN: the object table the for-in fast arm needs is gone, so the arm declines (see bjit `places.rs`).
     fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
-        // SAFETY: the running lane's heap, live for the row's step.
-        let heap = unsafe { &*self.heap? }.heap_reads();
-        Some((heap.array_record_base()? as u64, heap.object_record_base()? as u64, heap.collection_epoch()))
+        None
     }
 
     /// The `typeof` kind of the heap value `word` (`type_of_in_lane`), for a `typeof` row.
@@ -1930,18 +1930,17 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         if let Some(RecordPlan { word: true, .. }) = self.plan {
             return Some(quench_runtime::staged::ic::Reached::bare(object));
         }
-        let Some(RecordPlan { records, other: Some(heap), functions, .. }) = self.plan else {
-            if self.trust_this && object == self.this.to_bits() && let Some(records) = quench_runtime::staged::PropertyFrame::object_records(self, stage) {
-                return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
-            }
+        let Some(RecordPlan { other: Some(heap), functions, .. }) = self.plan else {
             return quench_runtime::staged::property::receiver(stage, self, object, miss);
         };
         // SAFETY: the heap is the lane's, live for the read.
         if functions && let Some(record) = unsafe { &*heap }.heap_reads().function_receiver(Value::from_bits(object)) {
             return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
         }
+        // S7f DESIGN: a direct object has no record in the table any more; it declines here until the class cell's
+        // receiver read replaces the record walk.
         if Value::from_bits(object).direct_object_index().is_some() {
-            return quench_runtime::staged::object::object_record_of(stage, records, object, miss).map(quench_runtime::staged::ic::Reached::bare);
+            return None;
         }
         // SAFETY: as above.
         let record = unsafe { &*heap }.heap_reads().held_other_receiver(Value::from_bits(object))?;
@@ -2085,10 +2084,9 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
 
     /// The live object record table, which an `instanceof` walk and a planned read address.
     #[inline(always)]
+    // S7f DESIGN: no object record table exists, so the table is absent.
     fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
-        if let Some(plan) = self.plan { return Some(plan.records); }
-        let Decisions { context, records, .. } = self.decisions?;
-        records(context)
+        None
     }
 }
 

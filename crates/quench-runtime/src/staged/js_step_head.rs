@@ -16,11 +16,6 @@ pub struct JsStepHead<V> {
     /// The activation's local slots and their count (`native_locals`, `local_count`).
     pub native_locals: *mut V,
     pub local_count: usize,
-    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
-    /// record reservation, the property value arena and its length, and the field cache
-    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
-    /// of them, so each is read again after one (`refresh_heap_bases`).
-    pub object_record_base: usize,
     /// The class space's base (`Heap::class_space_base`): a direct object's cell is at this plus its
     /// granule times 8, and its header's high half is the record id (R4-B2b). Zero where absent; refreshed
     /// with the other record bases.

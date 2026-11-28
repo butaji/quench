@@ -7,11 +7,11 @@
 use crate::words::{hop, word_at};
 use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
-use crate::places::{DEST, LEFT, Places, settle, tagged_place};
+use crate::places::{DEST, LEFT, Places, settle};
 use crate::places_property::run_lexical;
 use crate::stage::StencilStage;
-use crate::staged::{Operation, Stage, StagedRecordSpace, environment, op_kind, step_names_of};
-use crate::words::{hole, hole64};
+use crate::staged::{Operation, Stage, environment, op_kind, step_names_of};
+use crate::words::hole64;
 use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 
 /// The depth-0 capture slot (the stage's operands are holes 1 and 2) into the destination; a hit
@@ -77,25 +77,14 @@ fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
     settle(frame, step, Out::Next)
 }
 
-/// The first operand stored to the global object's slot (hole 0: the record id), through the store
-/// gate where `GATED`: a value that may be a heap reference joins the barrier's log, and a store
-/// the property arena observes (`store_watch`) is the VM's. The gate is read-only, so it runs
-/// before the staged `GlobalWrite`, which leaves at the same edge where the layout fails.
+/// The first operand stored to the global object's slot (hole 0: the record id). The global object is an
+/// ordinary class cell now, and the object record table it was stored in is gone, so the row declines
+/// (exit, nothing written) to the call-out.
+// S7f DESIGN: the global store is retargeted at the global's class cell (`StagedRecordSpace::Class`) in the lane slice;
+// until then the store declines. The `GATED` and `A` operands are unused by the declining row.
 #[inline(always)]
-fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    if GATED {
-        let open = stage.store_gate(StagedRecordSpace::Object, hole::<0>() as u64, tagged_place::<A, HOLE_A>(&s));
-        need!(s, stage.guard(open, ()));
-    } else {
-        // An ungated value is immediate: it needs no log unless old records keep counts.
-        let open = stage.immediate_store_open();
-        need!(s, stage.guard(open, ()));
-    }
-    let mut frame = Places::new::<0, A, 0>(s);
-    let step = step_names_of::<{ op_kind::GLOBAL_WRITE }, _, _>(&mut stage, &mut frame, Operation::GlobalWrite { source: LEFT, atom: 0, site: 0, initialize: false });
-    settle(frame, step, Out::Next)
+fn global_store_row<const A: u8, const GATED: bool>(s: S, _payload: usize) -> Out {
+    Out::Exit(s)
 }
 
 /// The global lexical binding at the address in hole 1 into the destination, as the staged `LoadName` whose binding is

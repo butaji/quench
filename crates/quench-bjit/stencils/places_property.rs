@@ -12,16 +12,14 @@
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
 use crate::heap_rows::{context_word, payload, stage_site, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_LOOP_ENTRY};
 use crate::typed_ir::Representation;
 use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
-use crate::staged::object::direct_object_record;
 use crate::staged::property::{FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::region::Region;
-use crate::staged::slot_store::{own_flat_store, store_admitted};
 use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names_of};
-use crate::words::{HOLE_B, S, hole64, is_double, is_int};
+use crate::words::{HOLE_B, S, hole64};
 
 /// Bits in a method-cache bitset word, as a shift.
 
@@ -226,16 +224,6 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
         RowPlans { ops: self.ops, held: self.held }
     }
 
-    /// The object record table, which a row's receiver and prototype reads address; a table the
-    /// process has not reserved leaves.
-    #[inline(always)]
-    fn object_records(&mut self, stage: &mut Concrete) -> Option<u64> {
-        let records = word_at(payload(&self.places.s), JS_STEP_OBJECT_RECORD_BASE);
-        let present = stage.ne_imm(records, 0u32);
-        stage.guard(present, ())?;
-        Some(records)
-    }
-
     /// The activation's bound receiver, from the payload (the `THIS_*` rows); a held read's receiver.
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> where Self: Sized {
@@ -262,7 +250,7 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     #[inline(always)]
     fn field_get_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, miss: ()) -> Option<u64> {
         let Callout::SiteRead { chained } = self.callout else { return None };
-        let (entries, records) = field_tables(&self.places.s);
+        let (entries, records) = field_tables(&self.places.s)?;
         // No function record table (`entry::readable_record`): a read of a function's own field misses, so
         // the call that follows runs the interpreter's builtin row (265 Ir) and not a body's native call
         // (`region_call_in_lane`, 1,250 Ir); it takes the table once a body's native call costs no more.
@@ -282,11 +270,11 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     fn field_store_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, value: u64, miss: ()) -> Option<()> {
         match self.callout {
             Callout::SiteStore { gated } => {
-                let tables = field_tables(&self.places.s);
+                let tables = field_tables(&self.places.s)?;
                 let offset = stage_site(stage);
                 entry::site_store(stage, tables, object, offset, (value, gated, None), miss)
             }
-            Callout::FlatStore { int } => flat_store(stage, &self.places.s, object, value, int),
+            Callout::FlatStore { .. } => None,
             Callout::Plan | Callout::LoopEntry | Callout::SiteRead { .. } => None,
         }
     }
@@ -322,26 +310,8 @@ pub(crate) fn receiver_set() -> Operation<u64, ()> {
 }
 
 /// The cache entry tables of the activation: the field entries and the object record table.
+/// S7f DESIGN: the object record table left the payload with the object records, so the tables are absent and
+/// the site read and store decline (`None`, the call-out) until `entry`'s tables drop the record table
+/// (`staged/entry`). The flat own-slot store (`FlatStore`) was a direct-object record store and declines likewise.
 #[inline(always)]
-fn field_tables(s: &S) -> (u64, u64) {
-    let base = payload(s);
-    (word_at(base, JS_STEP_FIELD_ENTRIES), word_at(base, JS_STEP_OBJECT_RECORD_BASE))
-}
-
-/// The flat own-slot store of `value` into the object `object` names (the cache row's store):
-/// a number, an int32 where `int`, into a program that stores in place and whose method cache
-/// names no atom it stores to (`store_admitted`), through a direct object of the exact
-/// shape its entry holds. Nothing is written where it leaves.
-#[inline(always)]
-fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -> Option<()> {
-    if !(is_int(value) || is_double(value)) || (int && !is_int(value)) {
-        return None;
-    }
-    let base = payload(s);
-    let specialized = stage.stores_specialized(base as u64);
-    store_admitted(stage, specialized, ())?;
-    let records = word_at(base, JS_STEP_OBJECT_RECORD_BASE);
-    let (id, record) = direct_object_record(stage, object, records, ())?;
-    let rep = if int { Representation::Int32 } else { Representation::Tagged };
-    own_flat_store(stage, record, id, 0, 0, (value, rep, crate::typed_ir::Type::ANY), ())
-}
+fn field_tables(_s: &S) -> Option<(u64, u64)> { None }

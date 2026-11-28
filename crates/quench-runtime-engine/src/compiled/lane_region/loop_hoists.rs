@@ -150,7 +150,7 @@ impl Lowering<'_, '_> {
                     let instruction = self.unit.instructions[store];
                     let site = instruction.cache_site_index();
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
-                        &mut self.builder, self.payload, site, exit, None));
+                        &mut self.builder, self.payload, site, exit));
                     self.admit_field_writes(&mut binding, Type::INT32, exit);
                     let allowed = self.store_atom_admitted(state, instruction.atom_index(), exit);
                     emit_js_guard(&mut self.builder, allowed, exit);

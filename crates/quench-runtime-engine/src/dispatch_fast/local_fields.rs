@@ -55,18 +55,13 @@ script_handler! {
 
 /// Binds the own-field hint of the local `GetField` record at `ip` to the primary own entry of `site`
 /// as `object` holds it, so the local-field row reads that field (`set_field_hint`). Only a direct
-/// object whose primary entry is an own one binds; the object records are bound on the first bind.
+/// object whose primary entry is an own one binds.
 fn bind_local_field_hint(cx: *mut LaneContext, ip: Ip, object: Value, site: u16) {
     // SAFETY: the context's program outlives the lane run.
     let vm = unsafe { vm(cx) };
     let entry = vm.field_cache_entry(site);
     if entry.holder != quench_runtime::vm::NO_FIELD_HOLDER || object.direct_object_index().is_none() {
         return;
-    }
-    if unsafe { (*cx).binding.object_base }.is_null() {
-        let Some(base) = vm.heap_reads().object_record_base() else { return };
-        // SAFETY: the context is the running lane's, and the object records it binds are live for the run.
-        unsafe { (*cx).binding.object_base = base };
     }
     set_field_hint(ip, vm.form_hint(entry, object));
     requicken(ip, generated_row!(quench_runtime::staged::GET_FIELD_ROW, ACC_NONE, LOCAL_FIELD_SITE) as Handler);

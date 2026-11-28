@@ -179,7 +179,8 @@ view_handler! {
             let script: *mut LaneContext = view.memory.bytes.cast();
             // The live record table: a direct object receiver proves it reserved, and any other
             // receiver leaves at the row's family test before it is addressed.
-            let records = unsafe { vm(script) }.heap_reads().live_object_records() as u64;
+            // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
+            let records: u64 = property_miss!();
             // A method cache that may name the atom must see the store (`store_admitted`); an add
             // leaves that to the VM's adds, which admit it themselves.
             if const { FLAG != crate::dispatch_fast::ADD_SITE } && unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
@@ -231,7 +232,8 @@ view_handler! {
             if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
                 // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
                 // layout over the bound object records. An unbound table or hint leaves to the local's miss.
-                let records = unsafe { (*script).binding.object_base } as u64;
+                // S7f DESIGN: the lane's object record base is gone, so it reads as absent and the zero checks decline.
+            let records = 0_u64;
                 let hint = i.field_hint();
                 if records == 0 || hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER {
                     sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
@@ -245,7 +247,7 @@ view_handler! {
                 let Some((guard, watch, value)) = machine.inherited_hint_operands(i.call_link.get(), i.imm(), others) else { property_miss!() };
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
-                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
+                frame.plan = Some(RecordPlan::held(guard, watch, value, property_miss!(), other));
             } else if const { crate::dispatch_fast::nested_site(FLAG) || crate::dispatch_fast::sink_site(FLAG) } {
                 // A nested read's two own hops: the record's hint is the first step's layout and
                 // slot, the site's second entry the second, both primary own entries; the base is
@@ -259,7 +261,7 @@ view_handler! {
                     if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                     let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
                     frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
-                        machine.heap_reads().live_object_records() as u64));
+                        property_miss!()));
                 } else {
                 let code = unsafe { &*(*script).code };
                 let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
@@ -283,7 +285,7 @@ view_handler! {
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
                 frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
-                    machine.heap_reads().live_object_records() as u64));
+                    property_miss!()));
                 }
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
@@ -296,7 +298,8 @@ view_handler! {
             } else if const { crate::dispatch_fast::returning_field_site(FLAG) } {
                 // A returning own read of the record's hint (`RecordPlan::own`); the lane's unbound
                 // object records are the miss's to bind.
-                let records = unsafe { (*script).binding.object_base } as u64;
+                // S7f DESIGN: the lane's object record base is gone, so it reads as absent and the zero checks decline.
+            let records = 0_u64;
                 if records == 0 { property_miss!() }
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
@@ -306,7 +309,8 @@ view_handler! {
                 // object, should the site meet one, through the bound records.
                 let machine = unsafe { vm(script) };
                 // The live record table: a direct object receiver proves it reserved.
-                let records = machine.heap_reads().live_object_records() as u64;
+                // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
+                let records: u64 = property_miss!();
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
                 // A fixed form is the hint layout's own (the decision chose the row by it).
@@ -345,7 +349,7 @@ view_handler! {
                 let machine = unsafe { vm(script) };
                 let Some((guard, watch, slot)) = machine.getter_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::getter(guard, watch, slot, machine.heap_reads().live_object_records() as u64));
+                frame.plan = Some(RecordPlan::getter(guard, watch, slot, property_miss!()));
             } else if const { FLAG == crate::dispatch_fast::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
@@ -361,7 +365,8 @@ view_handler! {
                 // (`RecordPlan::polymorphic`), the other entries alone.
                 let machine = unsafe { vm(script) };
                 if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
-                let records = machine.heap_reads().live_object_records() as u64;
+                // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
+                let records: u64 = property_miss!();
                 frame.entries = Some(EntryReads::of(script, ip));
                 frame.plan = Some(if const { FLAG == crate::dispatch_fast::POLYMORPHIC_SITE } {
                     let hint = i.field_hint();
@@ -379,9 +384,10 @@ view_handler! {
                 // A direct object's record is addressed in the table after its family test; at the
                 // held-other site, any other receiver's object part is resolved out of line.
                 let other = if const { crate::dispatch_fast::held_other_site(FLAG) } { Some(std::ptr::from_ref::<Vm>(machine)) } else { None };
-                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap_reads().live_object_records() as u64, other));
+                frame.plan = Some(RecordPlan::held(guard, watch, value, property_miss!(), other));
             } else {
-            let records = unsafe { (*script).binding.object_base } as u64;
+            // S7f DESIGN: the lane's object record base is gone, so it reads as absent and the zero checks decline.
+            let records = 0_u64;
             if const { crate::dispatch_fast::own_site_form(FLAG) == HINTED_FORM } {
                 // The form of no particular hint is the row a site starts on, before the lane bound
                 // its object records: its first miss binds them.

@@ -65,7 +65,7 @@ fn instanceof_row(s: S) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let mut stage = StencilStage::from_hole(0);
     let held = word_at(frame.s.frame, (constructor & u64::from(u32::MAX)) as usize) == hole64::<HOLE_B>();
-    let records = frame.object_records();
+    let Some(records) = frame.object_records() else { return finish_fast(frame, false) };
     let words = (word_at(frame.s.frame, value as usize), constructor >> HELD_LINK_AT);
     let done = held && object::instanceof_by_words(&mut stage, records, words.0, words.1, ()).map(|holds| {
         let (boolean, fact) = frame.boolean(&mut stage, holds);

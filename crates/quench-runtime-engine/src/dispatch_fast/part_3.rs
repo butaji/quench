@@ -284,49 +284,17 @@ pub(super) fn forwarded_construction_in_lane(
 /// (`ForwardedResolution`): own data properties of the plan's prototype and of the method's
 /// prototype, neither shadowed by the receiver template or the method, in shapes that fix
 /// their slots. `None` records nothing.
+// S7f DESIGN: the forwarded method reads its prototype's object record (`object_record`), which no ordinary object has
+// any more, so the resolution declines until its slot reads are made on the class cell.
 pub(super) fn forwarded_resolution(
-    vm: &Vm,
-    callee: Value,
-    class: u32,
-    method: quench_runtime::bytecode::ForwardedThisMethod,
-    function: Value,
-    apply: Value,
+    _vm: &Vm,
+    _callee: Value,
+    _class: u32,
+    _method: quench_runtime::bytecode::ForwardedThisMethod,
+    _function: Value,
+    _apply: Value,
 ) -> Option<ForwardedResolution> {
-    let plan = holding_construct_plan(vm, callee, class).filter(|plan| plan.fields == 0)?;
-    let data_slot = |owner: &quench_runtime::tier_surface::Object, atom| {
-        let shape = owner.shape();
-        if vm.shape_is_dictionary(shape) {
-            return None;
-        }
-        let slot = vm.shape_slot(shape, atom)?;
-        // SAFETY: the slot exists in the non-dictionary shape that names it.
-        let value = unsafe { vm.heap_reads().property_get_shaped(owner, slot) }?;
-        (!value.is_deleted()).then_some((u16::try_from(slot).ok()?, value))
-    };
-    let data = |owner: Value, atom, slot: usize| {
-        let key = quench_runtime::vm::PropertyKey::string(atom);
-        vm.property_attributes(owner, key).is_some_and(|attributes| !attributes.accessor)
-            && vm.heap_reads().object(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
-    };
-    if vm.shape_slot(plan.shape, method.method.0).is_some() {
-        return None;
-    }
-    let prototype = vm.heap_reads().object_record(plan.prototype)?;
-    let (method_slot, found) = data_slot(prototype, method.method.0)?;
-    let FunctionRecord { object, .. } = vm.function_record(function)?;
-    if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
-        return None;
-    }
-    let apply_holder = object.proto();
-    let (apply_slot, found) = data_slot(vm.heap_reads().object(apply_holder)?.record_only()?, method.apply.0)?;
-    (found == apply
-        && data(plan.prototype, method.method.0, usize::from(method_slot))
-        && data(apply_holder, method.apply.0, usize::from(apply_slot)))
-    .then_some(ForwardedResolution {
-        method: function,
-        apply_holder,
-        initializer: None,
-    })
+    None
 }
 
 /// The method a forwarding constructor's construction activates, from `callee`'s plan's

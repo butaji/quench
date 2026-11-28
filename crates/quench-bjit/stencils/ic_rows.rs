@@ -35,7 +35,6 @@
 
 use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
 use crate::places::deliver_number;
 use crate::places::{Places, finish_chained, site_object};
@@ -44,7 +43,7 @@ use crate::stage::StencilStage;
 use crate::staged::entry::{class_held_field, class_key_cell, class_own_field, class_store};
 use crate::staged::ic::{self, IcOp};
 use crate::staged::ic_flat::own_field_flat;
-use crate::staged::object::{Form, direct_object_record, object_record_of};
+use crate::staged::object::Form;
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::typed_ir::Representation;
 use crate::staged::{Stage, StagedRecordSpace, Step, op_kind, step_property_of};
@@ -62,11 +61,10 @@ const ENTRY_HOLES: u8 = 2;
 /// (for a get, above the destination's offset in hole 0, as a site row's) is a direct object and
 /// the VM has an object table.
 #[inline(always)]
-fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Option<(u64, u64, u64)> {
-    let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    let (id, record) = direct_object_record(stage, bits, records, ())?;
-    Some((id, record, records))
+// S7f DESIGN: the object record table is gone, so a direct object's record read declines (`None`) until the
+// receiver proof is made on the class cell (`IC_*_CLASS_ROW`), which is the live path for every ordinary object.
+fn receiver<const H: u8>(_s: &S, _stage: &mut StencilStage, _payload: usize) -> Option<(u64, u64, u64)> {
+    None
 }
 
 
@@ -112,10 +110,10 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
 /// (`base_region::proofs`): its address in the record table (`object_record_of`), no family test; `None` where
 /// the receiver is live (it has no record).
 #[inline(always)]
-fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Option<u64> {
-    let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    object_record_of(stage, records, bits, ())
+// S7f DESIGN: the object record table is gone; the record a proved receiver names is absent (`None`), so
+// the known-object rows decline until they are retargeted at the class cell.
+fn known_record<const H: u8>(_s: &S, _stage: &mut StencilStage, _payload: usize) -> Option<u64> {
+    None
 }
 
 /// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the

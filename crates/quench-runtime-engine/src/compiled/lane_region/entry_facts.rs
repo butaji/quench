@@ -170,7 +170,7 @@ impl Lowering<'_, '_> {
                 }
                 for (site, repeated, writes) in uses {
                     let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit, object_table);
+                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit);
                     let slot = binding.slot.read(&mut self.builder);
                     binding.slot = FieldSlot::Bound(slot);
                     // A slot whose writes the run does not admit leaves only at its stores

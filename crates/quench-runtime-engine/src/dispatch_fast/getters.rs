@@ -129,11 +129,6 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
             LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 Some(AccessorForward::Field(vm.field_cache_entry(cache)))
             }
-            LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
-                let answer = vm.site_private_field_entry(site, environment)?;
-                let receiver = vm.heap_reads().object_record(object)?;
-                (answer.receiver == receiver.exact_shape()).then_some(AccessorForward::Field(answer))
-            }
             _ => None,
         },
         _ => None,

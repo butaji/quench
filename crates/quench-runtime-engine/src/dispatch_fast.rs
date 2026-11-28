@@ -2721,13 +2721,9 @@ script_handler! {
         else {
             sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
         };
-        if !BOUND {
-            // SAFETY: a successful direct-object lookup proves the range is reserved.
-            unsafe { (*cx).binding.object_base = vm.heap_reads().object_record_base().unwrap_unchecked() };
-        }
         // A register read probes for an own constant (an enum member, a namespace export): the
         // first object it meets stays unhinted, so the next read comes back here; the same
-        // object again is held as the read's value under a watch on its values.
+        // object again is held
         if !THIS && !holds_loop_site(ip) && vm.probes_own_constant(ip.addr()) {
             let first = !vm.own_constant_probed(ip.addr());
             if let Some(index) = vm.probe_own_constant(ip.addr(), i.imm(), object, value, NO_CALL_LINK) {
