@@ -146,7 +146,7 @@ fn lane_demand(image: &AotImage, lane: &LaneImage, demand: &mut Demand) {
     demand.needs_exits |= !lane.exits.sites.is_empty();
     for symbol in symbols(image, &lane.code) {
         match symbol {
-            Some(Symbol::Helper(_) | Symbol::Attention | Symbol::NarrowUpperWords | Symbol::CallRecord { .. }) => {}
+            Some(Symbol::Helper(_) | Symbol::Attention | Symbol::NarrowUpperWords | Symbol::CallRecord { .. } | Symbol::EntryStub) => {}
             Some(Symbol::BasePc { .. }) => demand.needs_exits = true,
             _ => demand.needs_live_link = true,
         }

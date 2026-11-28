@@ -2654,6 +2654,7 @@ pub struct NativeJsProgram {
 
 unsafe extern "Rust" {
     fn quench_engine_native_from_linked_image(program: ResidualProgram, image: *const u8) -> Result<NativeJsProgram, String>;
+    fn quench_engine_install_linked_lane_stubs(body_shim: usize, entry_stub: usize) -> Result<(), String>;
 }
 
 impl NativeJsProgram {
@@ -2668,6 +2669,18 @@ impl NativeJsProgram {
     pub unsafe fn from_linked_image(program: ResidualProgram, image: *const u8) -> Result<Self, String> {
         // SAFETY: the caller's contract is the hook's.
         unsafe { quench_engine_native_from_linked_image(program, image) }
+    }
+
+    /// Makes the lane stubs the image links ahead (`LANE_BODY_SHIM_SYMBOL`, `LANE_ENTRY_STUB_SYMBOL`) the process's
+    /// body shim and entry stub (the engine's `lane_body_abi::install_linked`): the image support's init edge
+    /// (`linked_native_sources!`), before any lane body runs. An error where the process published its own first.
+    ///
+    /// # Safety
+    /// Both addresses must be the image's linked stubs, emitted by this build's object linker.
+    #[cfg(feature = "native-execution")]
+    pub unsafe fn install_linked_lane_stubs(body_shim: usize, entry_stub: usize) -> Result<(), String> {
+        // SAFETY: the caller's contract is the hook's.
+        unsafe { quench_engine_install_linked_lane_stubs(body_shim, entry_stub) }
     }
 }
 
@@ -5143,9 +5156,13 @@ impl Registers {
 /// and that stub is the cell's unpublished state (`EntryCell::stub`). This function has exactly one instance: a tiny
 /// function is otherwise inlinable and each codegen unit may get its own copy at its own address.
 #[inline(never)]
+#[unsafe(export_name = "quench_entry_stub_in_lane")]
 pub unsafe extern "C" fn entry_stub_in_lane(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
+
+/// The name `entry_stub_in_lane` is exported by, which an image's linked entry stub calls (`lane_body_abi::link_lane_stubs`).
+pub const ENTRY_STUB_IN_LANE_SYMBOL: &str = "quench_entry_stub_in_lane";
 
 /// The scalar entry no body backs: it enters nothing, so its caller restarts the call. One
 /// instance, as `entry_stub_in_lane`.

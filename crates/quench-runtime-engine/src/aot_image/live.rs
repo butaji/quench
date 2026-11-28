@@ -357,6 +357,7 @@ fn resolve(image: &AotImage, vm: &mut Vm, places: &Places<'_>, namespace: u32, k
         Symbol::GuardShape(_) | Symbol::HolderLink(_) | Symbol::HolderValue(_) | Symbol::GuardLayout(_) | Symbol::ClassLayout(_) =>
             symbols::resolve_recipe(symbol, image, vm),
         Symbol::ClassMethods => Some(quench_runtime::tier_surface::layouts::class_methods_base() as u64),
+        Symbol::EntryStub => Some(crate::compiled::lane_body_abi::entry_stub() as u64),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
 }

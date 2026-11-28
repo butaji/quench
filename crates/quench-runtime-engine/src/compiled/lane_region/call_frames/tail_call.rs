@@ -34,7 +34,7 @@ impl EmitFrame<'_> {
     pub(super) fn tail_branch(&self, stage: &mut Emit<'_, '_>, owned: &DirectArm, this: ir::Value, room: Room<ir::Value>, captures: ir::Value,
         entry: quench_runtime::staged::machine::CallTarget<ir::Value>, arguments: (Register, u16)) -> Option<()> {
         let call = self.call_site()?;
-        let stub = stage.constant(crate::compiled::lane_body_abi::entry_stub() as u64);
+        let stub = address(self.helpers, stage.builder, RelocKind::EntryStub, 0, crate::compiled::lane_body_abi::entry_stub() as u64);
         let unstubbed = stage.sub(entry.word(), stub);
         let bodied = stage.ne_imm(unstubbed, 0_u64);
         let packed = stage.load_u64(Region::Frame.mutable(), call.registers, context_at(quench_runtime::staged::frame::CONTEXT_PACKED));
