@@ -428,6 +428,7 @@ impl Vm {
         self.heap.alloc(Cell::BigInt(crate::bigint::JsBigInt::from_digits(negative, &[if negative { (word as i64).unsigned_abs() } else { word }])))
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;

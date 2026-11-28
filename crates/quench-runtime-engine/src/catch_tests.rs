@@ -2,10 +2,10 @@
 //! same function covers is the catch's jump in native code, and one that none covers crosses
 //! compiled frames as `LANE_BODY_THREW` (`lane_region::catches`); every result equals the
 //! interpreter's.
-use super::*;
-use crate::Engine;
-use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Tier};
+use crate::engine_prelude::*;
+use quench_runtime::Engine;
+use quench_runtime::test_host::TestHost;
+use crate::test_oracle::{assert_tier_agrees, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// The compiled run's output, which the oracle holds to the interpreter's.
@@ -201,16 +201,16 @@ fn an_uncaught_exception_from_compiled_frames_reports_the_throws_location() {
       for (let i = 0; i <= 40000; i++) total += caller(i);
       print(String(total));
     "#;
-    let location = |mode: crate::ExecutionMode| {
+    let location = |mode: quench_runtime::ExecutionMode| {
         let program = Engine::specialize(source, "catch-tests.js").unwrap();
-        let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
-        vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+        let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
+        vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        let error = vm.execute(&program).expect_err("the exception is uncaught");
+        let error = quench_runtime::test_support::execute(&mut vm, &program).expect_err("the exception is uncaught");
         error.source_location().map(|(file, line, column, _)| (file.to_owned(), line, column))
     };
-    assert_eq!(location(crate::ExecutionMode::Compiled), location(crate::ExecutionMode::Interpreted));
+    assert_eq!(location(quench_runtime::ExecutionMode::Compiled), location(quench_runtime::ExecutionMode::Interpreted));
 }
 
 /// `source` wrapped in a function, which compiled equals the interpreter in the lines it

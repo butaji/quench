@@ -2,7 +2,7 @@
 //! `lane_region::kept_shapes`) is seen at the code's next use: each way a shape can be left,
 //! from a callee and from outside the compiled function, ends as the interpreter's run does.
 
-use crate::vm::test_oracle::{assert_tier_agrees, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 /// A program whose hot `read` reads `a.x`, calls `f(a)`, then reads `a.y` (and `a.z`, which no
 /// object has until the departure) and stores `a.x`; the one object that departs its shape does

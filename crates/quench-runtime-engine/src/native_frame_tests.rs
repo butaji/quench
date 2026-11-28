@@ -1,24 +1,24 @@
 //! Native frames in the lane stack's activations (`dispatch_fast::native_frames`): the tag and
 //! top word emitted code writes through, and chains of direct calls whose helpers, collections,
 //! exceptions and leaves must match the lane's own run.
-use crate::vm::engine_types::DirectCallee;
-use super::dispatch_fast::{KIND_NATIVE, KIND_OFFSET};
-use crate::staged::frame;
-use super::lane_activations::LaneActivations;
-use super::*;
-use crate::test_host::TestHost;
-use crate::Engine;
+use quench_runtime::vm::engine_types::DirectBody;
+use crate::dispatch_fast::{KIND_NATIVE, KIND_OFFSET};
+use quench_runtime::staged::frame;
+use quench_runtime::vm::lane_activations::LaneActivations;
+use crate::engine_prelude::*;
+use quench_runtime::test_host::TestHost;
+use quench_runtime::Engine;
 use std::{cell::RefCell, rc::Rc};
 
 /// The output of `source` run with the lane's native bodies on (`native`) or off.
 fn run(source: &str, native: bool) -> Vec<String> {
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
+    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     if native { vm.programs.enable_js_lane_methods(); }
     let program = Engine::specialize(source, "native-frames.js").unwrap();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     output.borrow().clone()
 }
 
@@ -40,15 +40,15 @@ fn chain(depth: usize, innermost: &str, wrap: impl Fn(usize) -> String) -> Strin
 
 #[test]
 fn native_frames_pushed_through_the_top_word_are_counted_until_linked() {
-    let mut activations = LaneActivations::with_capacity(4);
+    let activations = LaneActivations::with_capacity(4);
     // A frame that still runs its body: `top_native` names only those (`retire_bodies` clears it).
-    let callee = std::ptr::dangling::<DirectCallee>();
+    let callee = std::ptr::dangling::<DirectBody>();
     assert!(!activations.top_is_native());
     for pushed in 1..=2 {
         // SAFETY: the allocation holds four slots; emitted code writes the prefix, the tag and the top the same way.
         unsafe {
             let top = *activations.top_word();
-            top.cast::<u8>().add(frame::CALLEE).cast::<*const DirectCallee>().write(callee);
+            top.cast::<u8>().add(frame::CALLEE).cast::<*const DirectBody>().write(callee);
             top.cast::<u8>().add(frame::BODY).cast::<usize>().write(1);
             top.cast::<u8>().add(KIND_OFFSET).write(KIND_NATIVE);
             *activations.top_word() = top.add(1);

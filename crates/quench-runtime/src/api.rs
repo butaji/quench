@@ -81,6 +81,7 @@ impl Engine {
 /// The process status of an entry whose top-level await never settled.
 pub const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 
+#[quench_macros::test_visible]
 pub struct Runtime<H: Host> {
     vm: Vm,
     host: std::marker::PhantomData<fn() -> H>,
@@ -789,19 +790,6 @@ pub enum RuntimeError {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
-
-    #[test]
-    fn a_restored_runtime_adopts_the_process_tier_enrollment_again() {
-        let program = Engine::specialize("1;", "restore-tier.js").unwrap();
-        let mut builder = Runtime::new(TestHost::default());
-        let snapshot = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
-        let mut restored = Runtime::new(TestHost::default());
-        restored.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert!(restored.vm.methods_enrolled_in_lane(), "the mode enrolls the lane-body tier");
-        restored.restore_snapshot(std::rc::Rc::new(snapshot), &program, |_, _| Ok(())).unwrap();
-        assert_eq!(restored.execution_mode(), crate::ExecutionMode::Compiled);
-        assert!(restored.vm.methods_enrolled_in_lane(), "a restore carries the realm, not the tier enrollment");
-    }
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
         let compile = Engine::specialize;

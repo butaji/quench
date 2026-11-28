@@ -81,14 +81,11 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         argument_count: 0,
         receiver_path: ReceiverPath::NONE,
     });
+    let call_method = program.atoms.iter().position(|name| name == "callMethod").unwrap() as u32;
     let function = program
         .functions
         .iter_mut()
-        .find(|function| {
-            function
-                .name
-                .is_some_and(|name| &program.atoms[name as usize] == "callMethod")
-        })
+        .find(|function| function.name == Some(call_method))
         .unwrap();
     assert_eq!(function.params, 1);
     assert!(function.wide.is_empty());

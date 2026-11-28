@@ -392,6 +392,7 @@ impl Vm {
 
     /// Runs a staged bulk rule over the bytes of the linear memory `memory`, on the interpreter's
     /// `ConcreteMemory` stage. The rule's trap leaves as the Wasm trap it names.
+    #[quench_macros::test_visible]
     pub(super) fn wasm_memory_bulk(
         &self,
         memory: Value,

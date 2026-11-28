@@ -3,7 +3,7 @@
 //! wrongly shows as a different answer, so any mismatch is a bug in the projection that emitted
 //! that guard.
 
-use crate::vm::test_oracle::{assert_tier_agrees, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 /// Runs `source` with each of its first `limit` guards forced, each run held to the interpreter's
 /// outcome by the oracle; the guards the unforced run emitted.

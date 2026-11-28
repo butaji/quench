@@ -1,7 +1,7 @@
 //! Record slots hold tagged words (`ValueArena::float` is never set), so every program computes what
 //! the interpreter computes in each execution mode.
 
-use super::Vm;
+use super::{EngineVm, Vm};
 
 /// Programs whose fields move between int32, double, string and object values, read by the
 /// interpreter and by compiled loops, and pass through every way a property is copied or listed.

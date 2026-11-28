@@ -1,7 +1,7 @@
-use super::*;
-use crate::Engine;
-use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Tier};
+use crate::engine_prelude::*;
+use quench_runtime::Engine;
+use quench_runtime::test_host::TestHost;
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 /// Cache sites of a program wide enough to outgrow the field cache table's first mapping.
 const WIDE_PROGRAM_SITES: usize = 20_000;
@@ -9,7 +9,7 @@ const WIDE_PROGRAM_SITES: usize = 20_000;
 /// Runs `source` in `vm`; the number it leaves in `globalThis.answer`.
 fn answer(vm: &mut Vm, source: &str, name: &str) -> Option<f64> {
     let program = Engine::specialize(source, name).unwrap();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(vm, &program).unwrap();
     let atom = vm.intern_atom("answer");
     vm.own_property(vm.realm.globals, atom).and_then(Value::as_number)
 }
@@ -25,9 +25,9 @@ fn a_program_install_that_moves_the_field_cache_table_leaves_lane_entries_readin
     let drive = format!("{hot} globalThis.o = {{ x: 1, y: 2 }}; let t = 0; for (let r = 0; r < 4000; r++) {{ t = (t + hot(o)) | 0; }} globalThis.answer = t;");
     let drive = drive.as_str();
     let wide: String = (0..WIDE_PROGRAM_SITES).map(|site| format!("w.f{site} = {site};")).collect();
-    let mut vm = Vm::new(TestHost::default());
+    let mut vm = quench_runtime::test_support::vm(TestHost::default());
     vm.programs.enable_js_lane_methods();
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     let before = answer(&mut vm, drive, "drive.js");
     let epoch = vm.cache_epochs.field_entries;
     answer(&mut vm, &format!("var w = {{}}; {wide}"), "wide.js");

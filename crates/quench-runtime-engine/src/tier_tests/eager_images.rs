@@ -1,12 +1,13 @@
 //! Published native images: the publisher's lane bodies and the frozen whole-program facts it folds
 //! (method atoms, globals, prototype values, heap-string constants) with their retirement.
-use super::*;
+use crate::engine_prelude::*;
+use crate::ext_traits::*;
+use quench_runtime::test_host::TestHost;
+use quench_runtime::{Engine, Runtime};
 
-impl<H: crate::Host> crate::Runtime<H> {
-    /// Records a method-cache name on the runtime's VM.
-    fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
-        self.vm.name_method_atom(atom);
-    }
+/// Records a method-cache name on `runtime`'s VM.
+fn name_method_atom<H: quench_runtime::Host>(runtime: &mut quench_runtime::Runtime<H>, atom: quench_runtime::bytecode::Atom) {
+    runtime.vm.name_method_atom(atom);
 }
 
 #[test]
@@ -20,14 +21,14 @@ fn eager_publication_reports_lane_bodies() {
     let program = Engine::specialize(source, "eager-report.js").unwrap();
     // The counts describe this publication's lowering; stencil publication has
     // its own shapes and is measured separately.
-    let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
+    let native = quench_runtime::NativeJsProgram::publish(program.clone()).unwrap();
     let counts = native.publication_counts();
     assert!(counts.functions >= 2, "program functions: {counts:?}");
     assert!(counts.bodies_in_lane >= 1, "no function entered a lane body: {counts:?}");
     assert!(counts.call_threaded >= 1, "the root stays call-threaded: {counts:?}");
     assert!(counts.semantic_entry_sites > 0, "a fallback must still exist: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
     let global = runtime.global_root().unwrap();
@@ -36,9 +37,9 @@ fn eager_publication_reports_lane_bodies() {
     assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(999_000.0));
 }
 
-fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram) {
+fn compile_frozen(source: &str) -> (ResidualProgram, quench_runtime::NativeJsProgram) {
     let program = Engine::specialize(source, "frozen.js").unwrap();
-    let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
+    let native = quench_runtime::NativeJsProgram::publish(program.clone()).unwrap();
     (program, native)
 }
 
@@ -46,7 +47,7 @@ fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram) {
 fn a_frozen_image_folds_the_unnamed_method_atoms_of_its_stores() {
     let (program, native) = compile_frozen(
         "var o={a:1,b:2}; function write(x){for(var i=0;i<3;i++){o.a=x}} write(2); write(3);");
-    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as quench_runtime::bytecode::Atom;
     assert!(native.frozen_atoms().contains(&a), "held atoms: {:?}", native.frozen_atoms());
 }
 
@@ -57,11 +58,11 @@ fn a_named_method_atom_retires_the_image_and_the_shared_body_runs() {
          function write(x){for(var i=0;i<3;i++){o.a=x} return o.a} \
          globalThis.answer = write(2) + write(3) + owner.a(); \
          if (globalThis.answer !== 6) throw Error('answer ' + globalThis.answer);");
-    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as quench_runtime::bytecode::Atom;
     assert!(native.frozen_atoms().contains(&a), "held atoms: {:?}", native.frozen_atoms());
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.name_method_atom(a);
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    name_method_atom(&mut runtime, a);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert!(native.frozen_invalidated(), "a named atom retires the image");
     assert_eq!(runtime.native_execution_rejections(), 0, "the deopt stays inside the image");
@@ -71,12 +72,12 @@ fn a_named_method_atom_retires_the_image_and_the_shared_body_runs() {
 fn a_later_method_cache_name_retires_the_image() {
     let (program, native) = compile_frozen(
         "var o={a:1}; function write(x){for(var i=0;i<3;i++){o.a=x}} write(2);");
-    let a = program.atoms.iter().position(|name| name == "a").unwrap() as crate::bytecode::Atom;
+    let a = program.atoms.iter().position(|name| name == "a").unwrap() as quench_runtime::bytecode::Atom;
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert!(!native.frozen_invalidated(), "the image holds while no cache names `a`");
-    runtime.name_method_atom(a);
+    name_method_atom(&mut runtime, a);
     assert!(native.frozen_invalidated(), "the subscription retires the image");
 }
 
@@ -96,10 +97,10 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
-    let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as crate::bytecode::Atom;
+    let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as quench_runtime::bytecode::Atom;
     assert!(native.frozen_global_atoms_for_test().contains(&scale), "atoms: {:?}", native.frozen_global_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
@@ -122,10 +123,10 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
-    let k = program.atoms.iter().position(|name| name == "k").unwrap() as crate::bytecode::Atom;
+    let k = program.atoms.iter().position(|name| name == "k").unwrap() as quench_runtime::bytecode::Atom;
     assert!(native.frozen_field_atoms_for_test().contains(&k), "atoms: {:?}", native.frozen_field_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
@@ -145,13 +146,13 @@ fn a_retired_image_leaves_its_lane_bodies_for_the_semantic_fallback() {
     let counts = native.publication_counts();
     assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert!(!native.frozen_invalidated());
     native.invalidate_frozen();
     assert!(native.frozen_invalidated());
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
@@ -169,28 +170,28 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
     let (_program, native) = compile_frozen(source);
     assert!(native.materialized_constants() >= 1, "no heap constant materialized");
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     native.invalidate_frozen();
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
 #[test]
 fn functions_past_the_set_width_keep_a_windowed_map() {
-    let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
+    let locals = quench_runtime::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
     let parameters = (0..locals).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame.js").unwrap();
     let wide = (0..program.function_count()).find(|index| program.function_get(*index)
-        .is_some_and(|function| function.registers > crate::compile::liveness::ROOT_MAP_REGISTERS))
+        .is_some_and(|function| function.registers > quench_runtime::compile::liveness::ROOT_MAP_REGISTERS))
         .expect("the wide body");
     let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a map");
     assert!(masks.is_windowed(), "the mask holds one set per register window");
     assert!(masks.live_at(0, 512).is_some(), "the second window has a per-pc entry");
-    let native = crate::NativeJsProgram::publish(program).unwrap();
+    let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "a windowed body has a precise map: {:?}", native.publication_counts());
 }
@@ -201,7 +202,7 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
     let parameters = (0..300).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame-half.js").unwrap();
-    let native = crate::NativeJsProgram::publish(program).unwrap();
+    let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "{:?}", native.publication_counts());
 }
@@ -220,7 +221,7 @@ fn functions_past_4096_registers_keep_precise_maps() {
 fn run_native_answer(source: &str) {
     let (_program, native) = compile_frozen(source);
     let mut runtime = Runtime::new(TestHost::default());
-    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 0);
 }

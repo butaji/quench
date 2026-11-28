@@ -51,7 +51,7 @@ pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 #[allow(unused_imports)]
 pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 #[quench_macros::test_visible]
 pub(crate) use global_values::new_table;
 
@@ -66,6 +66,7 @@ static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// The current `PROTOTYPE_LAYOUT_EPOCH`.
 #[inline(always)]
+#[quench_macros::test_visible]
 pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
@@ -707,6 +708,7 @@ impl std::fmt::Debug for WasmObjectSlot {
 
 /// What a Wasm host function runs: an embedder operation, or a JavaScript callable
 /// imported through the `WebAssembly` namespace.
+#[quench_macros::test_visible]
 #[derive(Clone, Debug)]
 pub(crate) enum WasmHostTarget {
     Host(crate::WasmHostFunctionId),
@@ -716,6 +718,7 @@ pub(crate) enum WasmHostTarget {
     JsEmscriptenMemcpy(Box<WasmHostMemcpyTarget>),
 }
 
+#[quench_macros::test_visible]
 #[derive(Clone, Debug)]
 pub(crate) struct WasmHostMemcpyTarget {
     pub(crate) function: Value,

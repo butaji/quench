@@ -1159,6 +1159,7 @@ impl ProgramStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
@@ -1822,6 +1823,7 @@ impl ProgramStore {
         self.js_jit_tracking_exhaustions
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes
     }
@@ -2321,7 +2323,7 @@ impl LaneViews {
 #[cfg(all(test, not(quench_profiled)))]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
+        JIT_MAX_ARTIFACTS, JS_JIT_MAX_FUNCTIONS,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };

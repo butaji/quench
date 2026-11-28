@@ -10,44 +10,7 @@ mod materialized_stops;
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_cursors_leave_interpreter_decoding_cold() {
-        let program = crate::Engine::specialize(
-            "var n = 3; while (n > 0) n--; throw n;", "native-cursor.js",
-        ).unwrap();
-        let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
-        assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
-        for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
-            vm.set_execution_mode(mode);
-            let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
-            assert!(cursor.lane.is_null() && !cursor.back_edges,
-                "linked code must not prepare an interpreter lane");
-        }
-
-        let mut interpreter = Vm::new(crate::test_host::TestHost::default());
-        interpreter.initialize_for_snapshot(&program).unwrap();
-        let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
-        assert!(!cursor.decoded.is_null(), "a looping function expands its dispatch cache on its first entry");
-        let straight = crate::Engine::specialize("var a = 1; throw a + 1;", "straight-cursor.js").unwrap();
-        let mut once = Vm::new(crate::test_host::TestHost::default());
-        once.initialize_for_snapshot(&straight).unwrap();
-        let cursor = once.general_cursor(ProgramId::MAIN, &straight, 0, false);
-        assert!(cursor.decoded.is_null(), "a loop-free function entered once runs from packed code");
-        let error = interpreter.execute(&program).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
-    }
-}
-
+#[quench_macros::test_visible]
 #[derive(Clone, Copy)]
 pub struct GeneralCodeCursor {
     program: ProgramId,
@@ -196,6 +159,7 @@ impl Vm {
     }
 
     /// A code cursor for `function`, with its lane view where the lane runs.
+    #[quench_macros::test_visible]
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,

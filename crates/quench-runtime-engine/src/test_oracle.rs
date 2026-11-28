@@ -94,3 +94,19 @@ pub(super) fn assert_outcomes_agree_after(scripts: &[(&str, &str)], source: &str
 pub(super) fn assert_tier_agrees(source: &str, tier: Tier) -> Run {
     assert_tier_agrees_after(&[], source, tier)
 }
+
+/// The loop sites the load installed in the lane view of function `function` of `vm`'s main
+/// program (`install_loop_sites`); none where it has no view.
+pub(crate) fn main_loops(vm: &quench_runtime::vm::Vm, function: usize) -> &[quench_runtime::vm::engine_types::LoopSite] {
+    let views = vm.programs.views_in_lane(ProgramId::MAIN).expect("main program lane views");
+    views.get(function).and_then(quench_runtime::vm::program_store::derived_lane_view).map_or(&[], |view| &view.loops)
+}
+
+/// Asserts the load's decision for the loops of function `function` of `vm`'s main program:
+/// they hold their entering rows exactly where its predicted tier compiles it. Returns whether it does.
+pub(crate) fn assert_loop_decision(vm: &quench_runtime::vm::Vm, function: usize) -> bool {
+    let predicted = vm.programs.compiled_tier(ProgramId::MAIN, function as u32);
+    let sites = main_loops(vm, function).len();
+    assert_eq!(sites > 0, predicted, "function {function}: its loops hold their entering rows iff it is predicted compiled ({sites} sites)");
+    predicted
+}

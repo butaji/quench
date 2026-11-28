@@ -8985,11 +8985,7 @@ mod tests {
     fn numeric_jit_shared_entry_observes_live_termination() {
         use std::{sync::mpsc, thread, time::Duration};
         const TIMEOUT: Duration = Duration::from_secs(5);
-        fn started(context: &mut quench_runtime::NativeContext<'_>,
-            _: quench_runtime::RootId, _: &[quench_runtime::RootId]) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-            context.host_as::<quench_runtime::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();
-            Ok(context.undefined())
-        }
+        use crate::tier_tests::ahead_behaviour::started;
         let (ready, entered) = mpsc::channel::<()>();
         let (send_handle, receive_handle) = mpsc::channel();
         let (complete, finished) = mpsc::channel();

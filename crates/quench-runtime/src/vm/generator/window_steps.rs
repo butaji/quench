@@ -320,6 +320,7 @@ impl Vm {
 #[cfg(test)]
 pub(super) mod tests {
     use crate::test_host::TestHost;
+    use crate::vm::EngineVm;
     use crate::vm::{activation::frames_made, Vm};
     use crate::Engine;
     use std::cell::RefCell;
