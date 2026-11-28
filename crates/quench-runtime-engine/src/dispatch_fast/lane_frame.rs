@@ -4491,7 +4491,7 @@ unsafe fn iterator_pop_in_lane(cx: *mut ()) -> bool {
 // `generated_row`'s body, once per shard (`generated_row_shard`).
 /// The generated rows of the `this` sites the lane trusts (`trusted_this_row`): the same body, whose frame
 /// trusts the activation's `this` as a direct object, which its receiver fact makes it (`dispatch_fast::receiver_trusted`).
-/// A requicken it takes stays trusted; a sibling row is an untrusted row's.
+/// An edge rewrite it takes stays trusted; a sibling row is an untrusted row's.
 pub(crate) mod trusted_this_rows {
     use super::*;
     const TRUSTS_THIS: bool = true;

@@ -384,7 +384,7 @@ impl LaneView {
             _ => forms!(PLAIN_LEAF),
         };
         for record in self.records.iter() {
-            // SAFETY: as `requicken`: the lane runs on the view's thread, and no reference to
+            // SAFETY: as `edge_rewrite`: the lane runs on the view's thread, and no reference to
             // the handler field is live.
             let record = unsafe { &mut *record.get() };
             if let Some((_, leaf)) = forms.iter().find(|(plain, _)| *plain as *const () == record.handler) {
@@ -4502,7 +4502,7 @@ script_handler! {
     /// that entry runs (`entry_call_row`) for this call, in place, and the record keeps its row.
     /// Out of line, reached by `sibling!`, so the miss makes no call.
     #[inline(never)]
-    fn script_call_requicken_miss<>(cx, r, ip, i, view) {
+    fn script_call_entry_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let target = vm.linked_script_call_entry(r.get(i.b), &i.call_link);
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
@@ -4515,7 +4515,7 @@ script_handler! {
     }
 }
 
-/// The row a call takes whose linked target has entry `entry` (`script_call_requicken_miss`, and the load
+/// The row a call takes whose linked target has entry `entry` (`script_call_entry_miss`, and the load
 /// for a body whose entry the facts name, `specialize_script_calls`): the environment, settling, keeping or
 /// leaf form of the entry, else the full form, which takes every other entry in place.
 pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
@@ -4537,7 +4537,7 @@ pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
 script_handler! {
     /// The miss of a call row (`script_call_row`) whose entry the row does not admit: the target the
     /// site links, which takes its entry's form where that is not a plain activation
-    /// (`script_call_requicken_miss`), and the out-of-line form where the site's arguments are more than
+    /// (`script_call_entry_miss`), and the out-of-line form where the site's arguments are more than
     /// it takes. Else the entry is proved (`Admission::UNPROVEN` cleared), the link marks it (`PLAIN_LINK`),
     /// and the call runs through its row, which admits it by the entry's proof, the argument count and the
     /// room (`CallFrame::call_entry`). A returning call the run refuses (`returning_call_admitted`) takes the
@@ -4557,7 +4557,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::framed(Framed::Activates) {
-            sibling!(script_call_requicken_miss, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_entry_miss, r, ip, Carried::script_in(cx, view))
         }
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         if returns && !returning_call_admitted(cx) {
@@ -6762,7 +6762,7 @@ const ENVIRONMENT_WINDOW_FIELD: u32 = (1 << ENVIRONMENT_WINDOW_SHIFT) - 1;
 /// The `arguments` count row the view gives its kept-arguments fact (`row_near`).
 const ARGUMENTS_COUNT: u16 = quench_runtime::staged::ARGUMENTS_COUNT_ROW;
 
-/// The jump rows the jump passes fuse and requicken to (`jump_row`).
+/// The jump rows the jump passes fuse to, and the loop admission edge rewrites to (`jump_row`).
 const JUMP: u16 = quench_runtime::staged::JUMP_ROW;
 
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,

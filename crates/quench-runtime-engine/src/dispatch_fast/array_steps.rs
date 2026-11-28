@@ -83,7 +83,7 @@ fn callback_target_in_lane(
     }
     let target = script_target_in_in_lane(cx, callback, resolved)?;
     if let Some(index) = vm.script_call_index(callback) {
-        // SAFETY: as `requicken`: the record's operand is the call's, written in place.
+        // SAFETY: as `edge_rewrite`: the record's operand is the call's, written in place.
         unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
     }
     Some(target)

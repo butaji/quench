@@ -46,7 +46,7 @@ view_handler! {
         }} }
         if property && !store {
             // A returning site's result carries its return; no other read's carries a flag: a record with
-            // other flags holds the general step from its edge on (`derive_lane_view`, `requicken`).
+            // other flags holds the general step from its edge on (`derive_lane_view`, `edge_rewrite`).
             let flags = if const { crate::dispatch_fast::returning_field_site(FLAG) } { quench_runtime::bytecode::RETURN_REGISTER } else { 0 };
             // The site fact names the base (`own_site`), `this` or a register: stated so the decode folds.
             unsafe {
@@ -81,7 +81,7 @@ view_handler! {
             sibling!(field_read_slow_row::<OP, ACC, FLAG>, r, ip, view)
         }
         // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
-        // `requicken`): this row's result is a register, stated so the decode's tests fold.
+        // `edge_rewrite`): this row's result is a register, stated so the decode's tests fold.
         if const { LaneFields::<OP, FLAG>::OPCODE.result_layout().allowed_flags() != 0 && !crate::dispatch_fast::sink_site(FLAG)
             && !local_result_site(OP, FLAG)
             && !(OP == crate::dispatch_fast::FIELD_LEAF_READ && crate::dispatch_fast::returning_field_site(FLAG)) } {

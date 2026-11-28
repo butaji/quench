@@ -266,7 +266,7 @@ pub struct LaneNativeCall {
 /// write this one, take the general path, so the memory view tracks the
 /// register exactly.
 pub struct LaneView {
-    /// A record's handler may change while the lane runs (`requicken`); its other fields do not.
+    /// A record's handler may change at an edge while the lane runs (`edge_rewrite`); its other fields do not.
     pub records: Records,
     /// Per instruction, whether the general loop enters the lane there: the
     /// straight-line lane run from it is long enough to repay the lane's

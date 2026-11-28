@@ -246,7 +246,7 @@ pub(crate) fn holds_trusted_record(record: &LaneInstruction) -> bool {
 #[inline(always)]
 pub(super) fn set_record_hint(ip: Ip, shape: u32, link: u16) {
     if !holds_loop_site(ip) && !holds_trusted_slot(ip) {
-        // SAFETY: as `requicken`; `ip` is a field read/store record of a live view.
+        // SAFETY: as `edge_rewrite`; `ip` is a field read/store record of a live view.
         unsafe {
             (*ip.cast_mut()).operand.field.shape = shape;
             (*ip).call_link.set(link);
@@ -963,11 +963,11 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     {
         specialize_in_lane(cx, own, site.function, &[]);
     }
-    // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
+    // SAFETY: as `edge_rewrite`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
     let header = unsafe { ip.byte_offset(site.jump) };
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
-    requicken(ip, jump_row::<JUMP>(true));
+    edge_rewrite(ip, jump_row::<JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
@@ -978,14 +978,14 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
         // SAFETY: the header is a record of the running view, on this thread.
         if let Some(plain) = lane_frame::unformed_compare_jump(unsafe { (*header).handler }) {
             unsafe { (*header.cast_mut()).mode = 0 };
-            requicken(header, plain);
+            edge_rewrite(header, plain);
         }
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
             // SAFETY: the record is the running view's, on this thread; its handler is requickened next.
             unsafe { (*update.cast_mut()).mode = mode };
-            requicken(update, int_steps::retired_step(cx, site, update, unsafe { &*header }, fused));
+            edge_rewrite(update, int_steps::retired_step(cx, site, update, unsafe { &*header }, fused));
         }
     }
 }

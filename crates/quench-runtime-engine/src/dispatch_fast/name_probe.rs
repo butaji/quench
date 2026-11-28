@@ -32,7 +32,7 @@ pub(crate) fn settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool
         (true, None) => name_row::<FLAG_NAME_GLOBAL_SCOPED>(quench_runtime::staged::NameLoad::Typeof),
     };
     // SAFETY: `pc` is a record of the view, whose records live while its program does.
-    requicken(unsafe { view.records().add(pc) }, handler);
+    edge_rewrite(unsafe { view.records().add(pc) }, handler);
 }
 
 /// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.

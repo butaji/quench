@@ -591,7 +591,7 @@ impl Dependencies {
 
     /// An edge moved cell `key` up the lattice (a store outside the cell, a method slot write, a
     /// global write, a length change, new code). Every reader is retired the same way in every
-    /// tier: records requicken, compiled units retire. This is the natural transformation on code
+    /// tier: records take their edge rewrite, compiled units retire. This is the natural transformation on code
     /// as a presheaf over cells: the edge names the key, and the readers of that key retire.
     /// The readers leave the table before they retire, so retiring never meets a borrow of it.
     pub(crate) fn widen_cell(&mut self, key: FactKey) {
