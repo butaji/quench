@@ -132,7 +132,7 @@ pub(super) fn construct_keeping_activation_in_lane(
     };
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
-    if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
+    if let Some(method) = forwarded_method_of(vm, &target)
         && let Some(forwarded) = match resolved_forwarding_in_lane(cx, callee, plan.as_ref()) {
             Some(forwarded) => Some(forwarded),
             None => forwarded_construction_in_lane(cx, target, method, this, class),

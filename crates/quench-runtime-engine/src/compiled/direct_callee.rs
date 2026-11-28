@@ -152,7 +152,7 @@ fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, 
         let crate::compiled::CalleeBinding::Forwarded { through, callee } = site.callee else { continue };
         // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
         let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };
-        let method = *vm.lane_stack.forwarded_methods.get(constructor.forwarded_method as usize)?;
+        let method = crate::dispatch_fast::forwarded_method_of(vm, &constructor)?;
         // The construction's class: the site's, in the running program (`Vm::construct_site_class`).
         let class = vm.construct_site_class(vm.active_program, function, pc, vm.ordinary_class(through));
         if !constructor.forwards() || !constructor.constructs() || holding_construct_plan(vm, through, class).is_none_or(|plan| plan.forwarded.is_none()) {

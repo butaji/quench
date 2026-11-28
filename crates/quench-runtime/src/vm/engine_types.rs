@@ -167,9 +167,6 @@ pub struct LaneStack {
     /// (`ScriptActivation::record`). A completion drops its activation's, and a materialization
     /// its frame's own state takes over: the environment the eval promoted.
     pub records: Vec<(usize, Box<crate::vm::activation::FrameRecord>)>,
-    /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
-    /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
-    pub forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
     /// The activation count at which a JavaScript lane call leaves for
     /// `script_call_frame_in_lane`: the activations' capacity, the guest calls the thread still
     /// admits (the activations hold no guards; their frames take them when they materialize,
@@ -1150,11 +1147,11 @@ pub struct ScriptCallTarget {
     /// does not end at a function environment or its storage is sparse. The storage of a live environment never
     /// moves, and the generation retires the target at the next collection.
     pub capture: *const usize,
-    /// The `LaneStack::forwarded_methods` index of a constructor body forwarding to a method
-    /// of `this` (`Function::forwarded_this_method`), which a construction may activate
-    /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
-    /// cache entry its size.
-    pub forwarded_method: u16,
+    /// Whether the target is a constructor body that forwards its construction to a method of
+    /// `this` under its call plan (`CallPlan::forwards_arguments`) and shape. Which method is
+    /// read from the function's record (`dispatch_fast::forwarded_method_of`), so a target
+    /// keeps its cache entry's size.
+    pub forwards_method: bool,
 }
 
 /// Where the call row's one guard (`staged::call::guard_bound_target`) reads a `ScriptCallTarget`: its
@@ -3607,7 +3604,6 @@ impl Default for LaneStack {
             bound_call: None,
             with_objects: Vec::new(),
             records: Vec::new(),
-            forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
             admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
@@ -3745,7 +3741,7 @@ pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     fill: 0,
     entry: CallEntry::framed(Framed::Activates),
     capture: std::ptr::null(),
-    forwarded_method: NO_FORWARDED_METHOD,
+    forwards_method: false,
 };
 
 pub const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
@@ -3818,9 +3814,6 @@ pub const CALLBACK_RESULT: u16 = 0;
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 pub const NO_CALL_LINK: u16 = u16::MAX;
 
-/// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
-/// forwarding bodies than the index spans leaves the rest unrecorded.
-pub const NO_FORWARDED_METHOD: u16 = u16::MAX;
 
 /// Entries per set: the one most recently resolved first, then the one before it, so two
 /// callees whose indices share a set both stay resolved.
