@@ -703,7 +703,7 @@ impl quench_runtime::staged::call_native::InPlaceBody<Concrete> for MathLane {
     }
 }
 
-/// The handler a `Call` site whose callee resolved to `native` takes from then on
+/// The handler a `Call` site whose callee resolved to `native` takes in place
 /// (`script_call_resolve_miss`): a native whose common case the lane makes in place has its
 /// own handler, which tests the callee's identity once and hands any other call to
 /// `native_call_miss`, the handler of every other native. A call returning its result

@@ -4504,8 +4504,8 @@ impl Vm {
         self.lane_stack.linked[noted_slot(address, index as u32)].set((address, current.callee));
     }
 
-    /// `script_call_entry` of a callee of another program than the running one, whose
-    /// targets `LaneStack::cross_targets` holds (`script_call_cross_miss`).
+    /// The entry of a callee of another program than the running one, whose targets
+    /// `LaneStack::cross_targets` holds.
     #[inline(always)]
     fn cross_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.cross_targets.set(callee)?;
@@ -4524,24 +4524,6 @@ impl Vm {
         self.lane_stack.cross_targets.entries.get(index).is_some_and(|cached| {
             cached.callee == callee && cached.admission.admits_across(self.lane_stack.admission)
         })
-    }
-
-    /// `cross_call_entry` for the call record whose hint is `link` (`LaneInstruction::call_link`),
-    /// as `linked_script_call_entry` is for the running program's targets: the entry the hint
-    /// names when it holds `callee`'s target, else the set's, which the hint names from then on.
-    #[inline(always)]
-    fn linked_cross_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
-        let linked = usize::from(link.get());
-        let index = if self.cross_call_holds(linked, callee) {
-            linked
-        } else {
-            let index = self.cross_call_index(callee)?;
-            // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
-            link.set(index as u16);
-            index
-        };
-        // SAFETY: `cross_call_holds` found the entry within the cache.
-        Some(unsafe { self.lane_stack.cross_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
     }
 
     /// `cross_call_index`'s entry, in place.
@@ -4994,10 +4976,9 @@ impl Vm {
 
 
 script_handler! {
-    /// The miss of a linked target whose entry is not a plain activation: the site
-    /// calls the form for that entry directly from now on, an environment or keeping
-    /// activation its own handler and any other entry the out-of-line form, which sorts them
-    /// out. Out of line, reached by `sibling!`, so the miss makes no call.
+    /// The miss of a linked target whose entry is not a plain activation: the call takes the row
+    /// that entry runs (`entry_call_row`) for this call, in place, and the record keeps its row.
+    /// Out of line, reached by `sibling!`, so the miss makes no call.
     #[inline(never)]
     fn script_call_requicken_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -5005,15 +4986,27 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
         let entry = target.map(|target| unsafe { (*target).entry });
         let handler: Handler = match entry {
-            Some(entry) if entry == CallEntry::framed(Framed::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
-            Some(entry) if entry == CallEntry::framed(Framed::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(entry) if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
-            Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler(entry, i),
-            Some(_) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
+            Some(entry) => entry_call_row(entry, i),
             None => sibling!(script_call_resolve_miss, r, ip, Carried::script_in(cx, view)),
         };
-        requicken(ip, handler);
         sibling!(handler, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+/// The row a call takes whose linked target has entry `entry` (`script_call_requicken_miss`, and the load
+/// for a body whose entry the facts name, `specialize_script_calls`): the environment, settling, keeping or
+/// leaf form of the entry, else the full form, which takes every other entry in place.
+pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
+    if entry == CallEntry::framed(Framed::Environment) {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>()
+    } else if entry == CallEntry::framed(Framed::Settles) {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>()
+    } else if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) {
+        protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>()
+    } else if entry.leaf_form() != NOT_LEAF {
+        leaf_call_handler(entry, i)
+    } else {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>()
     }
 }
 
@@ -5121,8 +5114,6 @@ script_handler! {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
         if target.entry == CallEntry::framed(Framed::Environment) {
-            // The site calls its environment target's form directly from now on.
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>());
             sibling!(script_call_environment_miss, r, ip, Carried::script_in(cx, view))
         }
         if target.settles() {
@@ -5241,8 +5232,6 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::framed(Framed::Environment) {
-            // A site this form serves calls the full form once its callee's target differs.
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = call_this_in_lane(vm, target, r.get(i.c)) else {
@@ -5279,7 +5268,6 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
         let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -5484,113 +5472,6 @@ use quench_runtime::staged::call_iteration;
 
 
 script_handler! {
-    /// A JavaScript `Call` of another program's frameless callee (`LaneStack::cross_targets`):
-    /// its activation runs in the callee's program, which its return leaves
-    /// (`Completion::Cross`). A site whose callee is no such target calls `script_call_prove_miss`
-    /// again.
-    #[inline(never)]
-    fn script_call_cross_miss<>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).script_calls } {
-            return exit(ip);
-        }
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        if constructing_in_lane(vm, callee) {
-            sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
-            requicken(ip, script_call_handler(i.imm()));
-            sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        let target = unsafe { &*target };
-        // A callee that needs a frame takes it as `frame_call_in_lane` pushes one.
-        if !target.entry.activates_across() && target.entry != CallEntry::framed(Framed::Environment) {
-            #[cfg(feature = "profile-lane-exits")]
-            quench_runtime::vm::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
-            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
-        }
-        #[cfg(feature = "profile-lane-exits")]
-        profile_script_call_target(cx, ip, callee, target);
-        // A leaf runs on a window without an activation, as its own program's calls run it.
-        if let Some((registers, base)) = leaf_calls::cross_leaf_call_in_lane(cx, r, ip, i, target) {
-            next!(cx, registers, base, Carried::script(cx))
-        }
-        let Some(this) = call_this_in_lane(vm, target, r.get(i.c)) else {
-            return exit(ip);
-        };
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        // A plain activation of a window the fixed copies take, not completing its caller,
-        // pushes as `script_call_prove_miss`'s does, entering the callee's program
-        // (`enter_window_in_lane`'s cross completion); the site calls its fixed form from now on
-        // (`script_call_cross_plain_miss`).
-        let argc = ImmediateLayout::argument_count(i.imm());
-        if target.entry == CallEntry::framed(Framed::Activates)
-            && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
-            && argc <= FIXED_ARGUMENT_COPIES
-            && admits_window_in_lane(vm, target, argc)
-        {
-            // The link now proves the plain form (`PLAIN_LINK`): this callee's entry activates
-            // plainly and its window takes `argc`, facts fixed for the callee in this generation.
-            i.call_link.set(i.call_link.get() | PLAIN_LINK);
-            requicken(ip, cross_plain_handler(argc));
-            // SAFETY: the record's window of `r` holds its values.
-            let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
-            let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc, this, false);
-            next!(cx, registers, base, Carried::script(cx))
-        }
-        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
-            // SAFETY: the call's window is registers of the running function.
-            activate_environment_in_lane(cx, r, ip, target, unsafe { call_window_in_lane(r, i) }, (this, false))
-        } else if target.forwards() {
-            activate_keeping_in_lane::<true>(cx, r, ip, target, ActivationArguments::Window(arguments), this, false, None)
-        } else {
-            activate_in_lane(cx, r, ip, target, arguments, this, false)
-        };
-        match activated {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
-            Err(next) => next,
-        }
-    }
-}
-
-script_handler! {
-    /// `script_call_cross_miss` at a site whose last callee was another program's plain
-    /// activation (`CallEntry::framed(Framed::Activates)`) of `ARGC` arguments, which no completion of its
-    /// caller follows: that activation alone, with the fixed copy of its window. Any other
-    /// call takes the general cross form.
-    fn script_call_cross_plain_miss<ARGC: u16>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        // The link proves the call (`PLAIN_LINK`, set where the general form requickened to
-        // this one): its admission (`Admission::admits_across`) that the run calls script
-        // functions with no construction pending, and, for this callee in this generation, a
-        // plain entry whose window takes `ARGC`. A link without the bit names no entry, so any
-        // other callee or a refused run falls to the general form, which decides and relinks.
-        let index = usize::from(i.call_link.get() ^ PLAIN_LINK);
-        if !vm.cross_call_holds(index, callee) {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        }
-        // SAFETY: `cross_call_holds` found the entry within the cache; nothing below resolves a
-        // target or collects.
-        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.cross_targets.entries.get_unchecked(index)) };
-        debug_assert!(target.entry == CallEntry::framed(Framed::Activates) && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
-        // The stack's room is the one test that stays per call: it is the push's depth check.
-        if !activation_room_in_lane(vm, target) {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(this) = direct_call_this_in_lane(vm, target, r.get(i.c)) else {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: the record's window of `r` holds its values.
-        let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-        let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, ARGC, this, false);
-        next!(cx, registers, base, Carried::script(cx))
-    }
-}
-
-
-script_handler! {
     /// `script_call_prove_miss` of a callee its target cache does not hold: resolving it
     /// (`Vm::resolve_script_call_target`) makes a call, so it runs out of line and the call
     /// continues at `script_call_prove_miss`, which then finds it, or at `native_call_miss`.
@@ -5600,9 +5481,9 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
+        // A callee of another program has no call row: the generic call step takes it.
         if vm.cross_call_entry(callee).is_some() {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
+            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
@@ -5615,23 +5496,19 @@ script_handler! {
                 }
                 sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
-            // Another program's callee that needs a frame takes it as `frame_call_in_lane`
-            // pushes one.
-            if !target.entry.activates() {
-                sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
-            }
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
+            // Another program's callee has no call row: the generic call step takes it, as it
+            // takes a callee that needs a frame.
+            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
-        // A site calling a native takes the native handler from now on, which hands any other
-        // callee back.
+        // A native callee takes the row its native has (`native_call_handler`), in place; the row hands
+        // any other callee back to `native_call_miss`.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) {
             let native = *native;
             let handler = native_call_handler(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
-            requicken(ip, handler);
             if handler as *const () != call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
                 native_calls::install_math_field_call(cx, ip, native);
             }
+            sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
         sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
     }
@@ -6488,12 +6365,8 @@ script_handler! {
         match call_keeping_activation_in_lane(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Err(Some(next)) => next,
-            // A site this form serves since `script_call_prove_miss` saw a keeping target calls
-            // the full form once its callee keeps nothing.
-            Err(None) => {
-                requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
-                sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-            }
+            // A keeping activation that declines takes the full form in place.
+            Err(None) => sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view)),
         }
     }
 }
@@ -7459,7 +7332,6 @@ script_handler! {
             {
                 resume!(cx, resumed)
             }
-            requicken(ip, script_call_handler(i.imm()));
             return exit(ip);
         };
         resume!(cx, push_frame_call_in_lane(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0)))

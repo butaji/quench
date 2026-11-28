@@ -180,8 +180,8 @@ pub(crate) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &que
         // A rest body gathers (`Gathers`), a keeping plan keeps its arguments (`Keeps`): `forwards()`.
         CallEntry::framed(form)
     } else if cross {
-        // A leaf runs as one across programs too (`cross_leaf_call_in_lane`); no other
-        // body form's answer reads another program's caches.
+        // A leaf of another program is a leaf too; no other body form's answer reads another
+        // program's caches.
         shape.leaf.map_or(CallEntry::framed(Framed::Activates), CallEntry::leaf)
     } else {
         // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).

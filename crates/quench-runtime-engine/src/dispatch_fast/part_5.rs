@@ -461,7 +461,7 @@ pub(crate) fn derive_lane_view<'live>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_constant_returns(&mut records);
-        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned);
+        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned, facts, function_id);
         specialize_proved_arrays(&decoded, &mut records);
     }
     // Adjacent generated rows the staged pair list names run as one generated record.

@@ -3458,8 +3458,8 @@ pub struct LeafCall {
     /// The form the call ran as, which decides what its activation takes from the caller
     /// (`materialize_leaf_in_lane`): a published body's entry (`enter_cell_body_in_lane`) runs as `CONTEXT_LEAF`.
     pub form: LeafForm,
-    /// The caller's program, for a leaf of another program (`cross_leaf_call_in_lane`), which
-    /// its return enters again; `None` for one of the caller's own.
+    /// The caller's program, for a leaf of another program, which its return enters again;
+    /// `None` for one of the caller's own.
     pub caller_program: Option<ProgramId>,
 }
 
