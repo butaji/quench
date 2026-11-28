@@ -14,7 +14,7 @@
 // The re-exports are the stencils' names (`crate::layout::*`), which the runtime does not read.
 #![allow(dead_code, unused_imports)]
 
-pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
+pub use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 use super::object_encoding::{
     CAPACITY_CLASSES, REGION_SHIFT,
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
@@ -101,7 +101,7 @@ pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFunctionLayout {
+pub struct NativeFunctionLayout {
     pub record_size: usize,
     pub object_offset: usize,
 }
@@ -109,9 +109,9 @@ pub(crate) struct NativeFunctionLayout {
 /// The function record as the stencils see it: the runtime's `FunctionRecord` with words of the same size and
 /// alignment in its fields (`Object` is an `ObjectHead`; `FunctionKind` is 12 bytes, align 4; `Value` a `u64`).
 /// `base_rows` checks each against the runtime type.
-pub(crate) type FunctionRecordWords = super::record_heads::FunctionRecord<super::record_heads::ObjectHead, [u32; 3], u64>;
+pub type FunctionRecordWords = super::record_heads::FunctionRecord<super::record_heads::ObjectHead, [u32; 3], u64>;
 
-pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+pub const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
     record_size: size_of::<FunctionRecordWords>(),
     object_offset: core::mem::offset_of!(FunctionRecordWords, object),
 };
@@ -212,13 +212,13 @@ pub const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLa
 /// The typed-array view table's page shift: a slot's page is `slot >> TYPED_PAGE_SHIFT`, its entry the
 /// slot's low bits (`heap::typed_view`). A page of entries is one 4 KiB memory page, so the first
 /// typed array in a range of slots zeroes and keeps resident no more than that.
-pub(crate) const TYPED_PAGE_SHIFT: u32 = 9;
+pub const TYPED_PAGE_SHIFT: u32 = 9;
 
 /// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
-pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
+pub const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
 
 /// The runtime's `TypedArrayKind` (`heap/cell/typed_array_catalog.rs`, mounted once for both builds).
-pub(crate) use super::typed_array_catalog::TypedArrayKind;
+pub use super::typed_array_catalog::TypedArrayKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeEnvironmentLayout {
@@ -279,23 +279,23 @@ pub const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLa
     own_holder: super::field_cache_layout::NO_HOLDER,
 };
 
-pub(crate) use super::encodings::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN, OTHERS_UNKNOWN};
+pub use super::encodings::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN, OTHERS_UNKNOWN};
 /// The first id past the string records' own range: a small string's id is this base plus its bits.
-pub(crate) const STRING_RECORD_HOLE: u32 = 1 << 24;
+pub const STRING_RECORD_HOLE: u32 = 1 << 24;
 /// A string id whose bits under the mask are the base is small: it names no string record.
 pub const SMALL_STRING_ID_MASK: u32 = !(STRING_RECORD_HOLE - 1);
 pub const SMALL_STRING_ID_BASE: u32 = STRING_RECORD_HOLE;
 /// The byte offsets from a backing's first value to its `len` and `others` words: the head
 /// `ArrayHeaderHead` is the backing's header, and its values follow it.
-pub(crate) const LENGTH_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
-pub(crate) const OTHERS_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, others) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
-pub(crate) const INLINE_PROPERTIES: usize = 2;
+pub const LENGTH_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
+pub const OTHERS_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, others) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
+pub const INLINE_PROPERTIES: usize = 2;
 
 /// The value encoding's constants under the stencil's names (`words::*`), each the runtime's own
 /// `staged::value_encoding` item. `ValueLayout` and `NarrowLayout` are that file's structs.
-pub(crate) use super::value_encoding::{NarrowLayout, ValueLayout};
-pub(crate) mod words {
-    pub(crate) use super::super::value_encoding::{
+pub use super::value_encoding::{NarrowLayout, ValueLayout};
+pub mod words {
+    pub use super::super::value_encoding::{
         CANONICAL_NAN, DIRECT_ARRAY_TAG, DIRECT_FUNCTION_TAG, DIRECT_ITERATOR_TAG, DIRECT_OBJECT_NARROW_CODE, DIRECT_OBJECT_TAG,
         DIRECT_OBJECT_UPPER, DIRECT_PROMISE_TAG, DIRECT_STRING_TAG, FIRST_TAG_FIELD, HEAP_FAMILY_BITS, HEAP_FAMILY_MASK,
         HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_CODE_MASK, NARROW_CODE_SHIFT, NARROW_HEAP_FAMILIES, NARROW_INDEX_BITS,
@@ -311,40 +311,40 @@ pub(crate) mod words {
 /// and memory values as `u64`, the compiled artifact, table words and diagnostics as bytes (only their
 /// pointers are read), the program id as `u32` and the raised completion as three words (an `Option<Raised>`,
 /// 24 bytes). `base_rows` checks each against the runtime type.
-pub(crate) type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u8, u32, [usize; 3]>;
-pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
-pub(crate) const CALL_CONTEXT_BODY_SHIM: usize = core::mem::offset_of!(CallContextWords, body_shim);
-pub(crate) const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);
-pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_record_base);
+pub type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u8, u32, [usize; 3]>;
+pub const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
+pub const CALL_CONTEXT_BODY_SHIM: usize = core::mem::offset_of!(CallContextWords, body_shim);
+pub const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);
+pub const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_record_base);
 /// The typed view records a view proof reads (`JsStepHead::typed_view_directory`, `typed_view_pages`, `buffer_relocations`).
-pub(crate) const JS_STEP_TYPED_VIEW_DIRECTORY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_directory);
-pub(crate) const JS_STEP_TYPED_VIEW_PAGES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_pages);
-pub(crate) const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, buffer_relocations);
+pub const JS_STEP_TYPED_VIEW_DIRECTORY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_directory);
+pub const JS_STEP_TYPED_VIEW_PAGES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, typed_view_pages);
+pub const JS_STEP_BUFFER_RELOCATIONS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, buffer_relocations);
 /// The storage word of the environment window the running activation holds its environment-owned locals in
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
-pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
+pub const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
 /// The empty object's class cell cursor and captured words (`JsStepHead::empty_object_cursor`, `empty_object_class` and after).
-pub(crate) const JS_STEP_EMPTY_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_cursor);
-pub(crate) const JS_STEP_EMPTY_OBJECT_CLASS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_class);
-pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_proto);
-pub(crate) const JS_STEP_ARRAY_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_cursor);
-pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_layout);
-pub(crate) const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_payload);
-pub(crate) const JS_STEP_EMPTY_ARRAY_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_proto);
-pub(crate) const JS_STEP_ASCII_UNIT_STRINGS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, ascii_unit_strings);
-pub(crate) const JS_STEP_ARMED_ARRAY_PROOFS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, armed_array_proofs);
-pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_chain_index_free_address);
+pub const JS_STEP_EMPTY_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_cursor);
+pub const JS_STEP_EMPTY_OBJECT_CLASS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_class);
+pub const JS_STEP_EMPTY_OBJECT_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_proto);
+pub const JS_STEP_ARRAY_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_cursor);
+pub const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_layout);
+pub const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_payload);
+pub const JS_STEP_EMPTY_ARRAY_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_proto);
+pub const JS_STEP_ASCII_UNIT_STRINGS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, ascii_unit_strings);
+pub const JS_STEP_ARMED_ARRAY_PROOFS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, armed_array_proofs);
+pub const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_chain_index_free_address);
 /// The activation's local slots and their count (`native_locals`, `local_count`).
-pub(crate) const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
-pub(crate) const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);
+pub const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
+pub const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);
 /// The heap bases a field read through a site's cache entry reads: the object record
 /// reservation, the allocator header of the property values (whose base is at
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
-pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
+pub const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
 /// The class space's base (`heap::class_space`): a direct object's cell is at this plus its granule times
 /// `CLASS_HEADER_BYTES`, and its header names the record by its high half.
-pub(crate) const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);
+pub const JS_STEP_CLASS_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_base);
 /// The granules the class space spans: a direct object's granule below this names a cell of some region.
 pub const CLASS_SPACE_GRANULES: u32 = (CAPACITY_CLASSES as u32) << REGION_SHIFT;
 /// A class cell's granule, in bytes: a direct object's cell is at the class base plus its granule times this.
@@ -353,115 +353,115 @@ pub const CLASS_CELL_GRANULE_BYTES: usize = super::object_encoding::CLASS_HEADER
 /// The class id of a departed object's class cell (`object_encoding::DEPARTED_CLASS`): a cell whose class is this
 /// holds its record id in the header's high half, and a live cell's class id is never this.
 pub const DEPARTED_CLASS: u32 = super::object_encoding::DEPARTED_CLASS;
-pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
+pub const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
 /// count, and what watches a store (`store_watch`), which an unobserved store requires zero.
-pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_blocks);
-pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_block_count);
+pub const JS_STEP_OBJECT_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_blocks);
+pub const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_block_count);
 /// The array records' mark blocks and their count, which an element store's barrier reads
 /// (`ElementFrame::array_store_gate`).
-pub(crate) const JS_STEP_ARRAY_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_blocks);
-pub(crate) const JS_STEP_ARRAY_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_block_count);
+pub const JS_STEP_ARRAY_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_blocks);
+pub const JS_STEP_ARRAY_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_block_count);
 /// The class cells' mark lists by region (`JsStepHead::class_mark_lists`): (blocks, count) pairs, 16 bytes a region.
-pub(crate) const JS_STEP_CLASS_MARK_LISTS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_mark_lists);
-pub(crate) const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
+pub const JS_STEP_CLASS_MARK_LISTS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_mark_lists);
+pub const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
 /// The `store_watch` bit set while the property arena records its slots' value classes.
-pub(crate) const STORE_WATCH_TRACKS: u64 = 1;
+pub const STORE_WATCH_TRACKS: u64 = 1;
 /// The `store_watch` counts bit, reserved in the gate word's layout: no heap keeps reference counts,
 /// so it is never set. Stencils and native guards still test it.
 pub const STORE_WATCH_COUNTS: u64 = 2;
 /// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
 /// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
-pub(crate) const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, epoch);
+pub const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, epoch);
 /// The string record range's base, which a string `length` read finds the record from.
-pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, string_record_base);
+pub const JS_STEP_STRING_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, string_record_base);
 /// What a store into a function's own properties reads (`StagedRecordSpace::Function`): the function
 /// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
 /// empty string's word, which a function's inferred name replaces (`staged::naming`).
-pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_blocks);
-pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_block_count);
-pub(crate) const JS_STEP_EMPTY_STRING: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_string);
+pub const JS_STEP_FUNCTION_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_blocks);
+pub const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_block_count);
+pub const JS_STEP_EMPTY_STRING: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_string);
 /// The function record reservation's base (`JsStepDispatch::function_record_base`).
-pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_record_base);
-pub(crate) const JS_STEP_FIELD_ENTRIES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, field_entries);
+pub const JS_STEP_FUNCTION_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_record_base);
+pub const JS_STEP_FIELD_ENTRIES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, field_entries);
 /// The base pointer's offset within a property buffer: the head is the buffer's first field (`PropertyBuffer::head`).
-pub(crate) const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::property_buffer::PropertyBufferHead<u8>, base);
+pub const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::property_buffer::PropertyBufferHead<u8>, base);
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
 /// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
 pub const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - super::shared_words::CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
-pub(crate) const JS_STEP_RETURNED_PC: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, returned_pc);
+pub const JS_STEP_RETURNED_PC: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, returned_pc);
 /// The activation's environment record, which an environment-resident local reads and writes
 /// through (`staged::environment`'s dense-slot rows); zero where the activation has none.
-pub(crate) const JS_STEP_ENVIRONMENT_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
+pub const JS_STEP_ENVIRONMENT_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
 /// frames' span. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const JS_STEP_VM: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, vm);
-pub(crate) const JS_STEP_RESIDUAL: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, residual);
-pub(crate) const JS_STEP_LANE_CONTEXT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_context);
+pub const JS_STEP_VM: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, vm);
+pub const JS_STEP_RESIDUAL: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, residual);
+pub const JS_STEP_LANE_CONTEXT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_context);
 /// The lane stack's words (`Vm::lane_stack_words`): the addresses of the values' and the activations' tops,
 /// the end of the values' room and the end of the frames' room.
-pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_top);
-pub(crate) const JS_STEP_LANE_VALUES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_end);
-pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_activations_top);
-pub(crate) const JS_STEP_LANE_FRAMES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_frames_end);
+pub const JS_STEP_LANE_VALUES_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_top);
+pub const JS_STEP_LANE_VALUES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_end);
+pub const JS_STEP_LANE_ACTIVATIONS_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_activations_top);
+pub const JS_STEP_LANE_FRAMES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_frames_end);
 /// The plain-frame words a native frame's header bumps (`PlainFrames`), and the body table each depth indexes.
 /// (reconciled with u-jit F5 on merge)
-pub(crate) const JS_STEP_PLAIN_DEPTH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth);
-pub(crate) const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth_limit);
-pub(crate) const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
-pub(crate) const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
-pub(crate) const JS_STEP_NATIVE_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_table);
-pub(crate) const JS_STEP_POP_OBSERVED_HEADER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, pop_observed_header);
-pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
+pub const JS_STEP_PLAIN_DEPTH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth);
+pub const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth_limit);
+pub const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
+pub const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
+pub const JS_STEP_NATIVE_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_table);
+pub const JS_STEP_POP_OBSERVED_HEADER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, pop_observed_header);
+pub const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`). The entry cell's
 /// offsets come from `staged::call`, which the Wasm rows' family does not compile (`stencil_family`).
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
+pub const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub const RAISED_RUN: u64 = 1 << u32::BITS;
 
 /// The running activation's receiver and body-capture words live in its window's header
 /// (`staged::frame::CONTEXT_THIS`, `CONTEXT_BODY`); the stencils read them at `context_word(frame, ..)`.
-pub(crate) const CONTEXT_THIS: usize = crate::staged::frame::CONTEXT_THIS;
-pub(crate) const CONTEXT_BODY: usize = crate::staged::frame::CONTEXT_BODY;
+pub const CONTEXT_THIS: usize = crate::staged::frame::CONTEXT_THIS;
+pub const CONTEXT_BODY: usize = crate::staged::frame::CONTEXT_BODY;
 /// The closure environment and captures pointer a linked activation's interpreter reads (`staged::frame::CONTEXT_ENV`, `CONTEXT_CAPTURE`).
-pub(crate) const CONTEXT_ENV: usize = crate::staged::frame::CONTEXT_ENV;
-pub(crate) const CONTEXT_CAPTURE: usize = crate::staged::frame::CONTEXT_CAPTURE;
+pub const CONTEXT_ENV: usize = crate::staged::frame::CONTEXT_ENV;
+pub const CONTEXT_CAPTURE: usize = crate::staged::frame::CONTEXT_CAPTURE;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
+pub const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
+pub const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
+pub const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
+pub const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_PROVEN_AT: usize = crate::staged::call::ENTRY_CELL.proven_offset as usize;
+pub const CELL_PROVEN_AT: usize = crate::staged::call::ENTRY_CELL.proven_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_NUMBERS_AT: usize = crate::staged::call::ENTRY_CELL.numbers_offset as usize;
+pub const CELL_NUMBERS_AT: usize = crate::staged::call::ENTRY_CELL.numbers_offset as usize;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))]
-pub(crate) const CELL_USES_THIS_AT: usize = crate::staged::call::ENTRY_CELL.uses_this_offset as usize;
-pub(crate) const RECOVERY_VALUES_AT: usize = 0;
-pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
+pub const CELL_USES_THIS_AT: usize = crate::staged::call::ENTRY_CELL.uses_this_offset as usize;
+pub const RECOVERY_VALUES_AT: usize = 0;
+pub const RECOVERY_ACTIVATIONS_AT: usize = 8;
 
 /// The flat string forms a string record is read in (`vm::wtf16::native_string`): the record's
 /// size (three words), where it keeps its form's tag, each form's tag, and where a short and a
 /// shared form keep their unit count. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) use super::string_form;
+pub use super::string_form;
 /// What an inline-cache row reads of the dispatch payload (`stencils/ic_rows.rs`): the method-cache atom bits and their
 /// word count, which a store row consults, and whether stores are specialized.
-pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atoms);
-pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atom_words);
-pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stores_specialized);
+pub const JS_STEP_METHOD_CACHE_ATOMS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atoms);
+pub const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atom_words);
+pub const JS_STEP_STORES_SPECIALIZED: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stores_specialized);
 /// The object layout table's fixed address (`heap::layouts::table_base`): a row reads an entry
 /// with the address as its displacement. On x86-64 Linux a low address is in a sign-extended
 /// 32-bit displacement's reach; Apple AArch64 reserves the low 4 GiB (the image sits at 4 GiB),
 /// so the table is mapped at 8 GiB there (`MAP_FIXED` of a 32 MiB range).
 #[cfg(not(all(target_arch = "aarch64", target_vendor = "apple")))]
-pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
+pub const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
 #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
-pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x2_0000_0000;
+pub const LAYOUT_TABLE_BASE: u64 = 0x2_0000_0000;

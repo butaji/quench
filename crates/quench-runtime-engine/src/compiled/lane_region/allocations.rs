@@ -3,6 +3,8 @@
 //! by the lane's own allocator (`LaneHelper::NewArray`, `NewObjectLiteral` and kin).
 
 #[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
+#[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;

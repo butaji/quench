@@ -2,6 +2,9 @@
 //! instructions a record names. The moved types take these as extension traits, since an
 //! inherent impl of a moved type cannot live in the runtime crate.
 #![allow(unused_imports)]
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::allocation::AllocationAllocationExt;
 use super::*;
 use crate::bytecode::{Register, WideInstruction};
 use crate::staged::generic::is_value_operand;

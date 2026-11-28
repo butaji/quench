@@ -3,6 +3,8 @@
 //! case calls: it makes the step by the interpreter's own definition (`Vm::call_out`), as
 //! `step_beside_activations_in_lane` does for a frameless activation, and continues, so no such
 //! record hands its body back.
+#[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
