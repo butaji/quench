@@ -406,9 +406,9 @@ pub fn tiers_run(mode: crate::ExecutionMode, policy: crate::MemoryPolicy, tiers:
 /// Operators up to which a Wasm module lowered for compiled code inlines its leaves as the
 /// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
 /// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
-/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
-/// runs or not; past this size the copies' compile time outweighs them on a module's first
-/// runs, and larger modules keep every call.
+/// leaf with its caller's values. A copy compiles with its caller's root, so it is compiled
+/// whether or not it runs; past this size the copies' compile time outweighs them on a module's
+/// first runs, and larger modules keep every call.
 pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
 
 /// Whether a Wasm module lowered for `mode` inlines its leaf calls (`wasm::inline::leaf_budget`).
@@ -728,11 +728,6 @@ pub const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 
 pub const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-pub const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-
 pub const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
@@ -786,37 +781,12 @@ pub(crate) const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 
 pub(crate) const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 
-/// The work (entries and loop backedges, `TIERS.wasm.backedges_per_entry`) a selective Wasm
-/// module observes before its whole-module compile is due: a module that runs this long gets
-/// the code eager compilation would have made at its first entry.
-pub(crate) const WASM_MODULE_WORK_BUDGET: u32 = 4096;
-
 pub(crate) const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-pub(crate) const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
 pub(crate) const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 
 pub(crate) const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
-
-/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
-/// kept. Below it most calls cross between native code and the interpreter, and each crossing
-/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
-/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
-/// slower than with no JIT.
-pub(crate) const WASM_MODULE_MIN_COVERAGE: usize = 500;
-
-/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
-/// module compiles in microseconds and makes few crossings, whatever it holds.
-pub(crate) const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 // Native graph, regexp and JS region compile budgets (native_graph, regexp_native, js_compiled)
 // Bounds the working CFG, not the source function. Large unpartitioned native

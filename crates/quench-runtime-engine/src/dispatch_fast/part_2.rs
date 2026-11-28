@@ -68,18 +68,12 @@ pub(super) fn safepoint_at(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
         unsafe { (*cx).fuel = 0 };
         return exit(ip);
     }
-    // A crediting run counts every backward jump here; any other run takes a batch of
-    // jumps before its next visit, and credits the work clock with the batch it spent.
+    // A run takes a batch of jumps before its next visit, and credits the work clock with the batch it spent.
     // SAFETY: as above.
     unsafe {
-        if (*cx).backedges_left.is_some() {
-            (*cx).fuel = 0;
-        } else {
-            (*cx).fuel = LANE_FUEL_BATCH;
-            quench_runtime::clock::note_backedges(LANE_FUEL_BATCH);
-        }
+        (*cx).fuel = LANE_FUEL_BATCH;
+        quench_runtime::clock::note_backedges(LANE_FUEL_BATCH);
     }
-    count_backedge(cx);
     // SAFETY: as above; the lane loop takes it before dispatching `target`.
     unsafe { (*cx).resumed_acc = acc };
     target

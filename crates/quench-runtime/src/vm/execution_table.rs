@@ -49,8 +49,6 @@ pub type RunCompiledFn = entry::quench_engine_vm_run_compiled;
 pub type WasmTableStepFn = entry::quench_engine_vm_wasm_table_step;
 /// The address of a Wasm instance record (`quench_engine_vm_wasm_instance_address`).
 pub type WasmInstanceAddressFn = entry::quench_engine_vm_wasm_instance_address;
-/// Compiles the module's Wasm functions eagerly (`quench_engine_vm_compile_wasm_eagerly`).
-pub type CompileWasmEagerlyFn = entry::quench_engine_vm_compile_wasm_eagerly;
 /// The count of rejected native executions (`quench_engine_vm_native_execution_rejections`).
 pub type NativeExecutionRejectionsFn = entry::quench_engine_vm_native_execution_rejections;
 /// Counts a rejected native execution (`quench_engine_vm_record_native_execution_rejection`).
@@ -95,7 +93,6 @@ pub struct ExecutionTable {
     pub run_compiled: Option<RunCompiledFn>,
     pub wasm_table_step: Option<WasmTableStepFn>,
     pub wasm_instance_address: Option<WasmInstanceAddressFn>,
-    pub compile_wasm_eagerly: Option<CompileWasmEagerlyFn>,
 }
 
 impl ExecutionTable {
@@ -121,7 +118,6 @@ impl ExecutionTable {
         run_compiled: Some(super::engine_calls::quench_engine_vm_run_compiled),
         wasm_table_step: Some(super::engine_calls::quench_engine_vm_wasm_table_step),
         wasm_instance_address: Some(super::engine_calls::quench_engine_vm_wasm_instance_address),
-        compile_wasm_eagerly: Some(super::engine_calls::quench_engine_vm_compile_wasm_eagerly),
     };
 }
 

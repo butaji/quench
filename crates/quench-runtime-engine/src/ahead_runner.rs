@@ -138,7 +138,7 @@ impl Vm {
         let view = unsafe { &*view };
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
         let function = self.frames[*frame].function;
-        let entered = self.enter_lane_floor(code, program);
+        let entered = self.enter_lane_floor();
         let start = frame_start(self, code, program, *frame, view, pending, executing, inline_calls, entered.cell);
         let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| {

@@ -190,8 +190,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::exit_protocol::ExitTableOps1 as _;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1 as _;
     pub use crate::compiled::frameless::CalleeAdmissionsOps1 as _;
-    pub use crate::compiled::indirect_profile::SiteHitsOps1 as _;
-    pub use crate::compiled::indirect_profile::CompiledProgramOps2 as _;
     pub use crate::compiled::instance_context::CallContextOps2 as _;
     pub use crate::compiled::instance_context::InstanceContextOps1 as _;
     pub use crate::compiled::instance_context::InstanceRecordOps1 as _;

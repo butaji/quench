@@ -66,7 +66,6 @@ unsafe extern "Rust" {
     pub(super) safe fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> ();
     safe fn quench_engine_vm_set_execution_mode(this: &mut Vm, mode: ExecutionMode) -> ();
     safe fn quench_engine_vm_enable_lane_methods(this: &mut Vm) -> ();
-    pub(super) safe fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> ();
     pub(super) safe fn quench_engine_vm_native_execution_rejections(this: &Vm) -> u64;
     safe fn quench_engine_vm_set_native_program_resolver_boxed(this: &mut Vm, resolver: Box<NativeProgramResolver>) -> ();
     safe fn quench_engine_vm_execute_native_program(this: &mut Vm, native: &NativeJsProgram, drain_jobs: bool) -> Result<Value, JsError>;
@@ -143,7 +142,6 @@ pub trait EngineVm {
     fn load_ahead_images(&mut self, images: AheadImages) -> ();
     fn set_execution_mode(&mut self, mode: ExecutionMode) -> ();
     fn enable_lane_methods(&mut self) -> ();
-    fn compile_wasm_eagerly(&mut self) -> ();
     fn native_execution_rejections(&self) -> u64;
     fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver>) -> ();
     fn execute_native_program(&mut self, native: &NativeJsProgram, drain_jobs: bool) -> Result<Value, JsError>;
@@ -291,8 +289,6 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn enable_lane_methods(&mut self) -> () { quench_engine_vm_enable_lane_methods(self) }
     #[inline(always)]
-    fn compile_wasm_eagerly(&mut self) -> () { if let Some(compile) = self.execution.compile_wasm_eagerly { compile(self) } }
-    #[inline(always)]
     fn native_execution_rejections(&self) -> u64 { self.execution.native_execution_rejections.map_or(0, |count| count(self)) }
     #[inline(always)]
     fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver>) -> () { quench_engine_vm_set_native_program_resolver_boxed(self, resolver) }
@@ -434,7 +430,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_load_ahead_images = fn(&mut Vm, AheadImages) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_set_execution_mode = fn(&mut Vm, ExecutionMode) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_enable_lane_methods = fn(&mut Vm) -> ();
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_compile_wasm_eagerly = fn(&mut Vm) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_native_execution_rejections = fn(&Vm) -> u64;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_set_native_program_resolver_boxed = fn(&mut Vm, Box<NativeProgramResolver>) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_execute_native_program = fn(&mut Vm, &NativeJsProgram, bool) -> Result<Value, JsError>;
