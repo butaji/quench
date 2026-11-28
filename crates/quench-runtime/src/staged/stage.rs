@@ -451,6 +451,10 @@ pub enum Table {
     /// `base + g * CLASS_HEADER_BYTES`, whose header's high half is the object's record id (R4-B2b). Per heap:
     /// a stage reads it from its heap or its dispatch head, never from a constant.
     ClassSpace,
+    /// The spill arena's base (`Heap::native_spill_base`): a spilled class field's word is the run's offset
+    /// (`spill_offset_of`) into it, so field `i` of the run at `spill_from` is at `SpillBase + (offset + i) * 8`.
+    /// Per heap, read live at each use: the arena moves only when it reallocates (`native_layout_epoch` counts it).
+    SpillBase,
 }
 
 
