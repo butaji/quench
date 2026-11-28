@@ -18,7 +18,6 @@ use crate::ext_traits::*;
 use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
-use quench_runtime::code_dependencies::InstanceofFact;
 use quench_runtime::typed_ir::{Representation, Type};
 use quench_runtime::value::Value;
 use crate::operand_class::Site;
@@ -34,7 +33,6 @@ use std::sync::Mutex;
 
 pub(crate) mod adds;
 pub(crate) mod call_args;
-pub(crate) mod names;
 pub(crate) mod call_plan;
 pub(crate) mod sites;
 pub(crate) mod callees;
@@ -101,9 +99,6 @@ pub(crate) struct Known<'a> {
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
     /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
     pub(crate) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>>,
-    /// The naming a cache site recorded for a `SetFunctionName`'s atom, with the word of the name's string
-    /// (`Vm::native_function_name`): the instruction runs it as `staged::naming`'s row. `None` where no fact may be held.
-    pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which code that
     /// holds a Stable fact and makes a call reads before the rows that hold it.
     pub(crate) invalidation: Option<usize>,
@@ -114,12 +109,6 @@ pub(crate) struct Known<'a> {
     /// `bytecode::TYPEOF_NAMES`: a `typeof` string row names it, so a value's string is the entry its tag's
     /// index selects. Empty for a region, whose `typeof` is the helper step.
     pub(crate) typeof_names: &'a [Value],
-    /// The constructor the `instanceof` at a PC names and what the VM proved of it (`Vm::instanceof_fact`), where the VM and
-    /// the program run specialized and the code may hold Stable facts: the row stands on the constructor's identity (its
-    /// register is guarded against it) and walks the value's chain for its `prototype` link, which a write of that
-    /// slot, a departure of its shape or a change of the `@@hasInstance` holder's values retires the code over
-    /// (`Body::instanceofs`). `None` where no fact may be held.
-    pub(crate) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a

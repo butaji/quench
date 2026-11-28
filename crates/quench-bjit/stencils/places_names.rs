@@ -1,12 +1,9 @@
 //! The `Places` methods the key, iteration and naming rows reach through the staged steps: the
-//! for-in fast arm the frame answers `CallOut::ForInNext` with, the `typeof` result table at hole 2,
-//! and the record and empty-string words the site rows read from the payload.
+//! for-in fast arm the frame answers `CallOut::ForInNext` with and the `typeof` result table at hole 2.
 //!
 //! `Frame<Concrete> for Places` is one impl in `places.rs`, so that impl forwards to these methods:
 //! `vm_step` to `call_out_fast`, `typeof_string` to `typeof_entry` (the lead adds the forwarders).
 
-use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_EMPTY_STRING, JS_STEP_FUNCTION_RECORD_BASE};
 use crate::numeric::HOLE_B;
 use crate::typed_ir::Representation;
 use crate::places::{Places};
@@ -15,18 +12,6 @@ use crate::staged::{CallOut, Concrete, Frame, Stage, iteration};
 use crate::words::hole64;
 
 impl Places {
-    /// The function record table the naming site reads (`JS_STEP_FUNCTION_RECORD_BASE`).
-    #[inline(always)]
-    pub(crate) fn function_records(&self) -> u64 {
-        word_at(payload(&self.s), JS_STEP_FUNCTION_RECORD_BASE)
-    }
-
-    /// The empty string the naming site writes where a function has no name (`JS_STEP_EMPTY_STRING`).
-    #[inline(always)]
-    pub(crate) fn empty_string(&self) -> u64 {
-        word_at(payload(&self.s), JS_STEP_EMPTY_STRING)
-    }
-
     /// The fast arm of the VM's operations the frame answers in place: `CallOut::ForInNext` yields the
     /// state's next key where its memo proves the snapshot current (`iteration::for_in_next`, over the
     /// payload's record tables and epoch, `heap_records`); every other operation, and a state the
