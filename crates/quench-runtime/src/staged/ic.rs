@@ -41,7 +41,7 @@ pub enum IcOp<'a> {
     LoadField { slot: u16, rep: Representation },
     /// The tagged value at `slot` of the live class cell at granule `holder`, the holder of a class-keyed held
     /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a holder whose fields
-    /// move resets the field caches before any read (`Vm::drop_departed_holder_entries`), so it tests none. It ends the read.
+    /// move resets the field caches before any read (`Vm::drop_moved_holder_entries`), so it tests none. It ends the read.
     LoadHeldField { holder: u32, slot: u16 },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan

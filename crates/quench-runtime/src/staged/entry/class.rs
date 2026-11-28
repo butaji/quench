@@ -135,7 +135,7 @@ pub fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, mis
 /// the class key of the receiver matches (`class_matches`), and the holder is the live cell whose
 /// granule the entry stores in `holder_cell`, whose field at `slot` is the value. The class fixes the
 /// prototype link, so there is no link guard, and a holder whose fields move resets the field caches
-/// (`Vm::drop_departed_holder_entries`), so there is no holder guard.
+/// (`Vm::drop_moved_holder_entries`), so there is no holder guard.
 #[inline(always)]
 pub fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let granule = super::super::value::direct_object_id(stage, object);
