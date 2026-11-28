@@ -211,8 +211,8 @@ impl Vm {
             wide: function_code.wide.as_ptr(),
             decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
-            // A JavaScript activation deferred its view; a loop that turns hot derives it.
-            back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm,
+            // A JavaScript activation deferred its view; a back edge derives it where the function's predicted tier compiles it.
+            back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm && self.programs.compiled_tier(program_id, function),
         }
     }
 
