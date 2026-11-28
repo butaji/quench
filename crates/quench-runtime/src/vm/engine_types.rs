@@ -2395,16 +2395,13 @@ impl FixedUnion {
         &self.atoms[..self.len]
     }
 
-    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: `None` where a name
-    /// is no union name or the names are not in slot order, where the cell's key order would differ from the
-    /// stores' (the plan does not hold then).
+    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: each name's position in
+    /// `atoms()`, whatever the order of `names`. `None` where a name is no union name, which the plan does not hold.
     pub fn cell_slots(&self, names: &[crate::bytecode::Atom]) -> Option<[u8; CONSTRUCT_PLAN_FIELDS]> {
         let mut slots = [0; CONSTRUCT_PLAN_FIELDS];
-        let mut next = 0;
         for (field, name) in names.iter().enumerate() {
-            let slot = next + self.atoms()[next..].iter().position(|atom| atom == name)?;
+            let slot = self.atoms().iter().position(|atom| atom == name)?;
             slots[field] = u8::try_from(slot).ok()?;
-            next = slot + 1;
         }
         Some(slots)
     }
