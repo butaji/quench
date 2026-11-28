@@ -7,6 +7,7 @@ use super::super::record::Record;
 use super::super::scope::Scope;
 use super::super::value::{Key, Origin, Word};
 use crate::bytecode::{Function, Operand, OperandKind, WideInstruction, used_registers};
+use crate::typed_ir::IntRange;
 use crate::staged::{Comparison, NumberOperation, Operation};
 use crate::staged::typing;
 use crate::vm::operations::NumberBitwise;

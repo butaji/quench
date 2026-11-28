@@ -4,7 +4,7 @@
 //! these at link time (`quench-runtime-engine`'s `call_body_forms` and `dispatch_fast::closure_targets`), and the
 //! AOT facts read the same functions (`AotFacts::body_entry` and its siblings), so both name one classification.
 
-use crate::bytecode::{CallPlan, Constant, FieldBase, FieldLookup, Function, ImmediateLayout, ImmediateRole, OperandKind, RETURN_REGISTER, Traits, WideInstruction};
+use crate::bytecode::{CallPlan, Constant, FieldBase, FieldLookup, Function, ImmediateRole, OperandKind, RETURN_REGISTER, Traits, WideInstruction};
 use crate::vm::engine_types::{CallEntry, Framed, Frameless};
 
 /// The operator `!==`, as the oxc operator's index in a binary record's immediate.
