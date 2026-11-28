@@ -2,7 +2,7 @@ use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
 use quench_runtime::{Engine, ImageRetention, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
-use quench_layers::engine::{Demand, emit_native_module_for, lower_native_js_module_for};
+use quench_layers::engine::{Demand, emit_native_module_for, link_lane_stubs, lower_native_js_module_for};
 use super::core_rest::{write_closed_world, ClosedTables};
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
@@ -102,7 +102,8 @@ impl CompiledSources {
         let mut lowered = Vec::with_capacity(programs.len());
         for (name, program) in &programs {
             program.freeze_native_diagnostics();
-            let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
+            let mut module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
+            if name == NATIVE_ENTRY_UNIT { link_lane_stubs(&mut module.functions, target)?; } // the image's one pair, its binder's
             lowered.push(module.entry_table_symbol().to_owned());
             demand.absorb(&module.demand);
             for function in &module.functions {
@@ -201,11 +202,12 @@ impl CompiledSources {
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
         // The image's lane helper imports are defined by this library (`aot::lane_helper_symbols`), and the
-        // attention byte its polls read and the narrow decode's table by the runtime (exported by name).
+        // attention byte its polls read, the narrow decode's table and the entry stub's callee by the runtime (exported by name).
         let mut exports = required_exports.iter()
             .filter(|name| !name.starts_with("quench_lane_helper_")
                 && *name != quench_runtime::execution_interrupt::ATTENTION_SYMBOL
-                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL)
+                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL
+                && *name != quench_runtime::vm::engine_types::ENTRY_STUB_IN_LANE_SYMBOL)
             .map(|name| format!("{name:?}")).collect::<Vec<_>>();
         // The Node host defines the lane helper trampolines from its own library
         // (`aot::lane_helper_symbols`); a core image has no host library, so its catalog does.

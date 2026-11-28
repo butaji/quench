@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::ClassMethods as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::EntryStub as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -83,11 +83,16 @@ pub(crate) enum Symbol {
     /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
     /// class's vector from by its layout id. One table for the process: keyed 0.
     ClassMethods,
+    /// The entry stub (`lane_body_abi::entry_stub`): the one the image links ahead, or the process's. Keyed 0.
+    EntryStub,
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
 
 pub(crate) use quench_runtime::vm::engine_types::ShapeRecipe;
+#[path = "symbols/guard_access.rs"] mod guard_access;
+pub(crate) use guard_access::{GuardAccess, guard_read_type, guard_recipe};
+use guard_access::{GUARD_ACCESS_SHIFT, GUARD_SLOT_BITS, guard_key};
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Recipes or labels interned to dense keys: one key per distinct value, in first-seen order.
@@ -209,7 +214,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 15] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 16] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -225,6 +230,7 @@ const KEYED: [(u32, fn(u32) -> Symbol); 15] = [
     (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
     (RelocKind::ClassLayout as u32, Symbol::ClassLayout),
     (RelocKind::ClassMethods as u32, class_methods),
+    (RelocKind::EntryStub as u32, |_| Symbol::EntryStub),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
@@ -255,6 +261,7 @@ impl Symbol {
             Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
             Self::ClassLayout(_) => RelocKind::ClassLayout as u32,
             Self::ClassMethods => RelocKind::ClassMethods as u32,
+            Self::EntryStub => RelocKind::EntryStub as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -268,7 +275,7 @@ impl Symbol {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
                 | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key) => key,
-            Self::Invalidation | Self::NarrowUpperWords | Self::Attention | Self::ClassMethods => 0,
+            Self::Invalidation | Self::NarrowUpperWords | Self::Attention | Self::ClassMethods | Self::EntryStub => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
         }
@@ -363,96 +370,6 @@ pub(crate) fn holder_constant(image: &AotImage, vm: &mut Vm, key: u32) -> Option
     let (holder, atom, class) = holder_cell(image, vm, key >> GUARD_SLOT_BITS, slot)?;
     let value = vm.own_property(holder, atom)?;
     Some((class, quench_runtime::tier_surface::ProtoLink::of(holder).bits(), value))
-}
-
-/// The bits of a guard key below its recipe (`guard_key`): the access, then the slot.
-const GUARD_SLOT_BITS: u32 = 12;
-/// The bits of a guard key below its access (`GuardAccess`): the slot.
-const GUARD_ACCESS_SHIFT: u32 = GUARD_SLOT_BITS - GuardAccess::BITS;
-
-/// What the access a shape guard admits needs of its slot (`guarded_shape`): a read reads any
-/// tagged word; a store writes in place, with no join of the slot's type, only the values of one
-/// class (`StoreArm::of` of the slot typed `GuardAccess::stored`), so its guard resolves only where
-/// the slot's type holds every value of that class. A prototype read guards two shapes: its
-/// receiver's (`Inherited`), which owns no field of the name, and its holder's (`Holder`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum GuardAccess {
-    Read,
-    /// A store of an int32.
-    StoreInt32,
-    /// A store of a direct object or `null`.
-    StoreReference,
-    /// A store of any tagged word: the slot is admitted to every value (`ahead_images::fields`).
-    StoreTagged,
-    /// The receiver of a read its prototype answers: the recipe's shape, whatever its slots hold.
-    Inherited,
-    /// The holder of a prototype read: the class cell the recipe's `prototype` names, where the
-    /// slot holds the recipe's one field, the name read, as a plain data field (`holder_cell`). The
-    /// recipe names no shape of its own: it carries the holder and the name.
-    Holder,
-    /// A read of a slot every store of which writes an int32 (`AotFacts::field_type`): the slot is
-    /// admitted to int32s, as its stores' guards admit it, and the read takes its words as int32s
-    /// under the slot's dependency (`ahead_images::guard_dependencies`), so a store of anything else
-    /// retires the code: the type is proven where the slot is written, never at the read.
-    ReadInt32,
-    /// A read of a slot every store of which writes a direct object or `null`, as `ReadInt32`.
-    ReadReference,
-}
-
-impl GuardAccess {
-    /// The bits of the access in a guard key.
-    const BITS: u32 = 3;
-    const ALL: [Self; 8] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::StoreTagged, Self::Inherited, Self::Holder,
-        Self::ReadInt32, Self::ReadReference];
-
-    /// The type the slot's type must hold for the access: `None` for a read.
-    pub(crate) fn stored(self) -> Option<quench_runtime::typed_ir::Type> {
-        use quench_runtime::typed_ir::Type;
-        match self {
-            Self::Read | Self::Inherited | Self::Holder | Self::ReadInt32 | Self::ReadReference => None,
-            Self::StoreInt32 => Some(Type::INT32),
-            Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
-            Self::StoreTagged => Some(Type::ANY),
-        }
-    }
-
-    /// The type a typed read takes its slot's words as, which the slot's type must be within: `None`
-    /// for any other access.
-    pub(crate) fn read(self) -> Option<quench_runtime::typed_ir::Type> {
-        use quench_runtime::typed_ir::Type;
-        match self {
-            Self::ReadInt32 => Some(Type::INT32),
-            Self::ReadReference => Some(Type::NULLABLE_DIRECT_OBJECT),
-            _ => None,
-        }
-    }
-
-    /// The accesses of a field whose stores all write values of type `ty` (`AotFacts::field_type`):
-    /// its reads' and its stores', typed by the one class `ty` is within, or any tagged word.
-    pub(crate) fn of_field(ty: quench_runtime::typed_ir::Type) -> (Self, Self) {
-        use quench_runtime::typed_ir::Type;
-        if ty == Type::NEVER { (Self::Read, Self::StoreTagged) }
-        else if ty.is_subtype(Type::INT32) { (Self::ReadInt32, Self::StoreInt32) }
-        else if ty.is_subtype(Type::NULLABLE_DIRECT_OBJECT) { (Self::ReadReference, Self::StoreReference) }
-        else { (Self::Read, Self::StoreTagged) }
-    }
-}
-
-/// The type the guard `key` admits its slot's words as for a typed read (`GuardAccess::read`).
-pub(crate) fn guard_read_type(key: u32) -> Option<quench_runtime::typed_ir::Type> {
-    GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?.read()
-}
-
-/// The shape recipe guard key `key` guards a slot of (`guard_key`).
-pub(crate) fn guard_recipe(key: u32) -> u32 {
-    key >> GUARD_SLOT_BITS
-}
-
-/// The key of the guard of `access` of `slot` of shape recipe `recipe`: the recipe above the
-/// access and the slot. `None` where either does not fit.
-fn guard_key(recipe: u32, slot: u16, access: GuardAccess) -> Option<u32> {
-    (u32::from(slot) < 1 << GUARD_ACCESS_SHIFT && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS))
-        .then_some(recipe << GUARD_SLOT_BITS | (access as u32) << GUARD_ACCESS_SHIFT | u32::from(slot))
 }
 
 /// The shape guard key `key` names in `vm`, its slot and the type an access of the slot depends on

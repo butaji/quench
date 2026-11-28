@@ -47,6 +47,8 @@ pub(crate) enum RelocKind {
     /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
     /// class's method vector from. Keyed 0.
     ClassMethods,
+    /// The entry stub (`lane_body_abi::entry_stub`), which a sibling tail call compares a callee's entry with. Keyed 0.
+    EntryStub,
 }
 
 impl RelocKind {
