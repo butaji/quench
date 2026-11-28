@@ -2252,7 +2252,6 @@ impl Vm {
                     if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
-                        p,
                         receiver,
                         ins.atom_index(),
                         self.read(frame, ins.register_a()),
@@ -2329,7 +2328,7 @@ impl Vm {
                                 .then(|| self.frames[frame].this),
                         } =>
                 {
-                    let value = match self.cached_field_hit(p, object, cache_site) {
+                    let value = match self.cached_field_hit(object, cache_site) {
                         super::object::FieldCacheProbe::Hit(value) => Some(value),
                         super::object::FieldCacheProbe::Ineligible => {
                             self.array_length_field(object, atom)

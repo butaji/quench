@@ -69,7 +69,6 @@ impl Vm {
             job_queue_programs: Vec::new(),
             queue_chains: false,
             chainable_job: false,
-            specialized: true,
             heap: Heap::new(),
             realm: Realm {
                 globals: Value::NULL,

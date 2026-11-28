@@ -774,7 +774,6 @@ impl Engine {
             })
         });
         let program = ResidualProgram {
-            specialized: false,
             kind: ProgramKind::Wasm,
             module_requests: vec![],
             module_imports: vec![],

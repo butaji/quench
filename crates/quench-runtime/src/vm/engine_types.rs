@@ -1963,8 +1963,7 @@ pub enum Crossing {
 
 /// The activation a region's parked dispatch was bound for: its VM, program and function,
 /// its VM frame (by index and by the frame's own address, which a pop and push at the same
-/// index changes), the lane context and register file, and whether the program runs
-/// specialized. An entry of the same activation (a loop entered again by an outer loop of
+/// index changes), the lane context and register file. An entry of the same activation (a loop entered again by an outer loop of
 /// the same frame, the case region entry costs most in) finds its frame, register and local
 /// words, `this` slot and capture view as they were: the run binds only what changes between
 /// runs, about a tenth of a full rebind.
@@ -1979,8 +1978,6 @@ pub struct EntryStamp {
     pub locals: usize,
     pub lane_context: usize,
     pub registers: usize,
-    /// Whether the program runs specialized (fixed for a program).
-    pub specialized: bool,
     /// The capture view the window's captures word was last bound to (`captures_key`): an entry
     /// rebinds it only where this changed. Not part of the activation's identity (`binds`).
     pub captures: (usize, u64),

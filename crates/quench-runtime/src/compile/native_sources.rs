@@ -17,28 +17,26 @@ pub struct NativeSourceKey {
 impl NativeSourceKey {
     pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
         match parts {
-            ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL | super::GLOBAL_SCRIPT_GOAL, _] => {},
-            ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
-            ["specialized" | "unspecialized", DYNAMIC_FUNCTION_GOAL, kind, _, _]
+            [STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL | super::GLOBAL_SCRIPT_GOAL, _] => {},
+            [goal, _] => { script_options(goal)?; },
+            [DYNAMIC_FUNCTION_GOAL, kind, _, _]
                 if DynamicFunctionKind::from_source_prefix(kind).is_some() => {},
-            ["specialized" | "unspecialized", _, _, _] => {},
+            [_, _, _] => {},
             _ => return Err("unknown native host source key".into()),
         }
         Ok(Self { name: name.into(), parts: parts.iter().map(|part| (*part).into()).collect() })
     }
 
-    pub fn function_constructor(specialized: bool, kind: DynamicFunctionKind, parameters: &str, body: &str) -> Self {
-        let mode = if specialized { "specialized" } else { "unspecialized" };
-        Self { name: DYNAMIC_FUNCTION_SOURCE_NAME.into(), parts: kind.native_parts(mode, parameters, body).into_iter().map(str::to_owned).collect() }
+    pub fn function_constructor(kind: DynamicFunctionKind, parameters: &str, body: &str) -> Self {
+        Self { name: DYNAMIC_FUNCTION_SOURCE_NAME.into(), parts: kind.native_parts(parameters, body).into_iter().map(str::to_owned).collect() }
     }
 
     pub fn is_function_constructor(&self) -> bool {
-        matches!(self.parts.as_slice(), [_, goal, _, _, _] if goal == DYNAMIC_FUNCTION_GOAL)
+        matches!(self.parts.as_slice(), [goal, _, _, _] if goal == DYNAMIC_FUNCTION_GOAL)
     }
 
-    pub fn global_script(specialized: bool, source: &str) -> Self {
-        let mode = if specialized { "specialized" } else { "unspecialized" };
-        Self { name: super::GLOBAL_SCRIPT_SOURCE_NAME.into(), parts: [mode, super::GLOBAL_SCRIPT_GOAL, source].into_iter().map(str::to_owned).collect() }
+    pub fn global_script(source: &str) -> Self {
+        Self { name: super::GLOBAL_SCRIPT_SOURCE_NAME.into(), parts: [super::GLOBAL_SCRIPT_GOAL, source].into_iter().map(str::to_owned).collect() }
     }
 
     pub fn name(&self) -> &str { &self.name }
@@ -47,7 +45,7 @@ impl NativeSourceKey {
 
 fn script_options(goal: &str) -> Result<HostScriptOptions, String> {
     let invalid = || "invalid native host Script goal".to_owned();
-    let fields: Vec<_> = goal.strip_prefix("specialized-script:").ok_or_else(invalid)?.split(':').collect();
+    let fields: Vec<_> = goal.strip_prefix("script:").ok_or_else(invalid)?.split(':').collect();
     let (line, column, kept, typescript) = match fields.as_slice() {
         [line, column, kept] => (line, column, kept, false),
         [line, column, kept, "typescript"] => (line, column, kept, true),
@@ -76,18 +74,16 @@ pub enum NativeSourceCompilation {
 pub struct NativeJsCompiler {
     atoms: Rc<AtomSequence>,
     index: FxHashMap<Rc<str>, Atom>,
-    specialized: bool,
     source_requests: Option<RefCell<BTreeSet<NativeSourceKey>>>,
     global_script_calls: Vec<(String, String)>,
 }
 
 impl NativeJsCompiler {
-    pub fn new(specialized: bool) -> Self {
+    pub fn new() -> Self {
         super::source_routes::enable();
         Self {
             atoms: Rc::new(AtomSequence::new(AtomTable::default())),
             index: FxHashMap::default(),
-            specialized,
             source_requests: None,
             global_script_calls: Vec::new(),
         }
@@ -137,27 +133,23 @@ impl NativeJsCompiler {
     /// Compile a captured loader input without executing its guest code.
     pub fn compile_source(&mut self, key: &NativeSourceKey) -> Result<ResidualProgram, String> {
         let parts: Vec<_> = key.parts().collect();
-        let expected = if self.specialized { "specialized" } else { "unspecialized" };
-        if parts.first().copied() != Some(expected) {
-            return Err("native source specialization does not match compiler".into());
-        }
         match parts.as_slice() {
-            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() })
+            [super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() })
                 .map_err(|errors| format!("{errors:?}")),
-            [_, goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
+            [goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
                 .map_err(|errors| format!("{errors:?}")),
-            [_, goal, source] => {
+            [goal, source] => {
                 // A captured unit is serialized into an image, which carries no compiler: keep
                 // its records and compile every body now (`KeptRecords`), never on first call.
                 let mut options = script_options(goal)?;
                 options.keep_records = true;
                 self.compile_script(source, key.name(), options).map_err(|errors| format!("{errors:?}"))
             },
-            [_, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
+            [DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
                 let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
                 self.compile_function_constructor(kind, parameters, body).map_err(|errors| format!("{errors:?}"))
             },
-            [_, prefix, body, suffix] => self.compile_library_body(prefix, std::sync::Arc::from(*body), suffix, key.name()),
+            [prefix, body, suffix] => self.compile_library_body(prefix, std::sync::Arc::from(*body), suffix, key.name()),
             _ => Err("unknown native host source key".into()),
         }
     }
@@ -181,15 +173,12 @@ impl NativeJsCompiler {
     /// Syntax errors are residual guest failures; producer failures stop emission.
     pub fn compile_source_request(&mut self, key: &NativeSourceKey) -> Result<NativeSourceCompilation, String> {
         let parts: Vec<_> = key.parts().collect();
-        if parts.first().copied() != Some(if self.specialized { "specialized" } else { "unspecialized" }) {
-            return Err("native source specialization does not match compiler".into());
-        }
         let compiled = match parts.as_slice() {
-            [_, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
+            [DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
                 let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
                 self.compile_function_constructor(kind, parameters, body)
             },
-            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() }),
+            [super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions { keep_records: true, ..Default::default() }),
             _ => return Err("unsupported native source request".into()),
         };
         match compiled {
@@ -284,26 +273,24 @@ mod tests {
 
     #[test]
     fn configured_global_script_graph_is_transitive_and_defers_syntax_errors() {
-        for specialized in [false, true] {
-            let mut compiler = NativeJsCompiler::new(specialized).with_function_source_discovery()
-                .with_global_script_source_discovery("host", "runScript");
-            let nested = "host.runScript('41 + 1;'); Function('return 7;');";
-            let source = format!("host.runScript({nested:?}); host.runScript('let invalid = ;'); function later() {{ host.runScript('void 2;'); }} {{ const host = {{}}; host.runScript('shadowed'); }}");
-            let entry = compiler.compile_script(&source, "entry.js", Default::default()).unwrap();
-            let requests = compiler.compile_discovered_sources().unwrap();
-            assert_eq!(requests.len(), 5);
-            for source in [nested, "41 + 1;", "void 2;"] {
-                assert!(matches!(requests.get(&NativeSourceKey::global_script(specialized, source)), Some(NativeSourceCompilation::Program(_))));
-            }
-            assert!(matches!(requests.get(&NativeSourceKey::global_script(specialized, "let invalid = ;")), Some(NativeSourceCompilation::SyntaxError(_))));
-            assert!(requests.contains_key(&NativeSourceKey::function_constructor(specialized, DynamicFunctionKind::Ordinary, "", "return 7;")));
-            compiler.finish(entry).unwrap();
+        let mut compiler = NativeJsCompiler::new().with_function_source_discovery()
+            .with_global_script_source_discovery("host", "runScript");
+        let nested = "host.runScript('41 + 1;'); Function('return 7;');";
+        let source = format!("host.runScript({nested:?}); host.runScript('let invalid = ;'); function later() {{ host.runScript('void 2;'); }} {{ const host = {{}}; host.runScript('shadowed'); }}");
+        let entry = compiler.compile_script(&source, "entry.js", Default::default()).unwrap();
+        let requests = compiler.compile_discovered_sources().unwrap();
+        assert_eq!(requests.len(), 5);
+        for source in [nested, "41 + 1;", "void 2;"] {
+            assert!(matches!(requests.get(&NativeSourceKey::global_script(source)), Some(NativeSourceCompilation::Program(_))));
         }
+        assert!(matches!(requests.get(&NativeSourceKey::global_script("let invalid = ;")), Some(NativeSourceCompilation::SyntaxError(_))));
+        assert!(requests.contains_key(&NativeSourceKey::function_constructor(DynamicFunctionKind::Ordinary, "", "return 7;")));
+        compiler.finish(entry).unwrap();
     }
 
     #[test]
     fn source_units_share_ids_and_entry_seeds_names_from_later_units() {
-        let mut compiler = NativeJsCompiler::new(true);
+        let mut compiler = NativeJsCompiler::new();
         let options = HostScriptOptions::default();
         let first = compiler.compile_script("globalThis.first = 1;", "first.js", options).unwrap();
         let second = compiler.compile_script("globalThis.second = globalThis.first;", "second.js", options).unwrap();
@@ -317,7 +304,7 @@ mod tests {
 
     #[test]
     fn discovered_function_graph_is_deduplicated_and_defers_invalid_source() {
-        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let mut compiler = NativeJsCompiler::new().with_function_source_discovery();
         let entry = compiler.compile_script(r#"
             Function("return Function('return 42;');");
             Function("return Function('return 42;');");
@@ -327,7 +314,7 @@ mod tests {
         let sources = compiler.compile_function_sources().unwrap();
         assert_eq!(sources.values().filter(|source| matches!(source, NativeSourceCompilation::Program(_))).count(), 2);
         assert_eq!(sources.values().filter(|source| matches!(source, NativeSourceCompilation::SyntaxError(_))).count(), 2);
-        assert!(!sources.contains_key(&NativeSourceKey::function_constructor(false, DynamicFunctionKind::Ordinary, "", "void 1;")));
+        assert!(!sources.contains_key(&NativeSourceKey::function_constructor(DynamicFunctionKind::Ordinary, "", "void 1;")));
         let entry = compiler.finish(entry).unwrap();
         for source in sources.values() {
             if let NativeSourceCompilation::Program(program) = source {
@@ -339,10 +326,10 @@ mod tests {
 
     #[test]
     fn namespace_sealing_requires_discovered_obligations_and_failed_parses_add_none() {
-        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let mut compiler = NativeJsCompiler::new().with_function_source_discovery();
         let entry = compiler.compile_script("Function('return 42;');", "entry.js", Default::default()).unwrap();
         assert!(compiler.with_function_source_discovery().finish(entry).unwrap_err().contains("obligations"));
-        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let mut compiler = NativeJsCompiler::new().with_function_source_discovery();
         let entry = compiler.compile_script("", "entry.js", Default::default()).unwrap();
         assert!(compiler.compile_script("Function('return 1;'); const invalid = ;", "invalid.js", Default::default()).is_err());
         assert!(compiler.compile_function_sources().unwrap().is_empty());
@@ -351,10 +338,11 @@ mod tests {
 
     #[test]
     fn failed_function_graph_compilation_keeps_all_obligations_pending() {
-        let mut compiler = NativeJsCompiler::new(true).with_function_source_discovery();
+        let mut compiler = NativeJsCompiler::new().with_function_source_discovery();
         let entry = compiler.compile_script("Function('return 42;');", "entry.js", Default::default()).unwrap();
-        let valid = NativeSourceKey::function_constructor(true, DynamicFunctionKind::Ordinary, "", "return 42;");
-        let incompatible = NativeSourceKey::function_constructor(false, DynamicFunctionKind::Ordinary, "", "return 0;");
+        let valid = NativeSourceKey::function_constructor(DynamicFunctionKind::Ordinary, "", "return 42;");
+        // A shape no Function or Script request takes: its compilation fails.
+        let incompatible = NativeSourceKey::new("incompatible.js", &["prefix", "body", "suffix"]).unwrap();
         compiler.source_requests.as_mut().unwrap().get_mut().insert(incompatible.clone());
         assert!(compiler.compile_function_sources().is_err());
         {
@@ -367,7 +355,7 @@ mod tests {
     #[test]
     fn sealing_rejects_an_independently_compiled_entry() {
         let entry = Engine::specialize("", "foreign.js").unwrap();
-        assert!(NativeJsCompiler::new(true).finish(entry).is_err());
+        assert!(NativeJsCompiler::new().finish(entry).is_err());
     }
 }
 
@@ -376,7 +364,6 @@ impl AtomPrefix for NativeJsCompiler {
     fn name(&self, atom: Atom) -> &str { self.atoms.name(atom as usize) }
     fn find(&self, name: &str) -> Option<Atom> { self.index.get(name).copied() }
     fn table(&self) -> AtomTable { AtomTable::shared(self.atoms.clone(), self.atoms.len()) }
-    fn specialized(&self) -> bool { self.specialized }
     fn native_source_requests(&self) -> Option<&RefCell<BTreeSet<NativeSourceKey>>> { self.source_requests.as_ref() }
     fn native_global_script_calls(&self) -> &[(String, String)] { &self.global_script_calls }
 }
@@ -387,21 +374,21 @@ pub use demands::SourceDemands;
 mod global_scripts;
 
 impl Engine {
-    pub(super) fn native_source_requests(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool, calls: &[(String, String)]) -> Vec<NativeSourceKey> {
-        let mut requests = Self::function_constructor_sources(program, scoping, specialized);
-        requests.extend(global_scripts::sources(program, scoping, specialized, calls));
+    pub(super) fn native_source_requests(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, calls: &[(String, String)]) -> Vec<NativeSourceKey> {
+        let mut requests = Self::function_constructor_sources(program, scoping);
+        requests.extend(global_scripts::sources(program, scoping, calls));
         requests
     }
     /// Literal arguments through possible constructor bindings. Actual intrinsic
     /// identity and exact source input are still guarded at invocation.
-    pub fn literal_function_constructor_sources(program: &oxc_ast::ast::Program<'_>, specialized: bool) -> Vec<NativeSourceKey> {
+    pub fn literal_function_constructor_sources(program: &oxc_ast::ast::Program<'_>) -> Vec<NativeSourceKey> {
         let semantic = oxc_semantic::SemanticBuilder::new().build(program);
-        Self::function_constructor_sources(program, semantic.semantic.scoping(), specialized)
+        Self::function_constructor_sources(program, semantic.semantic.scoping())
     }
 
     /// Discover literal constructor obligations using the caller's authoritative
     /// OXC scopes, shared with its other source analyses.
-    pub fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> Vec<NativeSourceKey> {
-        constructors::analyze(program, scoping, specialized).0
+    pub fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping) -> Vec<NativeSourceKey> {
+        constructors::analyze(program, scoping).0
     }
 }

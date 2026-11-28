@@ -95,7 +95,6 @@ impl Vm {
     #[inline(always)]
     pub fn megamorphic_field_entry_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         site: u16,
@@ -103,7 +102,7 @@ impl Vm {
         if let Some(hit) = self.field_stub_hit(object, atom) {
             return Some(hit);
         }
-        let (value, hit) = self.polymorphic_field_entry_hit(p, object, site)?;
+        let (value, hit) = self.polymorphic_field_entry_hit(object, site)?;
         if let PolymorphicHit::Own(entry) = hit
             && !self.is_private_name(atom)
         {
@@ -114,8 +113,8 @@ impl Vm {
 
     /// `megamorphic_field_entry_hit`'s value alone.
     #[inline(always)]
-    pub fn megamorphic_field_hit(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Value> {
-        self.megamorphic_field_entry_hit(p, object, atom, site).map(|(value, _)| value)
+    pub fn megamorphic_field_hit(&mut self, object: Value, atom: Atom, site: u16) -> Option<Value> {
+        self.megamorphic_field_entry_hit(object, atom, site).map(|(value, _)| value)
     }
 
     /// The value the stub cache's entry for a read of `atom` from the record object `object`

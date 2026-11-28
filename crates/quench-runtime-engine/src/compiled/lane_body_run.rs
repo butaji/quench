@@ -115,7 +115,7 @@ impl Vm {
                 program_id: run.program,
                 lane_context: run.lane_context.addr(),
                 residual: std::ptr::from_ref(run.residual).addr(),
-                stores_specialized: usize::from(self.specialized && run.residual.specialized),
+                stores_specialized: 1,
                 stack: self.lane_stack.values.top_word().addr(),
             };
             // A run's field cache entries and lane stack storage are bound once per run (`bind_run`), not per entry;

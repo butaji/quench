@@ -6,11 +6,10 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_semantic::Scoping;
 
-pub(super) fn sources(program: &Program<'_>, scoping: &Scoping, specialized: bool, calls: &[(String, String)]) -> Vec<NativeSourceKey> {
+pub(super) fn sources(program: &Program<'_>, scoping: &Scoping, calls: &[(String, String)]) -> Vec<NativeSourceKey> {
     struct Discovery<'s> {
         scoping: &'s Scoping,
         calls: &'s [(String, String)],
-        specialized: bool,
         requests: Vec<NativeSourceKey>,
     }
     impl<'a> Visit<'a> for Discovery<'_> {
@@ -23,13 +22,13 @@ pub(super) fn sources(program: &Program<'_>, scoping: &Scoping, specialized: boo
                 && let Some(argument) = call.arguments.first().and_then(Argument::as_expression)
                 && let Expression::StringLiteral(source) = argument.get_inner_expression()
             {
-                self.requests.push(NativeSourceKey::global_script(self.specialized, source.value.as_str()));
+                self.requests.push(NativeSourceKey::global_script(source.value.as_str()));
             }
             walk::walk_call_expression(self, call);
         }
     }
     if calls.is_empty() { return Vec::new(); }
-    let mut discovery = Discovery { scoping, calls, specialized, requests: Vec::new() };
+    let mut discovery = Discovery { scoping, calls, requests: Vec::new() };
     discovery.visit_program(program);
     discovery.requests
 }

@@ -439,8 +439,7 @@ impl Vm {
 
         let key = self.method_receiver_key(this);
         let (shape, proto) = key;
-        let specialized = self.specialized && p.specialized;
-        let cached_call = self.cached_method(cache_site, metadata.atom, key, this, specialized);
+        let cached_call = self.cached_method(cache_site, metadata.atom, key, this);
         self.profile.method_cache(cached_call.is_some());
         #[cfg(feature = "profile-aggregate")]
         self.profile
@@ -455,7 +454,7 @@ impl Vm {
             );
         }
 
-        let (callee, guard) = self.method_refill_read(p, this, metadata.atom, metadata.cache, specialized)?;
+        let (callee, guard) = self.method_refill_read(p, this, metadata.atom, metadata.cache)?;
         if let Some(guard) = guard
             && self.heap.is_function_value(callee)
             && let Ok(target) = self.call_target(callee)
@@ -480,24 +479,21 @@ impl Vm {
 }
 
 impl Vm {
-    /// The callee a method site's miss reads, with the guard that caches it when one exists. A
-    /// specialized site takes a single walk (`method_cache_lookup`), which yields the holder and
-    /// the value together. The walk comes after `prepare_named_function_info_lookup`, which the
-    /// read prepares first and which can change a function's shape. An accessor, a lookup the
-    /// walk does not answer, and an unspecialized site take `get_field_cached` alone, uncached.
+    /// The callee a method site's miss reads, with the guard that caches it when one exists. The
+    /// site takes a single walk (`method_cache_lookup`), which yields the holder and the value
+    /// together. The walk comes after `prepare_named_function_info_lookup`, which the read
+    /// prepares first and which can change a function's shape. An accessor, and a lookup the
+    /// walk does not answer, take `get_field_cached` alone, uncached.
     fn method_refill_read(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         atom: Atom,
         cache: u16,
-        specialized: bool,
     ) -> Result<(Value, Option<MethodGuard>), JsError> {
-        if specialized {
-            self.prepare_named_function_info_lookup(this, atom);
-            if let Some((guard, callee)) = self.method_cache_lookup(this, atom) {
-                return Ok((callee, Some(guard)));
-            }
+        self.prepare_named_function_info_lookup(this, atom);
+        if let Some((guard, callee)) = self.method_cache_lookup(this, atom) {
+            return Ok((callee, Some(guard)));
         }
         Ok((self.get_field_cached(p, this, atom, cache)?, None))
     }
@@ -512,11 +508,9 @@ impl Vm {
 
     /// The method of `this` the caches of `cache_site` serve for `atom` under `key` (its shape and
     /// prototype), with its call target and the cache tier that served it (the inline ways, then
-    /// the megamorphic set): the entry whose owner still holds the same callee. `specialized` is
-    /// whether the program and the VM use the caches at all.
-    fn cached_method(&self, cache_site: usize, atom: Atom, (shape, proto): (u32, Value), this: Value, specialized: bool)
+    /// the megamorphic set): the entry whose owner still holds the same callee.
+    fn cached_method(&self, cache_site: usize, atom: Atom, (shape, proto): (u32, Value), this: Value)
         -> Option<(Value, CallTarget, usize)> {
-        specialized.then_some(())?;
         let serves = |entry: &MethodCache| entry.serves(shape, atom, proto, this);
         let inline = self.method_caches[cache_site].iter().enumerate()
             .find(|(_, entry)| serves(entry)).map(|(tier, entry)| (*entry, tier));
@@ -535,9 +529,9 @@ impl Vm {
 
     /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`
     /// loads it on a hit and without running guest code: `None` where the caches do not serve it.
-    pub fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
+    pub fn method_cache_load(&self, site: usize, atom: Atom, this: Value) -> Option<Value> {
         let key = self.method_receiver_key(this);
-        self.cached_method(self.method_cache_index(site), atom, key, this, self.specialized && p.specialized)
+        self.cached_method(self.method_cache_index(site), atom, key, this)
             .map(|(callee, _, _)| callee)
     }
 }

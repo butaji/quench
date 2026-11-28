@@ -130,7 +130,7 @@ impl Vm {
         if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {
             return None;
         }
-        match self.global_name_read(p, atom, site) {
+        match self.global_name_read(atom, site) {
             super::field_cache::GlobalNameRead::Value(value) => Some(value),
             _ => None,
         }

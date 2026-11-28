@@ -179,9 +179,9 @@ impl Vm {
     /// fact, where the cell the lane's own read resolves it to (`Vm::global_name_read`) is not
     /// `Mutable`: an initialized global lexical binding. A binding that is `Mutable` is read live
     /// (`GlobalRead::Lexical`).
-    pub fn stable_global_read(&mut self, code: &super::ResidualProgram, atom: Atom, site: u16) -> GlobalRead {
+    pub fn stable_global_read(&mut self, atom: Atom, site: u16) -> GlobalRead {
         let globals = self.realm.globals;
-        let super::field_cache::GlobalNameRead::Value(value) = self.global_name_read(code, atom, site) else {
+        let super::field_cache::GlobalNameRead::Value(value) = self.global_name_read(atom, site) else {
             return GlobalRead::Dynamic;
         };
         // A lexical binding's value, or a cached field (which names no cell of the scope).

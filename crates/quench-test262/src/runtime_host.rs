@@ -338,7 +338,7 @@ impl Test262RuntimeHost {
         self.native_module_sources.clear();
         self.module_input_access = ModuleInputAccess::Filesystem;
         self.missing_module_input = None;
-        let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery()
+        let mut compiler = quench_runtime::NativeJsCompiler::new().with_function_source_discovery()
             .with_global_script_source_discovery("$262", "evalScript");
         let mut scripts = Vec::new();
         for script in harness {
@@ -1100,7 +1100,7 @@ mod tests {
         let source = "import { value } from './dep.mjs'; globalThis.saved = () => value; if (value !== 42) throw Error('bad dependency');";
         fs::write(directory.path().join("dep.mjs"), "export const value = harnessSeed;").unwrap();
         let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
-        let mut compiler = quench_runtime::NativeJsCompiler::new(false);
+        let mut compiler = quench_runtime::NativeJsCompiler::new();
         let harness = compiler.compile_script("const harnessSeed = 42;", "harness.js", Default::default()).unwrap();
         let program = compiler.compile_module(source, entry.to_str().unwrap()).unwrap();
         let dependencies = super::compile_native_dependencies(&mut host, &mut compiler, &program, entry.to_str().unwrap()).unwrap();

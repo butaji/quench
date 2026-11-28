@@ -59,7 +59,6 @@ impl ResidualProgram {
             }
         }).collect();
         DetachedProgram(ResidualProgram {
-            specialized: self.specialized,
             kind: self.kind,
             module_requests: Vec::new(),
             module_imports: Vec::new(),

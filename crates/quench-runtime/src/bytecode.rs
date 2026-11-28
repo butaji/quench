@@ -4001,7 +4001,6 @@ impl std::ops::DerefMut for ResidualProgram {
 
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
-    pub specialized: bool,
     pub kind: ProgramKind,
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,

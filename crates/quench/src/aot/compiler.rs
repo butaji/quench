@@ -370,7 +370,7 @@ impl SourceManifest {
     /// Compile a closed program whose whole source is the entry (`Variant::Core`): the entry
     /// program is the application itself, not the Node loader's empty bootstrap hook.
     pub fn compile_closed(self, source: &str, kind: quench_runtime::SourceKind) -> Result<CompiledSources, String> {
-        let mut compiler = NativeJsCompiler::new(true);
+        let mut compiler = NativeJsCompiler::new();
         let entry = match kind {
             quench_runtime::SourceKind::Module => compiler.compile_module(source, NATIVE_ENTRY_NAME),
             quench_runtime::SourceKind::Script | quench_runtime::SourceKind::Eval => compiler.compile_script(source, NATIVE_ENTRY_NAME, quench_runtime::HostScriptOptions { keep_records: true, ..Default::default() }),
@@ -381,7 +381,7 @@ impl SourceManifest {
     /// Compile every recorded body before execution; no application is trained
     /// or executed to create these native compilation records.
     pub fn compile(self) -> Result<CompiledSources, String> {
-        let mut compiler = NativeJsCompiler::new(true);
+        let mut compiler = NativeJsCompiler::new();
         let entry = match self.assets.entry.as_ref().and_then(|path| self.assets.files.get(path).map(|file| (path, file.kind))) {
             Some((path, quench_runtime::SourceKind::Module)) => {
                 let url = url::Url::from_file_path(path).map_err(|_| "invalid ES module entry path")?;

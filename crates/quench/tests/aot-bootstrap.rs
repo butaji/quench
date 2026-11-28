@@ -129,17 +129,17 @@ fn frozen_module_inputs_reject_conflicting_entries_without_changing_the_manifest
 #[test]
 fn source_keys_reject_unknown_or_noncanonical_shapes() {
     for parts in [
-        vec!["specialized", "script", ""],
-        vec!["specialized", "specialized-script:01:0:false", ""],
-        vec!["specialized", "specialized-script:0:0:yes", ""],
-        vec!["specialized", "specialized-script:0:0:false:jsx", ""],
+        vec!["script", ""],
+        vec!["script:01:0:false", ""],
+        vec!["script:0:0:yes", ""],
+        vec!["script:0:0:false:jsx", ""],
         vec!["other-mode", ""],
-        vec!["unspecialized", ""],
+        vec![""],
     ] {
         assert!(NativeSourceKey::new("unit", &parts).is_err(), "{parts:?}");
     }
-    let key = NativeSourceKey::new("unit", &["unspecialized", quench_runtime::GLOBAL_SCRIPT_GOAL, ""]).unwrap();
-    assert!(NativeJsCompiler::new(true).compile_source(&key).is_err());
+    let key = NativeSourceKey::new("unit", &[quench_runtime::GLOBAL_SCRIPT_GOAL, ""]).unwrap();
+    assert!(NativeJsCompiler::new().compile_source(&key).is_err());
 }
 
 #[test]
@@ -163,11 +163,11 @@ fn manifest_retains_full_source_identity_and_compiles_without_guest_execution() 
     let mut manifest = SourceManifest::default();
     let options = HostScriptOptions { typescript: true, ..Default::default() };
     let goal = options.cache_goal();
-    let parts = ["specialized", &goal, "throw ('x' as unknown as number) + 1;"];
+    let parts = [goal.as_str(), "throw ('x' as unknown as number) + 1;"];
     assert!(manifest.insert("unit.cts", &parts).unwrap());
     assert!(!manifest.insert("unit.cts", &parts).unwrap());
     assert!(manifest.insert("other.cts", &parts).unwrap());
-    assert!(manifest.insert("unit.cts", &["specialized", &goal, "throw 42;"]).unwrap());
+    assert!(manifest.insert("unit.cts", &[goal.as_str(), "throw 42;"]).unwrap());
     assert_eq!(manifest.units().len(), 3);
     let compiled = manifest.compile().unwrap();
     assert_eq!(compiled.units.len(), 3);

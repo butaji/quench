@@ -47,7 +47,6 @@ unsafe extern "Rust" {
     pub(super) safe fn quench_engine_vm_attach_native_js(this: &mut Vm, id: ProgramId, code: &NativeJsCode) -> Result<(), String>;
     safe fn quench_engine_vm_innermost_lane_state(this: &Vm) -> [Value; INNERMOST_STATE_LEN];
     safe fn quench_engine_vm_run_lane_job(this: &mut Vm, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume>;
-    safe fn quench_engine_vm_specialized_operations_enabled(this: &Vm, program: &ResidualProgram) -> bool;
     safe fn quench_engine_vm_call_stored_setter(this: &mut Vm, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError>;
     safe fn quench_engine_vm_enter_with_scope(this: &mut Vm) -> ();
     pub(super) safe fn quench_engine_vm_store_native_module_program(this: &mut Vm, native: NativeJsProgram) -> Result<ProgramId, JsError>;
@@ -122,7 +121,6 @@ pub trait EngineVm {
     fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String>;
     fn innermost_lane_state(&self) -> [Value; INNERMOST_STATE_LEN];
     fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume>;
-    fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool;
     fn call_stored_setter(&mut self, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError>;
     fn enter_with_scope(&mut self) -> ();
     fn store_native_module_program(&mut self, native: NativeJsProgram) -> Result<ProgramId, JsError>;
@@ -242,8 +240,6 @@ impl EngineVm for Vm {
     fn innermost_lane_state(&self) -> [Value; INNERMOST_STATE_LEN] { quench_engine_vm_innermost_lane_state(self) }
     #[inline(always)]
     fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume> { quench_engine_vm_run_lane_job(self, code, job, frame, resume) }
-    #[inline(always)]
-    fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool { quench_engine_vm_specialized_operations_enabled(self, program) }
     #[inline(always)]
     fn call_stored_setter(&mut self, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> { quench_engine_vm_call_stored_setter(self, p, site, setter, object, value) }
     #[inline(always)]
@@ -408,7 +404,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_attach_native_js = fn(&mut Vm, ProgramId, &NativeJsCode) -> Result<(), String>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_innermost_lane_state = fn(&Vm) -> [Value; INNERMOST_STATE_LEN];
     #[allow(non_camel_case_types)] pub type quench_engine_vm_run_lane_job = fn(&mut Vm, &ResidualProgram, JobRoot, *const FrameRecord, JobResume) -> Result<JobEnd, JobResume>;
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_specialized_operations_enabled = fn(&Vm, &ResidualProgram) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_call_stored_setter = fn(&mut Vm, &ResidualProgram, u16, Value, Value, Value) -> Result<Value, JsError>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_enter_with_scope = fn(&mut Vm) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_vm_store_native_module_program = fn(&mut Vm, NativeJsProgram) -> Result<ProgramId, JsError>;

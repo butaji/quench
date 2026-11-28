@@ -2852,11 +2852,8 @@ script_handler! {
         // proved inherited entry first, neither of which walks the chain.
         let quick = quench_runtime::bytecode::FieldBase(i.b).register_index().and_then(|register| {
             let vm = unsafe { vm(cx) };
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
             let object = r.get(register);
-            vm.specialized_operations_enabled(code).then_some(())?;
-            vm.proved_inherited_field_hit(code, object, i.c)
+            vm.proved_inherited_field_hit(object, i.c)
         });
         let Some(value) = quick.or_else(|| unsafe { field_value_in_lane(cx, r, i) }) else {
             if let Some(base) = field_read_beside_activations_in_lane(cx, r, i) {
@@ -2960,7 +2957,7 @@ script_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
-        if !vm.cached_field_write_hit(code, this, sink.0, value, sink.1) {
+        if !vm.cached_field_write_hit(this, sink.0, value, sink.1) {
             return exit(ip);
         }
         // Adding a property can allocate.
@@ -4210,13 +4207,6 @@ impl Vm {
         capture
     }
 
-    /// Whether `program` runs in the lane when dynamic execution is allowed:
-    /// Wasm always, JavaScript where it and the VM are specialized. A lane run keeps its program and the VM's specialization, so the
-    /// lane's field caches (`Vm::primary_own_field_hit` and its kin) need not test them.
-    pub(crate) fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool {
-        program.kind == quench_runtime::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
-    }
-
     /// Whether the lane may run program `id`: every program in a dynamic build, else one with a loaded AOT image.
     pub(crate) fn may_run_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
         self.execution_mode.allows_dynamic_execution() || self.programs.ahead_images(id, code).is_some()
@@ -4228,7 +4218,7 @@ impl Vm {
     }
 
     pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
-        self.may_run_in_lane(id, code) && self.specialized_operations_enabled(code)
+        self.may_run_in_lane(id, code)
     }
 
     /// The words a lane run's direct calls push onto (`compiled::DirectCallee`), bound together: the

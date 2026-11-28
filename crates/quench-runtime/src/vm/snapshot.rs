@@ -61,7 +61,6 @@ impl Vm {
             host,
             host_statics: _,
             runs_lane: _,
-            specialized,
             heap,
             realm,
             object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
@@ -258,7 +257,6 @@ impl Vm {
             return Err(SnapshotError::unsupported(what));
         }
         let mut writer = Writer::new();
-        writer.bool(*specialized);
         writer.value(*main_realm);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
@@ -395,11 +393,7 @@ impl Vm {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(self.host_statics.kept_bytes_read))?;
-        self.specialized = reader.bool()?;
         self.main_realm = reader.value()?;
-        if native.is_some_and(|program| program.specialized != self.specialized) {
-            return Err(SnapshotError("native script specialization does not match runtime".into()));
-        }
         quench_alloc::align_dump_phase();
         self.read_atoms(&mut reader, native.map(|program| &program.atoms))?;
         #[cfg(feature = "profile-memory")]

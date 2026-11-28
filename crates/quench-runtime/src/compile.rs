@@ -25,7 +25,7 @@ impl HostScriptOptions {
     /// remains a separate component.
     pub fn cache_goal(self) -> String {
         let (line, column) = self.origin.unwrap_or_default();
-        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
+        format!("script:{line}:{column}:{}{}", self.keep_records,
             if self.typescript { ":typescript" } else { "" })
     }
 }
@@ -334,8 +334,8 @@ impl DynamicFunctionKind {
     }
 
     #[cfg(feature = "native-execution")]
-    pub(crate) fn native_parts<'a>(self, mode: &'a str, parameters: &'a str, body: &'a str) -> [&'a str; 5] {
-        [mode, DYNAMIC_FUNCTION_GOAL, self.source_prefix(), parameters, body]
+    pub(crate) fn native_parts<'a>(self, parameters: &'a str, body: &'a str) -> [&'a str; 4] {
+        [DYNAMIC_FUNCTION_GOAL, self.source_prefix(), parameters, body]
     }
 
     fn source_prefix(self) -> &'static str {
@@ -1218,7 +1218,7 @@ impl Engine {
             annex_b_targets::Recognize::Flat
         };
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing, module_goal));
-        { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
+        { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| Vec::new()); }
         // A first-call chunk's annotations resolve against its program's top-level names.
         let saved_names = match expected_shape {
             ParsedProgramShape::FirstCallChunk(window) => window.saved_names(),
@@ -1410,7 +1410,7 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
-            (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
+            (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.native_global_script_calls()))
         });
         let type_only_imports = if module_goal { typescript::type_only_imports(&parsed.program, semantic.semantic.scoping()) } else { Vec::new() };
         drop(semantic);
@@ -1424,7 +1424,7 @@ impl Engine {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
-            if let Some((_, requests)) = facts.native_source_requests
+            if let Some(requests) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids.into_iter().map(|(span, id)| (span, first_private_id + id)));
             private_name_labels.extend(facts.private_name_labels);
@@ -3642,7 +3642,6 @@ impl<'a> Compiler<'a> {
         declared_types.declared.shrink_to_fit();
         declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
-            specialized: true,
             // Eval code is code compiled for an eval; a host script that only captures its
             // completion value keeps Script declaration semantics.
             kind: if self.module_goal {
@@ -3700,7 +3699,6 @@ impl<'a> Compiler<'a> {
                     module_goal: self.module_goal,
                     lazy_bodies: lazy_bodies::sorted(std::mem::take(&mut self.lazy_compiled)),
                     checked_bodies: lazy_bodies::sorted(std::mem::take(&mut self.checked_bodies)),
-                    specialized: true,
                     template_sites: self.template_sites,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_vec().into_boxed_slice(),

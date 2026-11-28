@@ -17465,7 +17465,7 @@ for(const object of [{},[],function(){},Object.create(null)]) {
 "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
-        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
+        let path = std::env::temp_dir().join(format!("quench-private-data-{}", std::process::id()));
         program.write_binary(&path).unwrap();
         let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
         Vm::new(TestHost::default()).execute(&decoded).unwrap();
@@ -17552,7 +17552,7 @@ new Negative().read()();
     let compile = Engine::specialize;
     let program = compile(source, "private-lexical-bindings.js").unwrap();
     Vm::new(TestHost::default()).execute(&program).unwrap();
-    let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
+    let path = std::env::temp_dir().join(format!("quench-private-lexical-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
     Vm::new(TestHost::default()).execute(&decoded).unwrap();
@@ -17576,7 +17576,7 @@ if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('pro
     let compile = Engine::specialize;
     let program = compile(source, "private-brand-initialization.js").unwrap();
     Vm::new(TestHost::default()).execute(&program).unwrap();
-    let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
+    let path = std::env::temp_dir().join(format!("quench-private-brands-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
     Vm::new(TestHost::default()).execute(&decoded).unwrap();
@@ -17610,7 +17610,7 @@ class Derived extends Base {
     let compile = Engine::specialize;
     let program = compile(source, "static-block-context.js").unwrap();
     Vm::new(TestHost::default()).execute(&program).unwrap();
-    let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
+    let path = std::env::temp_dir().join(format!("quench-static-context-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
     Vm::new(TestHost::default()).execute(&decoded).unwrap();

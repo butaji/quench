@@ -471,7 +471,6 @@ pub(crate) struct ProgramReplay {
     /// check, which repeats the load's. Empty where the load kept no check (a kept form's chunks),
     /// so the chunk checks itself.
     pub(super) checked_bodies: Box<[u32]>,
-    pub(super) specialized: bool,
     /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
     pub(crate) template_sites: u32,
     pub(super) atoms: ProgramAtomIndex,
@@ -541,14 +540,13 @@ impl ProgramReplay {
     /// it replays no function (its records are encoded); its chunks share the load's
     /// name-shared sites, `name_shared` as (store, atom, site), and give out new ones from
     /// `next_site` on.
-    pub(crate) fn for_chunks(specialized: bool, direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)], typescript: bool) -> Self {
+    pub(crate) fn for_chunks(direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)], typescript: bool) -> Self {
         Self {
             source_type: oxc_span::SourceType::script().with_typescript(typescript),
             root_strict: false,
             module_goal: false,
             lazy_bodies: Box::default(),
             checked_bodies: Box::default(),
-            specialized,
             template_sites: 0,
             atoms: ProgramAtomIndex { atoms: hashbrown::HashTable::new() },
             exits: Box::default(),
@@ -586,7 +584,6 @@ impl std::fmt::Debug for ProgramReplay {
 struct ReplayAtoms<'p> {
     table: &'p crate::bytecode::AtomTable,
     index: &'p ProgramAtomIndex,
-    specialized: bool,
 }
 
 impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
@@ -604,10 +601,6 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 
     fn table(&self) -> crate::bytecode::AtomTable {
         self.table.clone()
-    }
-
-    fn specialized(&self) -> bool {
-        self.specialized
     }
 }
 
@@ -862,7 +855,6 @@ pub(crate) fn recompile_source(
     let atoms = ReplayAtoms {
         table: &program.atoms,
         index: &replay.atoms,
-        specialized: replay.specialized,
     };
     let mut compiler = Compiler::new(&program.source_name, text, &atoms, FxHashMap::default());
     compiler.source_comments = parsed
