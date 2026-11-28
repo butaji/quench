@@ -366,7 +366,7 @@ impl Lengths {
 }
 
 /// A loop of a function: its header's pc, the pc ranges of its body's blocks, and the registers its body writes.
-pub(super) struct Loop {
+pub(in super::super) struct Loop {
     header: u32,
     ranges: Vec<Range<usize>>,
     written: BTreeSet<Register>,
