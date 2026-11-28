@@ -31,7 +31,7 @@ impl Lowering<'_, '_> {
     pub(super) fn body_entry(&self) -> bool { matches!(self.coverage, Coverage::Prefix | Coverage::PrefixFrom(_)) }
 
     /// The facts every run proves once at entry.
-    pub(super) fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)]) -> Entry {
+    pub(super) fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Bound(..) => self.fixed_this(),
@@ -119,66 +119,6 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, matched, exit);
             }
         }
-        let fields = {
-            let mut fields = smallvec::SmallVec::new();
-            if matches!(self.helpers, LaneHelpers::Bound(..)) {
-                let mut uses = smallvec::SmallVec::<[(u16, bool, Type); INLINE_FIELD_BINDINGS]>::new();
-                for (pc, instruction) in instructions.iter().enumerate() {
-                    // An inlined call's later alternatives are entered by its switch, an edge
-                    // the bytecode facts do not see: their sites bind too, or they would read
-                    // through the VM's caches for the whole run.
-                    if !self.facts.reached(pc) && !matches!(self.unit.origins[pc], super::lane_unit::Origin::Inlined { .. }) { continue; }
-                    // A field chain names sequential sites, not alternatives for
-                    // one polymorphic access. Bind each distinct column once.
-                    let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
-                    match () {
-                        _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
-                            Some(FieldLookup::Atom { cache_site, .. }) => sites.push(cache_site),
-                            Some(FieldLookup::Site(site)) => {
-                                let site = self.program.field_sites[site];
-                                sites.push(site.first.1);
-                                if let Some((_, cache)) = site.second { sites.push(cache); }
-                                if instruction.writes_current_this()
-                                    && let Some((_, cache)) = site.sink { sites.push(cache); }
-                            }
-                            _ => {},
-                        },
-                        _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) => sites.push(instruction.cache_site_index()),
-                        _ => {},
-                    }
-                    let repeated = _loops.iter().any(|&(header, back)| (header..=back).contains(&pc));
-                    for site in sites {
-                        let writes = if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) {
-                            self.cell_before(pc, instruction.register_a()).ty.machine()
-                        } else if instruction.writes_current_this()
-                            && matches!(instruction.field_lookup(), Some(FieldLookup::Site(index))
-                                if self.program.field_sites[index].sink.is_some_and(|(_, sink)| sink == site)) {
-                            Type::ANY
-                        } else { Type::NEVER };
-                        if let Some((_, reused, domain)) = uses.iter_mut().find(|(known, _, _)| *known == site) {
-                            *reused |= repeated;
-                            *domain = domain.join(writes);
-                        } else { uses.push((site, repeated, writes)); }
-                    }
-                }
-                for (site, repeated, writes) in uses {
-                    let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit);
-                    let slot = binding.slot.read(&mut self.builder);
-                    binding.slot = FieldSlot::Bound(slot);
-                    // A slot whose writes the run does not admit leaves only at its stores
-                    // (`EmitFrame::bound_store`): the rest of the run, which reads it by shape, holds.
-                    if writes != Type::NEVER { binding.admitted = Some(self.field_writes_admitted(&mut binding, writes)); }
-                    // The extra entry arithmetic pays for repeated receiver loads.
-                    // A one-off access keeps its cheaper storage-plus-slot form.
-                    if repeated {
-                        binding.arena = binding.arena.bind(&mut self.builder, slot);
-                    }
-                    fields.push((site, binding));
-                }
-            }
-            fields
-        };
         self.admit_store_domains(instructions, &mut miss);
         let records = self.entry_field_records(instructions, this);
         if let Some(miss) = miss {
@@ -195,7 +135,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, records, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
+        Entry { receiver, records, store_atoms, capture_values, capture_len, capture_stores, environment, this, calls, call_receivers }
     }
 
     /// Per atom the unit stores, whether the run admits direct stores of it. A direct store of an
