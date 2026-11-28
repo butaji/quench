@@ -269,7 +269,8 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, self.array_access(), exit);
+                let access = self.array_access();
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, access, exit);
                 (view.values, view.length)
             }
         };
@@ -322,7 +323,8 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, self.array_access(), exit);
+                let access = self.array_access();
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, access, exit);
                 (view.values, view.length)
             }
         };

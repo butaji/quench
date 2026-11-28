@@ -7,6 +7,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::emit;
 use quench_runtime::staged::Region;
+use quench_runtime::staged::flow::FlowStage;
 
 impl EmitFrame<'_> {
     /// The int32 `value` stored through the slot a loop's entry projected (`LoopStore`): a
