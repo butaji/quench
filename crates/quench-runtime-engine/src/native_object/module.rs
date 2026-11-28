@@ -18,6 +18,9 @@ pub struct NativeCode {
     pub code: Vec<u8>,
     pub alignment: u64,
     pub relocations: Vec<NativeReloc>,
+    /// The named executable section the code is placed in, page-aligned and padded to whole pages so it can be made
+    /// writable alone (`emit_native_module_for`), instead of `.text`; such code names no relocation.
+    pub section: Option<&'static str>,
 }
 
 /// One relocation of `NativeCode`: the field at `offset` takes the address of declaration

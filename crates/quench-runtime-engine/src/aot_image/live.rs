@@ -140,7 +140,7 @@ pub(crate) fn install(image: &AotImage, vm: &mut Vm) -> Result<LiveImage, String
     let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
         .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: Some(code), invalidation, calls, entries, bases, lanes, helpers: None })
+    Ok(LiveImage { _code: Some(code), invalidation, calls, entries, bases, lanes, lane_values: 0, helpers: None })
 }
 
 pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
@@ -149,8 +149,9 @@ pub(crate) use quench_runtime::vm::engine_types::LinkedTable;
 #[quench_macros::ext(LinkedTableOps1)]
 impl LinkedTable {
     /// The table at `table` of an image of `count` functions (`object::entry_table`): the ABI
-    /// header, `count` entries, `count` base bodies, then the file's address and length, the call
-    /// records' address, the linked helpers' address and count, and the RegExp searches' address and count.
+    /// header, `count` entries, `count` base bodies, `count` lane texts (0 where none), then the file's
+    /// address and length, the call records' address, the linked helpers' address and count, the RegExp
+    /// searches' address and count, and the lane value table's address.
     ///
     /// # Safety
     /// `table` is the aligned entry table symbol of an image of exactly `count` functions, emitted by
@@ -165,30 +166,81 @@ impl LinkedTable {
             let words = table.cast::<usize>();
             let entries = std::slice::from_raw_parts(words.add(header), count);
             let bases = std::slice::from_raw_parts(words.add(header + count), count);
-            let tail = words.add(header + 2 * count);
+            let lanes = std::slice::from_raw_parts(words.add(header + 2 * count), count);
+            let tail = words.add(header + 3 * count);
             let file = std::slice::from_raw_parts(tail.read() as *const u8, tail.add(1).read());
             let helpers = std::slice::from_raw_parts(tail.add(3).read() as *const usize, tail.add(4).read());
             let regexps = std::slice::from_raw_parts(tail.add(5).read() as *const usize, tail.add(6).read());
-            Ok(Self { entries, bases, file, calls: tail.add(2).read() as *mut CallRecord, helpers, regexps })
+            Ok(Self { entries, bases, lanes, lane_values: tail.add(7).read(), file, calls: tail.add(2).read() as *mut CallRecord, helpers, regexps })
         }
     }
 }
 
 /// `image` as the system linker placed it (`table`, the entry table it was read from): no code is
-/// placed or linked; a lane body a VM publishes is relinked from the image against the placed base
-/// bodies and records (`link_lane`).
+/// linked yet; each lane body sits unlinked in the executable's lane text (`object::lane_text`), linked in
+/// place when a VM installs it (`link_placed_lane`), against the placed base bodies and records.
 pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage, String> {
     linked_regexps(image, table);
     let count = image.functions.len();
-    if table.entries.len() != count || table.bases.len() != count {
+    if table.entries.len() != count || table.bases.len() != count || table.lanes.len() != count {
         return Err("native image table does not match its image".into());
     }
     // SAFETY: the table names the image's writable call records, alive for the process (`LinkedTable::read`).
     let calls = unsafe { BoundCalls::linked(image, table.calls) };
-    // The object places no lane body (`object::codes`): each is relinked from the image when a VM installs it.
-    let lanes = vec![None; count].into_boxed_slice();
+    let lanes = table.lanes.iter().map(|lane| (*lane != 0).then_some(*lane)).collect();
     Ok(LiveImage { _code: None, invalidation: Invalidation::default(), calls,
-        entries: table.entries.into(), bases: table.bases.into(), lanes, helpers: Some(table.helpers) })
+        entries: table.entries.into(), bases: table.bases.into(), lanes, lane_values: table.lane_values, helpers: Some(table.helpers) })
+}
+
+/// Links `function`'s lane body in place in the executable's lane text (`LiveImage::lanes`), its value table the image's
+/// one (`LiveImage::lane_values`), refilled first from this VM: every word and every immediate is written, whatever the
+/// text held (a dumped image's text holds the dumping run's). The text is writable only while it links. Returns the code's
+/// address and length, and the heap identities it embeds.
+#[cfg(unix)]
+pub(crate) fn link_placed_lane(image: &AotImage, vm: &mut Vm, live: &LiveImage, function: u32) -> Result<(usize, usize, FoldedRoots), String> {
+    let lane = image.functions.get(function as usize).and_then(|function| function.lane.as_ref()).ok_or("no lane body")?;
+    let address = live.lanes.get(function as usize).copied().flatten().ok_or("the image placed no lane text for it")?;
+    let code_len = lane.code.code.len();
+    let length = code_len + stub_bytes_in_lane(&lane.code);
+    let value_bytes = value_words(image) * std::mem::size_of::<u64>();
+    writable_text(&[(live.lane_values, value_bytes), (address, length)], || {
+        // SAFETY: the object placed `value_words` words of lane value table at `lane_values`, and `length` bytes of lane text
+        // at `address` (`object::lane_text`); both are writable for this closure.
+        let values = unsafe { std::slice::from_raw_parts_mut(live.lane_values as *mut u8, value_bytes) };
+        let unresolved = place_values(image, vm, values, 0)?;
+        require_placed(&lane.code, &unresolved)?;
+        let heap_values = placed_heap_values(image, values, 0);
+        // SAFETY: as above.
+        let out = unsafe { std::slice::from_raw_parts_mut(address as *mut u8, length) };
+        let (code_out, veneer_out) = out.split_at_mut(code_len);
+        let mut veneers = Veneers { base: (address + code_len) as u64, next: 0, out: veneer_out };
+        let places = live_places(image, live, live.lane_values as u64);
+        let roots = link_code(image, vm, &places, (lane, &heap_values), address as u64, &mut veneers, code_out)?;
+        Ok((address, length, roots))
+    })
+}
+
+/// Runs `link` with each `(address, length)` span of executable text writable, then makes them executable again and
+/// flushes the instruction cache over them.
+#[cfg(unix)]
+fn writable_text<T>(spans: &[(usize, usize)], link: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    // SAFETY: sysconf has no preconditions.
+    let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).map_err(|_| "no page size")?;
+    let pages = |(address, length): (usize, usize)| {
+        let start = address & !(page - 1);
+        (start, (address + length).next_multiple_of(page) - start)
+    };
+    let protect = |protection| spans.iter().filter(|span| span.1 > 0).try_for_each(|&span| {
+        let (start, bytes) = pages(span);
+        // SAFETY: the spans are the executable's own lane text, mapped for the process.
+        if unsafe { libc::mprotect(start as *mut libc::c_void, bytes, protection) } == 0 { Ok(()) }
+        else { Err(format!("mprotect of the lane text failed: {}", std::io::Error::last_os_error())) }
+    });
+    protect(libc::PROT_READ | libc::PROT_WRITE)?;
+    let linked = link();
+    protect(libc::PROT_READ | libc::PROT_EXEC)?;
+    for &(address, length) in spans { crate::compiled::code_heap::views::flush_icache(address as *mut u8, length); }
+    linked
 }
 
 /// Links `function`'s lane body at `address`, where it will run, writing its code and value table
@@ -209,9 +261,34 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
     // The symbols resolve to the table's slots, so a heap value's identity is the word it holds.
     let heap_values = placed_heap_values(image, code_out, code_len);
     let mut veneers = Veneers { base: address + (code_len + value_bytes) as u64, next: 0, out: veneer_out };
-    let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, helpers: live.helpers, invalidation: live.invalidation.address(), calls: live.calls.records(),
-        values: address + code_len as u64, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()) };
+    let places = live_places(image, live, address + code_len as u64);
+    link_code(image, vm, &places, (lane, &heap_values), address, &mut veneers, &mut code_out[..code_len])
+}
+
+/// The places a lane body of `live` resolves its symbols to, its value table at `values`.
+fn live_places<'a>(image: &AotImage, live: &'a LiveImage, values: u64) -> PlacesOwned<'a> {
+    PlacesOwned {
+        bases: live.bases.iter().map(|base| *base as u64).collect(), helpers: live.helpers, invalidation: live.invalidation.address(),
+        calls: live.calls.records(), values, value_counts: (image.atoms.len(), image.heap_values.len(), image.shapes.len()),
+    }
+}
+
+/// `Places` with its base addresses owned, for one lane link.
+struct PlacesOwned<'a> {
+    bases: Box<[u64]>,
+    helpers: Option<&'a [usize]>,
+    invalidation: usize,
+    calls: &'a [UnsafeCell<CallRecord>],
+    values: u64,
+    value_counts: (usize, usize, usize),
+}
+
+/// Links `lane`'s code to run at `address` into `out`, its symbols at `places`; `heap_values` are the value table's heap
+/// words, whose identities the code embeds and the returned roots keep.
+fn link_code(image: &AotImage, vm: &mut Vm, places: &PlacesOwned<'_>, (lane, heap_values): (&quench_runtime::vm::engine_types::LaneImage, &[u64]), address: u64,
+    veneers: &mut Veneers<'_>, out: &mut [u8]) -> Result<FoldedRoots, String> {
+    let places = Places { bases: &places.bases, helpers: places.helpers, invalidation: places.invalidation, calls: places.calls,
+        values: places.values, value_counts: places.value_counts };
     let mut roots = FoldedRoots::default();
     let mut symbol = None;
     let code = lane.code.link_through(address, |namespace, key| {
@@ -222,7 +299,7 @@ pub(crate) fn link_lane_at(image: &AotImage, vm: &mut Vm, live: &LiveImage, func
         }
         Some(word)
     }, |target| veneers.emit(target)).map_err(|error| format!("{error} [{symbol:?}]"))?;
-    code_out[..code_len].copy_from_slice(&code);
+    out.copy_from_slice(&code);
     Ok(roots.settled())
 }
 

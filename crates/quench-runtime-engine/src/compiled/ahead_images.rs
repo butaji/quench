@@ -504,23 +504,10 @@ impl Vm {
         let Some(unit) = unit_of(program, function, facts, graph) else {
             refused("no unit"); return None;
         };
-        // The body is linked where it will run: its page- and displacement-relative fields are its
-        // address's, so the placement comes first (`live::link_lane_at`). The value table follows
-        // the code in the same block.
-        let value_bytes = live::value_words(&images.image) * std::mem::size_of::<u64>();
-        let stubs = live::stub_bytes_in_lane(&lane.code);
-        let mut roots = None;
-        let memory = super::code_heap::publishing("u-jit-lane", function as usize, || {
-            super::code_heap::CodeMemory::assemble(lane.code.code.len() + value_bytes + stubs, |address, out| {
-                roots = Some(live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?);
-                Ok(())
-            })
-        });
-        let memory = match memory {
-            Ok(memory) => memory,
+        let (code, roots) = match self.link_ahead_lane(images, linked_live, function, &lane.code) {
+            Ok(linked) => linked,
             Err(error) => { refuse_lane(function, &format!("link_lane_at: {error}")); return None; }
         };
-        let roots = roots.unwrap_or_default();
         // The heap values the code names are its roots, which its publication keeps alive; the
         // Number slots its guessed field reads read as tagged words retire it where they widen to
         // raw doubles (`fields`).
@@ -540,9 +527,32 @@ impl Vm {
             clif: super::native_dump_directory().map(|_| String::new()),
             proven_calls: images.image.calls.iter().any(|site| site.function == function),
         };
-        let method = lane_compile::finish_lane_method(memory, None, None, facts);
+        let method = lane_compile::finish_lane_method(code, None, None, facts);
         if method.is_none() { refuse_lane(function, "finish_lane_method"); }
         method
+    }
+
+    /// `function`'s lane body linked where it runs, and the heap identities it embeds. An image the system linker placed
+    /// holds the body's text in the executable, linked in place (`live::link_placed_lane`); one placed in process links it
+    /// into a code heap block, its page- and displacement-relative fields its address's, so the placement comes first
+    /// (`live::link_lane_at`), and the value table follows the code in the same block.
+    fn link_ahead_lane(&mut self, images: &AheadImages, linked_live: &LiveImage, function: u32,
+        code: &quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode) -> Result<(super::lane_method::LaneCode, quench_runtime::folded_roots::FoldedRoots), String> {
+        #[cfg(unix)]
+        if linked_live.lane_values != 0 {
+            let (address, length, roots) = live::link_placed_lane(&images.image, self, linked_live, function)?;
+            return Ok((super::lane_method::LaneCode::Placed { pointer: address as *mut u8, length }, roots));
+        }
+        let value_bytes = live::value_words(&images.image) * std::mem::size_of::<u64>();
+        let stubs = live::stub_bytes_in_lane(code);
+        let mut roots = None;
+        let memory = super::code_heap::publishing("u-jit-lane", function as usize, || {
+            super::code_heap::CodeMemory::assemble(code.code.len() + value_bytes + stubs, |address, out| {
+                roots = Some(live::link_lane_at(&images.image, self, linked_live, function, address.addr() as u64, out)?);
+                Ok(())
+            })
+        })?;
+        Ok((super::lane_method::LaneCode::Owned(memory), roots.unwrap_or_default()))
     }
 
     /// The callees of `function`'s proven call sites (`AotImage::calls`) that bind now, each by its
