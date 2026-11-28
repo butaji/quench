@@ -61,7 +61,7 @@ pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
-pub use identity::BuiltinPath;
+pub use crate::typed_ir::BuiltinPath;
 pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
@@ -389,6 +389,15 @@ impl AotFacts {
     /// Its shape is then the one its union layout names for good, so an instance's slots are the union's slots.
     pub fn class_never_departs(&self, class: u32) -> bool {
         self.never_departs.contains(&class)
+    }
+
+    /// Whether an instance of class `class` is a fixed cell from birth: the closed world proves its union layout, its instances
+    /// never depart it (`class_never_departs`), and its fields fit one cell (`heap::MAX_CELL_FIELDS`). Every union field has its
+    /// domain (`slot_domain`) by construction. The one bit the allocator (a fixed union-shaped cell at the class's constructed
+    /// root) and the lane (direct addressing, no record-presence or departure guard) both read; whether a site constructs the
+    /// class is the site's own fact (`FunctionFacts::cell_at`'s proven classes).
+    pub fn class_fixed_cell(&self, class: u32) -> bool {
+        self.unions.get(&class).is_some_and(|union| union.fields.len() <= crate::heap::MAX_CELL_FIELDS) && self.class_never_departs(class)
     }
 
     /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in
