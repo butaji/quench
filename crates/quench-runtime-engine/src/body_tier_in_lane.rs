@@ -40,12 +40,10 @@ impl LaneView {
         let h = self.tier().history.get();
         // SAFETY: as `lane_body`; read only.
         let state = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized".into(),
-            LaneBody::Compiling { .. } => "compiling".into(),
-            LaneBody::Specialized { .. } => "specialized".into(),
-            LaneBody::Declined => "declined".into(),
-            #[allow(unreachable_patterns)]
-            _ => "other".into(),
+            LaneBody::Unspecialized => "unspecialized",
+            LaneBody::Compiling { .. } => "compiling",
+            LaneBody::Specialized { .. } => "specialized",
+            LaneBody::Declined => "declined",
         };
         format!("{state} unpaid={} demanded={} declined={:?}", h.unpaid, h.demanded, self.tier().body_stats.declined.get())
     }
