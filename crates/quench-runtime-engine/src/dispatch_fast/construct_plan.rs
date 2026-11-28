@@ -5,7 +5,9 @@ use super::*;
 use quench_runtime::staged::plan_fields::{field_value, FieldClass};
 pub(crate) mod nested;
 pub(crate) mod adds;
+pub(crate) mod site;
 pub(crate) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
+pub(crate) use site::{site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
 pub(crate) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds};
 
 pub(crate) use quench_runtime::vm::engine_types::ConstructPlan;
@@ -127,8 +129,8 @@ impl ConstructPlan {
     #[cold]
     #[inline(never)]
     fn record_unrecorded(&self, vm: &mut Vm, this: Value) {
-        vm.record_class_header(self.callee, this);
-        if let Some(index) = construct_plan_index(self.callee) && vm.lane_stack.construct_plans[index].callee == self.callee {
+        vm.record_class_header(self.callee, self.class, this);
+        if let Some(index) = construct_plan_index(self.callee, self.class) && vm.lane_stack.construct_plans[index].callee == self.callee && vm.lane_stack.construct_plans[index].class == self.class {
             vm.lane_stack.construct_plans[index].recorded = true;
         }
     }
@@ -230,25 +232,26 @@ pub(crate) fn initializer_store_value(vm: &Vm, store: &quench_runtime::bytecode:
 pub(crate) fn planned_construction_in_lane(
     vm: &mut Vm,
     callee: Value,
+    class: u32,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    planned_construction(vm, callee, construct_argument_in_lane(r, i))
+    planned_construction(vm, callee, class, construct_argument_in_lane(r, i))
 }
 
 /// `planned_construction_in_lane` of a plan of passed fields that fit the inline slots, where it
 /// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
 /// for anything else, which `planned_construction_in_lane` makes.
 #[inline(always)]
-pub(crate) fn planned_inline_quick_in_lane(vm: &mut Vm, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    planned_inline_quick(vm, callee, construct_argument_in_lane(r, i))
+pub(crate) fn planned_inline_quick_in_lane(vm: &mut Vm, callee: Value, class: u32, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    planned_inline_quick(vm, callee, class, construct_argument_in_lane(r, i))
 }
 
 /// `planned_inline_quick_in_lane` from the parameters' values `argument` gives: any construction
 /// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
 #[inline(always)]
-pub(crate) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let index = holding_construct_plan_index(vm, callee)?;
+pub(crate) fn planned_inline_quick(vm: &mut Vm, callee: Value, class: u32, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee, class)?;
     let plan = &vm.lane_stack.construct_plans[index];
     let len = usize::from(plan.fields);
     if plan.kind != ConstructPlanKind::Passed || len > INLINE_PROPERTY_COUNT {
@@ -264,8 +267,8 @@ pub(crate) fn planned_inline_quick(vm: &mut Vm, callee: Value, argument: impl Fn
 
 /// `planned_construction_in_lane` from the parameters' values `argument` gives.
 #[inline(always)]
-pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let index = holding_construct_plan_index(vm, callee)?;
+pub(crate) fn planned_construction(vm: &mut Vm, callee: Value, class: u32, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee, class)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
@@ -299,10 +302,10 @@ pub(crate) unsafe fn context_constructs_in_lane(context: *mut ()) -> bool {
 ///
 /// # Safety
 /// `arguments` are the body's `argc` registers.
-pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, class: u32, arguments: *const Value, argc: u16) -> Option<Value> {
     if vm.collection_due() { return None; }
     // SAFETY: the caller passes the body's argument registers.
-    unsafe { materialized_construction_in_lane(vm, code, callee, arguments, argc) }
+    unsafe { materialized_construction_in_lane(vm, code, callee, class, arguments, argc) }
 }
 
 /// `body_construction_in_lane` made whatever is due, for a materialization of a kept receiver
@@ -311,16 +314,16 @@ pub(crate) unsafe fn body_construction_in_lane(vm: &mut Vm, code: &ResidualProgr
 ///
 /// # Safety
 /// `arguments` are the body's `argc` registers.
-pub(crate) unsafe fn materialized_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+pub(crate) unsafe fn materialized_construction_in_lane(vm: &mut Vm, code: &ResidualProgram, callee: Value, class: u32, arguments: *const Value, argc: u16) -> Option<Value> {
     if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
     // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
-    let this = planned_construction(vm, callee, argument)
-        .or_else(|| forwarded_fields_in_lane(vm, callee, argument))
-        .or_else(|| initializer_construction(vm, code, callee, argument))?;
+    let this = planned_construction(vm, callee, class, argument)
+        .or_else(|| forwarded_fields_in_lane(vm, callee, class, argument))
+        .or_else(|| initializer_construction(vm, code, callee, class, argument))?;
     note_allocation(vm);
     Some(this)
 }
@@ -329,11 +332,11 @@ pub(crate) unsafe fn materialized_construction_in_lane(vm: &mut Vm, code: &Resid
 /// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
-pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value> {
+pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value, class: u32) -> Option<Value> {
     if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.collection_due() || vm.with_scope_entered {
         return None;
     }
-    let index = holding_construct_plan_index(vm, callee)?;
+    let index = holding_construct_plan_index(vm, callee, class)?;
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
         return None;
@@ -356,13 +359,13 @@ pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value>
 /// environment and reads no `arguments`. A miss leaves the unreachable receiver to the
 /// collector. Out of line, so planned constructions keep their code.
 #[inline(never)]
-fn initializer_construction(vm: &mut Vm, code: &ResidualProgram, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn initializer_construction(vm: &mut Vm, code: &ResidualProgram, callee: Value, class: u32, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let (program, function, _) = vm.same_realm_user_target(callee)?;
     if program != vm.active_program || function == super::ROOT_FUNCTION_ID
         || !Vm::inline_constructible(code.function_get(function as usize)?) {
         return None;
     }
-    let (this, added) = initialize_fields_in_lane(vm, code, callee, callee, function, argument)?;
+    let (this, added) = initialize_fields_in_lane(vm, code, callee, class, callee, function, argument)?;
     added.then_some(this)
 }
 
@@ -395,32 +398,35 @@ pub(crate) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> i
     move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
 }
 
-/// The construct plan cache entry `callee` owns, when it names a heap cell.
-#[inline] pub(crate) fn construct_plan_index(callee: Value) -> Option<usize> {
-    callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
+/// The construct plan cache entry of a construction of `callee` as class `class`, when `callee` names a heap cell.
+/// The class is part of the key: two construct sites of one callee under different classes take different entries,
+/// and a plan serves only the class it records (`holding_construct_plan_index`).
+#[inline] pub(crate) fn construct_plan_index(callee: Value, class: u32) -> Option<usize> {
+    callee.heap_index().map(|index| (index as usize ^ class as usize) & (CONSTRUCT_PLANS - 1))
 }
 
-/// `callee`'s construct plan while it holds: the entry names `callee`, the prototype
+/// `callee`'s construct plan of class `class` while it holds: the entry names `callee` and `class`, the prototype
 /// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
 /// `prototype`, from which the receiver's template is derived.
 #[inline(always)]
-pub(crate) fn holding_construct_plan(vm: &Vm, callee: Value) -> Option<ConstructPlan> {
-    holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+pub(crate) fn holding_construct_plan(vm: &Vm, callee: Value, class: u32) -> Option<ConstructPlan> {
+    holding_construct_plan_index(vm, callee, class).map(|index| vm.lane_stack.construct_plans[index])
 }
 
-/// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
+/// Whether `callee`'s plan of class `class` holds now (`holding_construct_plan_index`) and an allocation by it
 /// would not refuse (`body_construction_in_lane`): no construction under way, no collection due.
 /// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
 /// where the construction would run, so the receiver a leave allocates is the plan's.
-pub(crate) fn construct_plan_holds(vm: &Vm, callee: Value) -> bool {
-    vm.construct_target.is_none() && !vm.collection_due() && holding_construct_plan_index(vm, callee).is_some()
+pub(crate) fn construct_plan_holds(vm: &Vm, callee: Value, class: u32) -> bool {
+    vm.construct_target.is_none() && !vm.collection_due() && holding_construct_plan_index(vm, callee, class).is_some()
 }
 
-/// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
+/// The construct plan cache index of `callee`'s plan of class `class` while it holds (`holding_construct_plan`).
 #[inline(always)]
-pub(crate) fn holding_construct_plan_index(vm: &Vm, callee: Value) -> Option<usize> {
-    let index = construct_plan_index(callee)?;
-    (vm.lane_stack.construct_plans[index].callee == callee
+pub(crate) fn holding_construct_plan_index(vm: &Vm, callee: Value, class: u32) -> Option<usize> {
+    let index = construct_plan_index(callee, class)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    (plan.callee == callee && plan.class == class
         && vm.lane_stack.construct_watches[index].as_ref().is_some_and(|watch| watch.is_published()))
     .then_some(index)
 }
@@ -482,25 +488,27 @@ pub(crate) fn field_reader(vm: &Vm, callee: Value) -> impl Fn(u32) -> bool {
 pub(crate) fn initialize_stores_in_lane(
     vm: &mut Vm,
     callee: Value,
+    class: u32,
     constructor: Value,
     env: Value,
     adds: impl FnOnce(&mut Vm, Value, bool, &mut dyn FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>, &mut dyn FnMut(&quench_runtime::bytecode::InitializerStore, Value)) -> bool,
 ) -> Option<(Value, bool)> {
-    let plan_index = construct_plan_index(callee);
-    let template = vm.inline_construct_template_by(callee, constructor)?;
+    let plan_index = construct_plan_index(callee, class);
+    let template = vm.inline_construct_template_by(callee, constructor, class)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
     // A fixed class's union (R4-F, `Vm::fixed_union`): its receiver is the union cell from birth, all slots absent,
     // and each store is written to its union slot by atom once the adds have made them. No record is made.
-    let union = vm.fixed_union(constructor, source_shape);
+    let union = vm.fixed_union(constructor, class, source_shape);
     let this = match union {
         Some(union) => vm.allocate_fixed_cell(union.shape, prototype, &[], &[]),
         None => vm.allocate_object(template),
     };
     let mut planned = Some(ConstructPlan {
         callee,
-            callee_layout: (0, 0),
+        callee_layout: (0, 0),
         prototype,
         shape: source_shape,
+        class,
         ..EMPTY_CONSTRUCT_PLAN
     });
     // Each store's name and value, in store order: the plan's fields while it holds, and a fixed class's slot writes.

@@ -66,6 +66,9 @@ pub(crate) struct CallSite<'a> {
     /// `LaneHelper::Construct` (`lane_body_construction`), which is the construction's result; its body is
     /// not entered (`call_enter`), as the VM's own construction does not run it (`initializes()`).
     pub(crate) initializing: Option<(Register, u16)>,
+    /// The construct site of a construction (`Lowering::construct_site`), which its receiver's class is named by; `None`
+    /// for a call that is no construction.
+    pub(crate) construct: Option<u64>,
     /// A sibling tail call (DESIGN.md 4.4) of an owned body: the window of the call's arguments (`first`, `count`). The
     /// running frame becomes the callee's, and the body returns through the callee's entry (`tail_call`); the call's
     /// completion is the callee's. `None` where the call pushes its own frame.

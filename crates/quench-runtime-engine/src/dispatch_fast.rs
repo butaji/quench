@@ -446,7 +446,7 @@ pub(crate) mod this_binding;
 use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
 pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
@@ -5935,10 +5935,10 @@ script_handler! {
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         match vm.function_record(callee) {
             Some(FunctionRecord { kind: FunctionKind::User(..), .. }) => {
-                if let Some(parent) = super_forwarded_parent_in_lane(vm, callee) {
+                if let Some(parent) = super_forwarded_parent_in_lane(vm, cx, ip, callee) {
                     resume!(cx, construct_forwarded_parent_in_lane(cx, r, ip, i, callee, parent));
                 }
-                if let Some(this) = super_construction(cx, r, i, callee) {
+                if let Some(this) = super_construction(cx, ip, r, i, callee) {
                     // Allocating the receiver can make a collection due.
                     note_allocation(vm);
                     if returns {
@@ -6389,7 +6389,7 @@ script_handler! {
         // is the finished object, and the body completed with `undefined`.
         if target.initializes()
             && finishes_construction_in_lane(cx, i)
-            && let Some(this) = planned_construction_in_lane(vm, callee, r, i)
+            && let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) }
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
@@ -6416,13 +6416,12 @@ script_handler! {
             sibling!(script_construct_keeping_miss, r, ip, Carried::script_in(cx, view))
         }
         let built = if target.initializes() {
-            match planned_construction_in_lane(vm, callee, r, i) {
+            match unsafe { planned_site_in_lane(vm, cx, ip, r, i) } {
                 Some(this) => Some((this, true)),
-                // SAFETY: the context's program outlives the lane run.
-                None => initialize_fields_in_lane(vm, unsafe { &*(*cx).code }, callee, callee, target.function, construct_argument_in_lane(r, i)),
+                None => unsafe { initialize_site_in_lane(vm, cx, ip, r, i, target.function) },
             }
         } else {
-            vm.inline_construct_receiver(callee).map(|this| (this, false))
+            unsafe { inline_receiver_site_in_lane(vm, cx, ip, callee) }.map(|this| (this, false))
         };
         let Some((this, initialized)) = built else {
             return exit(ip);
@@ -6469,7 +6468,7 @@ script_handler! {
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
             return exit(ip);
         }
-        let Some(this) = planned_inline_quick_in_lane(vm, r.get(i.b), r, i) else {
+        let Some(this) = unsafe { planned_quick_site_in_lane(vm, cx, ip, r, i) } else {
             sibling!(planned_construct_full_in_lane, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, this);
@@ -6487,7 +6486,7 @@ script_handler! {
     #[inline(never)]
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(this) = planned_construction_in_lane(vm, r.get(i.b), r, i) else {
+        let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) } else {
             requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
@@ -6520,7 +6519,7 @@ script_handler! {
             return exit(ip);
         }
         let planned = finishes_construction_in_lane(cx, i)
-            .then(|| planned_construction_in_lane(vm, r.get(i.b), r, i))
+            .then(|| unsafe { planned_site_in_lane(vm, cx, ip, r, i) })
             .flatten();
         let Some(this) = planned else {
             requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
@@ -6565,7 +6564,7 @@ script_handler! {
         // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
         // before anything completes, which a site reaches directly once it is keeping.
         materialize_running_leaf_in_lane(cx);
-        let finished = match construct_planned_fields_in_lane(cx, r, i) {
+        let finished = match construct_planned_fields_in_lane(cx, r, ip, i) {
             Some(this) => Ok(KeepingConstruction::Finished(this)),
             None => construct_keeping_activation_in_lane(cx, r, ip, i),
         };

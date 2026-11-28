@@ -119,6 +119,7 @@ pub(super) fn initialize_fields_in_lane(
     vm: &mut Vm,
     code: &ResidualProgram,
     callee: Value,
+    class: u32,
     constructor: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
@@ -126,7 +127,7 @@ pub(super) fn initialize_fields_in_lane(
     let stores = code.function(function as usize).initializer_stores(&code.constants)?;
     let env = vm.same_realm_user_target(callee).map_or(Value::UNDEFINED, |(_, _, env)| env);
     let read = construct_plan::field_reader(vm, callee);
-    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, fixed, nested, each| {
+    initialize_stores_in_lane(vm, callee, class, constructor, env, |vm, this, fixed, nested, each| {
         add_stores_in_lane(vm, code, this, stores, argument, read, fixed, nested, each)
     })
 }
@@ -139,13 +140,14 @@ pub(super) fn initialize_fields_in_lane(
 pub(super) fn planned_receiver_in_lane(
     vm: &mut Vm,
     callee: Value,
+    class: u32,
     plan: Option<&ConstructPlan>,
     union: Option<quench_runtime::vm::engine_types::FixedUnion>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
         return Some(plan.allocate(vm, |_| Value::UNDEFINED));
     }
-    let template = vm.inline_construct_template(callee)?;
+    let template = vm.inline_construct_template(callee, class)?;
     let (prototype, shape) = (template.proto(), template.shape());
     // A fixed class's receiver is its union cell from birth (R4-F), as `initialize_stores_in_lane` makes it.
     let fixed = union.map(|union| quench_runtime::vm::engine_types::FixedCellPlan { shape: union.shape, slots: [0; CONSTRUCT_PLAN_FIELDS] });
@@ -153,7 +155,7 @@ pub(super) fn planned_receiver_in_lane(
         Some(union) => vm.allocate_fixed_cell(union.shape, prototype, &[], &[]),
         None => vm.allocate_object(template),
     };
-    if let Some(index) = construct_plan_index(callee)
+    if let Some(index) = construct_plan_index(callee, class)
         && let Some(callee_layout) = vm.function_prototype_layout(callee)
     {
         vm.lane_stack.construct_plans[index] = ConstructPlan {
@@ -163,6 +165,7 @@ pub(super) fn planned_receiver_in_lane(
             shape: fixed.map_or(shape, |fixed| fixed.shape),
             kind: ConstructPlanKind::Forwarding,
             fixed,
+            class,
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();
@@ -173,9 +176,9 @@ pub(super) fn planned_receiver_in_lane(
 
 /// The union of a forwarding constructor's receiver `callee` when its class is fixed (R4-F, `Vm::fixed_union`), from the
 /// template of `callee`'s prototype: the receiver is then the union cell (`planned_receiver_in_lane`).
-pub(super) fn fixed_receiver_union(vm: &mut Vm, callee: Value) -> Option<quench_runtime::vm::engine_types::FixedUnion> {
-    let template = vm.inline_construct_template(callee)?;
-    vm.fixed_union(callee, template.shape())
+pub(super) fn fixed_receiver_union(vm: &mut Vm, callee: Value, class: u32) -> Option<quench_runtime::vm::engine_types::FixedUnion> {
+    let template = vm.inline_construct_template(callee, class)?;
+    vm.fixed_union(callee, class, template.shape())
 }
 
 /// `activate_in_lane` for a target that keeps its passed values, or for values a forwarding
@@ -1295,6 +1298,9 @@ pub(super) fn frame_construct_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let callee = r.get(i.b);
+    // The construction's site PC in the running view, read before the activations below become frames.
+    // SAFETY: `ip` is a record of the running view.
+    let pc = unsafe { record_pc(cx, ip) };
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     // The checks `inline_construct_target` makes of the callee alone, before activations
     // become frames for it. A constructor of another program is pushed in its own, where the
@@ -1328,7 +1334,7 @@ pub(super) fn frame_construct_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip
     vm.materialize_lane_activations(cx);
     // The caller is now the innermost frame, its registers the frame's.
     let (frame, r) = unsafe { ((*cx).frame(), (*cx).registers) };
-    let target = match vm.inline_construct_target(code, frame, callee) {
+    let target = match vm.inline_construct_target(code, frame, pc, callee) {
         Some((program, id, env, this)) => Some((program, id, env, this, CallCompletion::Constructor(this))),
         None => vm
             .inline_derived_construct_target(code, frame, callee)

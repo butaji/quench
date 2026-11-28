@@ -1378,10 +1378,12 @@ pub(super) fn construct_native_in_lane(
 /// (`Function::super_forwarding`) and that parent is a native the lane constructs other
 /// than an error constructor, with what the constructor passes on.
 #[inline(never)]
-pub(super) fn super_forwarded_parent_in_lane(vm: &Vm, callee: Value) -> Option<(Value, quench_runtime::bytecode::SuperForwarded)> {
+pub(super) fn super_forwarded_parent_in_lane(vm: &Vm, cx: *mut LaneContext, ip: Ip, callee: Value) -> Option<(Value, quench_runtime::bytecode::SuperForwarded)> {
     // A plan with a recorded user parent (`super_construction`) is no native forwarding: its
     // construction goes straight to that plan, not decoding the constructor's body each time.
-    if holding_construct_plan_index(vm, callee).is_some_and(|index| vm.lane_stack.construct_plans[index].super_parent != Value::UNDEFINED) {
+    // SAFETY: `ip` is a record of the running view.
+    let class = unsafe { site_class_in_lane(cx, ip, callee) };
+    if holding_construct_plan_index(vm, callee, class).is_some_and(|index| vm.lane_stack.construct_plans[index].super_parent != Value::UNDEFINED) {
         return None;
     }
     let Some(FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.function_record(callee) else {
@@ -1437,7 +1439,7 @@ pub(super) fn construct_forwarded_parent_in_lane(
         && matches!(vm.function_record(parent), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }))
         && let Some(array) = vm.array_construction_by(callee, &passed)
     {
-        vm.capture_constructed_value(array, parent, false);
+        vm.capture_constructed_value(array, parent, vm.ordinary_class(parent), false);
         note_allocation(vm);
         return native_complete_in_lane(cx, ip, i, Some(array));
     }

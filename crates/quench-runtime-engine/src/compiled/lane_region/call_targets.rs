@@ -112,7 +112,7 @@ impl Lowering<'_, '_> {
         use quench_runtime::staged::{CallOperation, Operation};
         let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
+        let call = CallSite { callee, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None, construct: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 

@@ -177,7 +177,7 @@ impl Lowering<'_, '_> {
                 let tail = owned.filter(|_| proven.is_none() && callees.len() == 1)
                     .and_then(|callee| self.sibling_tail_arguments(pc, record, &site, callee));
                 let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, returned, missed, raised,
-                    stop: self.call_out_stop(), leave: self.leave_site(), initializing, tail };
+                    stop: self.call_out_stop(), leave: self.leave_site(), initializing, tail, construct: site.constructs().then(|| self.construct_site(pc)).flatten() };
                 self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
             }
         }
@@ -269,13 +269,13 @@ impl Lowering<'_, '_> {
             self.branch_if(matched, (arm, &[]), (next, &[]));
             self.builder.switch_to_block(arm);
             let miss = cold_block(&mut self.builder);
-            let call = CallSite { callee: Some(DirectSite::Owned(callee)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
+            let call = CallSite { callee: Some(DirectSite::Owned(callee)), record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None, construct: None };
             self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         }
         // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
         self.builder.switch_to_block(fallback);
         let miss = cold_block(&mut self.builder);
-        let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None };
+        let call = CallSite { callee: None, record, context, registers, completed, returned: None, missed, raised, stop, leave, initializing: None, tail: None, construct: None };
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 }

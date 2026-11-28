@@ -149,12 +149,13 @@ fn enter_program(vm: &mut Vm, program: ProgramId) {
 }
 
 /// Notes on `callee`'s plan, when the construction left one, the parent it holds with.
-fn plan_super_parent(vm: &mut Vm, callee: Value) {
-    if let Some(index) = construct_plan_index(callee)
+fn plan_super_parent(vm: &mut Vm, callee: Value, class: u32) {
+    if let Some(index) = construct_plan_index(callee, class)
         && vm.lane_stack.construct_plans[index].callee == callee
-        && let Some(class) = vm.heap_reads().object(callee)
+        && vm.lane_stack.construct_plans[index].class == class
+        && let Some(object) = vm.heap_reads().object(callee)
     {
-        vm.lane_stack.construct_plans[index].super_parent = class.proto();
+        vm.lane_stack.construct_plans[index].super_parent = object.proto();
     }
 }
 
@@ -173,6 +174,7 @@ fn plan_super_parent(vm: &mut Vm, callee: Value) {
 #[inline(never)]
 pub(crate) fn super_construction(
     cx: *mut LaneContext,
+    ip: Ip,
     r: Registers,
     i: &LaneInstruction,
     callee: Value,
@@ -181,18 +183,20 @@ pub(crate) fn super_construction(
     if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
         return None;
     }
-    if let Some(this) = holding_construct_plan(vm, callee)
+    // SAFETY: `ip` is a record of the running view.
+    let class = unsafe { site_class_in_lane(cx, ip, callee) };
+    if let Some(this) = holding_construct_plan(vm, callee, class)
         .filter(|plan| !plan.super_parent.is_undefined())
-        .and_then(|_| planned_construction_in_lane(vm, callee, r, i))
+        .and_then(|_| planned_construction_in_lane(vm, callee, class, r, i))
     {
         return Some(this);
     }
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
     let argument = construct_argument_in_lane(r, i);
-    let (this, added) = initialize_stores_in_lane(vm, callee, root, Value::UNDEFINED, |vm, this, fixed, _, each| add_chain_stores(vm, this, &stores, &argument, fixed, each))?;
+    let (this, added) = initialize_stores_in_lane(vm, callee, class, root, Value::UNDEFINED, |vm, this, fixed, _, each| add_chain_stores(vm, this, &stores, &argument, fixed, each))?;
     added.then(|| {
-        plan_super_parent(vm, callee);
+        plan_super_parent(vm, callee, class);
         this
     })
 }

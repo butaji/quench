@@ -75,14 +75,16 @@ pub(super) fn finishes_construction_in_lane(cx: *mut LaneContext, i: &LaneInstru
 /// registers and 1.3 KB of stack for the activation paths). `None` for any other case, which
 /// that function then decides from the start.
 #[inline(never)]
-pub(super) fn construct_planned_fields_in_lane(cx: *mut LaneContext, r: Registers, i: &LaneInstruction) -> Option<Value> {
+pub(super) fn construct_planned_fields_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some())
         || !finishes_construction_in_lane(cx, i)
     {
         return None;
     }
-    let this = forwarded_fields_in_lane(vm, r.get(i.b), construct_argument_in_lane(r, i))?;
+    // SAFETY: `ip` is a record of the running view.
+    let class = unsafe { site_class_in_lane(cx, ip, r.get(i.b)) };
+    let this = forwarded_fields_in_lane(vm, r.get(i.b), class, construct_argument_in_lane(r, i))?;
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
     Some(this)
@@ -104,10 +106,12 @@ pub(super) fn construct_keeping_activation_in_lane(
     if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
         return Err(Some(exit(ip)));
     }
+    // SAFETY: `ip` is a record of the running view.
+    let class = unsafe { site_class_in_lane(cx, ip, callee) };
     let finishes = finishes_construction_in_lane(cx, i);
     // A plan holding for `callee` fixes its function, so the plan alone answers before its
     // target is resolved.
-    if finishes && let Some(this) = forwarded_fields_in_lane(vm, callee, construct_argument_in_lane(r, i)) {
+    if finishes && let Some(this) = forwarded_fields_in_lane(vm, callee, class, construct_argument_in_lane(r, i)) {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
         return Ok(KeepingConstruction::Finished(this));
@@ -121,9 +125,9 @@ pub(super) fn construct_keeping_activation_in_lane(
     }
     // One look at the plan serves the receiver and the forwarding: a plan the receiver's
     // allocation leaves records no resolution yet.
-    let plan = holding_construct_plan(vm, callee);
-    let union = fixed_receiver_union(vm, callee);
-    let Some(this) = planned_receiver_in_lane(vm, callee, plan.as_ref(), union) else {
+    let plan = holding_construct_plan(vm, callee, class);
+    let union = fixed_receiver_union(vm, callee, class);
+    let Some(this) = planned_receiver_in_lane(vm, callee, class, plan.as_ref(), union) else {
         return Err(Some(exit(ip)));
     };
     note_allocation(vm);
@@ -131,7 +135,7 @@ pub(super) fn construct_keeping_activation_in_lane(
     if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
         && let Some(forwarded) = match resolved_forwarding_in_lane(cx, callee, plan.as_ref()) {
             Some(forwarded) => Some(forwarded),
-            None => forwarded_construction_in_lane(cx, target, method, this),
+            None => forwarded_construction_in_lane(cx, target, method, this, class),
         }
     {
         // A forwarded method that only initializes `this` from its parameters, which the
@@ -147,7 +151,7 @@ pub(super) fn construct_keeping_activation_in_lane(
             let read = construct_plan::field_reader(vm, callee);
             if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read, union) {
                 if let Some(fields) = fields {
-                    record_forwarded_fields_in_lane(vm, callee, (forwarded.program(), forwarded.function), this, &fields);
+                    record_forwarded_fields_in_lane(vm, callee, class, (forwarded.program(), forwarded.function), this, &fields);
                 }
                 return Ok(KeepingConstruction::Finished(this));
             }
@@ -174,8 +178,8 @@ pub(super) fn construct_keeping_activation_in_lane(
 /// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
 /// body completes with `undefined`, as the forwarding body then does.
 #[inline(always)]
-pub(super) fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let index = holding_construct_plan_index(vm, callee)?;
+pub(super) fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, class: u32, argument: impl Fn(u16) -> Value) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee, class)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     plan.forwarded?.initializer?;
@@ -200,11 +204,12 @@ pub(super) fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, argument: imp
 pub(super) fn record_forwarded_fields_in_lane(
     vm: &mut Vm,
     callee: Value,
+    class: u32,
     initializer: (ProgramId, u32),
     this: Value,
     fields: &ConstructPlan,
 ) {
-    let Some(index) = holding_construct_plan_index(vm, callee) else {
+    let Some(index) = holding_construct_plan_index(vm, callee, class) else {
         return;
     };
     let Some(shape) = vm.heap_reads().object(this).map(|object| object.shape()) else {
@@ -231,6 +236,7 @@ pub(super) fn forwarded_construction_in_lane(
     constructor: ScriptCallTarget,
     method: quench_runtime::bytecode::ForwardedThisMethod,
     this: Value,
+    class: u32,
 ) -> Option<ScriptCallTarget> {
     // SAFETY: the context's program outlives the lane run, and the constructor belongs to it
     // (`Vm::resolve_script_call_target`), so the body's sites index the run's caches.
@@ -266,8 +272,8 @@ pub(super) fn forwarded_construction_in_lane(
         return None;
     }
     let forwarded = script_target_in_lane(cx, function)?;
-    if let Some(resolution) = forwarded_resolution(vm, constructor.callee, method, function, apply) {
-        let index = construct_plan_index(constructor.callee)?;
+    if let Some(resolution) = forwarded_resolution(vm, constructor.callee, class, method, function, apply) {
+        let index = construct_plan_index(constructor.callee, class)?;
         record_forwarded_resolution(vm, index, function, resolution);
     }
     Some(forwarded)
@@ -281,11 +287,12 @@ pub(super) fn forwarded_construction_in_lane(
 pub(super) fn forwarded_resolution(
     vm: &Vm,
     callee: Value,
+    class: u32,
     method: quench_runtime::bytecode::ForwardedThisMethod,
     function: Value,
     apply: Value,
 ) -> Option<ForwardedResolution> {
-    let plan = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0)?;
+    let plan = holding_construct_plan(vm, callee, class).filter(|plan| plan.fields == 0)?;
     let data_slot = |owner: &quench_runtime::tier_surface::Object, atom| {
         let shape = owner.shape();
         if vm.shape_is_dictionary(shape) {
