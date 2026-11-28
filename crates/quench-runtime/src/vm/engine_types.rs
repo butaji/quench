@@ -1647,7 +1647,6 @@ pub struct LoopTier {
     /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
-    pub compilations: u32,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -2761,7 +2760,6 @@ miss_reasons! {
     PlanNoUnit => "plan:no-unit",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
-    PlanCompileBound => "plan:compile-bound",
     PlanNothingNative => "plan:nothing-native",
     PlanNotAmortized => "plan:not-amortized",
     PlanDependencies => "plan:dependencies",

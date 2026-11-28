@@ -7770,10 +7770,8 @@ impl Vm {
                 quench_runtime::vm::program_store::JsTierState::Unsupported
                 | quench_runtime::vm::program_store::JsTierState::Rejected { .. },
             ) => return None,
-            Some(quench_runtime::vm::program_store::JsTierState::Hot { .. })
-            | Some(quench_runtime::vm::program_store::JsTierState::PromotionPending)
-            | None => {
-                if !self.programs.note_js_function_entry(program_id, function_id, numeric, numeric) || !numeric {
+            None => {
+                if !self.programs.note_js_function_entry(program_id, function_id, numeric) {
                     return None;
                 }
                 self.js_tier_compile(unit, program_id, function_id)?

@@ -25,8 +25,6 @@ pub(crate) enum Refusal {
     FrameNotAdmitted,
     /// The unit has no instruction at the entry header.
     NoEntry,
-    /// The compiles left for the site, or the compile bound, are spent.
-    CompileBound,
     /// The lowering produced no native code.
     NothingNative,
     /// The compiled body's dependencies would not subscribe.
@@ -51,7 +49,6 @@ impl Refusal {
             Self::NoUnit => Miss::PlanNoUnit,
             Self::FrameNotAdmitted => Miss::PlanFrameNotAdmitted,
             Self::NoEntry => Miss::PlanNoEntry,
-            Self::CompileBound => Miss::PlanCompileBound,
             Self::NothingNative => Miss::PlanNothingNative,
             Self::Dependencies => Miss::PlanDependencies,
             _ => return None,
@@ -117,8 +114,6 @@ pub(crate) struct UnitFacts {
     pub(crate) cranelift_allowed: bool,
     /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
     pub(crate) wasm_program: bool,
-    /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
-    pub(crate) compiles_left: bool,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
     /// The compile is from the function's own entry, not a loop's (`entry.is_none()`).
@@ -219,8 +214,8 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,
-        // Phase A: the compile bound (the pick decided the tier before this gate).
-        UnitKind::LanePlan => facts.compiles_left,
+        // Phase A: the pick decided the tier before this gate.
+        UnitKind::LanePlan => true,
         // Phase B, during planning: the entry gate.
         UnitKind::LaneEntry(_) => {
             if facts.entry_none && !facts.called_by_bodies && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }

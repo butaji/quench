@@ -19,9 +19,8 @@
 //! ```
 //!
 //! Existing states map onto it: `LaneBody` Unspecialized/Compiling/Specialized/Declined
-//! (`LaneBody::tier_state`), and loop sites (`LoopBody` Idle/Compiling/Ready/Declined) the same way, and `JsTierState` (`js_tier_state`): Hot, PromotionPending and GeneralPromotionPending are
-//! Warming, GeneralCompileDue is Compiling, Compiled is UJit, Rejected is Retired, Unsupported
-//! is Declined. BaseJIT regions are BJit.
+//! (`LaneBody::tier_state`), and loop sites (`LoopBody` Idle/Compiling/Ready/Declined) the same way, and `JsTierState` (`js_tier_state`): no state is Interpreter, Compiled is UJit, Rejected is Retired,
+//! Unsupported is Declined. BaseJIT regions are BJit.
 use super::engine_types::EntryCell;
 use crate::vm::engine_types::PublishedLaneMethod;
 use super::program_store::JsTierState;
@@ -119,7 +118,6 @@ pub fn withdraw(cell: &EntryCell, from: TierState, event: TierEvent) -> TierStat
 pub fn js_tier_state(state: Option<&JsTierState>) -> TierState {
     match state {
         None => Interpreter,
-        Some(JsTierState::Hot { .. } | JsTierState::PromotionPending) => Warming,
         Some(JsTierState::Compiled(_)) => UJit,
         Some(JsTierState::Rejected { .. }) => Retired,
         Some(JsTierState::Unsupported) => Declined,
