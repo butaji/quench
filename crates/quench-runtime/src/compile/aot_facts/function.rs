@@ -101,6 +101,13 @@ impl<'a> FunctionFacts<'a> {
         self.facts.registers.get(&self.function)?.at(pc, register)
     }
 
+    /// The settled cell of local slot `slot` of this function's own frame (`FactKey::Slot { owner: self.function, slot }`): the
+    /// join of every store to the slot, a parameter's binding included (`effects::binding_stores`). None where the solve keeps
+    /// no cell for the slot.
+    pub fn local_cell(&self, slot: u16) -> Option<crate::typed_ir::Cell> {
+        self.facts.cell(crate::typed_ir::FactKey::Slot { owner: self.function, slot })
+    }
+
     /// The interned atoms the string register `register` holds just before `pc` is one of, sorted (`typed_ir::StringFact`),
     /// where the settled solve names some. Each is an interned string, so `===` between two atom-known operands is a
     /// pointer compare (`staged::typing::both_interned`), and a key atom-known here reads like a named property.

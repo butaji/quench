@@ -1308,3 +1308,43 @@ fn a_strict_function_only_called_plainly_has_no_global_object_as_this() {
     let program = program("function f() { 'use strict'; return this; } f(); f();");
     assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "a strict callee's this is undefined");
 }
+
+/// The identity of every register `cell_at` answers for in the function named `name`.
+fn identities_in(program: &ResidualProgram, facts: &AotFacts, name: &str) -> Vec<Identity> {
+    let id = function_named(program, name);
+    let (len, registers) = program.with_record(id, |function| (function.code.len() as u32, usize::from(function.registers)));
+    let function = facts.function_facts(id as u32);
+    let mut found = Vec::new();
+    for pc in 0..len {
+        for register in 0..registers {
+            if let Some(cell) = function.cell_at(pc, register as u16) { found.push(cell.identity); }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_named_property_read_before_its_closure_store_is_no_closure_identity() {
+    let program = program("var o = {}; function f() { return o.m(); } try { f(); } catch (e) {} o.m = function () { return 1; }; f();");
+    let facts = analyze(&program);
+    assert!(!identities_in(&program, &facts, "f").iter().any(|identity| matches!(identity, Identity::Closure(_))),
+        "f reads o.m before the one store of it, which dominates no read: the read holds no closure identity");
+}
+
+#[test]
+fn a_class_method_read_after_construction_keeps_its_closure_identity() {
+    let program = program("class C { m() { return 1; } } var c = new C(); var r = c.m();");
+    let m = function_named(&program, "m") as u32;
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Closure(m)),
+        "the class header defines m before any construction, and the read runs after it");
+}
+
+#[test]
+fn a_slot_with_a_checked_store_of_another_class_joins_both_classes() {
+    let program = program("function A() {} function B() {} function f() { let x = new A(); x = new B(); return x; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    let function = facts.function_facts(f);
+    assert!((0..4u16).filter_map(|slot| function.local_cell(slot)).any(|cell| cell.classes.ids().len() == 2),
+        "x holds an A and then a B, so its slot's cell holds both classes");
+}
