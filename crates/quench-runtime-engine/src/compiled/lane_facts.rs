@@ -89,11 +89,11 @@ impl std::fmt::Write for Fnv {
 }
 
 /// The predicted tier of `function`'s lane body (design decision 4.9): the one input of every lane tier pick, read from
-/// the program's table (`ProgramStore::predicted_tiers`; `called_by_loop` picks its column). An AOT program's
-/// predicted tier is Ultra for every function (`tier_policy::body_tier`). A program not running has no table and no body.
-pub(crate) fn body_pick(aot: bool, predicted: &[[PredictedTier; 2]], function: u32, called_by_loop: bool) -> PredictedTier {
-    let row = predicted.get(function as usize).map_or(PredictedTier::Interpreter, |row| row[usize::from(called_by_loop)]);
-    quench_runtime::vm::tier_policy::body_tier(aot, row)
+/// the program's table (`ProgramStore::predicted_tiers`). An AOT program's predicted tier is Ultra for every function
+/// (`tier_policy::body_tier`). A program not running has no table and no body.
+pub(crate) fn body_pick(aot: bool, predicted: &[PredictedTier], function: u32) -> PredictedTier {
+    let tier = predicted.get(function as usize).copied().unwrap_or(PredictedTier::Interpreter);
+    quench_runtime::vm::tier_policy::body_tier(aot, tier)
 }
 
 /// Whether a field site guards its shapes and exits on a miss (speculates), rather than reading in place through the

@@ -2,9 +2,9 @@
 use crate::ext_traits::*;
 use quench_runtime::vm::tier_events::{Event, TierEvents};
 use quench_runtime::test_host::TestHost;
-use quench_runtime::{Engine, ExecutionMode, JitMode};
+use quench_runtime::{Engine, ExecutionMode};
 
-/// What a program printed in the interpreter and as BaseJIT loop regions (`--b-jit`), the runs of
+/// What a program printed in the interpreter and as compiled loop regions, the runs of
 /// lane-ABI regions the second made (all, and what they did: `Event::OsrLent` and its kin).
 struct Regions {
     interpreted: Vec<String>,
@@ -26,7 +26,7 @@ fn run_regions(source: &str) -> Regions {
         (output.take(), vm.tier_events().clone())
     };
     let (interpreted, _) = printed(ExecutionMode::Interpreted);
-    let (compiled, kinds) = quench_runtime::jit_mode::with_mode(JitMode::BaseOnly, || printed(ExecutionMode::Compiled));
+    let (compiled, kinds) = printed(ExecutionMode::Compiled);
     Regions { interpreted, compiled, runs: kinds.count(Event::OsrRun), kinds }
 }
 

@@ -69,13 +69,10 @@ impl CodePublication {
     }
 }
 
-/// How much effort one compile spends. `Optimized` is the shipping configuration; `Quick`
-/// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
-/// allocation) for code that has not proven itself hot. A caller chooses per compile; every
-/// compile uses `Optimized` until a tier policy asks otherwise.
+/// How much effort one compile spends. `Optimized` is the shipping configuration, which every
+/// compile uses unless its body is too large for the backtracking allocator.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CompileLevel {
-    Quick,
     /// A body too large for the backtracking allocator's scratch memory: `Optimized` with
     /// one-pass register allocation.
     Large,
@@ -84,16 +81,9 @@ pub enum CompileLevel {
 }
 
 impl CompileLevel {
-    /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` where QuickJIT
-    /// is the only Cranelift tier.
-    pub fn run_default() -> Self {
-        if crate::vm::tier_policy::quick_only() { Self::Quick } else { Self::Optimized }
-    }
-
     /// The Cranelift settings a level fixes, applied after the publication's.
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Quick => &[("opt_level", "none")],
             Self::Large => &[("regalloc_algorithm", "single_pass")],
             Self::Optimized => &[],
         }
@@ -144,7 +134,7 @@ pub fn symbol_in(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, namespa
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub fn target_isa() -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
-    { target_isa_level(CompileLevel::run_default()) }
+    { target_isa_level(CompileLevel::Optimized) }
     #[cfg(not(feature = "jit"))]
     { None }
 }
@@ -158,7 +148,7 @@ pub fn ahead_lane_isa(target: &NativeTarget) -> Option<Arc<TargetIsa>> {
         static ISAS: OnceLock<Mutex<Vec<(NativeTarget, Arc<TargetIsa>)>>> = OnceLock::new();
         let mut isas = ISAS.get_or_init(Default::default).lock().ok()?;
         if let Some((_, isa)) = isas.iter().find(|(built, _)| built == target) { return Some(Arc::clone(isa)); }
-        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), target, false).ok()?;
+        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::Optimized, target, false).ok()?;
         isas.push((target.clone(), Arc::clone(&isa)));
         Some(isa)
     }

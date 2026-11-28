@@ -14,7 +14,7 @@ use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
-use super::super::entry_cell::{EntryCell, RAISED_RUN};
+use super::super::entry_cell::EntryCell;
 use quench_bjit::call_record::{CalleeRecord, CallRecord, LaneStatus};
 use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;

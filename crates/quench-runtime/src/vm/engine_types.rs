@@ -660,8 +660,7 @@ pub struct EntryCell {
     pub validity: std::cell::Cell<u64>,
     /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
     pub recovery: std::cell::Cell<usize>,
-    /// The runs that ended by an exception through a native caller, in the high half (`RAISED_RUN`,
-    /// written by the native code only).
+    /// The entry cell's run counters word, which the native code lays out and no run writes.
     pub counters: std::cell::Cell<u64>,
     /// The address of the published body's scalar entry (`LaneMethod::scalar_address`), which a native
     /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
@@ -5239,10 +5238,6 @@ impl LaneStack {
 
 impl LaneView {
 
-    /// Whether a loop region called it while it had no body (`note_native_caller`).
-    #[inline]
-    pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
-
     /// A specialized body that went at a lifecycle edge warms again from the start: a call site's behavior
     /// outlives the shape ids the edge renumbered.
     pub fn drop_body(&self, body: &mut LaneBody) {
@@ -5299,7 +5294,6 @@ impl LaneBody {
         match self {
             Self::Unspecialized => TierState::Warming,
             Self::Compiling { .. } => TierState::Compiling,
-            Self::Specialized { .. } if crate::vm::tier_policy::quick_only() => TierState::QJit,
             Self::Specialized { .. } => TierState::UJit,
             Self::Declined => TierState::Declined,
         }

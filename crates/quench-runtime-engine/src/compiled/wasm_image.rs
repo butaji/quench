@@ -8,7 +8,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::vm::jit_backend::relocatable_code::PatchKind;
 use super::*;
 use crate::aot_image::Symbol;
 
@@ -81,29 +80,4 @@ fn function_rows(analysis: &Analysis<'_>, index: usize, (plans, callable): (&[Op
     let named = named.into_iter().map(|(offset, value)| symbols.get(usize::try_from(value - SYMBOL_WORDS).ok()?).map(|symbol| (offset, *symbol)))
         .collect::<Option<Vec<_>>>()?;
     Some(WasmImageRows { code, symbols: named })
-}
-
-/// Function `index`'s rows from the image of program `analysis.program`, linked for this instance's compile:
-/// each callee's entry cell (`cells`) written where the rows name it. `None` where the image has no rows for
-/// it, was planned for another memory slot, or names a callee that is not `callable` here (the live plan may
-/// keep fewer functions than the module's declarations did), and the function then stitches as usual.
-pub(crate) fn linked(analysis: &Analysis<'_>, index: usize, memory_slot: Option<u32>, (cells, callable): (&[std::cell::Cell<usize>], &[bool]))
-    -> Option<Vec<u8>> {
-    let images = analysis.vm.programs.ahead_images(analysis.program, analysis.code)?;
-    let image = &images.image;
-    let wasm = image.wasm.as_ref().filter(|wasm| wasm.memory_slot == memory_slot)?;
-    let rows = wasm.functions.get(index)?.as_ref()?;
-    let mut code = rows.code.to_vec();
-    for relocation in rows.relocations.iter() {
-        let Some(Symbol::EntryCell(callee)) = crate::aot_image::symbols::SymbolTable::decode(image, relocation.namespace, relocation.key) else { return None };
-        if relocation.kind != PatchKind::Abs8 || !callable.get(callee as usize).copied().unwrap_or(false) {
-            return None;
-        }
-        let word = (cells.get(callee as usize)?.as_ptr() as i64).wrapping_add(relocation.addend) as u64;
-        code.get_mut(relocation.offset..relocation.offset + 8)?.copy_from_slice(&word.to_le_bytes());
-    }
-    if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: wasm function {index}: image rows");
-    }
-    Some(code)
 }

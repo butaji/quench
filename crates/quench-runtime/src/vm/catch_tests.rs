@@ -100,10 +100,9 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
     matches_interpreter(&format!("(function(){{{source}}})();"));
 }
 
-/// The runs of a function's lane body: those a Rust entry ended and those it left to the lane
-/// (`LaneBodyStats::runs`), and those a native caller saw end by an exception
-/// (`EntryCell::raised_runs`), which only direct calls make.
-pub(super) type BodyRuns = (u32, u32, u32);
+/// The runs of a function's lane body: those it ended and those it left to the lane
+/// (`LaneBodyStats::ended_runs`).
+pub(super) type BodyRuns = (u32, u32);
 
 /// Runs `source` compiled and returns the `BodyRuns` of each function of `names`: a throw that
 /// crossed native frames made no frame, so no run left.
@@ -121,10 +120,7 @@ fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == *name))
             .unwrap();
         let view = views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view");
-        let (ended, left) = view.tier().body_stats.ended_runs();
-        // SAFETY: the view owns its entry cell, which lives as long as the view.
-        let raised = unsafe { &*(view.entry_cell() as *const crate::vm::engine_types::EntryCell) }.raised_runs();
-        (ended, left, raised)
+        view.tier().body_stats.ended_runs()
     }).collect()
 }
 
@@ -132,7 +128,7 @@ fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
 pub(super) fn bodies_match_interpreter(source: &str, tier: Tier, names: &[&str]) -> Vec<BodyRuns> {
     let wrapped = format!("(function(){{{source}}})();");
     assert_tier_agrees(&wrapped, tier, Expect::ENGAGED);
-    crate::jit_mode::with_mode(tier.jit_mode(), || body_runs(&wrapped, names))
+    crate::jit_mode::with_mode(crate::jit_mode::JitMode::Full, || body_runs(&wrapped, names))
 }
 
 /// A compiled callee's throw reaches the compiled caller's catch through the native call:
@@ -159,7 +155,6 @@ fn a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving
     let runs = bodies_match_interpreter(source, Tier::Full, &["caller", "thrower"]);
     assert!(runs[0].0 > 0, "the caller's body runs natively");
     assert_eq!(runs[0].1, 0, "the callee's throw is caught by native code: no run of the caller leaves");
-    assert!(runs[1].2 > 0, "the callee's body ended by an exception through its native caller");
 }
 
 /// An exception no compiled frame catches crosses three of them and reaches the
@@ -186,7 +181,6 @@ fn an_uncaught_throw_crosses_three_compiled_frames_to_the_interpreter() {
     let runs = bodies_match_interpreter(source, Tier::Full, &["first", "second", "third"]);
     assert!(runs[0].0 > 0, "the outermost compiled frame runs natively");
     assert_eq!(runs[0].1, 0, "the exception unwinds through the native frames without a leave");
-    assert!(runs[1].2 > 0 && runs[2].2 > 0, "the second and third frames ended by the exception through native callers");
 }
 
 /// A `finally` in a compiled frame between the throw and the catch runs once per unwind, and a

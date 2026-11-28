@@ -16,7 +16,7 @@ Quench runs the Node solution, the same source Node runs. Linear: TOD-2275.
 
 Gate: quench-gate step `ds-budgets` (crates/quench-gate/src/suite_budgets.rs, the same judge as
 `js3-budgets`) holds every structure in every mode to the target below, with the shrink-only
-debt list crates/quench-tier-corpus/ds_budgets.txt, plus the tier order (no-jit -> b-jit -> default
+debt list crates/quench-tier-corpus/ds_budgets.txt, plus the tier order (no-jit -> default
 never slower beyond 5%, never more Ir per op beyond 2%; TOD-2152) against ds_tier_order.txt
 (seed both: QUENCH_DEBT_WRITE=1):
 
@@ -30,5 +30,5 @@ compared with C. Upstream sizes are `SIZES`; `--scale` multiplies them.
 at 2n, and (Ir(2n) - Ir(n)) / ops(2n) - ops(n) is the Ir per op, the method of
 `crates/quench-gate/src/ir_budget.rs`. C is built -march=x86-64-v3, as valgrind traps on AVX-512.
 
-Target (user, 2026-11-25): in no-jit, b-jit and default, time <= 1/1.5 and peak RSS <= 0.5x
+Target (user, 2026-11-25): in no-jit and default, time <= 1/1.5 and peak RSS <= 0.5x
 of the better of Node and Bun on every structure; C is ground truth.

@@ -7,7 +7,7 @@ Ir/op divides that by the ops the two runs add (the driver's "ops" in each run's
 This is the method of crates/quench-gate/src/ir_budget.rs. C runs the driver built with
 -march=x86-64-v3, as valgrind traps on AVX-512.
 
-usage: ir.py --engines c,q-no-jit,q-b-jit,q-default --ds unionfind --cases chain --n 20000
+usage: ir.py --engines c,q-no-jit,q-default --ds unionfind --cases chain --n 20000
              [--quench PATH] [--reps 1] [--warmup 0] [--tag NAME]
 """
 import argparse, json, os, subprocess, sys, tempfile
@@ -41,7 +41,7 @@ def whole_run(engine, ds, case, length, reps, warmup, quench):
                            cwd=cwd, check=True)
         argv += ["./driver_ir"]
     else:
-        mode = {"q-no-jit": ["--no-jit"], "q-b-jit": ["--b-jit"], "q-default": []}[engine]
+        mode = {"q-no-jit": ["--no-jit"], "q-default": []}[engine]
         argv += [quench, *mode, "--expose-gc", "driver.mjs"]
         cwd = SUITE / ds / "node"
         cache = HERE / "results" / ".xdg"
@@ -73,7 +73,7 @@ def measure(engine, ds, case, n, reps, warmup, quench):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engines", default="c,q-no-jit,q-b-jit,q-default")
+    ap.add_argument("--engines", default="c,q-no-jit,q-default")
     ap.add_argument("--ds", required=True)
     ap.add_argument("--cases", default="")
     ap.add_argument("--n", type=int, default=20000)
