@@ -33,8 +33,8 @@ pub(crate) struct VirtualObject {
     aliases: smallvec::SmallVec<[Register; 2]>,
     /// The plan's callee, which the allocation at a leave constructs again.
     callee: PlanCallee,
-    /// The construct site of the construction (`construct_site`), whose class the allocation at a leave builds under.
-    site: u64,
+    /// The class the construction builds under (`construct_class`), which the allocation at a leave builds under.
+    class: u32,
     /// Per field in slot order: its name, and the variable holding its tagged value (an
     /// argument's, or a constant's) with the type the value had.
     fields: smallvec::SmallVec<[(Atom, Option<Variable>, Value, Type); 4]>,
@@ -74,7 +74,7 @@ pub(crate) struct JoinedVirtuals {
 fn same_receivers(template: &[VirtualObject], live: &[VirtualObject]) -> bool {
     template.len() == live.len() && template.iter().zip(live).all(|(kept, other)| kept.aliases.len() == other.aliases.len()
         && kept.aliases.iter().all(|register| other.aliases.contains(register))
-        && kept.callee == other.callee && kept.site == other.site && kept.arguments.len() == other.arguments.len()
+        && kept.callee == other.callee && kept.class == other.class && kept.arguments.len() == other.arguments.len()
         && kept.fields.len() == other.fields.len()
         && kept.fields.iter().zip(&other.fields).all(|(field, theirs)| field.0 == theirs.0 && field.1.is_some() == theirs.1.is_some()
             && field.2 == theirs.2 && field.3 == theirs.3))
@@ -100,8 +100,8 @@ fn same_receivers(template: &[VirtualObject], live: &[VirtualObject]) -> bool {
 #[derive(Clone, Copy)]
 pub(crate) struct ConstructReady {
     callee: PlanCallee,
-    /// The construct site the test is for: a plan serves only the class of its site.
-    site: u64,
+    /// The class the test is for: a plan serves only the class it is built under.
+    class: u32,
     variable: Variable,
     header: usize,
     end: usize,
@@ -151,8 +151,8 @@ impl Lowering<'_, '_> {
     /// object until one is needed (`materialize_virtuals`).
     pub(crate) fn virtual_construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, plan: ScalarConstructPlan) -> bool {
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return false };
-        let Some(site) = self.construct_site(pc) else { return false };
-        let site_word = self.raw_const(Lane::I64, site as i64);
+        let Some(class) = self.construct_class(pc, Some(instruction.register_b())) else { return false };
+        let class_word = self.raw_const(Lane::I64, i64::from(class));
         let exit = self.guard_exit(state, pc as u32);
         let expected = self.plan_callee_word(plan.callee);
         if !self.construct_callee_proven(pc, instruction.register_b()) {
@@ -161,7 +161,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, same, exit);
         }
         let ready = self.construct_ready.iter()
-            .find(|ready| ready.callee == plan.callee && ready.site == site && (ready.header..=ready.end).contains(&pc))
+            .find(|ready| ready.callee == plan.callee && ready.class == class && (ready.header..=ready.end).contains(&pc))
             .map(|ready| ready.variable);
         let holds = match ready {
             // Tested on the loop's entering edge, or at an earlier construction, with only quiet
@@ -176,7 +176,7 @@ impl Lowering<'_, '_> {
                 self.branch_if(flag, (join, &[one]), (slow, &[]));
                 self.builder.switch_to_block(slow);
                 let payload = self.payload;
-                let tested = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, site_word]);
+                let tested = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, class_word]);
                 self.goto(join, &[tested]);
                 self.builder.switch_to_block(join);
                 // Past the guard below the test held, and this construction allocates nothing.
@@ -185,7 +185,7 @@ impl Lowering<'_, '_> {
             }
             None => {
                 let payload = self.payload;
-                self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, site_word])
+                self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, class_word])
             }
         };
         let held = self.raw_compare_imm(Relation::NotEqual, holds, 0);
@@ -211,7 +211,7 @@ impl Lowering<'_, '_> {
         // The definition releases the register from any receiver it aliased (`register_define`).
         let placeholder = self.raw_const(Lane::I64, 0);
         self.define(state, result, placeholder, RegisterFact::definition(Type::ANY, Representation::Tagged));
-        state.virtuals.push(VirtualObject { aliases: smallvec::smallvec![result], callee: plan.callee, site, fields, arguments });
+        state.virtuals.push(VirtualObject { aliases: smallvec::smallvec![result], callee: plan.callee, class, fields, arguments });
         true
     }
 
@@ -357,7 +357,7 @@ impl Lowering<'_, '_> {
                 };
                 fields.push((*atom, variable, *constant, *ty));
             }
-            objects.push(VirtualObject { aliases: kept.aliases.clone(), callee: kept.callee, site: kept.site, fields, arguments });
+            objects.push(VirtualObject { aliases: kept.aliases.clone(), callee: kept.callee, class: kept.class, fields, arguments });
         }
         Some(objects)
     }
@@ -401,14 +401,14 @@ impl Lowering<'_, '_> {
             let arguments = self.slot_address(slot, 0);
             let callee = self.plan_callee_word(kept.callee);
             let argc = self.raw_const(Lane::I64, count as i64);
-            let site = self.raw_const(Lane::I64, kept.site as i64);
+            let class = self.raw_const(Lane::I64, i64::from(kept.class));
             let payload = self.payload;
             // The plan held at the construction and nothing since could retire it: the allocation
             // cannot refuse for the plan, and a due collection is no refusal (DESIGN 4.7). Were the
             // plan refused anyway, the answer is `DELETED`, which the code does not resume with: it
             // is a violated invariant, so the trap stops the code rather than resume with a register
             // that names no object.
-            let this = self.helper_call(LaneHelper::MaterializeConstruct, &[payload, callee, site, arguments, argc]);
+            let this = self.helper_call(LaneHelper::MaterializeConstruct, &[payload, callee, class, arguments, argc]);
             let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
             self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
             self.bind_allocated(state, &kept.aliases, this);

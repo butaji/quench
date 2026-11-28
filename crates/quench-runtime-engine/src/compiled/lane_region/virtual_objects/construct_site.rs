@@ -1,5 +1,5 @@
-//! The construct site a compiled construction names: its function and PC in the original program, whose class the
-//! runtime reads (`Vm::construct_site_class`, `compiled::constructions`), and the readiness tests a loop hoists for them.
+//! The class of a compiled construction, fixed at compile time (`AotFacts::construct_class`, or the proven callee's body),
+//! and the readiness tests a loop hoists for it.
 use super::super::Lowering;
 use super::*;
 
@@ -12,11 +12,19 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The construct site of the construction at unit PC `pc`, packed for the compiled helpers: its function in the high
-    /// word, its PC in the low word.
-    pub(crate) fn construct_site(&self, pc: usize) -> Option<u64> {
+    /// The class of the construction at unit PC `pc`, as a compile-time constant: the closed world's construct class of
+    /// its site (`AotFacts::construct_class`), else the body of the callee the site proves (`construct_callee_proven`'s
+    /// identity: the callee register's cell names that body's one closure, so `callee` is the register it is read through,
+    /// `None` for a callee that is no register). `None` where neither is known; the construction then takes no class and
+    /// leaves to the generic construct.
+    pub(crate) fn construct_class(&self, pc: usize, callee: Option<Register>) -> Option<u32> {
         let (function, at) = self.construct_origin(pc)?;
-        Some((u64::from(function) << 32) | u64::from(at))
+        let facts = self.vm.facts?;
+        facts.construct_class(function, at).or_else(|| {
+            let callee = callee?;
+            facts.function_facts(function).construct_target(at)
+                .filter(|&body| self.cell_before(pc, callee).identity == quench_runtime::typed_ir::Identity::Closure(body))
+        })
     }
 
     /// On an entering edge of the loop at `header`, entered there only, the test of each
@@ -25,26 +33,27 @@ impl Lowering<'_, '_> {
     /// each construction then tests at its site and leaves there as before.
     pub(crate) fn hoist_constructions(&mut self, header: usize) {
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
-        // Each callee with the construct site it is built at: a plan serves one site's class (`ConstructReady`).
-        let mut sites = smallvec::SmallVec::<[(PlanCallee, u64); 2]>::new();
+        // Each callee with the class it is built under: a plan serves one class (`ConstructReady`).
+        let mut classes = smallvec::SmallVec::<[(PlanCallee, u32); 2]>::new();
         for pc in header..=end {
-            let Some(plan) = self.virtual_construct_plan(pc, self.unit.instructions[pc]) else { continue };
-            let Some(site) = self.construct_site(pc) else { continue };
-            if !sites.contains(&(plan.callee, site)) { sites.push((plan.callee, site)); }
+            let instruction = self.unit.instructions[pc];
+            let Some(plan) = self.virtual_construct_plan(pc, instruction) else { continue };
+            let Some(class) = self.construct_class(pc, Some(instruction.register_b())) else { continue };
+            if !classes.contains(&(plan.callee, class)) { classes.push((plan.callee, class)); }
         }
-        for (callee, site) in sites {
-            // One variable per callee and site: an inner loop's entry and an outer one's define the same.
-            let variable = match self.construct_ready.iter().find(|ready| ready.callee == callee && ready.site == site) {
+        for (callee, class) in classes {
+            // One variable per callee and class: an inner loop's entry and an outer one's define the same.
+            let variable = match self.construct_ready.iter().find(|ready| ready.callee == callee && ready.class == class) {
                 Some(ready) => ready.variable,
                 None => self.builder.declare_var(types::I64),
             };
             let expected = self.plan_callee_word(callee);
-            let site_word = self.raw_const(Lane::I64, site as i64);
+            let class_word = self.raw_const(Lane::I64, i64::from(class));
             let payload = self.payload;
-            let holds = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, site_word]);
+            let holds = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected, class_word]);
             self.builder.def_var(variable, holds);
-            if !self.construct_ready.iter().any(|ready| ready.callee == callee && ready.site == site && ready.header == header) {
-                self.construct_ready.push(ConstructReady { callee, site, variable, header, end });
+            if !self.construct_ready.iter().any(|ready| ready.callee == callee && ready.class == class && ready.header == header) {
+                self.construct_ready.push(ConstructReady { callee, class, variable, header, end });
             }
         }
     }

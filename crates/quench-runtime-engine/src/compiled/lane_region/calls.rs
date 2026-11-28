@@ -177,7 +177,7 @@ impl Lowering<'_, '_> {
                 let tail = owned.filter(|_| proven.is_none() && callees.len() == 1)
                     .and_then(|callee| self.sibling_tail_arguments(pc, record, &site, callee));
                 let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, returned, missed, raised,
-                    stop: self.call_out_stop(), leave: self.leave_site(), initializing, tail, construct: site.constructs().then(|| self.construct_site(pc)).flatten() };
+                    stop: self.call_out_stop(), leave: self.leave_site(), initializing, tail, construct: site.constructs().then(|| self.construct_class(pc, match site.callee { quench_runtime::staged::forms::Callee::Register(register) => Some(register), _ => None })).flatten() };
                 self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
             }
         }
