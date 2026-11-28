@@ -542,6 +542,11 @@ pub(super) fn resolved(call: &Call, callees: &[u32], census: &Census) -> bool {
         // A method read off a receiver whose solved classes each hold their own method of the name, all among the callees, runs
         // one of them: the classes are the solve's own (a guess to a lane, which guards them), so within the solve the call is
         // resolved, and its arguments flow to the callees' parameters, not to unseen code. A key new code can move is no proof.
+        // A static method read off its class's own constructor closure (`C.m()`), where the class's static key holds one closure
+        // (`Census::static_method`), runs that closure: the read's holder is the closure the receiver is, not an instance's class.
+        (Target::Register, Some(Origin::MemberOn { class, instance: false, atom, guess: false }))
+            if call.receiver.cell.ty.body_index() == Some(census.classes.body(class)) =>
+            !census.live_callee(call.callee) && census.static_method(class, atom, callees),
         (Target::Register, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. })) => {
             !census.live_callee(call.callee) && census.own_methods(call.receiver.cell.classes, atom, callees)
         }

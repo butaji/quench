@@ -146,11 +146,12 @@ pub(super) fn global_object_proof(flows: &[FunctionFlow], facts: &AotFacts, cens
 /// The body that runs the program's top-level code, once per run: the root, or the body of the one closure the root makes and
 /// returns where the host calls that value once (`ResidualProgram::host_calls_result_once`, the CommonJS loader's wrapper, whose
 /// body holds the whole script). The wrapper body runs once only while no code can reach it as a value to call it again: it reads
-/// no `arguments` (`arguments.callee` is the wrapper), and the program names no `caller` (a function's `caller` read may be the
-/// wrapper). A root that does anything but make that closure and return it keeps the root as the body.
+/// no `arguments` (`arguments.callee` is the wrapper), and legacy reflection never hands it out (`Vm::hides_host_wrapper`: a
+/// `caller` read and a stack trace's `getFunction` answer `null` and `undefined` for it, as for top-level code). A root that does
+/// anything but make that closure and return it keeps the root as the body.
 pub(crate) fn once_body(program: &ResidualProgram) -> u32 {
     use crate::bytecode::JsDenotation;
-    if !program.host_calls_result_once || program.atoms.iter().any(|name| name == "caller") { return 0; }
+    if !program.host_calls_result_once { return 0; }
     let wrapped = program.with_record(0, |root| {
         let mut made = None;
         for pc in 0..root.code.len() {

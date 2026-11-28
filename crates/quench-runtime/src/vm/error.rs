@@ -916,7 +916,7 @@ impl Vm {
                 record.this_value
             }),
             Native::CallSiteGetFunction => Ok(match record.name {
-                CallSiteName::Callable(function) if !record.hide_identity => function,
+                CallSiteName::Callable(function) if !record.hide_identity && !self.hides_host_wrapper(function) => function,
                 _ => Value::UNDEFINED,
             }),
             Native::CallSiteGetMethodName => Ok(self.call_site_method_name(&record)?

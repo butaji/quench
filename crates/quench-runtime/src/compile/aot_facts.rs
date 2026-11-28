@@ -28,6 +28,7 @@ mod frozen;
 mod function;
 mod gate;
 mod identity;
+pub(crate) use identity::once_body;
 mod globals;
 mod length_settle;
 mod lengths;

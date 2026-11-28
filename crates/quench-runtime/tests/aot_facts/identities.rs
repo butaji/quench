@@ -216,9 +216,11 @@ fn a_returned_wrapper_the_host_may_call_again_keeps_no_closure_identity() {
 }
 
 #[test]
-fn a_commonjs_body_a_caller_read_may_reach_keeps_no_closure_identity() {
+fn a_commonjs_body_keeps_its_closure_identity_past_a_caller_read() {
+    // Legacy reflection never hands out the host's wrapper (`f.caller` reads `null` there, `Vm::hides_host_wrapper`), so a
+    // `caller` read reaches no value that could run the body again.
     let program = commonjs(&format!("{MODULE} function f() {{ return f.caller; }} f();"), true);
-    assert!(!analyze(&program).closure_identity(function_named(&program, "S") as u32), "f.caller is the wrapper, which may be called again");
+    assert!(analyze(&program).closure_identity(function_named(&program, "S") as u32), "f.caller is null, not the wrapper");
 }
 
 #[test]

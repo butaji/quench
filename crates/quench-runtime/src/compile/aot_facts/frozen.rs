@@ -153,6 +153,11 @@ struct RootOrder {
     blocks: Blocks,
     dominators: Dominators,
     seeded: Vec<bool>,
+    /// Per function, whether it is a seed only as a closure a named property holds (`gate::named_closures`): code the call graph
+    /// does not record may call it only once its closure exists, so only after its creation.
+    named: Vec<bool>,
+    /// Per function, the PC in the body of its closure's one creation site in the program, where it has one there.
+    created: Vec<Option<u32>>,
 }
 
 impl RootOrder {
@@ -162,13 +167,28 @@ impl RootOrder {
         let blocks = Blocks::of(&Successors::of_code(root), root.code.len());
         let dominators = Dominators::of(&blocks, root.code.len());
         let mut seeded = vec![false; flows.len()];
-        for seed in gate::seeds(program, flows, census, escaped) {
+        for seed in gate::started_seeds(program, flows, census, escaped) {
             if let Some(slot) = seeded.get_mut(seed as usize) { *slot = true; }
         }
         // The body runs once, from its entry, and its own reads are ordered by its dominators: no seed or escape starts it again
         // (`once_body`), though the host's call of the wrapper makes it a seed and its return an escape.
         if let Some(slot) = seeded.get_mut(body as usize) { *slot = false; }
-        Self { body, blocks, dominators, seeded }
+        let mut named = vec![false; flows.len()];
+        for function in gate::named_closures(flows) {
+            if let Some(slot) = named.get_mut(function as usize) { *slot = !seeded[function as usize]; }
+        }
+        // Each body's creation sites: one in the body that runs once is the closure's only creation.
+        let mut sites: Vec<Vec<(u32, u32)>> = vec![Vec::new(); flows.len()];
+        for id in 0..program.function_count() {
+            program.with_record(id, |function| for pc in 0..function.code.len() {
+                let instruction = function.instruction_at(pc);
+                if instruction.op() == crate::bytecode::Op::MakeClosure && let Some(made) = sites.get_mut(instruction.closure_function_index() as usize) {
+                    made.push((id as u32, pc as u32));
+                }
+            });
+        }
+        let created = sites.iter().map(|made| match made.as_slice() { [(owner, pc)] if *owner == body => Some(*pc), _ => None }).collect();
+        Self { body, blocks, dominators, seeded, named, created }
     }
 }
 
@@ -181,7 +201,7 @@ fn dominating_store(order: &RootOrder, flows: &[FunctionFlow], facts: &AotFacts,
     let [(function, pc, word)] = sites else { return None };
     // A store no path from the entry reaches never writes the key.
     if *function != order.body || !order.dominators.reached(*pc) { return None; }
-    dominates_reads(flows, facts, census, &order.seeded, &order.dominators, order.body, *pc, key_reads).then_some((*pc, *word))
+    dominates_reads(flows, facts, census, order, *pc, key_reads).then_some((*pc, *word))
 }
 
 /// The key a write or a read of `key` belongs to: a global's own, a slot's own, and a named property's name-wide group (every
@@ -237,35 +257,40 @@ fn immediate(constant: &Constant) -> Option<Value> {
 
 /// Whether every read in `key_reads` runs after the store at root `store`: a read in the root is dominated by it, and a read in
 /// another function runs only after it (`late`).
-fn dominates_reads(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, seeded: &[bool], dominators: &Dominators,
-    body: u32, store: u32, key_reads: &[(u32, u32)],
-) -> bool {
+fn dominates_reads(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, order: &RootOrder, store: u32, key_reads: &[(u32, u32)]) -> bool {
     if key_reads.is_empty() { return true; }
-    let late = late_functions(flows, facts, census, seeded, dominators, body, store);
+    let late = late_functions(flows, facts, census, order, store);
     key_reads.iter().all(|&(function, pc)| {
-        if function == body { dominators.dominates_pc(store, pc) } else { late.get(function as usize).copied().unwrap_or(false) }
+        if function == order.body { order.dominators.dominates_pc(store, pc) } else { late.get(function as usize).copied().unwrap_or(false) }
     })
 }
 
-/// Per function, whether it runs only after the store at `store` of the body that runs once (`body`): not a seed, and every call
-/// the solve may reach it by is made in that body after the store, or from a function that is itself late. A greatest fixpoint:
-/// a function starts late and loses the mark at the first call that may run before the store. The root, where it is not the
-/// body, runs before it.
-fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, seeded: &[bool], dominators: &Dominators, body: u32,
-    store: u32,
-) -> Vec<bool> {
-    let mut late: Vec<bool> = (0..flows.len()).map(|function| function != body as usize && function != 0 && !seeded[function]).collect();
+/// Per function, whether it runs only after the store at `store` of the body that runs once (`RootOrder::body`): not a seed, and
+/// every call the solve may reach it by is made in that body after the store, or from a function that is itself late. A closure
+/// a named property holds (`RootOrder::named`) is late too where its one creation comes after the store, or where no point that
+/// may run guest code (`FunctionFlow::guest_runs`, where code the call graph does not record may call it) comes before the
+/// store: in the body before it, or in a function that is not late. A greatest fixpoint: a function starts late and loses the
+/// mark at the first call that may run before the store. The root, where it is not the body, runs before it.
+fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, order: &RootOrder, store: u32) -> Vec<bool> {
+    let (body, dominators) = (order.body as usize, &order.dominators);
+    let after_store = |caller: usize, pc: u32, late: &[bool]| if caller == body { dominators.dominates_pc(store, pc) } else { late[caller] };
+    let created_after = |function: usize| order.created[function].is_some_and(|pc| dominators.dominates_pc(store, pc));
+    let mut late: Vec<bool> = (0..flows.len()).map(|function| function != body && function != 0 && !order.seeded[function]).collect();
     loop {
         let mut changed = false;
+        let mut unmark = |callee: usize, late: &mut Vec<bool>| if let Some(mark) = late.get_mut(callee) && *mark { *mark = false; changed = true; };
         for (caller, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let after_store = if caller == body as usize { dominators.dominates_pc(store, call.pc) } else { late[caller] };
-                if after_store { continue; }
-                for callee in reached_by(caller as u32, call, facts, census) {
-                    if let Some(mark) = late.get_mut(callee as usize) && *mark {
-                        *mark = false;
-                        changed = true;
-                    }
+                if after_store(caller, call.pc, &late) { continue; }
+                for callee in reached_by(caller as u32, call, facts, census) { unmark(callee as usize, &mut late); }
+            }
+            // Code the call graph does not record may call a named closure that exists at a guest run before the store: in the
+            // body, one whose creation the run does not dominate; elsewhere, one not created after the store.
+            let early: Vec<u32> = flow.guest_runs.iter().copied().filter(|&pc| !after_store(caller, pc, &late)).collect();
+            for pc in early {
+                for function in 0..flows.len() {
+                    let exists = if caller == body { order.created[function].is_none_or(|made| !dominators.dominates_pc(pc, made)) } else { !created_after(function) };
+                    if order.named[function] && exists { unmark(function, &mut late); }
                 }
             }
         }

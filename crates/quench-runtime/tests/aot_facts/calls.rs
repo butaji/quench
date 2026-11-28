@@ -292,3 +292,33 @@ fn an_atom_no_method_call_names_is_uncached_in_a_closed_program() {
     assert!(facts.uncached_atoms().contains(&atom_named(&program, "q")), "no method call site names q");
     assert!(!facts.uncached_atoms().contains(&atom_named(&program, "m")), "a method call site names m, which a method cache may hold");
 }
+
+#[test]
+fn a_static_method_call_on_its_constructor_is_resolved() {
+    // `C.m(3)` reads `m` off `C`'s own closure, whose static key holds one closure: the call runs it, so its argument flows
+    // to `m`'s parameter and does not reach unseen code.
+    let program = program("(function () { function C() {} C.m = function m(x) { return x | 1; }; \
+        function f() { return C.m(3); } f(); new C(); })();");
+    let facts = analyze(&program);
+    assert!(parameter(&program, &facts, "m", 0).ty.is_subtype(Type::INT32));
+}
+
+#[test]
+fn a_field_store_into_a_local_object_leaves_the_global_of_its_name() {
+    // `o` is a literal, never the global object: `o.x = 'a'` writes no global `x`, which keeps its one store.
+    let program = program("var x = 5; (function () { var o = {}; o.x = 'a'; return o; })();");
+    let facts = analyze(&program);
+    let ty = facts.cell(FactKey::Global(atom_named(&program, "x"))).map(|cell| cell.ty);
+    assert!(ty.is_some_and(|ty| ty.is_subtype(Type::INT32)), "the global keeps its number: {ty:?}");
+}
+
+#[test]
+fn a_closure_stored_in_a_field_shares_no_elements_with_the_unnamed_class() {
+    // A closure is its own object (`ElementClass::Closure`): its store into `h` joins `h`'s element class to the closure's,
+    // not to the unnamed class every unresolved value shares.
+    let program = program("(function () { function C() { this.h = function h(a) { return a | 1; }; } var c = new C(); return c; })();");
+    let facts = analyze(&program);
+    let h = atom_named(&program, "h");
+    let class = facts.element_class_keys(FactKey::Elements(ElementClass::Field(h)));
+    assert!(!class.contains(&FactKey::Elements(ElementClass::Unnamed)), "{class:?}");
+}

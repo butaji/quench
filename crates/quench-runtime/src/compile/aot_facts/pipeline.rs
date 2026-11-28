@@ -195,7 +195,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         None => escapes::escapes(&first, &first_facts, &first_census, &scope),
     };
     let mut settled_escapes = None;
-    let (undominated, undominated_bodies) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
+    let (undominated, _) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
     let mut resolved = first_census.singles();
     resolved.retain(|key, _| !undominated.contains(&census::fact_key(*key)));
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
@@ -364,7 +364,13 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
         facts.builtins = identity::builtin_proofs(program, world, &settled_flows, &scope, &facts.cells);
         facts.closures_once = identity::closures_once(program, world);
-        facts.closures_once.retain(|body| !undominated_bodies.contains(body));
+        // A closure read before its store holds `undefined` there, so no identity: judged over the settled solve, whose types
+        // name the stores the first pass could not (an indexed store `a[i] = x` with `i` a Number writes no named key).
+        let (_, settled_undominated) = frozen::undominated_closures(program, &settled_flows, &facts, &census, &open_escapes);
+        facts.closures_once.retain(|body| !settled_undominated.contains(body));
+        if crate::trace::Channel::AotLanes.on() {
+            eprintln!("aot-lanes: once body {}, closures once {:?}", identity::once_body(program), facts.closures_once);
+        }
         // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.
         let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
         facts.global_object_identity = identity::global_object_proof(&settled_flows, &facts, &census, &scope, &this_undefined);

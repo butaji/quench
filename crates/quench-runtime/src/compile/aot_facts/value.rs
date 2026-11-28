@@ -171,6 +171,9 @@ impl Word {
             Some(Origin::Alloc { function, pc }) => ElementClass::Allocation { function, pc },
             Some(Origin::Parameter { function, index }) => ElementClass::Parameter { function, index },
             Some(Origin::Receiver(function)) => ElementClass::Receiver(function),
+            // A closure of one body with no origin (its allocation, or a join of its reads) names its body's class, so a
+            // store of it into a field joins that class, not the unnamed one every unresolved value shares.
+            None => self.cell.ty.body_index().map_or(ElementClass::Unnamed, ElementClass::Closure),
             _ => ElementClass::Unnamed,
         }
     }
@@ -184,12 +187,11 @@ impl Word {
         (self.cell.elements != Elements::NEVER && from != class).then_some((from, class))
     }
 
-    /// The links a join of `self` with `other` makes where their origins differ (`flow::Solver::join_words`): the joined word
-    /// has no origin, so an array either word holds joins the unnamed class, which a store or read through the joined word
-    /// names. A join of one origin keeps it, and makes no link.
+    /// The links a join of `self` with `other` makes (`flow::Solver::join_words`): each word whose class is not the joined
+    /// word's joins it, since a store or read through the joined word names that class. A join of one class makes no link.
     pub(super) fn join_links(self, other: Self) -> impl Iterator<Item = (ElementClass, ElementClass)> {
-        let differ = self.origin != other.origin;
-        [self, other].into_iter().filter(move |_| differ).filter_map(|word| word.link(ElementClass::Unnamed))
+        let joined = self.join(other).elements_key();
+        [self, other].into_iter().filter_map(move |word| word.link(joined))
     }
 
     /// The atom `self` is the property-key constant of, if it is one.

@@ -537,6 +537,9 @@ pub enum ElementClass {
     Parameter { function: u32, index: u16 },
     /// The arrays `this` of function `function` holds. A resolved call joins its receiver's class to it, as a parameter's.
     Receiver(u32),
+    /// The indexed properties of the closures of body `0` a value with no origin holds: each closure is its own object, and a
+    /// store of one into a key joins this class to the key's, as an array's store does.
+    Closure(u32),
     /// The arrays no key names: an element of an array, a value read with no origin, an argument or receiver of a call
     /// the solve does not resolve, and every array that may reach code the solve does not follow (an escaped function's).
     /// The arguments of a function that reads its `arguments` object join it too (`flow::bound_parameters`).

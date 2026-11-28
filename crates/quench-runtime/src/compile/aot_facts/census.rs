@@ -246,6 +246,11 @@ impl Census {
         !ids.is_empty() && ids.iter().all(|&class| matches!(self.members_on.get(&(class, true, atom)), Some(Some(function)) if callees.contains(function)))
     }
 
+    /// Whether class `class`'s constructor-side key of `atom` holds one closure (`members_on`), and the callees are that closure.
+    pub(super) fn static_method(&self, class: u32, atom: u32, callees: &[u32]) -> bool {
+        matches!(self.members_on.get(&(class, false, atom)), Some(Some(function)) if callees == [*function])
+    }
+
     /// The closure `key` holds, when it is written once, with a closure, and no write the
     /// analysis cannot follow reaches it.
     fn single(&self, key: Key) -> Option<u32> {
