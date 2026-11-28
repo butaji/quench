@@ -6,8 +6,10 @@
 //! interpreter runs the loop; there is no checked twin.
 
 use super::super::*;
+use super::super::scalar::parameter_register;
 use super::plan::access_registers;
 use super::{Nest, Reach, Resolved, Version};
+use quench_runtime::bytecode::Function;
 use quench_runtime::compile::aot_facts::{Affine, Base};
 
 /// The most forms an end of an index range holds (the analysis's `MAX_TERMS`).
@@ -32,15 +34,15 @@ pub(crate) struct Linear {
 }
 
 impl Linear {
-    /// `form` as a linear form over registers, where its coefficients and offset are within the limits.
-    /// A form over a parameter's entry value is none: the lane does not read parameters on a loop's entry.
-    fn of(form: Affine) -> Option<Self> {
+    /// `form` as a linear form over registers, where its coefficients and offset are within the limits. A base
+    /// that is a parameter reads its register by `parameter` (its entry value, which nothing in the function writes).
+    fn of(form: Affine, parameter: &impl Fn(u16) -> Option<Register>) -> Option<Self> {
         if !(-OFFSET_LIMIT..=OFFSET_LIMIT).contains(&form.offset) { return None; }
         let mut terms = [None; 2];
         for (slot, term) in terms.iter_mut().zip(form.terms) {
             *slot = match term {
                 None => None,
-                Some((Base::Register(register), coefficient)) if (-COEFFICIENT_LIMIT..=COEFFICIENT_LIMIT).contains(&coefficient) => Some((register, coefficient)),
+                Some((base, coefficient)) if (-COEFFICIENT_LIMIT..=COEFFICIENT_LIMIT).contains(&coefficient) => Some((register_of(base, parameter)?, coefficient)),
                 Some(_) => return None,
             };
         }
@@ -48,21 +50,37 @@ impl Linear {
     }
 }
 
-/// The index range of an access as the lane takes it: the function PC of the loop it is invariant in, and
-/// the forms of its floor and ceiling.
+/// The register a base's value is read from on a loop's entering edge: a register, or a parameter's entry register.
+fn register_of(base: Base, parameter: &impl Fn(u16) -> Option<Register>) -> Option<Register> {
+    match base {
+        Base::Register(register) => Some(register),
+        Base::Parameter(index) => parameter(index),
+    }
+}
+
+/// The register parameter `index` enters in, where it is the register the analysis proves unwritten
+/// (`AotFacts`' `promoted_register`): only then does the lane's parameter register hold the entry value a form reads.
+fn parameter_entry_register(function: &Function, index: u16) -> Option<Register> {
+    let register = parameter_register(function, usize::from(index))?;
+    (function.promoted_register(index) == Some(register)).then_some(register)
+}
+
+/// The index range of an access as the lane takes it: the function PC of the loop it is invariant in, the forms of
+/// its floor and ceiling, and whether the index is an integer wherever it is not NaN (`IndexRange::integral`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Ends {
     pub(crate) header: u32,
     pub(crate) floor: Linears,
     pub(crate) ceiling: Linears,
+    pub(crate) integral: bool,
 }
 
 /// The forms of one end, where each is admitted by `Linear::of`, there are at most `FORMS`, and there is at least one.
-fn linears_of(end: impl Iterator<Item = Affine>) -> Option<Linears> {
+fn linears_of(end: impl Iterator<Item = Affine>, parameter: &impl Fn(u16) -> Option<Register>) -> Option<Linears> {
     let mut linears: Linears = [None; FORMS];
     let mut count = 0;
     for form in end {
-        *linears.get_mut(count)? = Some(Linear::of(form)?);
+        *linears.get_mut(count)? = Some(Linear::of(form, parameter)?);
         count += 1;
     }
     (count > 0).then_some(linears)
@@ -76,7 +94,10 @@ impl Lowering<'_, '_> {
         let function_pc = self.caller_pc(pc)?;
         let range = self.vm.facts?.function_facts(self.function_id).index_ceiling(function_pc)?;
         if range.nan { return None; }
-        Some(Ends { header: range.header, floor: linears_of(range.floor.forms())?, ceiling: linears_of(range.ceiling.forms())? })
+        let function = self.program.function_get(self.function_id as usize)?;
+        let parameter = |index: u16| parameter_entry_register(function, index);
+        Some(Ends { header: range.header, integral: range.integral,
+            floor: linears_of(range.floor.forms(), &parameter)?, ceiling: linears_of(range.ceiling.forms(), &parameter)? })
     }
 
     /// The reach of the access at unit PC `pc` proved by the entry of the loop `ends` names, where that loop

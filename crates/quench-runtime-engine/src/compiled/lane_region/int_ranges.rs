@@ -14,7 +14,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
-use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Reach, Resolved, Shape, Version};
 use super::loop_versions::affine_reach::Ends;
 
 /// The facts one analysis proves, by unit PC.
@@ -27,6 +27,9 @@ pub(crate) struct IntRanges {
     /// (`Lowering::version_loops`), by PC (ascending). Every loop whose body may resize an array
     /// keeps none of its own, and the body of a loop keeps only the versions its own entries check.
     versioned: Vec<Version>,
+    /// The accesses whose index is an integer wherever it is not NaN, and whose affine version keeps its
+    /// entry check (`Ends::integral`): inside that version the index is an int32 with no representation test.
+    integral: quench_runtime::dataflow::BitSet,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
     /// The relations of registers holding no Number that a loop's entry decides once
@@ -55,7 +58,7 @@ impl IntRanges {
     pub(crate) fn new(instructions: usize) -> Self {
         Self { overflow_free: quench_runtime::dataflow::BitSet::with_capacity(instructions), in_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             string_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            versioned: Vec::new(), integral: quench_runtime::dataflow::BitSet::with_capacity(instructions), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             non_negative_dividend: quench_runtime::dataflow::BitSet::with_capacity(instructions), nonzero_divisor: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             numeric_stores: quench_runtime::dataflow::BitSet::with_capacity(instructions) }
     }
@@ -98,6 +101,10 @@ impl IntRanges {
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
     pub(crate) fn versioned(&self) -> &[Version] { &self.versioned }
+
+    /// Whether the index of the element access at `pc` is an int32 inside its affine version, which its loop's entry
+    /// proved in range and integral wherever it is not NaN: its representation takes no test (`Lowering::integral_index`).
+    pub(crate) fn integral_index(&self, pc: usize) -> bool { self.integral.contains(pc) }
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(crate) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
@@ -274,6 +281,9 @@ impl Lowering<'_, '_> {
         let settled = self.settled_versions(nest.loops, candidates);
         for resolved in resolved {
             if settled.iter().any(|version| version.pc == resolved.version.pc && version.header == resolved.version.header) { proved.keep(resolved); }
+        }
+        for (pc, _) in seen.ends.iter().filter(|(pc, ends)| ends.integral && settled.iter().any(|version| version.pc == *pc && matches!(version.reach, Reach::Affine { .. }))) {
+            proved.integral.insert(*pc);
         }
         proved.versioned.sort_by_key(|version| version.pc);
     }

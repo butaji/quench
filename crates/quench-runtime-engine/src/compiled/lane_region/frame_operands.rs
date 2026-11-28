@@ -195,6 +195,21 @@ pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &
     int
 }
 
+/// The int32 index of a register held as a binary64 that its loop's entry proved integral wherever it is not NaN
+/// (`IntRanges::integral_index`): the truncation of the Number, with no exactness test. The register is left as it
+/// was, so a -0 it holds stays a -0 for its other reads, and an element access reads the index 0 it truncates to.
+/// `None` where the register is no binary64 home without a tag, where its guarded read applies.
+pub(crate) fn integral_index_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &State, register: Register) -> Option<ir::Value> {
+    let index = usize::from(register);
+    let fact = state.values[index];
+    if !matches!(fact.value.representation, Representation::Float64) || fact.tagged.current() { return None; }
+    let variable = register_float(builder, registers, index);
+    let home = NumberFact::of_representation(Representation::Float64).expect("a float home");
+    let (number, mut stage) = (Float64::by_fact(builder.use_var(variable), home), emit(builder));
+    Some(quench_runtime::staged::value::exact_int32(&mut stage, number.word()).0)
+}
+
 /// The int32 of a register held as a binary64: the staged exactness guard, or the truncation
 /// alone where its type proves it an int32.
 fn float_home_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, index: usize,

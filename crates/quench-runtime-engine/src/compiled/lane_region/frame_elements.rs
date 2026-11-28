@@ -8,7 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use super::frame::{calls, held_long, operand_int, register_tagged};
+use super::frame::{calls, held_long, integral_index_value, operand_int, register_tagged};
 use quench_runtime::bytecode::{Operand, OperandKind};
 use quench_runtime::staged::element_rows::ElementView;
 use quench_runtime::staged::elements::DenseView;
@@ -21,8 +21,9 @@ use crate::compiled::emit_js_guard;
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
 #[derive(Clone, Copy)]
 pub(crate) enum Held {
-    /// A dense array's view, and what its access proves (`DenseView::packed`, `DenseView::within`).
-    Dense(super::super::DenseArrayView, (bool, bool)),
+    /// A dense array's view, what its access proves (`DenseView::packed`, `DenseView::within`), and whether its key
+    /// is an integer wherever it is not NaN and in range, so its int32 takes no test (`Lowering::integral_index`).
+    Dense(super::super::DenseArrayView, (bool, bool), bool),
     Typed(TypedView<ir::Value>),
     /// A typed view whose reads are `Value` words (`typed_read_value`): a base the row proved typed only at its miss.
     TypedValues(TypedView<ir::Value>),
@@ -103,10 +104,15 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     /// The key's index word, from the representation its fact proved: a 64-bit integer word as it
-    /// is (`held_long`), else its int32 (`operand_int`), which the rows zero-extend.
+    /// is (`held_long`), else, where the access's key is integral (`Held::Dense`), the truncation of its binary64
+    /// (`integral_index_value`), else its int32 (`operand_int`), which the rows zero-extend.
     fn index_key(&mut self, stage: &mut Emit<'b, 'c>, key: Operand, miss: ir::Block) -> Option<ir::Value> {
         let long = key.register_index().and_then(|register| held_long(stage.builder, self.registers, self.state, register));
-        long.or_else(|| operand_int(stage.builder, self.registers, self.state, self.constants, key, miss).map(quench_runtime::staged::Int32::word))
+        let integral = match self.held {
+            Some(Held::Dense(_, _, true)) => key.register_index().and_then(|register| integral_index_value(stage.builder, self.registers, self.state, register)),
+            _ => None,
+        };
+        long.or(integral).or_else(|| operand_int(stage.builder, self.registers, self.state, self.constants, key, miss).map(quench_runtime::staged::Int32::word))
     }
 
     /// The view an earlier access of the same array value proved, which no storage change has
@@ -114,7 +120,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     fn kept_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool) -> Option<ElementView<ir::Value>> {
         let held = match self.held {
             Some(Held::Typed(view) | Held::TypedValues(view)) => return Some(ElementView::Typed(view)),
-            Some(Held::Dense(view, proved)) => Some((view, proved)).filter(|(view, _)| view.writable || !writable),
+            Some(Held::Dense(view, proved, _)) => Some((view, proved)).filter(|(view, _)| view.writable || !writable),
             None => None,
         };
         let (view, (packed, within)) = held.or_else(|| self.state.proofs.arrays.iter()
