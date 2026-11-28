@@ -427,11 +427,6 @@ pub(crate) fn derive_lane_view<'live>(
     // Each record's handler before any fusion: a record still holding it
     // runs only its own instruction.
     let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-    // Whether a record's handler serves `op` with accumulator field `acc`.
-    let serves = |handler: *const (), op: u16, acc: u8| {
-        handler_in_lane(false, acc, usize::from(op))
-            .is_some_and(|served| handler == served.handler as *const ())
-    };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
     // that `handler` is, for an instruction whose handler depends on its jump's direction.
     let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
@@ -457,22 +452,6 @@ pub(crate) fn derive_lane_view<'live>(
             }
         }
     }
-    // A record's plain jump, with its direction.
-    let jump_direction = |handler: *const ()| {
-        [false, true].into_iter().find(|&backward| {
-            handler_in_lane(backward, ACC_NONE, quench_runtime::staged::JUMP_ROW as usize)
-                .is_some_and(|jump| handler == jump.handler as *const ())
-        })
-    };
-    let _entry_jumps = branch_table_entry_records(&decoded);
-    // A plain move or add of a constant whose next record jumps fuses with that jump
-    // (`staged::FUSED_ROWS`, `fuse_rows`), except at a hot OSR latch: its jump record stays
-    // visible to `install_loop_sites`, which runs before the fusion pass.
-    let _then_fuses = |records: &[LaneInstruction], pc: usize| {
-        pc + 1 < records.len()
-            && (serves(records[pc].handler, quench_runtime::staged::MOVE_ROW, ACC_NONE) || serves(records[pc].handler, quench_runtime::staged::WASM_I32_ADD_IMMEDIATE_ROW, ACC_NONE))
-            && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
-    };
     specialize_returning_binaries(&decoded, constants, &mut records);
     specialize_frame_locals(function, &mut records);
     specialize_captures(function_id, facts, &mut records);
@@ -1360,8 +1339,11 @@ fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, functio
                     && first.a == window && second.a == window + 1;
                 let reads_apart = call_b != window && call_b != window + 1 && records[field_pc].a != window && records[field_pc].a != window + 1;
                 if shaped && reads_apart && reads_callee(&*records, field_pc, call_b) && math_callee(call_pc, call_b, decoded[field_pc].imm()) {
-                    let row = if constant_second { MATH_CALL2_CONST_SITE } else { MATH_CALL2_SITE };
-                    records[field_pc].handler = generated_row!(FIELD_LEAF_READ, ACC_NONE, row) as Handler as *const ();
+                    records[field_pc].handler = if constant_second {
+                        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as Handler as *const ()
+                    } else {
+                        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as Handler as *const ()
+                    };
                 }
             }
             _ => {}
@@ -2038,19 +2020,6 @@ pub(super) fn specialize_returning_operator(instruction: WideInstruction, consta
     record.handler = handler as *const ();
     record.b = left.payload();
     record.operand = LaneOperand { constant };
-}
-
-/// Whether some loop of `function`, from a backward jump's target through the jump, has no
-/// instruction the lane exits at.
-/// Whether one activation of `function` may run an instruction more than once: it has a
-/// backward jump, or a branch table, whose entries may jump back.
-pub(super) fn may_loop(function: &Function) -> bool {
-    function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = function.widened(*packed);
-        quench_runtime::staged::wasm_branch_table(instruction.op())
-            || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
-                && instruction.imm() as usize <= pc)
-    })
 }
 
 /// Whether the straight-line run from the first instruction, through its unconditional jumps,
