@@ -3154,7 +3154,14 @@ pub struct NativeFieldLoad {
     /// For a holder read, the layout id of the holder (`FieldCache::holder_cell`) where the entry
     /// kept one: a guard of it proves the holder's whole header, which names `holder` as its
     /// shape, so it replaces the holder's shape guard (`IcOp::GuardLayout`, `field_plans`).
+    /// For a class-keyed held read (`class` set) it is the holder cell's granule instead, which
+    /// the read loads the holder's field from (`IcOp::LoadHeldField`).
     pub holder_cell: Option<u32>,
+    /// The class id of a class-keyed read (`FieldCache::receiver` a class key): the receiver is the
+    /// live class cell of this class, which the read guards by its class (`IcOp::GuardClass`) and
+    /// reads its own field (`IcOp::LoadField`) or its held one (`IcOp::LoadHeldField`), not a record
+    /// of `shape`. `None` for a shape-keyed read.
+    pub class: Option<u32>,
 }
 
 /// An inherited read's values, each fixed by the receiver's prototype link that names its
