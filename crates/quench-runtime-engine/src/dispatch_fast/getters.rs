@@ -52,20 +52,15 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     #[inline(always)]
     fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
         let cx = self.cx;
-        if target.entry == CallEntry::frameless(Frameless::Reads) {
-            // A getter only the general path has called has not run its read in the lane yet: it
-            // takes the kind its first run would.
-            // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
-            let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-            if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
-                requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
-            }
         // SAFETY: a cached target of the running program.
-        } else if let Some(value) = unsafe { constant_body_value(target) } {
-            // `return k`: no receiver to bind, nothing to read.
-            return Some(value);
-        } else if !target.entry.answered_by_read() {
-            return None;
+        if target.entry != CallEntry::frameless(Frameless::Reads) {
+            if let Some(value) = unsafe { constant_body_value(target) } {
+                // `return k`: no receiver to bind, nothing to read.
+                return Some(value);
+            }
+            if !target.entry.answered_by_read() {
+                return None;
+            }
         }
         let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, base)?;
         // SAFETY: the running lane's context, a frameless target of its program.
@@ -324,20 +319,3 @@ unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &Scrip
         Some(lane_enter_leaf(cx, AdmittedWindow::of(entry, std::ptr::null(), 0), window, ip, r, entry, form, 0, this, None))
     }
 }
-
-script_handler! {
-    /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
-    /// getter's answer makes (`step_getter_answer_of`), whose getter's own field becomes the
-    /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
-    #[inline(never)]
-    pub(crate) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
-        let base = unsafe { field_base_in_lane(cx, r, quench_runtime::bytecode::FieldBase(i.b)) };
-        let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-            sibling!(get_field_getter_miss, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-

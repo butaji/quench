@@ -15,7 +15,6 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
     assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
     assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
-    assert!(std::mem::offset_of!(EntryCell, validity) as i32 == ENTRY_CELL.validity_offset);
     assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
     assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
@@ -37,7 +36,7 @@ const _: () = {
 impl EntryCell {
     /// A cell of an unpublished function, whose entry is `stub`, the engine's entry stub (`lane_body_abi::entry_stub`).
     pub(crate) fn new(stub: usize) -> Self {
-        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),
+        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),
             proven_entry: Default::default(), proven_body: Default::default(), stub: std::cell::Cell::new(stub) };
         cell.unpublish();
         cell

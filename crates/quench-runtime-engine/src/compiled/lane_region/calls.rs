@@ -48,7 +48,9 @@ impl Lowering<'_, '_> {
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
                     || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame))
-                    || self.plan_call(state, exit, frame) { None }
+                    || self.plan_call(state, exit, frame)
+                    // The callee the solve proves is the one closure of its body needs no binding check (`is_body_closure_identity`).
+                    || (inlined.alternative.is_none() && self.is_body_closure_identity(pc, inlined.callee_register, inlined.target.function)) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),

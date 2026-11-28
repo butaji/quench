@@ -16,10 +16,10 @@ view_handler! {
         if const { ACC != ACC_NONE && !accumulator_readable(LaneFields::<OP, FLAG>::OPCODE, ACC) } {
             sibling!(generated_row!(OP, ACC_NONE, FLAG), r, ip, view)
         }
-        if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
-            let flagged: Handler = if i.imm() != 0 { generated_row!(OP, ACC, FLAG_SET) } else { generated_row!(OP, ACC, FLAG_CLEAR) };
-            requicken(ip, flagged);
-            sibling!(flagged, r, ip, view)
+        // A closure read (`CLOSURE_CELL_SITE`) reads its record's `mode` word alone, before the field row's base
+        // asserts, which a closure read's base does not satisfy.
+        if const { FLAG == crate::dispatch_fast::CLOSURE_CELL_SITE } {
+            sibling!(closure_cell_read::<OP, ACC, FLAG>, r, ip, view)
         }
         // Where a planned named read misses: the own read past its record's hint, which reads
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
@@ -35,42 +35,14 @@ view_handler! {
         let store = const { LaneFields::<OP, FLAG>::OPCODE.field_store().is_some() };
         let this_store = const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_store(),
             Some(quench_runtime::bytecode::FieldStore { receiver: quench_runtime::bytecode::StoreReceiver::This, .. })) };
-        // A store's miss: the general write's activation path (`GENERAL_SITE`, `POLY_SITE`), or the
-        // classifier that names the site the record moves to (`row_set_field_classify`).
+        // A store's miss: the general write's activation path. The row was chosen at load, so a miss never
+        // rewrites the record; it takes the general step in place.
         macro_rules! store_miss { () => {{
             let script: *mut LaneContext = view.memory.bytes.cast();
-            if const { FLAG == crate::dispatch_fast::ADD_SITE } {
-                // A refused add: the generated general write, which the record keeps from now on.
-                requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::GENERAL_SITE));
-            }
-            if const { FLAG == crate::dispatch_fast::ADD_SITE || FLAG == crate::dispatch_fast::GENERAL_SITE || FLAG == crate::dispatch_fast::POLY_SITE } {
-                if this_store {
-                    sibling!(crate::dispatch_fast::row_set_this_field_miss, r, ip, Carried::script_in(script, view))
-                }
-                sibling!(crate::dispatch_fast::row_set_object_field_miss, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == FLAG_UNREAD } {
-                // A tracked runtime's own hint store is the record's first choice from now on, at the row of
-                // the type its slot holds (`tracked_store_row`).
-                if unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                    let hint = i.field_hint();
-                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
-                }
-            }
-            // A held-type store missed (its slot's type widened, or another receiver): the tracked row stores it
-            // with the VM's stores, and installs the row of the type the slot holds after (`tracked_store_row`).
-            if const { crate::dispatch_fast::store_held_site(FLAG) } {
-                sibling!(generated_row!(OP, ACC_NONE, crate::dispatch_fast::TRACKED_SITE), r, ip, Carried::script_in(script, view))
-            }
-            // A store instance missed: the plain row stores it, with the VM's stores the instance does not
-            // carry (`frame.stores`), and re-chooses the instance from the hint it leaves (`requicken_store_form`).
-            if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                sibling!(generated_row!(OP, ACC_NONE, FLAG_UNREAD), r, ip, Carried::script_in(script, view))
-            }
             if this_store {
-                sibling!(crate::dispatch_fast::row_set_field_classify::<OP, true>, r, ip, Carried::script_in(script, view))
+                sibling!(crate::dispatch_fast::row_set_this_field_miss, r, ip, Carried::script_in(script, view))
             }
-            sibling!(crate::dispatch_fast::row_set_field_classify::<OP, false>, r, ip, Carried::script_in(script, view))
+            sibling!(crate::dispatch_fast::row_set_object_field_miss, r, ip, Carried::script_in(script, view))
         }} }
         if property && !store {
             // A returning site's result carries its return; no other read's carries a flag: a record with
@@ -86,7 +58,7 @@ view_handler! {
                 } else if const { crate::dispatch_fast::nested_site(FLAG) } {
                     // A nested record's lookup is its site (`set_field_lookup_site`): `b` names the nested base, `c` is zero.
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::NESTED && i.c == 0);
-                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
+                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) } {
                     // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
                 }
@@ -102,29 +74,11 @@ view_handler! {
                 std::hint::assert_unchecked(i.c <= quench_runtime::bytecode::REGISTER_MASK);
             }
         }
-        // The cached, private and general reads answer at their record before the staged plan runs: a
-        // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
-        // A private read (its brand check throws) and a general read (it may run a getter) take the record's
+        // The private and general reads answer at their record before the staged plan runs: a
+        // private read (its brand check throws) and a general read (it may run a getter) take the record's
         // address and the lane's helpers, so they leave the row through `field_read_slow_row`.
         if property && const { crate::dispatch_fast::private_field_site(FLAG) || crate::dispatch_fast::general_site(FLAG) } {
             sibling!(field_read_slow_row::<OP, ACC, FLAG>, r, ip, view)
-        }
-        if property && const { crate::dispatch_fast::cached_field_site(FLAG) } {
-            let script: *mut LaneContext = view.memory.bytes.cast();
-            // The base: `this` for a `this` site, else the register the record names.
-            let receiver = if const { crate::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
-            // A deleted `this` is no object for a cached read; the general read takes it as before.
-            if receiver.is_deleted() { property_miss!() }
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*script).code };
-            let read = LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0);
-            match read {
-                Some(value) => {
-                    r.set(i.a, value);
-                    next!(script, r, following(ip), Carried::script_in(script, view))
-                }
-                None => property_miss!(),
-            }
         }
         // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
         // `requicken`): this row's result is a register, stated so the decode's tests fold.
@@ -169,7 +123,7 @@ view_handler! {
             Some((register, slot, r.get(register)))
         } else { None };
         if let Some(index) = const { crate::dispatch_fast::typed_site_kind(FLAG) } {
-            // The element kind the row's site fixes (`requicken_typed`), so no access dispatches on
+            // The element kind the row's site fixes (`element_typed_row`, chosen at load), so no access dispatches on
             // it, and the typed array records the view proof reads.
             let script: *mut LaneContext = view.memory.bytes.cast();
             frame.typed = Some((quench_runtime::staged::typed_elements::native_kind_at(index),
@@ -181,42 +135,25 @@ view_handler! {
             // receiver leaves at the row's family test before it is addressed.
             // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
             let records: u64 = property_miss!();
-            // A method cache that may name the atom must see the store (`store_admitted`); an add
-            // leaves that to the VM's adds, which admit it themselves.
-            if const { FLAG != crate::dispatch_fast::ADD_SITE } && unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
+            // A method cache that may name the atom must see the store (`store_admitted`).
+            if unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
             // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
             // a plain own-field store row keeps the record's `this` and no call on its path.
             if this_store {
-                frame.this = if const { FLAG == FLAG_UNREAD || crate::dispatch_fast::store_formed_site(FLAG) || crate::dispatch_fast::store_held_site(FLAG) } { r.this() }
+                frame.this = if const { FLAG == FLAG_UNREAD } { r.this() }
                     else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
             // its siblings), at every plain store row.
-            // A store instance (`store_formed_site`) carries none: what its plan refuses, the plain row
-            // completes (`store_miss!`), so the instance makes no call and keeps its values in registers.
-            // A held-type store (`store_held_site`) carries none either: its miss is the tracked row's.
-            if const { !crate::dispatch_fast::store_formed_site(FLAG) && !crate::dispatch_fast::store_held_site(FLAG) } { frame.stores = Some(FieldStores::of(script)); }
-            frame.plan = Some(if const { FLAG == crate::dispatch_fast::ADD_SITE } {
-                RecordPlan::own_add()
-            } else if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
+            frame.stores = Some(FieldStores::of(script));
+            frame.plan = Some(if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
                 RecordPlan::general_store(records)
-            } else if const { FLAG == crate::dispatch_fast::POLY_SITE } {
+            } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
                 let hint = i.field_hint();
-                RecordPlan::own_polymorphic(hint.receiver, hint.slot, records)
-            } else if const { crate::dispatch_fast::store_held_site(FLAG) } {
-                let hint = i.field_hint();
-                RecordPlan::own_held(hint.receiver, hint.slot, records, const { crate::dispatch_fast::held_of(FLAG) })
-            } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE || FLAG == crate::dispatch_fast::NARROW_SITE } {
-                let hint = i.field_hint();
-                RecordPlan::own_hinted(hint.receiver, hint.slot, records, const { FLAG == crate::dispatch_fast::NARROW_SITE })
+                RecordPlan::own_hinted(hint.receiver, hint.record_slot(), records)
             } else {
                 let hint = i.field_hint();
-                // A store instance's form is its hint layout's own: the requicken that chose the row proved it
-                // (`requicken_store_form`), and a hint a store moves retires the row (`store_miss!`, the success arm).
-                if const { crate::dispatch_fast::store_formed_site(FLAG) } {
-                    unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == const { crate::dispatch_fast::own_site_form(FLAG) }) }
-                }
-                RecordPlan::own_store(hint.receiver, hint.slot, records)
+                RecordPlan::own_store(hint.receiver, hint.record_slot(), records)
             });
         } else if property {
             // The record's plan: its own-field hint over the object records the lane bound; an
@@ -229,17 +166,7 @@ view_handler! {
                 // The Math call the read's value feeds, computed by the VM's functions (`PropertyFrame::math_call`).
                 frame.math = Some(MathCalls::of(script));
             }
-            if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
-                // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
-                // layout over the bound object records. An unbound table or hint leaves to the local's miss.
-                // S7f DESIGN: the lane's object record base is gone, so it reads as absent and the zero checks decline.
-            let records = 0_u64;
-                let hint = i.field_hint();
-                if records == 0 || hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER {
-                    sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
-                }
-                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
-            } else if const { crate::dispatch_fast::inherited_site(FLAG) } {
+            if const { crate::dispatch_fast::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
                 let machine = unsafe { vm(script) };
@@ -254,13 +181,13 @@ view_handler! {
                 // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
                 let machine = unsafe { vm(script) };
                 if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) } {
-                    // A formed instance's hops are its record's (`requicken_nested`): the hint the first,
-                    // `mode` the second and the base. Their guards are the check, so nothing is looked up.
+                    // A formed instance's hops are its record's: the hint the first, `mode` the second and the
+                    // base. Their guards are the check, so nothing is looked up.
                     let hint = i.field_hint();
                     let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
                     if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                     let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
-                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
+                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.record_slot(), forms[0]), (layout, slot, forms[1]), base,
                         property_miss!()));
                 } else {
                 let code = unsafe { &*(*script).code };
@@ -284,17 +211,13 @@ view_handler! {
                 }
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
-                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
+                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.record_slot(), forms[0]), (entry.receiver, entry.record_slot(), forms[1]), site.base,
                     property_miss!()));
                 }
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 frame.plan = Some(RecordPlan::private(i.imm()));
-            } else if const { crate::dispatch_fast::cached_field_site(FLAG) } {
-                // The cached read of the site's atom, which the VM answers (`FieldPlan::Host`).
-                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::host_read(quench_runtime::staged::property::FieldPlan::Host { atom: i.imm(), site: i.c }));
             } else if const { crate::dispatch_fast::returning_field_site(FLAG) } {
                 // A returning own read of the record's hint (`RecordPlan::own`); the lane's unbound
                 // object records are the miss's to bind.
@@ -303,27 +226,16 @@ view_handler! {
                 if records == 0 { property_miss!() }
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
-                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
-            } else if const { crate::dispatch_fast::cell_own_site(FLAG) } {
-                // A receiver outside the object records (a function) by its layout id; a direct
-                // object, should the site meet one, through the bound records.
-                let machine = unsafe { vm(script) };
-                // The live record table: a direct object receiver proves it reserved.
-                // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
-                let records: u64 = property_miss!();
+                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
+            } else if const { crate::dispatch_fast::trusted_site(FLAG) } {
+                // A fixed class's own field at the slot word the load chose (`trusted_named_read`): the cell is read with
+                // no class or layout guard. A field the class may leave absent leaves at the miss (`property_miss_row`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                let hint = i.field_hint();
-                // A fixed form is the hint layout's own (the decision chose the row by it).
-                let form = const { crate::dispatch_fast::own_site_form(FLAG) };
-                frame.plan = Some(if form == HINTED_FORM {
-                    RecordPlan::own_other(hint.receiver, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
-                } else {
-                    RecordPlan::own_other_formed(hint.receiver, form, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
-                });
-            } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
-                // S7f DESIGN: one object's own constant was its object record's address and the watch on its values
-                // (`own_constant_word_operands`); no ordinary object is a record, so the site declines to the miss row.
-                property_miss!()
+                let word = unsafe { i.operand.field.shape };
+                frame.plan = Some(RecordPlan::host_read(quench_runtime::staged::property::FieldPlan::Fixed {
+                    slot: word & !crate::dispatch_fast::TRUSTED_HOLE,
+                    hole: word & crate::dispatch_fast::TRUSTED_HOLE != 0,
+                }));
             } else if const { crate::dispatch_fast::length_site(FLAG) } {
                 // A register's `length`: an array's or a string's, as the site's tier decided.
                 let machine = unsafe { vm(script) };
@@ -341,11 +253,6 @@ view_handler! {
                 } else {
                     quench_runtime::staged::property::FieldPlan::Geometry { atom: i.imm() }
                 }));
-            } else if const { crate::dispatch_fast::getter_site(FLAG) } {
-                // S7f DESIGN: a getter whose hint returned the receiver's own field (`IcOp::GetterOwn`) held that
-                // field through the receiver's object record (`getter_hint_operands`); no ordinary object is a record,
-                // so the read declines to the miss row (the getter's refresh, `row_get_field_getter_refresh`).
-                property_miss!()
             } else if const { FLAG == crate::dispatch_fast::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
@@ -366,7 +273,7 @@ view_handler! {
                 frame.entries = Some(EntryReads::of(script, ip));
                 frame.plan = Some(if const { FLAG == crate::dispatch_fast::POLYMORPHIC_SITE } {
                     let hint = i.field_hint();
-                    RecordPlan::polymorphic(hint.receiver, hint.slot, records)
+                    RecordPlan::polymorphic(hint.receiver, hint.record_slot(), records)
                 } else {
                     RecordPlan::entry(const { crate::dispatch_fast::entry_kind(FLAG) }, records)
                 });
@@ -402,46 +309,19 @@ view_handler! {
             // A fixed form is the hint's layout's own (`own_formed_handler` chose the row by it),
             // stated so the read takes it as a constant, not from the layout table.
             if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == form) } }
-            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
+            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
             }
         }
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(_) if store => {
                 let script: *mut LaneContext = view.memory.bytes.cast();
-                // The form the VM's own-field store left for the record (`field_store_host`).
+                // The form the VM's own-field store left for the record (`field_store_host`): the hint the row reads
+                // next time. No row is re-chosen here. A narrow run's layout is no store's hint, so its object misses
+                // every store row to the general step.
                 if let Some(hint) = frame.stored {
-                    set_field_hint(ip, hint);
-                    // A tracked runtime's own store completes through the VM's own-field hit each time from the
-                    // plain row (its layout store observes no representation): the record takes the tracked
-                    // site's hinted store, as a refused one does (`store_miss!`), and stops asking the site.
-                    if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                        requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
+                    if quench_runtime::tier_surface::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM != quench_runtime::value_vec::NARROW_FORM {
+                        set_field_hint(ip, hint);
                     }
-                    // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
-                    // a narrow site whose object is no longer narrow goes back to the own store.
-                    if const { FLAG == FLAG_UNREAD || FLAG == crate::dispatch_fast::NARROW_SITE } && !unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                        let narrow = quench_runtime::tier_surface::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM == quench_runtime::value_vec::NARROW_FORM;
-                        if const { FLAG == FLAG_UNREAD } {
-                            if narrow { requicken(ip, generated_row!(OP, ACC_NONE, crate::dispatch_fast::NARROW_SITE)); }
-                        } else if !narrow {
-                            requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
-                        }
-                    }
-                }
-                // A plain store's record takes the instance of its hint's storage form (`requicken_store_form`, which
-                // leaves a tracked or narrow record to its own site). An instance whose hint a VM store moved retires.
-                if const { FLAG == FLAG_UNREAD } {
-                    let layout = frame.stored.map_or_else(|| i.field_hint().receiver, |hint| hint.receiver);
-                    crate::dispatch_fast::requicken_store_form::<OP>(script, ip, layout);
-                }
-                if const { crate::dispatch_fast::store_formed_site(FLAG) } && frame.stored.is_some() {
-                    requicken(ip, generated_row!(OP, ACC_NONE, FLAG_UNREAD));
-                }
-                // The tracked row's store leaves the slot's type joined: the record takes the row of that type
-                // (`tracked_store_row`), which stores the next value of it in place.
-                if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
-                    let hint = frame.stored.unwrap_or_else(|| i.field_hint());
-                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
                 }
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
@@ -519,6 +399,23 @@ view_handler! {
                 sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view)
             }
         }
+    }
+}
+
+view_handler! {
+    /// The closure read of a field row (`CLOSURE_CELL_SITE`, chosen by `named_read_row`): the read's value is the one
+    /// closure object the record's `mode` word addresses (the closure cell `derive_lane_view` wrote there). That cell is full
+    /// at every read: the closure's creation edge writes it before any code can reach the closure
+    /// (`ProgramStore::write_closure_cell`), and the read's proven identity (`typed_ir::Identity::Closure`) makes the read's
+    /// value that closure. So the read takes no receiver, walks no prototype and cannot miss.
+    #[inline(never)]
+    pub(crate) fn closure_cell_read<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let script: *mut LaneContext = view.memory.bytes.cast();
+        // SAFETY: the word is the closure cell of the running program, which keeps its cells for its life; the cell is
+        // full (see above).
+        let value = unsafe { *(*(i.mode as *const std::cell::OnceCell<Value>)).get().unwrap_unchecked() };
+        r.set(i.a, value);
+        next!(script, r, following(ip), Carried::script_in(script, view))
     }
 }
 

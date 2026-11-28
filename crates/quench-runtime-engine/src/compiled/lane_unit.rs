@@ -17,8 +17,7 @@ use quench_runtime::bytecode::{Constant, FieldBase, FieldLayout, FieldLookup, Im
 use quench_runtime::bytecode::Function;
 use quench_runtime::compile::call_graph::CallGraph;
 use quench_runtime::compile::call_plan::{tail_site, CallPlan};
-use quench_runtime::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
-use quench_runtime::typed_ir::BindingTime;
+use quench_runtime::staged::Operation;
 use quench_runtime::value::Value;
 #[path = "lane_unit/admission.rs"] pub(crate) mod admission;
 pub(crate) use admission::{inlinable, InlineScope};
@@ -99,8 +98,6 @@ mod emit;
 #[path = "lane_unit/tests.rs"]
 pub(crate) mod tests;
 pub(crate) use emit::*;
-use super::tier_policy::{charges_growth, INLINE_GROWTH_PERCENT, PERCENT};
+use super::tier_policy::inline_plan;
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
-/// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
-const MAX_INLINING_DEPTH: usize = 5;
 

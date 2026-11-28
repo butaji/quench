@@ -2977,7 +2977,7 @@ mod tests {
     }
 
     /// Installs a compiled root for every function of `instance`'s module. The argmin of
-    /// `tier_policy::predicted_tier` decides which functions a first call compiles; tests that
+    /// `tier_policy::predicted_tiers` decides which functions a first call compiles; tests that
     /// execute compiled code install the roots directly instead.
     fn install_roots(vm: &mut Vm, instance: &crate::WasmInstance) {
         let program = vm

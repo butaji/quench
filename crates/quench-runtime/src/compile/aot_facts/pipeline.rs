@@ -25,6 +25,10 @@ use super::super::signatures::{self, Argument, CallSite};
 use super::types;
 use super::value;
 use super::AotFacts;
+use super::BodyForm;
+use super::super::body_forms::{body_entry, forwards_args, returning_read};
+use crate::staged::effects::CallForm;
+use crate::vm::engine_types::{CallEntry, Framed};
 use crate::bytecode::ResidualProgram;
 
 /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`): every key its steps
@@ -119,6 +123,22 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     solve_with(program, world, openers, &classes)
 }
 
+/// The body forms of every function of `program`, each classified once from the function and its bytecode (`body_forms`). The
+/// entry is the one a call takes, from the form the composed signature gives the body (`call_plan::entry_form`). A frameless body
+/// that no other frameless answer takes is `Frameless::Native` or `Framed::Activates` by its published native code, which the
+/// bytecode does not say, so its entry is None (`AotFacts::body_entry`).
+fn body_forms(program: &ResidualProgram, facts: &AotFacts) -> Box<[BodyForm]> {
+    (0..program.function_count()).map(|id| program.with_record(id, |body| {
+        let frameless = crate::compile::call_plan::entry_form(Some(facts), id as u32) == CallForm::Frameless;
+        let entry = body_entry(body, &program.constants, frameless, false);
+        BodyForm {
+            entry: (!(frameless && entry == CallEntry::framed(Framed::Activates))).then_some(entry),
+            returning: returning_read(body),
+            forwards: forwards_args(body, &body.call_plan(program)),
+        }
+    })).collect()
+}
+
 /// `solve` with the class ids `classes` the constructions and prototypes resolve to (`ClassIds::of`).
 fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, classes: &ClassIds) -> (AotFacts, bool) {
     let scope = Scope::of(program);
@@ -138,9 +158,18 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     let none = length_settle::Feedback::default();
     let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None, &none);
     let accessor_names = accessors::names_of(&first);
-    let resolved = Census::of(&first, world, classes.clone()).singles();
+    // A binding or a named property one of whose closure stores no root store dominates is no single closure
+    // (`frozen::undominated_closures`): its closure's identity is no proof either, so a read of it holds no closure identity.
+    // The first pass's census names the callees the dominance check follows.
+    let first_census = Census::of(&first, world, classes.clone());
+    let first_facts = AotFacts::unsolved(world);
+    let first_escapes = escapes::escapes(&first, &first_facts, &first_census, &scope);
+    let (undominated, undominated_bodies) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
+    let mut resolved = first_census.singles();
+    resolved.retain(|key, _| !undominated.contains(&census::fact_key(*key)));
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
     let mut census = Census::of(&flows, world, classes.clone());
+    census.undominated = undominated;
     census.phases = phase::folds(program, &flows, &census);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
@@ -272,6 +301,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
+        // The `extends` chain and the accessor names `field_holder` reads, settled with the census.
+        facts.parents = census.accessors.parents().clone();
+        facts.accessor_atoms = accessors::names_of(&settled_flows);
         // The cell facts need the union layout, which holds only in a closed world: no class of an open world keeps one. A fixed
         // cell's slots are stable and every construction is direct; a writable cell is also reached by no flag transition.
         let mut fixed = std::collections::BTreeSet::new();
@@ -295,8 +327,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
         facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
-        facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
+        facts.builtins = identity::builtin_proofs(program, world, &settled_flows, &scope, &facts.cells);
         facts.closures_once = identity::closures_once(program, world);
+        facts.closures_once.retain(|body| !undominated_bodies.contains(body));
         // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.
         let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
         facts.global_object_identity = identity::global_object_proof(program, &settled_flows, &facts, &census, &scope, &this_undefined);
@@ -311,6 +344,11 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.cells = fact_cells;
         facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
         facts.uncached = globals::uncached_atoms(program, world);
+        facts.global_lexical = globals::global_lexical_names(program, world);
+        // The static name scope of each function (`Function::names_resolve_statically`) is a bytecode property, read in every world.
+        facts.names_static = (0..program.function_count() as u32)
+            .filter(|&id| program.with_record(id as usize, |function| function.names_resolve_statically(program)))
+            .collect();
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
@@ -326,6 +364,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         if round + 1 == LENGTH_ROUNDS || next == feedback { break; }
         feedback = next;
     }
+    // The body forms read the settled signatures (`call_plan::entry_form`), so they are classified once the solve has settled.
+    let bodies = body_forms(program, &facts);
+    facts.bodies = bodies;
     facts.classes = built;
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());

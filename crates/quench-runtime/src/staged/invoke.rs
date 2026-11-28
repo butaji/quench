@@ -118,8 +118,7 @@ pub trait CallFrame<S: Stage>: Frame<S> {
     }
 
     /// The bound target's admission word and the run's it must equal, where the frame reads them (a
-    /// lane's script call entry: generation, program and proof, `Admission`; an image's call record:
-    /// the cell's validity word and the one it was bound under), checked with the callee's identity in
+    /// lane's script call entry: generation, program and proof, `Admission`), checked with the callee's identity in
     /// one guard (`call::guard_bound_target`); `None` where the plan proved it.
     #[inline(always)]
     fn call_admission(&mut self, _stage: &mut S) -> Option<(S::Word, S::Word)> {

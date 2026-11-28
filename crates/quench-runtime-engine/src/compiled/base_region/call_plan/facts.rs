@@ -11,7 +11,6 @@ use super::*;
 pub(crate) struct DirectFacts {
     pub(crate) callee: u64,
     pub(crate) cell: usize,
-    pub(crate) validity: u64,
     pub(crate) facts: CellFacts,
     /// The caller's call record and base, and the callee's function: the header words (`CallRecord::call`,
     /// `caller_base`, and `CalleeRecord::function` with the site's `CallRecord::packed`).
@@ -43,7 +42,7 @@ pub(crate) struct DirectFacts {
 }
 
 impl DirectFacts {
-    /// The facts of `callee`, whose cell's validity and facts words are read now; `held` is whether the site's
+    /// The facts of `callee`, whose cell's facts word is read now; `held` is whether the site's
     /// callee register is a Stable fact's (`DirectFacts::held`).
     ///
     /// # Safety
@@ -54,7 +53,6 @@ impl DirectFacts {
         Self {
             callee: callee.callee.to_bits(),
             cell: callee.cell,
-            validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             call: callee.call as u64,
             caller_base: callee.caller_base as u64,
@@ -74,7 +72,7 @@ impl DirectFacts {
     }
 
     /// Whether the cell's facts describe this callee as a plain activation that takes `argc`
-    /// arguments, so the stencil's admission (validity and room) is all that is left to check.
+    /// arguments, so the stencil's admission (room) is all that is left to check.
     fn describes(&self, argc: u16) -> bool {
         let facts = self.facts;
         facts.registers == self.registers && facts.room == self.registers && facts.params >= argc && u64::from(facts.entry) == ENTRY_ACTIVATES

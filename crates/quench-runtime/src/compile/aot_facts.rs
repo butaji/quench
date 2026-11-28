@@ -22,6 +22,7 @@ mod class_layout;
 mod copies;
 mod effects;
 mod escapes;
+mod field_forms;
 mod flow;
 mod frozen;
 mod function;
@@ -50,6 +51,8 @@ use std::collections::BTreeMap;
 pub use crate::staged::effects::{Affine, Base};
 
 use crate::bytecode::ResidualProgram;
+use crate::vm::engine_types::CallEntry;
+use super::body_forms::ReturningRead;
 use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
 use super::signatures::{CallSite, Signatures};
@@ -60,8 +63,10 @@ use record::ElementStore;
 pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
+pub use accessors::AccessorArms;
 pub use gate::World;
 pub use crate::typed_ir::BuiltinPath;
+pub use field_forms::{ClassForm, FieldHolder, Holder, StoreForm};
 pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
@@ -157,6 +162,11 @@ pub struct AotFacts {
     /// The union layouts of the constructed classes the closed world proves one for (`class_layout::unions_of`), read by
     /// `AotFacts::class_union_layout`.
     unions: BTreeMap<u32, UnionLayout>,
+    /// Per class, the parent its prototype chain links it to (`accessors::parents_of`): the `extends` chain `field_holder` walks.
+    parents: BTreeMap<u32, u32>,
+    /// The names some accessor definition defines on some object (`accessors::names_of`): a read of one is no prototype field,
+    /// so `field_holder` names no holder for it.
+    accessor_atoms: std::collections::BTreeSet<u32>,
     /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
     /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
     root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
@@ -183,6 +193,26 @@ pub struct AotFacts {
     uncached: std::collections::BTreeSet<u32>,
     /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
     global_shape: Option<GlobalShape>,
+    /// The names top-level `let`, `const` and `class` declare in the closed world's scripts, sorted and deduped
+    /// (`globals::global_lexical_names`). Empty unless the program is closed.
+    global_lexical: Vec<u32>,
+    /// The functions whose names resolve statically (`Function::names_resolve_statically`), read by
+    /// `FunctionFacts::names_static`. A bytecode property, so it holds in every world.
+    names_static: std::collections::BTreeSet<u32>,
+    /// Per body (function id), the body forms `body_forms` classifies from the function and its bytecode, computed once by the
+    /// pipeline (`pipeline::body_forms`). The readers `body_entry`, `returning_read` and `forwards_args` index it.
+    bodies: Box<[BodyForm]>,
+}
+
+/// The body forms of one function, as the pipeline classifies them (`body_forms`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct BodyForm {
+    /// The entry a call of the body takes (`body_forms::body_entry`), None where the native publication decides it.
+    entry: Option<CallEntry>,
+    /// The `return this.f` or `return p.f` read the body is (`body_forms::returning_read`).
+    returning: Option<ReturningRead>,
+    /// Whether a call of the body forwards its arguments (`body_forms::forwards_args`).
+    forwards: bool,
 }
 
 impl AotFacts {
@@ -216,6 +246,8 @@ impl AotFacts {
             signatures: None,
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
+            parents: BTreeMap::new(),
+            accessor_atoms: std::collections::BTreeSet::new(),
             root_stores: BTreeMap::new(),
             fixed_cells: std::collections::BTreeSet::new(),
             writable_cells: std::collections::BTreeSet::new(),
@@ -226,6 +258,9 @@ impl AotFacts {
             global_object_identity: false,
             uncached: std::collections::BTreeSet::new(),
             global_shape: None,
+            global_lexical: Vec::new(),
+            names_static: std::collections::BTreeSet::new(),
+            bodies: Box::default(),
         }
     }
 
@@ -305,6 +340,12 @@ impl AotFacts {
     /// may reach the global object by a name the analysis cannot follow.
     pub fn global_shape(&self) -> Option<&GlobalShape> {
         self.global_shape.as_ref()
+    }
+
+    /// The names top-level `let`, `const` and `class` declare in every script of the closed world, sorted and deduped
+    /// (`globals::global_lexical_names`). Empty in any world but `World::Closed`, since a later script may declare one.
+    pub fn global_lexical_names(&self) -> &[u32] {
+        &self.global_lexical
     }
 
     /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the
@@ -471,6 +512,25 @@ impl AotFacts {
         self.classes.body(class)
     }
 
+    /// The entry a call of body `body` takes (`body_forms::body_entry`): the form its signature gives it, then the body's own
+    /// answer. The VM classifies a target's entry at link time with the same function (`dispatch_fast`'s `body_entry`). None where
+    /// the native publication decides the entry: a frameless body that no other frameless answer takes is `Frameless::Native` when
+    /// its code is published and `Framed::Activates` when not, which the bytecode does not say.
+    pub fn body_entry(&self, body: u32) -> Option<CallEntry> {
+        self.bodies.get(body as usize)?.entry
+    }
+    /// The read body `body` returns, `return this.f` or `return p.f` (`body_forms::returning_read`): the field's atom and base.
+    /// The VM's `Frameless::Reads` entry (`body_forms::body_entry`) takes the same returning first instruction, for any base;
+    /// this reader is narrower, a base of `this` or a parameter and no handler, so it names the field alone.
+    pub fn returning_read(&self, body: u32) -> Option<ReturningRead> {
+        self.bodies.get(body as usize)?.returning
+    }
+    /// Whether a call of body `body` forwards its arguments (`body_forms::forwards_args`), the static form of
+    /// `ScriptCallTarget::forwards`: a rest body or one whose plan keeps its arguments, where no settling, environment or frame form
+    /// takes its place. False for a body that does not forward, and for one whose other forms may override it.
+    pub fn forwards_args(&self, body: u32) -> bool {
+        self.bodies.get(body as usize).is_some_and(|form| form.forwards)
+    }
     /// The facts of function `function`, for its lowering.
     pub fn function_facts(&self, function: u32) -> FunctionFacts<'_> {
         FunctionFacts { facts: self, function }

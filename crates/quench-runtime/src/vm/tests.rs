@@ -20578,7 +20578,7 @@ fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_ac
 #[test]
 fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
     // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
-    // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).
+    // atom reads the native its own text stands for (`bytecode::intrinsic_name_native`).
     let source = r#"
       function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
       class A { set x(v) { this.y = v; } }
@@ -24296,35 +24296,6 @@ fn hot_loops_keep_function_constructed_receivers_as_their_fields() {
     vm.execute(&program).unwrap();
     let round = "200050000;200010000,207,291,292,true,x,y;200010000;200130000;200090000;19999000060000;200010050";
     assert_eq!(output.borrow().as_slice(), [[round, round, round].join(";")]);
-}
-
-#[test]
-fn an_own_constant_hint_answers_for_its_object_until_the_object_is_written() {
-    // `Vm::own_constant_hint_hit`: an enum-like object's member read as the value it held,
-    // for that object only (another object of its layout misses) and until a write to any of
-    // its values or a layout change retires the hint's watch.
-    let source = r#"
-      globalThis.Color = { Red: 0, Green: 1, Blue: 2 };
-      globalThis.Twin = { Red: 0, Green: 1, Blue: 2 };
-    "#;
-    let mut vm = Vm::new(TestHost::default());
-    let program = Engine::specialize(source, "own-constant.js").unwrap();
-    vm.execute(&program).unwrap();
-    let global = |vm: &mut Vm, name: &str| {
-        let atom = vm.intern_atom(name);
-        vm.own_property(vm.realm.globals, atom).expect("a global")
-    };
-    let (color, twin) = (global(&mut vm, "Color"), global(&mut vm, "Twin"));
-    let green: crate::bytecode::Atom = 7;
-    let index = vm.hold_own_constant_hint(None, green, color, Value::integer(1), 8).expect("a hint");
-    assert!(vm.own_constant_hint_live(index));
-    assert_eq!(vm.own_constant_hint_hit(index, green, color), Some(Value::integer(1)));
-    assert_eq!(vm.own_constant_hint_hit(index, green, twin), None, "another object of the layout");
-    assert_eq!(vm.own_constant_hint_hit(index, green + 1, color), None, "another name");
-    let write = Engine::specialize("Color.Blue = 5;", "write.js").unwrap();
-    vm.execute(&write).unwrap();
-    assert!(!vm.own_constant_hint_live(index), "a write to the object retires the hint");
-    assert_eq!(vm.own_constant_hint_hit(index, green, color), None);
 }
 
 #[test]

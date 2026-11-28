@@ -55,20 +55,6 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             }
             return Some(value);
         }
-        StorePlan::Held { id, slot, held } => {
-            // A stage without the slot owner tables makes no tracked store in place (`Stage::SLOT_TABLES`).
-            if !S::SLOT_TABLES { return None; }
-            let base = base.map_or(FieldBase::THIS, FieldBase::register);
-            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
-            use super::slot_store::{HELD_INT32, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-            match held {
-                HELD_INT32 => held_store::<S, F, HELD_INT32>(stage, frame, at, (id, slot), value, miss),
-                HELD_OBJECT => held_store::<S, F, HELD_OBJECT>(stage, frame, at, (id, slot), value, miss),
-                HELD_OBJECT_OR_NULL => held_store::<S, F, HELD_OBJECT_OR_NULL>(stage, frame, at, (id, slot), value, miss),
-                _ => held_store::<S, F, HELD_TAGGED>(stage, frame, at, (id, slot), value, miss),
-            }?;
-            return Some(value);
-        }
         StorePlan::Polymorphic { id, slot } => {
             let base = base.map_or(FieldBase::THIS, FieldBase::register);
             let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
@@ -103,22 +89,6 @@ fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (ow
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     let record_id = super::value::direct_object_id(stage, object);
     own_store(stage, at.record, record_id, id, true, slot, value, miss)
-}
-
-/// The tracked store of `value` into `object`'s arena-form record through the hint `(id, slot)`, by
-/// a row installed for the slot's held type `HELD` (`StorePlan::Held`): the method cache's admission,
-/// the receiver's record, its payload once the layout compare, the slot's type and the barrier's log
-/// admit the store (`held_payload`), then the arena's slot. Nothing takes effect before a guard, so a
-/// refusal leaves to the plain row, which stores and installs the row of the slot's type now.
-#[inline(always)]
-fn held_store<S: Stage, F: PropertyFrame<S>, const HELD: u8>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
-    (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
-    frame.store_admitted(stage, miss)?;
-    let at = frame.receiver_record(stage, owner, object, false, miss)?;
-    let record_id = super::value::direct_object_id(stage, object);
-    let payload = super::slot_store::held_payload::<S, HELD>(stage, at.record, record_id, (id, slot), value, miss)?;
-    super::slot_store::store_flat(stage, payload, slot, (value, Representation::Tagged));
-    Some(())
 }
 
 /// The VM's completion of the store of `value`: its own-field hit, through the bound slot
@@ -205,7 +175,7 @@ fn shape_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (own
 /// holds `arm`'s slot: a store through it needs neither the storage form nor the run tested again.
 #[inline(always)]
 fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, object: S::Word, arm: StoreArm) -> Option<S::Word> {
-    match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len)?.slots {
+    match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.record_slot()) < layout.storage_len)?.slots {
         super::object::Slots::Flat(base) => Some(base),
         _ => None,
     }
@@ -275,9 +245,9 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
         None => fact,
     };
     let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
-    admit_named(stage, named, (record, arm.slot), value, miss)?;
+    admit_named(stage, named, (record, arm.record_slot()), value, miss)?;
     let id = super::value::direct_object_id(stage, object);
-    own_store_proved(stage, record, id, arm.slot, (value, fact), miss)
+    own_store_proved(stage, record, id, arm.record_slot(), (value, fact), miss)
 }
 
 /// The store of `value` into the field `arm` names of the live class cell `object` is, of the class its key names

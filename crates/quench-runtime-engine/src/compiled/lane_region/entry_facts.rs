@@ -82,8 +82,8 @@ impl Lowering<'_, '_> {
                     if !(call.recovery == super::lane_unit::CallRecovery::RestartCall && numeric)
                         && let Some(root) = aliases[usize::from(call.receiver)] {
                         let recovery = ReceiverRecovery::for_body(body);
-                        // A receiver the solve proves a direct object (its solver type) needs no recovery guard at entry.
-                        if !self.solver_object(pc, call.receiver) {
+                        // A receiver the solve proves passes the recovery's test (its solver type) needs no recovery guard at entry.
+                        if !self.receiver_proven(pc, call.receiver, recovery) {
                             if let Some((_, required)) = receivers.iter_mut().find(|(owner, _)| *owner == root) {
                                 if recovery == ReceiverRecovery::Object { *required = recovery; }
                             } else { receivers.push((root, recovery)); }
@@ -95,7 +95,10 @@ impl Lowering<'_, '_> {
                         && self.planned_target(frame).is_none()
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
-                        if !admitted.contains(&binding) {
+                        // A function-bound callee the solve proves is the one closure of its body (`is_body_closure_identity`)
+                        // passes the binding check by construction: no guard at entry.
+                        let proven = matches!(call.target.callee, CalleeBinding::Function) && self.is_body_closure_identity(pc, root, call.target.function);
+                        if !admitted.contains(&binding) && !proven {
                             let callee = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),

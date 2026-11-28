@@ -88,16 +88,6 @@ pub(crate) fn inlined_of(original: *const LaneView) -> Option<*const LaneView> {
     INLINED.with(|views| views.borrow().iter().find(|view| std::ptr::eq(view.original, original)).map(|view| view.view))
 }
 
-/// Whether `function` of `code` is a callee N7a inlines: a leaf (no call), straight-line (no
-/// backward jump), short, of no handler, generator or async body.
-fn leaf_callee(code: &quench_runtime::ResidualProgram, function: u32) -> bool {
-    const MAX_LEAF_INSTRUCTIONS: usize = 16;
-    let Some(body) = code.function_get(function as usize) else { return false };
-    body.handlers.is_empty() && !body.is_generator && !body.is_async && body.code.len() <= MAX_LEAF_INSTRUCTIONS
-        && body.instructions().enumerate().all(|(pc, instruction)| !quench_runtime::staged::calls(instruction.op())
-            && (instruction.op().immediate_role() != quench_runtime::bytecode::ImmediateRole::JumpTarget || instruction.imm() as usize > pc))
-}
-
 /// Makes and registers the inlined view of `function` of the running program, whose own view is
 /// `original` (N7a): its unit (`lane_unit::unit`) splicing in the leaf callees its call sites link,
 /// derived as the function's second record array, its call markers made `inlined_call_marker`
@@ -114,7 +104,7 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     let plans = crate::compiled::lane_region::bindings::CallPlans::new(code, aot.as_deref(), graph.as_deref());
     let targets = |caller: u32, pc: u32| -> Vec<crate::compiled::CallTarget> {
         if caller != function { return Vec::new(); }
-        plans.targets(caller, pc).into_iter().filter(|target| leaf_callee(code, target.function)).collect()
+        plans.targets(caller, pc)
     };
     let unit = crate::compiled::lane_unit::unit(code, graph.as_deref(), function, body, &targets, &|caller, pc| plans.at(caller, pc),
         &|callee| code.function_get(callee as usize))?;
@@ -139,10 +129,9 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     }
     let masks = unit.register_masks(code, function).map(|masks| std::rc::Rc::new(masks.into_owned()));
     let synthetic = body.with_unit_code(&unit.instructions, unit.registers)?;
-    let heap = vm.heap_reads();
     let view = vm.programs.store_extra_lane_view(program, function, |_, constants, kind, sites| {
         // The unit's pcs are not the function's, so the solve's cells at a pc do not describe these records.
-        Some(super::derive_lane_view(function, &synthetic, constants, heap, kind, &|| masks.as_ref(), sites,
+        Some(super::derive_lane_view(program, function, &synthetic, constants, &*vm, kind, &|| masks.as_ref(), sites,
             crate::compiled::admission::record_plan(false), false, None, Vec::new()))
     })?;
     // SAFETY: the program store keeps the view alive with its program.

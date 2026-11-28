@@ -32,8 +32,16 @@ impl<'a> FunctionFacts<'a> {
         }
     }
 
+    /// The functions the call at `pc` may call where no guess is among them (`call_targets` less a guessed target under
+    /// `guessed_calls`): empty where the call's target is a guess. A load-time choice reads this, never a guess (ruling Q5).
+    pub fn proven_call_targets(&self, pc: u32) -> Vec<u32> {
+        if self.facts.guessed_calls.contains(&(self.function, pc)) { return Vec::new(); }
+        self.call_targets(pc)
+    }
+
     /// The accessor the field access at `pc` runs, where the census proves one (`accessors::accessor_arms`).
-    pub(crate) fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
+    /// Read by the load-time choice of the accessor protocol rows (category F: sites 54, 59).
+    pub fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
         self.facts.accessor_arms.get(&(self.function, pc))
     }
 
@@ -55,6 +63,14 @@ impl<'a> FunctionFacts<'a> {
         self.access_classes(pc).single().map(|(class, _)| class)
     }
 
+    /// The kind of typed array the register `reg` holds just before `pc` is, where every array it holds is a typed array of
+    /// that one native kind (`typed_ir::View::One`, read through `View::kind`, the mapping `element_view` settles). None where
+    /// the solve did not settle, or the register holds no array of one kind. Read by the load-time choice of the length
+    /// rows (category D: sites 9, 10), where a typed array's `length` is its view's.
+    pub fn view_kind(&self, pc: u32, reg: u16) -> Option<crate::heap::TypedArrayKind> {
+        self.cell_at(pc, reg)?.elements.view.kind()
+    }
+
     /// The kind of typed array the element access (a read or a store) at `pc` reads or stores, where its base holds typed
     /// arrays of one native kind and no other array (`typed_ir::View::One`). The element is that kind's: an access may
     /// read it as the kind's element type with no conversion of the stores (`typed_ir::view_element_type`).
@@ -70,12 +86,26 @@ impl<'a> FunctionFacts<'a> {
         })
     }
 
+    /// The function whose environment holds the depth-0 capture slot `slot` this function reads (`FactKey::Slot { owner, slot }`).
+    /// None where this function reads no depth-0 capture of `slot`. Read by the load-time choice of a capture's root row
+    /// (category M: site 1), which needs the owner to test whether it is the program's root function.
+    pub fn capture_owner(&self, slot: u16) -> Option<u32> {
+        self.facts.captures.get(&self.function)?.iter().find(|&&(_, captured)| captured == slot).map(|&(owner, _)| owner)
+    }
+
     /// The cell register `register` holds just before the instruction at `pc` in the settled solve
     /// (`RegisterCells::at`): its type with its range, the classes of its objects and what its arrays keep.
     /// None where the solve did not settle or no path reaches `pc`. A tier lowers the instruction from it:
     /// a guard the cell decides is never built.
     pub fn cell_at(&self, pc: u32, register: u16) -> Option<crate::typed_ir::Cell> {
         self.facts.registers.get(&self.function)?.at(pc, register)
+    }
+
+    /// The settled cell of local slot `slot` of this function's own frame (`FactKey::Slot { owner: self.function, slot }`): the
+    /// join of every store to the slot, a parameter's binding included (`effects::binding_stores`). None where the solve keeps
+    /// no cell for the slot.
+    pub fn local_cell(&self, slot: u16) -> Option<crate::typed_ir::Cell> {
+        self.facts.cell(crate::typed_ir::FactKey::Slot { owner: self.function, slot })
     }
 
     /// The interned atoms the string register `register` holds just before `pc` is one of, sorted (`typed_ir::StringFact`),
@@ -181,8 +211,7 @@ impl<'a> FunctionFacts<'a> {
     /// The slot of named field `atom` in instances of `class` (its index in `AotFacts::class_layout`), where the layout is
     /// proven: a fixed offset a lowering reads in place of the field's name.
     pub fn field_slot(&self, class: u32, atom: u32) -> Option<u16> {
-        let slot = self.facts.class_layout(class)?.iter().position(|&field| field == atom)?;
-        u16::try_from(slot).ok()
+        self.facts.field_slot(class, atom)
     }
 
     /// The function the construction (`new`) at `pc` always constructs.
@@ -233,6 +262,13 @@ impl<'a> FunctionFacts<'a> {
     /// Whether the step at `pc` may resize an array of any element class (`may_resize_length` over every class).
     pub fn may_resize_any(&self, pc: u32) -> bool {
         self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize_any(pc))
+    }
+
+    /// Whether the names of this function resolve statically (`Function::names_resolve_statically`): every name the body
+    /// names is a lexical binding the compiler resolved, or a global one. Read by the load-time choice of the name sites
+    /// (category K: sites 25 to 33, 55), so a by-name read or store is no run-time resolution.
+    pub fn names_static(&self) -> bool {
+        self.facts.names_static.contains(&self.function)
     }
 
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).

@@ -346,18 +346,25 @@ pub(super) const fn script_call_row(argc: u16, plain: bool, returns: bool) -> Ha
     }
 }
 
-/// The general protocol row of a call record whose immediate is `imm`: that of its argument count, not
-/// `PLAIN` nor `RETURNS`, which the record's requickened form takes (`specialize_script_calls`).
-pub(super) fn script_call_handler(imm: u32) -> Handler {
-    script_call_row(ImmediateLayout::argument_count(imm), false, false)
+/// The entry every body the call at `pc` of `function` may call takes (`FunctionFacts::call_targets`,
+/// `AotFacts::body_entry`): one body's, or the one entry shared by several. None where a body's entry is
+/// not named, or where the bodies differ.
+fn targets_entry(facts: &quench_runtime::compile::aot_facts::AotFacts, function: u32, pc: u32) -> Option<CallEntry> {
+    let mut entries = facts.function_facts(function).proven_call_targets(pc).into_iter().map(|body| facts.body_entry(body));
+    let first = entries.next()??;
+    entries.all(|entry| entry == Some(first)).then_some(first)
 }
 
 /// Gives each call record the protocol row of its argument count, of a receiver that is the function's
 /// `undefined` register (`undefined`), and, where `admits_returns` (`concrete_admits_returning_call` for
 /// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits. A record of
 /// a planned site (`planned`, sorted by pc) takes `planned_call_row` instead, which reads its site from the record's `mode`.
+/// A call whose entry the facts name (`targets_entry`) takes that entry's row (`entry_call_row`), except an activating
+/// entry, which keeps the row that proves the call on its first run. A call whose callee the facts prove is a builtin the
+/// realm binds to a native takes that native's row (`builtin_calls::builtin_call_row`).
 pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool,
-    planned: &[quench_runtime::vm::engine_types::PlannedSite]) {
+    planned: &[quench_runtime::vm::engine_types::PlannedSite], vm: &quench_runtime::vm::Vm,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) {
     let general = script_call_row(ANY_ARGC, false, false) as *const ();
     for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
         if let Ok(index) = planned.binary_search_by_key(&(pc as u32), |site| site.pc) {
@@ -369,7 +376,40 @@ pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined
         let returns = admits_returns && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         let argc = ImmediateLayout::argument_count(record.imm());
         const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-        record.handler = script_call_row(argc, plain, returns) as *const ();
+        let entry = facts.and_then(|facts| targets_entry(facts, function, pc as u32)).filter(|entry| *entry != CallEntry::framed(Framed::Activates));
+        let handler = match entry {
+            Some(entry) => entry_call_row(entry, record),
+            None => super::builtin_calls::builtin_call_row(vm, facts, function, pc as u32, record).unwrap_or_else(|| script_call_row(argc, plain, returns)),
+        };
+        record.handler = handler as *const ();
+    }
+}
+
+/// Gives each construct record whose target the facts prove the row its construction takes (`protocol_misses::construct`),
+/// chosen here, once. A site the facts name a planned construction of (`construct_class` is a fixed cell whose class
+/// is the proven body, and the body only initializes `this`) takes `PLANNED_CONSTRUCT`, or `PLANNED_CONSTRUCT_RETURNED`
+/// where its result is returned; its plan is run-time state the row reads, and a site with no plan takes the generic
+/// step in place. Any other proven target that forwards its arguments (`forwards_args`) takes `SCRIPT_CONSTRUCT_KEEPING`.
+/// A record with no proven target keeps `SCRIPT_CONSTRUCT`.
+pub(super) fn specialize_constructs(records: &mut [LaneInstruction], function: u32, code: Option<&quench_runtime::bytecode::ResidualProgram>,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>) {
+    let Some(facts) = facts else { return };
+    let general = protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>() as *const ();
+    let facts_of = facts.function_facts(function);
+    for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
+        let Some(body) = facts_of.construct_target(pc as u32) else { continue };
+        let planned = facts.construct_class(function, pc as u32).is_some_and(|class| facts.class_fixed_cell(class) && facts.class_body(class) == body)
+            && code.is_some_and(|code| code.function_get(body as usize).is_some_and(|callee| callee.only_initializes_this_fields(&code.constants)));
+        let handler = if planned && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0 {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>() as *const ()
+        } else if planned {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>() as *const ()
+        } else if facts.forwards_args(body) {
+            protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>() as *const ()
+        } else {
+            continue
+        };
+        record.handler = handler;
     }
 }
 
@@ -443,42 +483,18 @@ pub(super) fn array_iteration_result_in_lane(vm: &mut Vm, iterator: Value) -> Op
     Some(result)
 }
 
-/// The `script_call_cross_plain_miss` instantiation of a window of `argc` values, at most
-/// `FIXED_ARGUMENT_COPIES`.
-pub(super) fn cross_plain_handler(argc: u16) -> Handler {
-    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    match argc {
-        0 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_0 as u16 }>(),
-        1 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_1 as u16 }>(),
-        2 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_2 as u16 }>(),
-        3 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_3 as u16 }>(),
-        _ => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_4 as u16 }>(),
-    }
-}
-
-/// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
-/// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
-/// binding source text can declare, except the internal globals the realm installs on its global
+/// The resolution of the by-name load or store of `atom` in program `id`, decided at load from static facts only: the
+/// atom's text, whether the function's names resolve statically (`names_static`) and whether the program's names are
+/// global (`names_are_global`). A native an internal name stands for is read from the atom's text by its row. An
+/// internal name is no binding source text can declare, except the internal globals the realm installs on its global
 /// object, which a static lookup reads as any other.
-pub(super) fn name_resolution(cx: *mut LaneContext, atom: u32) -> NameResolution {
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let vm = unsafe { vm(cx) };
+pub(super) fn name_resolution(vm: &Vm, residual: &quench_runtime::ResidualProgram, id: quench_runtime::vm::ProgramId, names_static: bool, atom: u32) -> NameResolution {
     let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
-    if internal && let Some(native) = quench_runtime::bytecode::intrinsic_name_native(&code.atoms[atom as usize]) {
-        let slot = atom as usize;
-        if vm.intrinsic_natives.len() <= slot {
-            vm.intrinsic_natives.resize(slot + 1, None);
-        }
-        vm.intrinsic_natives[slot] = Some(native);
+    if internal && quench_runtime::bytecode::intrinsic_name_native(&residual.atoms[atom as usize]).is_some() {
         return NameResolution::Native;
     }
-    // The running function decides the name's scope: a running leaf's is its materialized
-    // activation's.
-    materialize_running_leaf_in_lane(cx);
-    let function = running_function_in_lane(cx);
-    let global = code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-        && vm.programs.names_are_global(unsafe { (*cx).program })
+    let global = names_static
+        && vm.programs.names_are_global(id)
         && (!internal || quench_runtime::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(atom)));
     match (global, vm.atom_name(atom)) {
         (true, UNDEFINED_GLOBAL) => NameResolution::Undefined,
@@ -599,8 +615,8 @@ pub(super) fn function_call_activation_in_lane(
     }
 }
 
-/// `passed_target_in_lane` of a forwarded call's `callee` at the call record `ip`, whose read
-/// memo slot links the callee's cache entry, as an array callback method's call links its
+/// `passed_target_in_lane` of a forwarded call's `callee` at the call record `ip`, whose
+/// `CallOperand::memo` slot links the callee's cache entry, as an array callback method's call links its
 /// callback's (`callback_target_in_lane`): the link, tested first, skips the set's hash and the
 /// cross-program and environment lookups for a callee the running program activates.
 #[inline(always)]

@@ -77,6 +77,8 @@ pub(super) struct Scope {
     this_passers: Vec<u32>,
     /// The atom `prototype` interns to, if the program names it.
     pub(super) prototype: Option<u32>,
+    /// The atom `constructor` interns to, if the program names it: the read that reaches the `Function` constructor.
+    pub(super) constructor: Option<u32>,
     /// The atom `length` interns to, if the program names it: a store to it changes an array's length.
     pub(super) length: Option<u32>,
     /// The atom `__proto__` interns to, if the program names it: a read of it is a builtin prototype (`Cell::prototype`).
@@ -150,6 +152,7 @@ impl Scope {
                 .collect(),
             this_passers: THIS_PASSERS.iter().filter_map(|name| atom_named(program, name)).collect(),
             prototype: program.atoms.iter().position(|name| name == "prototype").map(|atom| atom as u32),
+            constructor: program.atoms.iter().position(|name| name == "constructor").map(|atom| atom as u32),
             length: program.atoms.iter().position(|name| name == "length").map(|atom| atom as u32),
             proto: program.atoms.iter().position(|name| name == "__proto__").map(|atom| atom as u32),
             set_prototype: atom_named(program, INTRINSIC_SET_PROTOTYPE_OF_BINDING),
@@ -198,7 +201,7 @@ impl Scope {
     pub(super) fn string_builtins(&self, proofs: &Proofs) -> StringBuiltins {
         StringBuiltins {
             global: self.string_global.filter(|&atom| proofs.proves(Quiet::Intrinsic { object: None, name: atom })),
-            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom)).collect(),
+            methods: self.string_methods.iter().copied().filter(|&(atom, _)| proofs.string_method(atom, self.string_global)).collect(),
         }
     }
 
@@ -278,6 +281,12 @@ impl Scope {
             Descriptors::WithSecond => arguments >= 2,
             Descriptors::Keep => false,
         })
+    }
+
+    /// Whether `atom` names a builtin of `PROPERTY_BUILTINS` the program names: a call of it may define or lock the properties of
+    /// the objects it is given (`identity::may_define`).
+    pub(super) fn is_property_builtin(&self, atom: u32) -> bool {
+        self.property_adders.iter().any(|&(named, _, _)| named == atom)
     }
 
     /// Whether the builtin named `atom` adds or re-shapes properties of the objects it is given (`PROPERTY_BUILTINS`).

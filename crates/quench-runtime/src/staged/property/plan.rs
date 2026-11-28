@@ -116,4 +116,9 @@ pub enum FieldPlan<'a> {
     /// A private name's read of the frame's record (`PropertyFrame::private_field`): the
     /// object's private field under the name's brand, which no field cache records.
     Private { atom: u32 },
+    /// The own field of a fixed class cell (`AotFacts::class_fixed_cell`) whose class the load proved, so the receiver's
+    /// object is that cell and no class or shape guard runs. `slot` is the cell's slot word: the field index, or a spilled
+    /// slot word past the cell's spill slot (`field_cache_layout::spilled_slot`), which `cell_field` decodes. Where
+    /// `hole` the class may leave the field absent (`!AotFacts::field_always_stored`): the read then leaves at the miss.
+    Fixed { slot: u32, hole: bool },
 }

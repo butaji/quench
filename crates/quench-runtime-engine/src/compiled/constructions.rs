@@ -19,9 +19,27 @@ pub(crate) unsafe extern "C" fn construct_in_lane(vm: u64, residual: u64, payloa
 /// makes its receiver whatever is due: the allocation sets a collection due and the next safepoint
 /// collects (DESIGN 4.7). The plan the construction tested still decides, so the receiver is the
 /// one the construction would have made.
+///
+/// The receiver of a kept construction (`lane_region::virtual_objects`), made where its plan held
+/// when the construction was kept: `virtual_construct`'s `ConstructPlanHolds` test proved the frame
+/// constructs in place, no construction is pending and the plan holds. Since then only copies,
+/// constants, Number arithmetic, jumps and reads of kept fields ran (`keeps_virtuals`), and each of
+/// those leaves all three alone. An AOT scalar plan has no computed field, so its plan builds the
+/// receiver whatever the arguments (`planned_construction`). The helper therefore cannot refuse.
+///
+/// # Safety
+/// As `construct_with`'s: the body passes its own VM, running residual and dispatch.
 pub(crate) unsafe extern "C" fn materialize_construct_in_lane(vm: u64, residual: u64, payload: u64, callee: Value, class: u32, arguments: u64, argc: u64) -> u64 {
-    // SAFETY: as `construct_with`'s.
-    unsafe { construct_with(vm, residual, payload, callee, class, arguments, argc, super::dispatch_fast::materialized_construction_in_lane) }
+    // SAFETY: the body passes its own VM, running residual and dispatch; allocating runs no guest code.
+    let (vm, residual, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    };
+    let this = unsafe {
+        super::dispatch_fast::materialized_construction_in_lane(vm, residual, callee, class, arguments as *const Value, argc as u16)
+    }
+    .expect("a kept receiver's plan holds where ConstructPlanHolds tested it: that test proved the frame constructs, no construction is pending and the plan holds, and only copies, constants, Number arithmetic, jumps and kept-field reads ran since (keeps_virtuals), none of which alters them; an AOT scalar plan computes no field, so planned_construction builds it");
+    dispatch.refresh_object_bases(vm);
+    this.to_bits()
 }
 
 /// The construction behind `construct_in_lane` and `materialize_construct_in_lane`: `build` makes the

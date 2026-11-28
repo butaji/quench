@@ -38,15 +38,11 @@ pub enum IcOp<'a> {
     GuardImageClass(u32),
     /// The value at `slot` of the class cell the guard before it proved (`object::cell_fields`): tagged, at
     /// `cell + 8 + 8 * slot`. It ends the read.
-    LoadField { slot: u16, rep: Representation },
+    LoadField { slot: u32, rep: Representation },
     /// The tagged value at `slot` of the live class cell at granule `holder`, the holder of a class-keyed held
     /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a holder whose fields
     /// move resets the field caches before any read (`Vm::drop_moved_holder_entries`), so it tests none. It ends the read.
-    LoadHeldField { holder: u32, slot: u16 },
-    /// The read of the one object whose record is at `record` as `value`, while `watch` holds
-    /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
-    /// that starts from the receiver's word compares the word with the object's own instead.
-    OwnConstant { record: u64, watch: u64, value: u64 },
+    LoadHeldField { holder: u32, slot: u32 },
     /// A direct array's `length` from the receiver's word, its record among the array records
     /// at `records` (`elements::array_length`); any other receiver or form misses.
     ArrayLength { records: u64 },
@@ -84,10 +80,6 @@ pub enum IcOp<'a> {
     /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
     /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldNumber { watch: u64, value: u64 },
-    /// The own field at `slot` of the record, which a getter's hint returned for a receiver of
-    /// layout `guard` (`getter_own_read`): the record's layout is `guard` and the watch at `watch`
-    /// on its prototype's values still holds, else the read misses. It ends the read.
-    GetterOwn { guard: u64, watch: u64, slot: u16 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -192,7 +184,6 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),
         IcOp::HolderConstant(key) => return Break(holder_constant(stage, at.shaped.expect("a holder's constant follows the guard of the receiver's shape"), key, miss)),
         IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
-        IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
         IcOp::ArrayLength { records } => {
             let records = site_word(stage, records);
             return Break(super::elements::array_length(stage, records, at.record, miss));
@@ -203,7 +194,6 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         }
         IcOp::HeldString { watch, value } => return Break(string_read(stage, at.record, watch, value, miss)),
         IcOp::HeldNumber { watch, value } => return Break(number_read(stage, at.record, watch, value, miss)),
-        IcOp::GetterOwn { guard, watch, slot } => return Break(getter_own_read(stage, at.record, guard, watch, slot, miss)),
     }
     Continue(())
 }

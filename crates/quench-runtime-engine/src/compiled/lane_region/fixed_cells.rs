@@ -1,6 +1,6 @@
 //! Named reads and stores of a fixed class's receiver (`AotFacts::class_fixed_cell`). Every instance of the class is a class
 //! cell of its union layout from birth, so the receiver's cell is its direct reference's granule (`ObjectRecord::FixedCell`),
-//! and union slot `k` is the cell's field at `fields_offset + field_size * k`. No record presence, departed, class or shape
+//! and union slot `k` is the cell's field at `fields_offset + field_size * k`. No record presence, class or shape
 //! test is made: the class is the fact. A slot of an absent field holds `DELETED`, which a read answers by the union's
 //! `FieldDefault`. A store writes its slot in place, since the union's domain admits every store of the field; a tagged store
 //! first passes the class space's barrier (`Stage::store_gate`), keyed by the cell's granule.
@@ -9,6 +9,8 @@ use super::*;
 use super::super::object_slots::{emit, Emit, ObjectRecord};
 use quench_runtime::bytecode::{Atom, Register};
 use quench_runtime::compile::aot_facts::{AotFacts, FieldDefault, UnionField};
+use quench_runtime::staged::entry::class_slot_address;
+use quench_runtime::staged::field_cache_layout::{is_spilled_slot, spilled_slot};
 use quench_runtime::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use quench_runtime::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
 use quench_runtime::staged::{Receiver, StagedRecordSpace};
@@ -24,6 +26,9 @@ fn slot_displacement(slot: usize) -> i64 {
 #[derive(Clone, Copy)]
 struct FixedSlot {
     slot: usize,
+    /// The slot word the field's address takes (`class_slot_address`): `slot` where inline, `spilled_slot` past
+    /// the union's `spill_from` (`AotFacts::spill_from`), where the field is in the cell's spill run.
+    word: u32,
     field: UnionField,
     stored: bool,
 }
@@ -95,7 +100,11 @@ impl Lowering<'_, '_> {
     fn fixed_field_in(&self, class: u32, atom: Atom) -> Option<FixedSlot> {
         let facts = self.vm.facts?;
         let (slot, field) = union_field(facts, class, atom)?;
-        Some(FixedSlot { slot, field, stored: facts.field_always_stored(class, atom) })
+        let word = match facts.spill_from(class) {
+            Some(from) if slot >= from as usize => spilled_slot(from, slot as u32 - from),
+            _ => slot as u32,
+        };
+        Some(FixedSlot { slot, word, field, stored: facts.field_always_stored(class, atom) })
     }
 
     /// The fixed class and the union field `atom` of the receiver `owner` at unit PC `pc`, for a read (`tag_proofs::fixed_class`).
@@ -106,6 +115,21 @@ impl Lowering<'_, '_> {
     /// `fixed_field_of` for a store that addresses the cell in place: the class must be writable (`tag_proofs::writable_class`).
     fn fixed_store_field_of(&self, pc: usize, owner: Option<Register>, atom: Atom) -> Option<FixedSlot> {
         self.fixed_field_in(self.writable_class(pc, owner)?, atom)
+    }
+
+    /// The address of the fixed receiver's union field `fixed` in `cell`: an inline field's displacement from the cell, or a
+    /// spilled field's through `class_slot_address` with its constant slot word (the spill run is read live from `SpillBase`).
+    fn fixed_field_address(&mut self, cell: ObjectRecord, fixed: FixedSlot) -> ir::Value {
+        if !is_spilled_slot(fixed.word) {
+            let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
+            return cell.offset_address(&mut self.builder, displacement);
+        }
+        let address = cell.address(&mut self.builder);
+        let payload = self.payload;
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: Some(payload), payload: Some(payload),
+            facts: Default::default(), fresh: false };
+        let word = stage.constant(u64::from(fixed.word));
+        class_slot_address(&mut stage, address, word)
     }
 
     /// The word the union slot at `address` holds for the access at unit PC `pc`, under the alias region of its field.
@@ -149,8 +173,7 @@ impl Lowering<'_, '_> {
         exit: ir::Block) -> Option<(ir::Value, Type)> {
         let fixed = self.fixed_field_of(pc, owner, atom)?;
         let cell = self.fixed_cell(state, owner)?;
-        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
-        let address = cell.offset_address(&mut self.builder, displacement);
+        let address = self.fixed_field_address(cell, fixed);
         Some(match self.slot_word(pc, address, fixed, exit) {
             SlotWord::Number(number) => (self.raw_unary(Unary::Bitcast(Lane::I64), number), fixed.field.cell.ty),
             SlotWord::Tagged(word, ty) => (word, ty),
@@ -163,8 +186,7 @@ impl Lowering<'_, '_> {
         (owner, atom): (Option<Register>, Atom), exit: ir::Block) -> bool {
         let Some(fixed) = self.fixed_field_of(pc, owner, atom) else { return false };
         let Some(cell) = self.fixed_cell(state, owner) else { return false };
-        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
-        let address = cell.offset_address(&mut self.builder, displacement);
+        let address = self.fixed_field_address(cell, fixed);
         let destination = instruction.result_register();
         match self.slot_word(pc, address, fixed, exit) {
             SlotWord::Number(number) => self.set_number(state, destination, number),
@@ -189,8 +211,7 @@ impl Lowering<'_, '_> {
         let field = fixed.field;
         if !state.values[usize::from(source)].value.ty.is_subtype(field.cell.ty) { return false; }
         let Some(cell) = self.fixed_cell(state, owner) else { return false };
-        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
-        let address = cell.offset_address(&mut self.builder, displacement);
+        let address = self.fixed_field_address(cell, fixed);
         let property = regions::property_flags(self.field_region(pc));
         if super::number_domains::is_double(field.cell.ty) {
             // A raw Number is no heap reference: its store needs no barrier.
@@ -215,8 +236,7 @@ impl Lowering<'_, '_> {
         if !domain.is_subtype(fixed.field.cell.ty) { return None; }
         let cell = self.fixed_cell(state, Some(owner))?;
         let header = cell.header(&mut self.builder, None);
-        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
-        let address = cell.offset_address(&mut self.builder, displacement);
+        let address = self.fixed_field_address(cell, fixed);
         Some(LoopStore { header, address, packed_range: None, domain })
     }
 

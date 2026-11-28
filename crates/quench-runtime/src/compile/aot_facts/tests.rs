@@ -1135,6 +1135,62 @@ fn a_builtin_member_a_store_writes_is_no_builtin_identity() {
 }
 
 #[test]
+fn a_builtin_member_an_immediate_is_stored_to_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } Math.floor = 1; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math.floor = 1 writes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_deleted_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } delete Math.floor; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "delete Math.floor removes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_stored_under_a_computed_key_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } var k = 'floor'; Math[k] = function () { return 9; }; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math[k] = v writes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_defined_through_an_alias_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } var d = Object.defineProperty; d(Math, 'floor', { value: 9 }); var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "an aliased defineProperty writes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_stays_builtin_past_a_script_call_handed_an_object() {
+    let program = program("function g(o) { return o.x; } g({ x: 1 }); var y = Math.floor(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "no value of Math leaks, so no define changes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_is_no_builtin_identity_once_its_object_leaks_into_a_many_cell() {
+    let program = program("var M = Math; if (Math.random() > 0.5) { M = {}; } Object.defineProperty(M, 'x', { value: 1 }); var y = Math.floor(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math leaks into M, which a define may hand Math.floor's object");
+}
+
+#[test]
+fn a_constructor_read_by_a_computed_key_leaves_the_world_open() {
+    let program = program("var k = 'constructor'; var F = Object.getPrototypeOf(function () {})[k]; var src = 'Math.floor = 1'; var s = 0; if (s === 1) F(src)();");
+    assert!(world(&program) != World::Closed, "the Function constructor is reached by a computed read of constructor");
+}
+
+#[test]
+fn a_closure_bound_before_its_store_is_no_closure_identity() {
+    let program = program("var h; function call() { return h(); } function g() { return 1; } var out = 0; \
+        for (var i = 0; i < 100; i++) { if (i === 50) h = g; try { out += call(); } catch (e) { out -= 1; } }");
+    let g = function_named(&program, "g") as u32;
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Closure(g)), "h is undefined until its one store, which dominates no read");
+}
+
+#[test]
 fn a_top_level_function_register_is_its_closure_identity() {
     let program = program("function f(x) { return x; } var g = f; g(1);");
     let f = function_named(&program, "f") as u32;
@@ -1251,4 +1307,44 @@ fn a_sloppy_function_only_called_plainly_has_the_global_object_as_this() {
 fn a_strict_function_only_called_plainly_has_no_global_object_as_this() {
     let program = program("function f() { 'use strict'; return this; } f(); f();");
     assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "a strict callee's this is undefined");
+}
+
+/// The identity of every register `cell_at` answers for in the function named `name`.
+fn identities_in(program: &ResidualProgram, facts: &AotFacts, name: &str) -> Vec<Identity> {
+    let id = function_named(program, name);
+    let (len, registers) = program.with_record(id, |function| (function.code.len() as u32, usize::from(function.registers)));
+    let function = facts.function_facts(id as u32);
+    let mut found = Vec::new();
+    for pc in 0..len {
+        for register in 0..registers {
+            if let Some(cell) = function.cell_at(pc, register as u16) { found.push(cell.identity); }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_named_property_read_before_its_closure_store_is_no_closure_identity() {
+    let program = program("var o = {}; function f() { return o.m(); } try { f(); } catch (e) {} o.m = function () { return 1; }; f();");
+    let facts = analyze(&program);
+    assert!(!identities_in(&program, &facts, "f").iter().any(|identity| matches!(identity, Identity::Closure(_))),
+        "f reads o.m before the one store of it, which dominates no read: the read holds no closure identity");
+}
+
+#[test]
+fn a_class_method_read_after_construction_keeps_its_closure_identity() {
+    let program = program("class C { m() { return 1; } } var c = new C(); var r = c.m();");
+    let m = function_named(&program, "m") as u32;
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Closure(m)),
+        "the class header defines m before any construction, and the read runs after it");
+}
+
+#[test]
+fn a_slot_with_a_checked_store_of_another_class_joins_both_classes() {
+    let program = program("function A() {} function B() {} function f() { let x = new A(); x = new B(); return x; } f();");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    let function = facts.function_facts(f);
+    assert!((0..4u16).filter_map(|slot| function.local_cell(slot)).any(|cell| cell.classes.ids().len() == 2),
+        "x holds an A and then a B, so its slot's cell holds both classes");
 }

@@ -11,7 +11,7 @@ const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, 
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: quench_runtime::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-    DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false, closed: false, descriptor: 0 }
+    DirectFacts { callee: 7, cell: 0x1000, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false, closed: false, descriptor: 0 }
 }
 
 /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
@@ -79,7 +79,7 @@ fn a_direct_chain_is_spills_direct_helper_reloads_with_the_direct_row_skipping_t
     let (record, callee) = chain.records.into_iter().next().expect("the direct row's record");
     assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
     assert_eq!(record.callee_record, std::ptr::from_ref(&*callee).addr() as u64, "the site names its callee record");
-    assert_eq!((callee.callee, callee.cell, callee.expected, record.result_register), (7, 0x1000, 5, 6));
+    assert_eq!((callee.callee, callee.cell, record.result_register), (7, 0x1000, 6));
     assert_eq!(chain.parts[spills.len() + 2].holes[0], SLOT);
 }
 

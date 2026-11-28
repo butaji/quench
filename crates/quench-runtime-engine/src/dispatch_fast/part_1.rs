@@ -55,73 +55,14 @@ pub(super) const fn field_store_opcode(receiver: StoreReceiver, strict: bool) ->
 /// receiver and strictness `store` names.
 pub(super) const fn field_store_row(store: FieldStore) -> Handler { field_store_row_at::<FLAG_UNREAD>(store) }
 
-/// `field_store_row` at site fact `FLAG`: `ADD_SITE` is the row of a store that may add its property.
+/// `field_store_row` at site fact `FLAG`: `GENERAL_SITE` for a store the class's facts do not prove always stored,
+/// `TRACKED_SITE` for a store whose field keeps a narrower domain (`named_store_row`).
 pub(super) const fn field_store_row_at<const FLAG: u8>(store: FieldStore) -> Handler {
     match (store.receiver, store.strict) {
-        (StoreReceiver::Register, false) => generated_row!(FIELD_STORE, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::Register, true) => generated_row!(FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::This, false) => generated_row!(THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::This, true) => generated_row!(THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
-    }
-}
-
-/// Whether store opcode `op` takes `this` as its receiver (`THIS_FIELD_STORE`, `THIS_FIELD_STORE_STRICT`).
-pub(super) const fn this_store_op(op: u16) -> bool { op == THIS_FIELD_STORE || op == THIS_FIELD_STORE_STRICT }
-
-/// Whether site `site` is a store's own-field instance (`store_formed_handler`), of either form and receiver.
-pub(crate) const fn store_formed_site(site: u8) -> bool {
-    site == own_site(false, STORE_FLAT) || site == own_site(true, STORE_FLAT)
-        || site == own_site(false, STORE_INLINE) || site == own_site(true, STORE_INLINE)
-}
-
-/// The store row of opcode `OP` at the instance of the storage form `form` (`own_form_index`): the flat run's
-/// or packed inline values'. Extras and narrow runs have none: their stores stay plain.
-pub(super) fn store_formed_handler<const OP: u16>(form: usize) -> Option<Handler> {
-    match form {
-        3 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_FLAT)) }
-            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_FLAT)) }),
-        1 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_INLINE)) }
-            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_INLINE)) }),
-        _ => None,
-    }
-}
-
-/// Requickens the plain own-field store of `script`'s record at `ip` to the instance of its hint's storage
-/// form (`store_formed_handler`), the hint `layout` the store just matched or a VM store set. The arena that
-/// keeps slot representations (`tracks_slot_representations`) leaves a store plain: its tracked site owns it.
-#[inline(never)]
-pub(crate) fn requicken_store_form<const OP: u16>(script: *mut LaneContext, ip: Ip, layout: u32) {
-    if unsafe { vm(script) }.heap_reads().tracks_slot_representations() { return; }
-    if let Some(handler) = store_formed_handler::<OP>(own_form_index(Some(layout))) { requicken(ip, handler); }
-}
-
-/// Whether site `site` is a tracked store installed for its slot's held type (`TRACKED_TAGGED_SITE` and its siblings).
-pub(crate) const fn store_held_site(site: u8) -> bool {
-    site == TRACKED_TAGGED_SITE || site == TRACKED_INT_SITE || site == TRACKED_OBJECT_SITE || site == TRACKED_OBJECT_OR_NULL_SITE
-}
-
-/// The held type (`HELD_*`) the tracked store site `site` is installed for; `HELD_NONE` at any other site.
-pub(crate) const fn held_of(site: u8) -> u8 {
-    use quench_runtime::staged::{HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-    if site == TRACKED_TAGGED_SITE { HELD_TAGGED }
-    else if site == TRACKED_INT_SITE { HELD_INT32 }
-    else if site == TRACKED_OBJECT_SITE { HELD_OBJECT }
-    else if site == TRACKED_OBJECT_OR_NULL_SITE { HELD_OBJECT_OR_NULL }
-    else { HELD_NONE }
-}
-
-/// The tracked store row of opcode `OP` through the hint `(layout, slot)`: the row of the type the slot
-/// holds now (`Heap::tracked_store_held`), which stores a value of it in place with no join; else the
-/// tracked row (`TRACKED_SITE`), which stores through the VM and chooses again from the hint it leaves.
-#[inline(never)]
-pub(crate) fn tracked_store_row<const OP: u16>(script: *mut LaneContext, layout: u32, slot: u16) -> Handler {
-    use quench_runtime::staged::{HELD_INT32, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-    match unsafe { vm(script) }.heap_reads().tracked_store_held(layout, slot) {
-        HELD_TAGGED => generated_row!(OP, ACC_NONE, TRACKED_TAGGED_SITE),
-        HELD_INT32 => generated_row!(OP, ACC_NONE, TRACKED_INT_SITE),
-        HELD_OBJECT => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_SITE),
-        HELD_OBJECT_OR_NULL => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_OR_NULL_SITE),
-        _ => generated_row!(OP, ACC_NONE, TRACKED_SITE),
+        (StoreReceiver::Register, false) => generated_row!(FIELD_STORE, ACC_NONE, FLAG),
+        (StoreReceiver::Register, true) => generated_row!(FIELD_STORE_STRICT, ACC_NONE, FLAG),
+        (StoreReceiver::This, false) => generated_row!(THIS_FIELD_STORE, ACC_NONE, FLAG),
+        (StoreReceiver::This, true) => generated_row!(THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG),
     }
 }
 
@@ -140,13 +81,9 @@ pub(crate) const fn runtime_base(site: u8) -> bool {
     site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS || entry_site(site)
 }
 
-pub(crate) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
-
 pub(crate) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
 
 pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
-
-pub(crate) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
 
 /// Whether site `site` is a nested read, `NESTED_SITE` or one of its formed instances.
 pub(crate) const fn nested_site(site: u8) -> bool {
@@ -163,23 +100,6 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
     else if site == NESTED_INLINE_FLAT { [Form::Packed, Form::Arena] }
     else if site == NESTED_INLINE_INLINE { [Form::Packed, Form::Packed] }
     else { [Form::Either, Form::Either] }
-}
-
-/// The storage-form class of a nested hop whose layout id is `layout`: `0` a flat run, `1` packed
-/// inline values; `None` for another form, whose hop keeps `NESTED_SITE`'s `Form::Either`. Reads the
-/// hint's form through `own_form_index`.
-pub(super) fn nested_hop_class(layout: u32) -> Option<usize> {
-    match own_form_index(Some(layout)) {
-        3 => Some(0),
-        1 => Some(1),
-        _ => None,
-    }
-}
-
-/// The formed nested row of the classes `first` and `second` (`nested_hop_class`).
-pub(super) fn nested_formed_handler(first: usize, second: usize) -> Handler {
-    macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as Handler } }
-    [row!(NESTED_FLAT_FLAT), row!(NESTED_FLAT_INLINE), row!(NESTED_INLINE_FLAT), row!(NESTED_INLINE_INLINE)][first * 2 + second]
 }
 
 pub(crate) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
@@ -215,15 +135,8 @@ pub(crate) fn general_field_read(context: *mut (), record: usize, register: bool
     quick.or_else(|| field_step_in_lane(cx, record, code, object, atom, site))
 }
 
-/// Whether the nested site `i` reads two ordinary own entries, which `NESTED_SITE`'s row runs; a
-/// `length` step (an array's or a string's own `length`) or a single step stays with
-/// `get_field_nested_miss`.
-pub(super) fn nested_row_site(vm: &Vm, code: &ResidualProgram, i: &LaneInstruction) -> bool {
-    code.field_sites.get(i.imm() as usize).is_some_and(|site| site.second.is_some_and(|(atom, _)| atom != vm.length_atom))
-}
-
 /// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
-/// `MATH_CALL2_CONST_SITE`).
+/// `MATH_CALL2_CONST_SITE`), chosen at load (`fuse_math_calls`).
 pub(crate) const fn math_site(site: u8) -> bool {
     site == MATH_CALL_SITE || site == MATH_CALL2_SITE || site == MATH_CALL2_CONST_SITE
 }
@@ -263,10 +176,6 @@ pub(crate) const fn private_field_site(site: u8) -> bool {
     site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
 }
 
-pub(crate) const fn cached_field_site(site: u8) -> bool {
-    site == CACHED_FIELD_THIS || site == CACHED_FIELD_REGISTER
-}
-
 pub(crate) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
 
 pub(crate) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
@@ -281,9 +190,9 @@ pub(super) fn returning_own_row(handler: *const ()) -> bool {
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)) as *const ()
 }
 
-pub(crate) const fn cell_own_site(site: u8) -> bool {
-    site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
-        || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
+/// Whether site `site` is a trusted own-field read of a fixed class's cell (`TRUSTED_OWN_*`, `TRUSTED_RUN_*`).
+pub(crate) const fn trusted_site(site: u8) -> bool {
+    site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER
 }
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
@@ -307,8 +216,6 @@ pub(crate) const fn own_site_form(site: u8) -> u32 {
     if index < OWN_FORMS.len() { OWN_FORMS[index] }
     else if index == OWN_FORMS.len() + 7 { 0 }
     else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM }
-    else if index == STORE_FLAT { 0 }
-    else if index == STORE_INLINE { quench_runtime::value_vec::INLINE_FORM }
     else { HINTED_FORM }
 }
 
@@ -344,7 +251,13 @@ pub(super) fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 pub(super) fn set_field_hint(ip: Ip, entry: quench_runtime::vm::FieldCache) {
-    set_record_hint(ip, entry.receiver, entry.slot);
+    // A hint holds a `u16` field index, which a spilled slot word does not fit (`Vm::form_hint`): a spilled entry
+    // writes the empty hint, so its site keeps reading through the entry (`class_slot_address`).
+    if quench_runtime::staged::field_cache_layout::is_spilled_slot(entry.slot) {
+        set_record_hint(ip, quench_runtime::vm::NO_FIELD_RECEIVER, NO_CALL_LINK);
+        return;
+    }
+    set_record_hint(ip, entry.receiver, entry.record_slot());
 }
 
 /// Makes inherited entry `index` the hint of the `GetField` record at `ip`
@@ -375,11 +288,29 @@ pub(super) fn set_prototype_hint(ip: Ip, hold: impl FnOnce(Option<u16>) -> Optio
     }
 }
 
-/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header
-/// (`holds_loop_site`).
+/// Whether the field record at `ip` runs a trusted own-field row (`trusted_site`): its operand word holds the field's
+/// slot the load chose (`trusted_named_read`), so no hint may overwrite it. Its general misses write no hint either.
+#[inline(always)]
+pub(super) fn holds_trusted_slot(ip: Ip) -> bool {
+    // SAFETY: `ip` is a field read record of a live view.
+    holds_trusted_record(unsafe { &*ip })
+}
+
+/// `holds_trusted_slot` of the record `record`, whichever way it is addressed.
+#[inline(always)]
+pub(crate) fn holds_trusted_record(record: &LaneInstruction) -> bool {
+    let handler = record.handler;
+    handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER) as *const ()
+}
+
+/// Writes a field record's hint, `shape` and `link`, unless it is a held loop header (`holds_loop_site`) or a trusted
+/// record, whose operand word is its slot (`holds_trusted_slot`).
 #[inline(always)]
 pub(super) fn set_record_hint(ip: Ip, shape: u32, link: u16) {
-    if !holds_loop_site(ip) {
+    if !holds_loop_site(ip) && !holds_trusted_slot(ip) {
         // SAFETY: as `requicken`; `ip` is a field read/store record of a live view.
         unsafe {
             (*ip.cast_mut()).operand.field.shape = shape;
@@ -501,28 +432,6 @@ pub(super) fn length_read(vm: &mut Vm, receiver: Value) -> Option<Value> {
     vm.arguments_object_length(receiver)
         .or_else(|| vm.plain_function_length(receiver))
         .or_else(|| vm.typed_array_geometry_read_inline(receiver, atom))
-}
-
-pub(super) fn field_site_tier_in_lane(
-    vm: &Vm,
-    code: &ResidualProgram,
-    i: &LaneInstruction,
-) -> FieldSiteTier {
-    if i.b == quench_runtime::bytecode::FieldBase::NESTED {
-        // A step that reads `name` or `length` may prepare prototype lookup
-        // (`Vm::reads_function_info`); only an array's own `length` needs no preparing.
-        let nested_own = code.field_sites.get(i.imm() as usize).is_some_and(|site| {
-            !vm.reads_function_info(site.first.0)
-                && site.second.is_none_or(|(atom, _)| {
-                    atom == vm.length_atom || !vm.reads_function_info(atom)
-                })
-        });
-        if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
-    } else {
-        // The entry tiers come from one cache index (`Vm::field_site_tier`), not one lookup per
-        // predicate, since a held or inherited local read classifies its site on every read.
-        vm.field_site_tier(i.c)
-    }
 }
 
 /// A nested `GetField`'s value (`this.a.b`, `r.a.b`), each step one shape compare and one
@@ -648,50 +557,8 @@ pub(super) fn own_length(vm: &Vm, object: Value) -> Option<Value> {
     })
 }
 
-/// Requickens the nested read at `ip` to the formed instance its two hops' layouts name: the record's hint
-/// is the first hop's layout, and the second hop's is the layout of the intermediate object the first step
-/// reads (`form_hint`'s, which the site's entry names by shape). A hop of another form, or a hop the
-/// record does not hold, leaves the generic row.
-///
-/// # Safety
-/// `cx` is the running lane's context and `i` a nested record of it naming its site, which `lane_nested_value`
-/// has just read.
-pub(super) unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) {
-    // SAFETY: the context's program outlives the lane run; a nested record names its site.
-    let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
-    let Some((_, cache)) = site.second else { return };
-    let Some(first) = (unsafe { lane_nested_hinted_first(cx, r, i, site) }) else { return };
-    let machine = unsafe { vm(cx) };
-    let entry = machine.field_cache_entry(cache);
-    let hint = i.field_hint();
-    let Some(record) = machine.heap_reads().record_object_value(first) else { return };
-    if hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER || entry.holder != quench_runtime::vm::NO_FIELD_HOLDER
-        || entry.receiver != record.exact_shape() {
-        return;
-    }
-    // Each hop's class is its object's layout's (a flat run of tagged words or packed inline values,
-    // `nested_hop_class`), whose words the row then reads with no decode (`decode_staged_word`).
-    let Some(base) = (unsafe { field_base_in_lane(cx, r, site.base) }) else { return };
-    let Some(base_record) = machine.heap_reads().record_object_value(base) else { return };
-    let second_layout = record.layout_id();
-    let (Some(first_class), Some(second_class)) = (nested_hop_class(base_record.layout_id()), nested_hop_class(second_layout)) else { return };
-    // A loop header keeps its site in the record, and a header's `mode` is the loop's: it keeps the generic row.
-    if holds_loop_site(ip) { return; }
-    // The formed row reads its second hop and base from the record (`nested_mode`), not from the site
-    // and the cache: the hops' guards are the check, so a stale word only misses.
-    // SAFETY: as `requicken`; an unfused field record's `mode` is zero and no fusion names it.
-    unsafe { (*ip.cast_mut()).mode = nested_mode(second_layout, entry.slot, site.base) };
-    requicken(ip, nested_formed_handler(first_class, second_class));
-}
-
-/// The `mode` word of a formed nested record: the intermediate object's layout id (bits 0..32) and its slot
-/// (32..48), and the site's base (48..64), which the formed row reads with no site or cache lookup.
-pub(super) const fn nested_mode(layout: u32, slot: u16, base: quench_runtime::bytecode::FieldBase) -> u64 {
-    layout as u64 | (slot as u64) << 32 | (base.0 as u64) << 48
-}
-
-/// The second hop and base `nested_mode` packed.
+/// The second hop and base of a formed nested record's `mode` word: the intermediate object's layout id (bits 0..32),
+/// its slot (32..48), and the site's base (48..64).
 #[inline(always)]
 pub(crate) const fn nested_mode_parts(mode: u64) -> (u32, u16, quench_runtime::bytecode::FieldBase) {
     (mode as u32, (mode >> 32) as u16, quench_runtime::bytecode::FieldBase((mode >> 48) as u16))
@@ -1044,7 +911,7 @@ pub(super) fn hint_private_field(vm: &Vm, ip: Ip, atom: quench_runtime::bytecode
         && let Ok(slot) = u16::try_from(slot)
         && slot != NO_CALL_LINK
     {
-        set_field_hint(ip, quench_runtime::vm::FieldCache::own(shape, slot));
+        set_field_hint(ip, quench_runtime::vm::FieldCache::own(shape, u32::from(slot)));
     }
 }
 
@@ -1233,7 +1100,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    let direct = |vm: &mut Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
     let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
@@ -1278,14 +1145,9 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
-        // A header comparison that ran while the site held its loop took its formed instance (`row_jump`),
-        // which no target run names: it goes back to its plain row (and its record's `mode` to the zero of an
-        // unfused record), as the loader's `fuse_rows` saw it, so the back edge fuses the test again.
-        // SAFETY: the header is a record of the running view, on this thread.
-        if let Some(plain) = lane_frame::unformed_compare_jump(unsafe { (*header).handler }) {
-            unsafe { (*header.cast_mut()).mode = 0 };
-            requicken(header, plain);
-        }
+        // The header keeps the compare-jump form the load gave it (`specialize_compare_jumps`), or the formed
+        // instance it took while the loop ran; it is not re-formed here. A formed test is an instance of the
+        // comparison jump row (`compare_instances`), which the target run tests as it tests the plain row.
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {

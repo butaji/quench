@@ -56,24 +56,6 @@ impl AccessorCall {
         lane_read_getter(self.cx, r, ip, i, getter, base)
     }
 
-    /// What the getter the site cached answers for `base` (`step_getter_answer_of`). The record moves to
-    /// `get_field_getter_miss` for good: no getter's own field becomes the record's hint.
-    ///
-    /// # Safety
-    /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
-    // S7f DESIGN: a getter that returns its receiver's own field made that field the record's hint, through the
-    // receiver's object record (`object_record_by_id(record_id(base))`), which no ordinary object has. Until the
-    // hint reads the receiver's shape from the class cell, every getter read requickens to the miss row.
-    pub(crate) unsafe fn hold_getter_hint(&self, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
-        let vm = unsafe { vm(self.cx) };
-        let site = vm.field_cache_index(i.c);
-        let getter = vm.cached_field_getter(base, i.imm(), site)?;
-        let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
-        let value = step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, base)?;
-        requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-        Some(value)
-    }
-
     /// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`
     /// trap: the read of its target (through further trapless proxies) along the ordinary chain
     /// (`Vm::ordinary_chain_read`), a data value or an absent key completing the record in place

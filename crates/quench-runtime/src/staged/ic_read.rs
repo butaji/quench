@@ -31,45 +31,6 @@ pub fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: 
     Some(stage.add_imm(zero, value))
 }
 
-/// The own field the getter hint `(guard, watch, slot)` records for the object part at `record`:
-/// `None` (leaving at `miss`) where the record's layout word differs from `guard` (`holder_read`'s
-/// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
-/// slot `LoadSlot` reads, as a getter's own-field return is.
-#[inline(always)]
-pub fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
-    miss: S::Miss) -> Option<S::Word> {
-    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
-    let guard = stage.site(guard);
-    let same = stage.eq_imm(words, guard);
-    stage.guard(same, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let at = Reached { shaped: Some(Shaped::of_guard(record)), ..Reached::bare(record) };
-    load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
-}
-
-/// The value the own-constant hint `(record, watch, value)` records for the object part at
-/// `at`: `None` (leaving at `miss`) for any record but the hinted one, or once the watch on its
-/// values no longer holds. A receiver that is always one object, whose slot the code reads and
-/// nothing rewrites (an enum, a namespace, a module's exports, a configuration object), reads
-/// as its value: one compare of the record's address and the watch's flag. Two objects of one
-/// layout (two enums with the same members) share a layout but never a record.
-#[inline(always)]
-pub fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u64, watch: u64, value: u64,
-    miss: S::Miss) -> Option<S::Word> {
-    let record = stage.site(record);
-    let same = stage.eq_imm(at, record);
-    stage.guard(same, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let zero = stage.constant(0);
-    let value = stage.site(value);
-    Some(stage.add_imm(zero, value))
-}
-
 /// The per-site operand `bits` as a word (a record table's base the row names).
 #[inline(always)]
 pub fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
@@ -160,17 +121,19 @@ pub fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
 /// `IcOp::LoadField`: the tagged value at `slot` of the class cell the reached word names, which the class
 /// guard before it proved holds the slot (`object::cell_fields`).
 #[inline(always)]
-pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation)) -> S::Word {
+pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u32, Representation)) -> S::Word {
     debug_assert!(at.shaped.is_some(), "a field load follows the guard of its class");
-    let layout = super::object::cell_fields(stage, at.record, usize::from(slot) + 1);
-    read_slot_value(stage, layout, slot, rep)
+    debug_assert!(rep == Representation::Tagged, "a class cell's field is read tagged");
+    // The class cell's own field, inline or spilled (`entry::cell_field`, `class_slot_address`).
+    let slot = stage.constant(u64::from(slot));
+    super::entry::cell_field(stage, at.record, slot)
 }
 
 /// `IcOp::LoadHeldField`: the tagged value at `slot` of the live class cell at granule `holder`, the holder
 /// `entry::class_held_value` reads. No guard of its own: the class guard before it proved the receiver, and the
 /// holder's fields moving resets the caches before any read.
 #[inline(always)]
-pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
+pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u32) -> S::Word {
     let granule = stage.constant(u64::from(holder));
     let cell = super::object::cell_at_granule(stage, granule);
     let slot = stage.constant(u64::from(slot));

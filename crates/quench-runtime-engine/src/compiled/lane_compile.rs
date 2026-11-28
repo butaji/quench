@@ -30,7 +30,7 @@ use lane_facts::{unit_closed, bind_callees, Census, plan_key, entry_pc, unit_dir
 
 /// A lane body's work (`body_work_in_lane`), the route `jit_routes` installs.
 pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32,
-    &dyn Fn(Value) -> (usize, usize), &dyn Fn(&Vm) -> Vec<DirectCandidates>, LaneBodyWork<'_>, Option<u32>) -> LaneBodyOutcome;
+    &dyn Fn(Value) -> (usize, usize), &dyn Fn(&mut Vm) -> Vec<DirectCandidates>, LaneBodyWork<'_>, Option<u32>) -> LaneBodyOutcome;
 
 #[quench_macros::ext(CompiledLaneCompileVm)]
 impl Vm {
@@ -261,7 +261,7 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Without the JIT's routes (`jit_routes`) the body declines and the interpreter runs.
         match crate::jit_routes::jit() {
             Some(routes) => (routes.body)(self, program, function, captures, direct, work, entry),
@@ -272,7 +272,7 @@ impl Vm {
     /// `body_work_in_lane`'s route, which `jit_routes` installs.
     fn compile_body_work(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
+        direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         let caller = match work {
             LaneBodyWork::Start { caller } => caller,
@@ -282,7 +282,7 @@ impl Vm {
         if let Some(published) = self.install_ahead_body(super::admission::ahead_unit(), program, function, entry) {
             return LaneBodyOutcome::Published(published);
         }
-        let direct = direct(self);
+        let direct = direct(&mut *self);
         let started = match self.start_lane_method(program, function, captures, &direct, entry, caller) {
             Ok(started) => started,
             Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
@@ -370,7 +370,7 @@ impl Vm {
         let atom = instruction.atom_index();
         let shaped = self.shape_constructed_class(load.shape).is_some_and(|(program, class)| program == self.active_program
             && lane_region::tag_proofs::slot_write_seeded(facts, class, atom, load.ty)
-            && lane_region::tag_proofs::union_slot(facts, class, atom) == Some(usize::from(load.slot)));
+            && lane_region::tag_proofs::union_slot(facts, class, atom) == Some(load.field_index()));
         shaped || lane_region::tag_proofs::store_seeded(facts, unit, function, pc, instruction, load.ty)
     }
 }

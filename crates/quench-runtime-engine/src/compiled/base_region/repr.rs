@@ -145,15 +145,9 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
     }
 }
 
-/// Whether the row at `pc` is widened: named by a leave, its site's operands not all int32s (`site`, the solver's), or a
-/// loaded value among widened ones.
-fn row_widened(widened: &[usize], pc: usize, with_loads: bool, site: Option<Site>) -> bool {
-    with_loads || widened.contains(&pc) || site.is_some_and(|site| site.class != OperandClass::Int32)
-}
-
-/// Whether a loaded value (a heap row) is among the widened PCs.
-fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
-    decoded.iter().enumerate().any(|(k, row)| row.heap.is_some() && widened.contains(&(header as usize + k)))
+/// Whether the row is widened: its site's operands are not all int32s (`site`, the solver's).
+fn row_widened(site: Option<Site>) -> bool {
+    site.is_some_and(|site| site.class != OperandClass::Int32)
 }
 
 /// Where a web starts: unseen where the region is not entered with it, else the narrowest representation
@@ -174,11 +168,7 @@ fn entry_repr(entered: bool, register: Register, seen: &[Type]) -> Option<Repres
 
 /// The representation of every web the region names, to a fixed point: where the compile
 /// began (`seen`, the entry's observed types; dead at the header: none yet), then each writer's result.
-pub(crate) fn representations(span: &Span, decoded: &[Decoded], (widened, sites): (&[usize], &[Option<Site>]), seen: &[Type], webs: &Webs) -> Reprs {
-    let header = span.header;
-    // One loaded value that left for its int32 speculation widens every loaded value at once: the
-    // next compile need not discover them one leave at a time.
-    let loads_widened = loads_widened(decoded, header, widened);
+pub(crate) fn representations(span: &Span, decoded: &[Decoded], sites: &[Option<Site>], seen: &[Type], webs: &Webs) -> Reprs {
     let entered = webs.entry_live(span);
     let mut reprs: Reprs = webs.orig.iter().enumerate().map(|(web, register)| entry_repr(entered.contains(&web), *register, seen)).collect();
     let mut changed = true;
@@ -192,7 +182,7 @@ pub(crate) fn representations(span: &Span, decoded: &[Decoded], (widened, sites)
             let Some(dst) = row.dst else { continue };
             let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
             let site = sites.get(k).copied().flatten();
-            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), site), numbers) };
+            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(site), numbers) };
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;

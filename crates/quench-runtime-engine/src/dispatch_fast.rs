@@ -239,8 +239,8 @@ use quench_runtime::vm::engine_types::FieldOperand;
 
 use quench_runtime::vm::engine_types::CallOperand;
 
-/// A `CallOperand::memo` that names no slot: no table holds this many.
-const NO_READ_MEMO: u32 = u32::MAX;
+/// A `CallOperand::memo` link that names no script target: no cache holds this many.
+const NO_OPERAND_LINK: u32 = u32::MAX;
 
 /// The `FieldOperand::shape` of a record whose hint is an inherited entry
 /// (`Vm::inherited_hint_operands`): no object's exact shape (`Object::exact_shape`, whose id
@@ -255,14 +255,14 @@ const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
     /// slot of its own data field, as the site's primary entry proved it
-    /// (`row_get_field_own_refresh`) or a polymorphic store hit it (`POLY_SITE`).
+    /// (`row_get_field_own_refresh`).
     /// Between shape compactions, which clear every hint (`LaneView::invalidate_shape_bindings`), a
     /// shape's slots never change, so the pair holds whatever the entry holds now.
     #[inline(always)]
     fn field_hint(&self) -> quench_runtime::vm::FieldCache {
         // SAFETY: the view writes `field` for every `GetField` and `SetField` record, the only
         // records whose handlers read the hint.
-        quench_runtime::vm::FieldCache::own(unsafe { self.operand.field.shape }, self.call_link.get())
+        quench_runtime::vm::FieldCache::own(unsafe { self.operand.field.shape }, u32::from(self.call_link.get()))
     }
 
     #[inline(always)]
@@ -368,7 +368,6 @@ impl LaneView {
                         returning_row_of!(quench_runtime::bytecode::UNARY_ROW, RETURNING_UNARY, $leaf) as Handler),
                     (returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, $leaf) as Handler),
-                    (row_returning_field_first::<NOT_LEAF>, row_returning_field_first::<{ $leaf }>),
                     (row_returning_field_miss::<NOT_LEAF>, row_returning_field_miss::<{ $leaf }>),
                     (generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, NOT_LEAF)),
                         generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, { $leaf }))),
@@ -434,6 +433,8 @@ use closure_targets::target_entry;
 pub(crate) mod window_records;
 use window_records::{window_local_handler, window_record, WindowRecord};
 pub(crate) mod lane_stack_growth;
+pub(crate) mod forwarded_methods;
+pub(crate) use forwarded_methods::forwarded_method_of;
 pub(crate) mod lane_generations;
 pub(crate) mod native_frames;
 use quench_runtime::vm::lane_values::{self, HEAP_WINDOW};
@@ -652,7 +653,10 @@ impl LaneView {
         let pc = u32::try_from(pc).ok()?;
         if !self.field_records.contains(&pc) { return None; }
         // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
-        let shape = unsafe { (*self.records[pc as usize].get()).operand.field.shape };
+        let record = unsafe { &*self.records[pc as usize].get() };
+        // A trusted record's operand word is its field's slot, not a hint (`holds_trusted_record`).
+        if holds_trusted_record(record) { return None; }
+        let shape = unsafe { record.operand.field.shape };
         (shape < HOLDER_HINT).then_some(shape)
     }
 
@@ -1332,7 +1336,6 @@ const GATHERED_INLINE_VALUES: usize = 8;
 const SCRIPT_CALL_TARGET_BYTES: usize = 64;
 const _: () = assert!(std::mem::size_of::<ScriptCallTarget>() <= SCRIPT_CALL_TARGET_BYTES);
 
-use quench_runtime::vm::engine_types::NO_FORWARDED_METHOD;
 
 use quench_runtime::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET;
 
@@ -1700,21 +1703,6 @@ impl LaneStack {
         }
     }
 
-    /// The index of `method` in `forwarded_methods`, recording it when new, or
-    /// `NO_FORWARDED_METHOD` once the index space is spent.
-    fn forwarded_method_index(&mut self, method: quench_runtime::bytecode::ForwardedThisMethod) -> u16 {
-        if let Some(index) = self.forwarded_methods.iter().position(|known| *known == method) {
-            return index as u16;
-        }
-        match u16::try_from(self.forwarded_methods.len()) {
-            Ok(index) if index != NO_FORWARDED_METHOD => {
-                self.forwarded_methods.push(method);
-                index
-            }
-            _ => NO_FORWARDED_METHOD,
-        }
-    }
-
     /// Push `activation` onto the stack's reserved capacity, without `Vec::push`'s growth.
     ///
     /// # Safety
@@ -1919,11 +1907,6 @@ impl LaneStack {
         Admission(Admission::new(self.generation, program).0 | self.refused & Admission::DIAGNOSED)
     }
 
-    /// The admission a target or memo made now holds: the lane's, without its conditions.
-    #[inline(always)]
-    fn current_admission(&self) -> Admission {
-        Admission(self.admission.0 & !Admission::CONDITIONS)
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::DeferredLaneCall;
@@ -2316,8 +2299,7 @@ view_handler! {
 pub(crate) mod lane_frame;
 pub(crate) mod protocol_misses; use protocol_misses::*;
 pub(crate) mod derived_frames;
-pub(crate) mod local_fields;
-use local_fields::{local_field_handler, local_field_miss};
+pub(crate) mod compare_instances;
 pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
@@ -2516,11 +2498,6 @@ script_handler! {
         };
         let vm = unsafe { vm(cx) };
         let key = vm.canonical_index_key(key);
-        // A register-operand read (the element row's form) that found a typed element switches to
-        // the typed row of its kind (`row_typed_element`), so the next read makes no protocol miss.
-        let registers = i.a <= quench_runtime::bytecode::REGISTER_MASK
-            && i.b <= quench_runtime::bytecode::REGISTER_MASK
-            && i.c <= quench_runtime::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
             // An array's hole (`new Array(n)` read where nothing was written): the typed and string
@@ -2528,7 +2505,7 @@ script_handler! {
             .or_else(|| vm.array_hole_element(base, key))
             // A BigInt kind's element has no typed row, so its record misses here each read: asked first.
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
-            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
+            .or_else(|| row_typed_element(vm, base, key))
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
@@ -2642,7 +2619,7 @@ script_handler! {
         let slot = ImmediateLayout::capture_slot(imm);
         // The root reads' fast paths (a global var's hint, a global lexical's index, a root
         // binding slot read in place) are gone: every read takes the walk, which answers the same
-        // value through `read_capture_value`. Their record requickening went with them.
+        // value through `read_capture_value`.
         let value = read_capture_value::<true>(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
@@ -2664,11 +2641,6 @@ script_handler! {
         }
         if let Some(value) = value {
             r.set(i.a, value);
-            // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
-            // which reads the binding through the same reads this walk takes.
-            if capture_settles_on_root(cx, depth) {
-                requicken(ip, generated_row!(quench_runtime::staged::LOAD_CAPTURE_ROW, ACC_NONE, FLAG_ROOT) as Handler);
-            }
             next!(cx, r, following(ip), view)
         }
         // A capture of a root environment's global var or lexical: the staged row's root read.
@@ -2731,10 +2703,9 @@ const FIELD_LEAF_READ: u16 = {
 };
 
 /// The site facts of a keyed access of a typed array's element, one per native kind
-/// (`typed_elements::native_kind_at`; `requicken_typed`): the row proves the array's view for
+/// (`typed_elements::native_kind_at`; `element_typed_row`, chosen at load): the row proves the array's view for
 /// the kind its site fixes (`LaneFrame::kept_view`) and reads or stores the element inline with
-/// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`),
-/// which records the kind again.
+/// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`).
 const TYPED_KIND_SITES: [u8; quench_runtime::staged::typed_elements::NATIVE_KINDS] = {
     const FORMS: [usize; quench_runtime::staged::typed_elements::NATIVE_KINDS] = [26, 27, 28, 29, 51, 52, 53, 54, 55];
     let mut sites = [0; quench_runtime::staged::typed_elements::NATIVE_KINDS];
@@ -2754,15 +2725,6 @@ const FIELD_STORE: u16 = field_store_opcode(StoreReceiver::Register, false);
 const FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::Register, true);
 const THIS_FIELD_STORE: u16 = field_store_opcode(StoreReceiver::This, false);
 const THIS_FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::This, true);
-
-
-
-
-/// The storage forms a store's own-field instance fixes, as `own_site` form indexes that `own_site_form`
-/// decodes: the flat run (`0`) and packed inline values (`INLINE_FORM`). Their sites (41 to 44) are below
-/// the returning sites and clash with no `FLAG_*` value, and no other site fact uses these indexes.
-const STORE_FLAT: usize = OWN_FORMS.len() + 11;
-const STORE_INLINE: usize = OWN_FORMS.len() + 12;
 
 
 
@@ -2808,29 +2770,20 @@ pub(crate) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5)
 pub(crate) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
 
 
-/// The site fact of an own read of a receiver outside the object records, as a function's static
-/// field (`Strength.REQUIRED`): the record's hint is the receiver's layout id and slot
-/// (`Vm::cell_own_hint`), guarded by one compare of the function's record (`IcOp::GuardLayout`);
-/// one instantiation per base: the register one (`A.x`) is the common read, and a fixed base
-/// saves the base test (5 Ir per read).
-pub(crate) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
-pub(crate) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
-/// The cell-own sites whose hint layout keeps its slots in an arena run of tagged words (every record
-/// slot is tagged): the row reads the slot untested and undecoded, as an own-field site of that form
-/// does (`OWN_FORMS`), so the read is the slot load past the layout guard.
-pub(crate) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
-pub(crate) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
-/// The cell-own sites of a run with an extras block where slots hold tagged words: the slot load past the layout guard.
-pub(crate) const CELL_EXTRAS_THIS: u8 = own_site(true, OWN_FORMS.len() + 33);
-pub(crate) const CELL_EXTRAS_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 33);
+/// The trusted own-field sites: the load proved the base's class `C` (`trusted_named_read`), so the record reads its
+/// field from `C`'s cell with no class or layout guard. The slot is the record's operand word (`FieldOperand::shape`, set by `derive_lane_view`).
+/// `TRUSTED_OWN_*` is a class whose fields sit in the cell's own words, `TRUSTED_RUN_*` one with fields past its spill
+/// slot; the form is in the slot word itself (`spilled_slot`), so both rows read through `FieldPlan::Fixed` alike.
+/// One instantiation per base: `this` and a register.
+pub(crate) const TRUSTED_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 26);
+pub(crate) const TRUSTED_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 26);
+pub(crate) const TRUSTED_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 27);
+pub(crate) const TRUSTED_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 27);
 
-/// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
-/// plain local, whose hint the record binds like an own read's. Own-form index 30, a
-/// free one below the returning sites.
-pub(crate) const LOCAL_FIELD_SITE: u8 = own_site(false, OWN_FORMS.len() + 30);
-/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the
-/// record's hint names an own-constant hint (`OWN_CONSTANT_HINT`, `Vm::own_constant_operands`).
-pub(crate) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
+/// The bit of a trusted operand's slot word that marks a field the class may leave absent (`!field_always_stored`):
+/// its read leaves at the miss, which takes the general read. Bit 30 is clear in every slot word of a spill slot below
+/// `1 << 14` (`spilled_slot` puts `spill_from` at bits 16 to 30), and `trusted_named_read` declines any other word.
+pub(crate) const TRUSTED_HOLE: u32 = 1 << 30;
 
 /// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
 /// (`IcOp::StringLength`); a miss takes `row_length_other`.
@@ -2849,22 +2802,21 @@ pub(crate) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
 /// as `n.toFixed`: own-form index 14.
 pub(crate) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
-/// The site facts of a read that met a getter whose hint returns an own field of the receiver
-/// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
-/// getter's refresh, which makes the hint (`row_get_field_getter_refresh`).
-pub(crate) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
-pub(crate) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
+/// The site fact of a read whose result is one proven closure (`named_read_row`, `closure_cell_read`): the record's
+/// operand word addresses the closure cell, and the row loads the closure from it. The read's base is not read, so one
+/// instance serves `this` and a register.
+pub(crate) const CLOSURE_CELL_SITE: u8 = own_site(false, OWN_FORMS.len() + 42);
 
 /// The site fact of a nested read `a.b.c` of two own entries (`get_field_nested_miss`'s steps):
 /// the record's hint is the first step's entry, the site's second entry the second; the row runs
-/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read that
-/// refreshes the hint.
+/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read.
+/// No load installs it: a nested read takes the general read.
 pub(crate) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 
 /// The formed nested sites: `NESTED_SITE`'s row with each hop's storage form fixed, the first hop's
 /// (the record's hint) and the second's (the intermediate object's), each a flat run or packed inline
-/// values (`nested_hop_class`). Indexes 43 to 46 are below the returning sites (from 59) and no other
-/// site fact uses them.
+/// values (`nested_mode_parts`). Indexes 43 to 46 are below the returning sites (from 59) and no other
+/// site fact uses them. No load installs them now.
 const NESTED_PAIR_BASE: usize = OWN_FORMS.len() + 34;
 pub(crate) const NESTED_FLAT_FLAT: u8 = own_site(false, NESTED_PAIR_BASE);
 pub(crate) const NESTED_FLAT_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 1);
@@ -2885,41 +2837,17 @@ pub(crate) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
 
 
 
-/// The site fact of a named store that may add its property (`StorePlan::Add`, `RecordPlan::own_add`):
-/// its row runs the VM's adds, and a refused add takes the general cached write.
-pub(crate) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
-
-/// The site fact of a named store whose own hint is a narrow run (`StorePlan::Hinted`, `narrow`):
-/// the row stores the value's narrow form in place (`hinted_narrow_field_store_hit`); a refusal
-/// takes the VM's own-field store, and a store whose object is no longer narrow moves back.
-pub(crate) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
-
-/// The site fact of a named store on a runtime whose arena keeps slot representations
-/// (`Heap::tracks_slot_representations`): the row stores through the record's hint in place of
-/// the untracked own store (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`).
+/// The site fact of a named store into a field whose domain is narrower than Any (`AotFacts::store_form`
+/// Tracked), chosen at load: the row stores through the record's hint in place of the untracked own store
+/// (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`); a refusal takes the general step.
 pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
-
-/// The site facts of a tracked store installed for its slot's held type (`StorePlan::Held`,
-/// `slot_store::HELD_*`), one per type a store keeps in place: a tagged slot's row stores with no
-/// class test, an int slot's with one, an object slot's and an object-or-null slot's with one or two.
-/// A store the slot's type refuses takes the tracked row (`TRACKED_SITE`), which stores, widens and
-/// installs the row of the type the slot holds now (`tracked_store_row`). Free own-form indexes.
-pub(crate) const TRACKED_TAGGED_SITE: u8 = own_site(false, OWN_FORMS.len() + 13);
-pub(crate) const TRACKED_INT_SITE: u8 = own_site(false, OWN_FORMS.len() + 19);
-pub(crate) const TRACKED_OBJECT_SITE: u8 = own_site(false, OWN_FORMS.len() + 43);
-pub(crate) const TRACKED_OBJECT_OR_NULL_SITE: u8 = own_site(false, OWN_FORMS.len() + 49);
-
-/// The site fact of a named store past one shape (`StorePlan::Polymorphic`): the record's hint,
-/// the site's polymorphic entries, then the proved add, all inside the row; a refusal takes
-/// `GENERAL_SITE`'s activation path.
-pub(crate) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
 
 /// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
 /// cached store or add inside the row, a private name's or a refusal's activation path after it
-/// (`row_set_field_miss_path`).
+/// (`row_set_field_miss_path`). Chosen at load for a store the class's facts do not prove always stored.
 pub(crate) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
 /// The site facts of a field read whose value is the callee of a Math call the record after it
-/// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
+/// makes (`fuse_math_calls`): one argument, a register second argument,
 /// and a constant second argument. The row runs the call past its read (`math_row_resume`), the
 /// function's identity read by the VM (`PropertyFrame::math_call`).
 pub(crate) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
@@ -2956,12 +2884,6 @@ pub(crate) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41)
 /// or missing field takes `get_private_field_miss`, the general read.
 pub(crate) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
 pub(crate) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
-
-/// The site facts of a read the VM's cache answers, of `this` and of a register (`FieldPlan::Host`):
-/// the cached read of the site's atom (`LaneFrame::cached_read`). A miss takes `lane_get_field`,
-/// the general read, which runs the getter and the data lookups.
-pub(crate) const CACHED_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 42);
-pub(crate) const CACHED_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 42);
 
 /// The site facts of a returning own-field read (`RETURNING_FIELD_OWN`'s row, k 50 up: the topmost site facts): the record's own
 /// hint, for `this` and a register, at each leaf form the record returns from (`LeafForm`). The
@@ -3001,15 +2923,12 @@ macro_rules! own_sites {
 
 
 script_handler! {
-    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): a site whose entries moved to the hash
-    /// takes the hashed row (`HASHED_SITE`) from now on; every other miss takes it as well, which
-    /// reads the hash and misses to `lane_get_field`.
+    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): the general read, which keeps the record. A polymorphic
+    /// read whose classes the load proves one slot for takes its trusted row there (`trusted_named_read`).
     #[inline(never)]
     fn row_polymorphic_miss<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.field_site_hashed(i.c) {
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, HASHED_SITE));
-        }
-        sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HASHED_SITE), r, ip, Carried::script_in(cx, view))
+        let _ = i;
+        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3072,20 +2991,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// The own-constant row's miss (`OWN_CONSTANT_REGISTER`): another object, or the object was
-    /// written. The site never holds an own constant again and reads as its tier decides.
-    /// Out of line, so the row's hit path makes no call and saves no register.
-    #[inline(never)]
-    #[cold]
-    fn refuse_own_constant_row<>(cx, r, ip, i, view) {
-        // S7f DESIGN: `Vm::refuse_own_constant` is deleted with the own-constant probes; the row's miss
-        // reads as the site's tier decides.
-        let _ = i;
-        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// The generated held read at `HELD_CELL_REGISTER` past its hint: the site's holder entry
     /// (`Vm::cell_holder_field_hit`), whose answer becomes the hint. A miss takes
     /// the holder row (`HOLDER_SITE`), which moves the record on.
@@ -3105,57 +3010,17 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `GetField`'s first run: a read of `name` or `length` can enter prototype lookup
-    /// mode (`Vm::reads_function_info`), which only `lane_get_field`'s general probe
-    /// prepares, so such a site keeps it; any other takes the own-field row (`own_formed_handler`).
+    /// A `GetField` of a local slot: the general read. A base that is no local slot takes its row at load
+    /// (`named_read_row`), and no local base has a fact that names a fixed class, so no local row is chosen.
     #[inline(never)]
     fn row_get_field_first<>(cx, r, ip, i, view) {
-        if quench_runtime::bytecode::FieldBase(i.b).local_index().is_some() {
-            if let Some(handler) = local_field_handler(cx, i) {
-                requicken(ip, handler);
-            }
-            sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-        }
-        let vm = unsafe { vm(cx) };
-        if vm.is_private_name(i.imm()) && i.b != quench_runtime::bytecode::FieldBase::NESTED {
-            // The private field row of the base; a local base reads through the general private read.
-            let private: Handler = single_base_handler(i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
-                protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>());
-            requicken(ip, private);
-            sibling!(private, r, ip, Carried::script_in(cx, view))
-        }
-        // `name` reads take the own-field handlers: an own hit needs the receiver's exact shape
-        // to hold `name` as a data slot the general read recorded, which a function's unprepared
-        // `name` never is (it is no slot until `prepare_function_info_prototypes` makes it one),
-        // and every miss still reaches the general read, which prepares it. `user.name` then
-        // costs an own read, not the general probe.
-        if vm.reads_function_info(i.imm()) && i.imm() == vm.length_atom {
-            // A register's `length` is most often an array's, which no function information
-            // can answer.
-            let handler: Handler = if i.imm() == vm.length_atom
-                && quench_runtime::bytecode::FieldBase(i.b).register_index().is_some()
-                && i.b != quench_runtime::bytecode::FieldBase::NESTED
-            {
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
-            } else {
-                general_handler(i.b)
-            };
-            requicken(ip, handler);
-            sibling!(handler, r, ip, Carried::script_in(cx, view))
-        }
-        // The generated own read of the form of no particular hint, which binds the lane's
-        // object records on its first miss where they are not yet bound.
-        let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
-        let own = single_base_handler(i.b, this, register, row_get_field_miss);
-        requicken(ip, own);
-        sibling!(own, r, ip, Carried::script_in(cx, view))
+        let _ = i;
+        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
 script_handler! {
-    /// The generated `length` row's miss (`ARRAY_LENGTH_SITE`, `STRING_LENGTH_SITE`): an array in a
+    /// The generated `length` row's miss (`ARRAY_LENGTH_SITE`, `STRING_LENGTH_SITE`, `TYPED_LENGTH_SITE`): an array in a
     /// form the row does not read (`Vm::array_length_value`), then a string primitive's length
     /// (`Vm::string_length`), whose site takes the string row. Any other receiver `length_read`
     /// answers (an arguments object's or a user function's own `length`, a typed view's geometry)
@@ -3169,14 +3034,10 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         if let Some(length) = vm.string_length(receiver) {
-            // A site that reads a string's length mostly reads strings, as a scan over one does.
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE));
             r.set(i.a, Value::length(length));
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         if let Some(length) = length_read(vm, receiver) {
-            // A site that reads such a `length` mostly reads these receivers, as a loop over a typed array does.
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE));
             r.set(i.a, length);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -3185,140 +3046,17 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
-    /// `lane_get_field`, one whose site went polymorphic to `POLYMORPHIC_SITE`,
-    /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
-    /// an inherited entry to the generated inherited read; the read itself takes
-    /// `lane_get_field`.
+    /// A miss of a single-entry read (the own-field row, or a nested read's base): the general read, which keeps the
+    /// record. The row was chosen at load (`named_read_row`); no miss rewrites it.
     #[inline(never)]
     fn row_get_field_miss<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let base = unsafe { single_field_base_in_lane(cx, r, i.b) };
-        let string_base = base.is_some_and(|base| {
-            (unsafe { vm(cx) }).heap_reads().is_string(base)
-        });
-        if let Some(handler) = local_field_handler(cx, i) {
-            requicken(ip, handler);
-            sibling!(row_get_field_general, r, ip, Carried::script(cx))
-        }
-        let geometry_base = base.is_some_and(|base| geometry_read_in_lane(unsafe { vm(cx) }, base, i.imm()).is_some());
-        let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
-            // A site that read a typed array's, DataView's, Map's or Set's geometry mostly
-            // reads such views, as a loop over one does: the host read row answers it first.
-            _ if geometry_base => Some(single_base_handler(
-                i.b,
-                general_handler(i.b),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GEOMETRY_SITE),
-                general_handler(i.b),
-            )),
-            // A string primitive reads `String.prototype`, whatever tier its entries name,
-            // where the site admits that read; any other read of one is the general read's.
-            _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
-                Some(single_base_handler(
-                    i.b,
-                    protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_SITE),
-                    protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
-                ))
-            }
-            _ if string_base => Some(general_handler(i.b)),
-            // A number primitive reads `Number.prototype` where the site admits that read, as the
-            // string arm does; a `this` or nested base takes the general read.
-            _ if base.is_some_and(|base| base.as_number().is_some())
-                && (unsafe { vm(cx) }).number_field_site_cacheable(code, i.imm()) =>
-            {
-                Some(single_base_handler(
-                    i.b,
-                    general_handler(i.b),
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, NUMBER_SITE),
-                    general_handler(i.b),
-                ))
-            }
-            FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_SITE)),
-            FieldSiteTier::Nested => Some(protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }>()),
-            FieldSiteTier::General => Some(general_handler(i.b)),
-            // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
-            // local base, which no row names, reads through the getter's activation.
-            FieldSiteTier::Getter => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GETTER_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER),
-                protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>(),
-            )),
-            FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
-                Some(generated_row!(FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE) as Handler),
-            FieldSiteTier::Polymorphic => Some(general_handler(i.b)),
-            // A receiver outside the object records, such as a function, takes the cell lookup.
-            FieldSiteTier::Holder
-                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
-            {
-                Some(if quench_runtime::bytecode::FieldBase(i.b).register_index().is_some() {
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER)
-                } else {
-                    general_handler(i.b)
-                })
-            }
-            FieldSiteTier::Holder => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER),
-                general_handler(i.b),
-            )),
-            FieldSiteTier::Inherited => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, INHERITED_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER),
-                general_handler(i.b),
-            )),
-            // A receiver outside the object records, such as a function, reads its own slot by the
-            // receiver's layout id, which the record's hint holds (a loop header's keeps none).
-            FieldSiteTier::Own
-                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
-            {
-                match base.and_then(|object| (unsafe { vm(cx) }).cell_own_hint(object, i.c)) {
-                    Some((layout, slot)) if !holds_loop_site(ip) => {
-                        set_record_hint(ip, layout, slot);
-                        // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
-                        use quench_runtime::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-                        let form = quench_runtime::tier_surface::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM);
-                        let run = form == 0;
-                        Some(if run {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER), general_handler(i.b))
-                        } else if form == EXTRAS_FORM {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_EXTRAS_REGISTER), general_handler(i.b))
-                        } else {
-                            single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS),
-                                generated_row!(FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER), general_handler(i.b))
-                        })
-                    }
-                    // A site that cached nothing yet (its first read, before the general read
-                    // below records an entry) keeps its record: the next miss decides by the entry,
-                    // a prototype's method (`a.includes`) the held row.
-                    _ if (unsafe { vm(cx) }).field_site_empty(i.c) => None,
-                    // A function's own field the layout does not hold: the cached read.
-                    _ => Some(single_base_handler(
-                        i.b,
-                        generated_row!(FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_THIS),
-                        generated_row!(FIELD_LEAF_READ, ACC_NONE, CACHED_FIELD_REGISTER),
-                        general_handler(i.b),
-                    )),
-                }
-            }
-            FieldSiteTier::Own => None,
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
+        let _ = i;
         sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
 
 
-pub(crate) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 
 
@@ -3334,15 +3072,12 @@ pub(crate) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 script_handler! {
     /// A nested `GetField` whose steps hit their entries without guest code
-    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). A miss
-    /// retires a formed instance to `NESTED_SITE`, and a hit re-chooses the instance from the hops read
-    /// (`requicken_nested`).
+    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). The nested
+    /// read is no load-time row, so its record keeps its row either way.
     fn get_field_nested_miss<>(cx, r, ip, i, view) {
-        requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_SITE));
         let Some(value) = (unsafe { lane_nested_value(cx, r, ip, i) }) else {
             sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
         };
-        unsafe { requicken_nested(cx, r, ip, i) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -3683,7 +3418,7 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
-    /// no field cache records (`row_get_field_first`): the object's private field under
+    /// no field cache records (`named_read_row`): the object's private field under
     /// the name's brand at this record (`private_brand_in_lane`). Any other read, a private
     /// method's or accessor's included, takes `lane_get_field`.
     #[inline(never)]
@@ -3707,7 +3442,7 @@ script_handler! {
                     let shape = data.shape();
                     let hint = i.field_hint();
                     if shape == hint.receiver {
-                        return vm.heap_reads().property_get_ref(data, usize::from(hint.slot)).map(PrivateRead::Value);
+                        return vm.heap_reads().property_get_ref(data, usize::from(hint.record_slot())).map(PrivateRead::Value);
                     }
                     if let Some(element) = vm.private_site_homes.unique_element(ip.addr(), shape) {
                         return Some(element_read(element, object));
@@ -3757,7 +3492,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A store's general write past the generated row (`GENERAL_SITE`, `POLY_SITE`, `ADD_SITE`):
+    /// A store's general write past the generated row (`GENERAL_SITE`, and every store row that misses):
     /// the activation path of `SetField` and its strict form, on the receiver register.
     #[inline(never)]
     fn row_set_object_field_miss<>(cx, r, ip, i, view) {
@@ -3776,41 +3511,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// A store whose site has proved neither its add nor its shape (`UNREAD`, `TRACKED_SITE`,
-    /// `NARROW_SITE`) missed its row and its VM store: the site the record moves to, by what the
-    /// site observed (`ADD_SITE`, `POLY_SITE`, `GENERAL_SITE`), then the general write's
-    /// activation path.
-    #[inline(never)]
-    fn row_set_field_classify<OP: u16, THIS: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let polymorphic = vm.field_site_polymorphic(i.c);
-        let adds = vm.field_site_adds(i.c);
-        // A receiver outside the object records (a RegExp's or a function's cell) hits the own
-        // store's logged path only at one shape, so a polymorphic site of one takes the general
-        // cached write from now on.
-        let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
-        // A private field's store takes the private element path (`row_set_field_miss_path`).
-        let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
-            Some(generated_row!(OP, ACC_NONE, GENERAL_SITE))
-        } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
-            Some(generated_row!(OP, ACC_NONE, ADD_SITE))
-        } else if polymorphic && !cell_receiver {
-            Some(generated_row!(OP, ACC_NONE, POLY_SITE))
-        } else if adds || polymorphic {
-            Some(generated_row!(OP, ACC_NONE, GENERAL_SITE))
-        } else {
-            None
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
-        if THIS {
-            sibling!(row_set_this_field_miss, r, ip, Carried::script_in(cx, view))
-        }
-        sibling!(row_set_object_field_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
 
 
 script_handler! {
@@ -3836,7 +3536,7 @@ script_handler! {
 
 
 /// The strict operators `lane_jump_strict_constant_false` decides.
-const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+use quench_runtime::compile::body_forms::STRICT_INEQUALITY_OPERATOR;
 
 
 
@@ -4470,8 +4170,8 @@ impl Vm {
         self.lane_stack.linked[noted_slot(address, index as u32)].set((address, current.callee));
     }
 
-    /// `script_call_entry` of a callee of another program than the running one, whose
-    /// targets `LaneStack::cross_targets` holds (`script_call_cross_miss`).
+    /// The entry of a callee of another program than the running one, whose targets
+    /// `LaneStack::cross_targets` holds.
     #[inline(always)]
     fn cross_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.cross_targets.set(callee)?;
@@ -4490,24 +4190,6 @@ impl Vm {
         self.lane_stack.cross_targets.entries.get(index).is_some_and(|cached| {
             cached.callee == callee && cached.admission.admits_across(self.lane_stack.admission)
         })
-    }
-
-    /// `cross_call_entry` for the call record whose hint is `link` (`LaneInstruction::call_link`),
-    /// as `linked_script_call_entry` is for the running program's targets: the entry the hint
-    /// names when it holds `callee`'s target, else the set's, which the hint names from then on.
-    #[inline(always)]
-    fn linked_cross_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
-        let linked = usize::from(link.get());
-        let index = if self.cross_call_holds(linked, callee) {
-            linked
-        } else {
-            let index = self.cross_call_index(callee)?;
-            // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
-            link.set(index as u16);
-            index
-        };
-        // SAFETY: `cross_call_holds` found the entry within the cache.
-        Some(unsafe { self.lane_stack.cross_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
     }
 
     /// `cross_call_index`'s entry, in place.
@@ -4737,13 +4419,7 @@ impl Vm {
             // only its program's caches index.
             entry: target_entry(body, &plan, &shape, (settles, environment, cross)),
             capture,
-            forwarded_method: match (plan.forwards_arguments && shape.constructs)
-                .then(|| body.forwarded_this_method(&code.constants))
-                .flatten()
-            {
-                Some(method) => self.lane_stack.forwarded_method_index(method),
-                None => NO_FORWARDED_METHOD,
-            },
+            forwards_method: plan.forwards_arguments && shape.constructs,
         };
         self.remember_target(target, numeric, cross);
         Some(target)
@@ -4941,7 +4617,7 @@ impl Vm {
                 let facts = self.programs.aot_facts(id);
                 let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
+                    derive_lane_view(id, function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false), false,
                         facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };
@@ -4960,10 +4636,9 @@ impl Vm {
 
 
 script_handler! {
-    /// The miss of a linked target whose entry is not a plain activation: the site
-    /// calls the form for that entry directly from now on, an environment or keeping
-    /// activation its own handler and any other entry the out-of-line form, which sorts them
-    /// out. Out of line, reached by `sibling!`, so the miss makes no call.
+    /// The miss of a linked target whose entry is not a plain activation: the call takes the row
+    /// that entry runs (`entry_call_row`) for this call, in place, and the record keeps its row.
+    /// Out of line, reached by `sibling!`, so the miss makes no call.
     #[inline(never)]
     fn script_call_requicken_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -4971,15 +4646,27 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
         let entry = target.map(|target| unsafe { (*target).entry });
         let handler: Handler = match entry {
-            Some(entry) if entry == CallEntry::framed(Framed::Environment) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
-            Some(entry) if entry == CallEntry::framed(Framed::Settles) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(entry) if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) => protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>(),
-            Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler(entry, i),
-            Some(_) => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
+            Some(entry) => entry_call_row(entry, i),
             None => sibling!(script_call_resolve_miss, r, ip, Carried::script_in(cx, view)),
         };
-        requicken(ip, handler);
         sibling!(handler, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+/// The row a call takes whose linked target has entry `entry` (`script_call_requicken_miss`, and the load
+/// for a body whose entry the facts name, `specialize_script_calls`): the environment, settling, keeping or
+/// leaf form of the entry, else the full form, which takes every other entry in place.
+pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
+    if entry == CallEntry::framed(Framed::Environment) {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>()
+    } else if entry == CallEntry::framed(Framed::Settles) {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>()
+    } else if entry == CallEntry::framed(Framed::Keeps) || entry == CallEntry::framed(Framed::Gathers) {
+        protocol_handler::<{ quench_runtime::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>()
+    } else if entry.leaf_form() != NOT_LEAF {
+        leaf_call_handler(entry, i)
+    } else {
+        call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>()
     }
 }
 
@@ -5087,8 +4774,6 @@ script_handler! {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
         if target.entry == CallEntry::framed(Framed::Environment) {
-            // The site calls its environment target's form directly from now on.
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>());
             sibling!(script_call_environment_miss, r, ip, Carried::script_in(cx, view))
         }
         if target.settles() {
@@ -5125,7 +4810,7 @@ script_handler! {
         } else {
             let passed = ReadArguments { registers: r, base: arguments, passed: argc };
             // SAFETY: as `call_read_in_lane`.
-            unsafe { answered_call_in_lane(cx, ip, target, passed, this) }
+            unsafe { answered_call_in_lane(cx, target, passed, this) }
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, a full lane stack or another
@@ -5207,8 +4892,6 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::framed(Framed::Environment) {
-            // A site this form serves calls the full form once its callee's target differs.
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = call_this_in_lane(vm, target, r.get(i.c)) else {
@@ -5245,7 +4928,6 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
         let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -5450,113 +5132,6 @@ use quench_runtime::staged::call_iteration;
 
 
 script_handler! {
-    /// A JavaScript `Call` of another program's frameless callee (`LaneStack::cross_targets`):
-    /// its activation runs in the callee's program, which its return leaves
-    /// (`Completion::Cross`). A site whose callee is no such target calls `script_call_prove_miss`
-    /// again.
-    #[inline(never)]
-    fn script_call_cross_miss<>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).script_calls } {
-            return exit(ip);
-        }
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        if constructing_in_lane(vm, callee) {
-            sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
-            requicken(ip, script_call_handler(i.imm()));
-            sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        let target = unsafe { &*target };
-        // A callee that needs a frame takes it as `frame_call_in_lane` pushes one.
-        if !target.entry.activates_across() && target.entry != CallEntry::framed(Framed::Environment) {
-            #[cfg(feature = "profile-lane-exits")]
-            quench_runtime::vm::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
-            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
-        }
-        #[cfg(feature = "profile-lane-exits")]
-        profile_script_call_target(cx, ip, callee, target);
-        // A leaf runs on a window without an activation, as its own program's calls run it.
-        if let Some((registers, base)) = leaf_calls::cross_leaf_call_in_lane(cx, r, ip, i, target) {
-            next!(cx, registers, base, Carried::script(cx))
-        }
-        let Some(this) = call_this_in_lane(vm, target, r.get(i.c)) else {
-            return exit(ip);
-        };
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        // A plain activation of a window the fixed copies take, not completing its caller,
-        // pushes as `script_call_prove_miss`'s does, entering the callee's program
-        // (`enter_window_in_lane`'s cross completion); the site calls its fixed form from now on
-        // (`script_call_cross_plain_miss`).
-        let argc = ImmediateLayout::argument_count(i.imm());
-        if target.entry == CallEntry::framed(Framed::Activates)
-            && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
-            && argc <= FIXED_ARGUMENT_COPIES
-            && admits_window_in_lane(vm, target, argc)
-        {
-            // The link now proves the plain form (`PLAIN_LINK`): this callee's entry activates
-            // plainly and its window takes `argc`, facts fixed for the callee in this generation.
-            i.call_link.set(i.call_link.get() | PLAIN_LINK);
-            requicken(ip, cross_plain_handler(argc));
-            // SAFETY: the record's window of `r` holds its values.
-            let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
-            let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc, this, false);
-            next!(cx, registers, base, Carried::script(cx))
-        }
-        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
-            // SAFETY: the call's window is registers of the running function.
-            activate_environment_in_lane(cx, r, ip, target, unsafe { call_window_in_lane(r, i) }, (this, false))
-        } else if target.forwards() {
-            activate_keeping_in_lane::<true>(cx, r, ip, target, ActivationArguments::Window(arguments), this, false, None)
-        } else {
-            activate_in_lane(cx, r, ip, target, arguments, this, false)
-        };
-        match activated {
-            Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
-            Err(next) => next,
-        }
-    }
-}
-
-script_handler! {
-    /// `script_call_cross_miss` at a site whose last callee was another program's plain
-    /// activation (`CallEntry::framed(Framed::Activates)`) of `ARGC` arguments, which no completion of its
-    /// caller follows: that activation alone, with the fixed copy of its window. Any other
-    /// call takes the general cross form.
-    fn script_call_cross_plain_miss<ARGC: u16>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        // The link proves the call (`PLAIN_LINK`, set where the general form requickened to
-        // this one): its admission (`Admission::admits_across`) that the run calls script
-        // functions with no construction pending, and, for this callee in this generation, a
-        // plain entry whose window takes `ARGC`. A link without the bit names no entry, so any
-        // other callee or a refused run falls to the general form, which decides and relinks.
-        let index = usize::from(i.call_link.get() ^ PLAIN_LINK);
-        if !vm.cross_call_holds(index, callee) {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        }
-        // SAFETY: `cross_call_holds` found the entry within the cache; nothing below resolves a
-        // target or collects.
-        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.cross_targets.entries.get_unchecked(index)) };
-        debug_assert!(target.entry == CallEntry::framed(Framed::Activates) && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
-        // The stack's room is the one test that stays per call: it is the push's depth check.
-        if !activation_room_in_lane(vm, target) {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(this) = direct_call_this_in_lane(vm, target, r.get(i.c)) else {
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: the record's window of `r` holds its values.
-        let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
-        let (registers, base) = push_passed_in_lane::<true, false>(cx, r, ip, target, passed, ARGC, this, false);
-        next!(cx, registers, base, Carried::script(cx))
-    }
-}
-
-
-script_handler! {
     /// `script_call_prove_miss` of a callee its target cache does not hold: resolving it
     /// (`Vm::resolve_script_call_target`) makes a call, so it runs out of line and the call
     /// continues at `script_call_prove_miss`, which then finds it, or at `native_call_miss`.
@@ -5566,9 +5141,9 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
+        // A callee of another program has no call row: the generic call step takes it.
         if vm.cross_call_entry(callee).is_some() {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
+            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
@@ -5581,23 +5156,16 @@ script_handler! {
                 }
                 sibling!(script_call_prove_miss::<ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
-            // Another program's callee that needs a frame takes it as `frame_call_in_lane`
-            // pushes one.
-            if !target.entry.activates() {
-                sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
-            }
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
-            sibling!(script_call_cross_miss, r, ip, Carried::script_in(cx, view))
+            // Another program's callee has no call row: the generic call step takes it, as it
+            // takes a callee that needs a frame.
+            sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
-        // A site calling a native takes the native handler from now on, which hands any other
-        // callee back.
+        // A native callee takes the row its native has (`native_call_handler`), in place; the row hands
+        // any other callee back to `native_call_miss`.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) {
             let native = *native;
             let handler = native_call_handler(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
-            requicken(ip, handler);
-            if handler as *const () != call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
-                native_calls::install_math_field_call(cx, ip, native);
-            }
+            sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
         sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))
     }
@@ -5611,12 +5179,12 @@ const LOAD_NAME_CALL: u8 = 1;
 /// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
-/// What a by-name load's first run resolves its name to: the `name_row` instance its
-/// record runs from then on, which holds the binding.
+/// How a by-name load or store's name resolves, decided at load (`name_resolution`): the `name_row` instance its
+/// record runs from, which holds the binding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameResolution {
-    /// The active realm's function for the native an internal name stands for
-    /// (`Vm::intrinsic_natives`), which no binding can shadow and no scope affects.
+    /// The active realm's function for the native an internal name stands for, which no binding can shadow and no scope
+    /// affects.
     Native,
     /// The global `undefined`, which is non-writable and non-configurable and which no global
     /// lexical declaration may shadow (GlobalDeclarationInstantiation rejects a restricted
@@ -5635,87 +5203,14 @@ enum NameResolution {
 }
 
 
-script_handler! {
-    /// A by-name load's first run, the miss its generated row takes (`name_load_miss`): the VM's
-    /// resolution of its name (`name_resolution`) fills the record, whose handler from then on
-    /// is the row instance (`name_row`) holding the binding, or leaves every run to the general
-    /// path. `KIND` is the load's (`LOAD_NAME`).
-    #[inline(never)]
-    fn load_name_resolve_miss<KIND: u8>(cx, r, ip, i, view) {
-        let load = match KIND {
-            LOAD_NAME_CALL => quench_runtime::staged::NameLoad::Call,
-            LOAD_NAME_TYPEOF => quench_runtime::staged::NameLoad::Typeof,
-            _ => quench_runtime::staged::NameLoad::Read,
-        };
-        let bound: Handler = match name_resolution(cx, i.imm()) {
-            NameResolution::Native => name_row::<FLAG_NAME_NATIVE>(load),
-            NameResolution::Undefined => name_row::<FLAG_NAME_UNDEFINED>(load),
-            NameResolution::Global => name_row::<FLAG_NAME_GLOBAL>(load),
-            NameResolution::Intrinsic => name_row::<FLAG_NAME_INTRINSIC>(load),
-            NameResolution::General => {
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                if code.function_get(running_function_in_lane(cx) as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-                    let scoped = name_row::<FLAG_SCOPE>(load);
-                    requicken(ip, scoped);
-                    sibling!(scoped, r, ip, Carried::script_in(cx, view))
-                }
-                // Any other name's scope is a runtime fact, which the general path's read settles
-                // (`name_probe_miss`).
-                if !unsafe { vm(cx) }.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
-                    // The probe is the row's miss at `FLAG_PROBE` (`name_probe`), which settles the record after.
-                    let probing = name_row::<{ lane_frame::FLAG_PROBE }>(load);
-                    requicken(ip, probing);
-                    sibling!(probing, r, ip, Carried::script_in(cx, view))
-                }
-                requicken(ip, exit_lane);
-                return exit(ip);
-            }
-        };
-        requicken(ip, bound);
-        sibling!(bound, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-
 /// The global value property `name_resolution` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
-    /// A `StoreName` row's miss (`Miss::StoreNameFirst`), the name's first-run resolution: an
-    /// assignment to a name the global object answers whenever no global lexical binding
-    /// shadows it (as `name_resolution` decides for a read) takes
-    /// `store_global_name_miss`, a `var`'s initializer too, which stores as one: the
-    /// declaration made the property, and a lexical binding is never hinted. The record stays
-    /// on its row, which stores through the hint this arm sets. Any other store always takes
-    /// the general path.
-    #[inline(never)]
-    fn store_name_first_miss<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let function = running_function_in_lane(cx);
-        let global = !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-            && vm.programs.names_are_global(unsafe { (*cx).program });
-        if global {
-            sibling!(store_global_name_miss, r, ip, Carried::script_in(cx, view))
-        }
-        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-            let scoped = lane_frame::scoped_store_row();
-            requicken(ip, scoped);
-            sibling!(scoped, r, ip, Carried::script(cx))
-        }
-        requicken(ip, exit_lane);
-        exit(ip)
-    }
-}
-
-script_handler! {
-    /// The global name store past the row's hint (`global_name_store`): the global object's own
-    /// writable data field, which becomes the hint where no realm declares the name lexically
-    /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
-    /// from then on.
+    /// The global name store past the row's hint (`global_name_store`), which a global store's row takes at load: the
+    /// global object's own writable data field, which becomes the hint where no realm declares the name lexically
+    /// (`Vm::global_name_hintable`). Where a realm declares it, the store leaves to the general path at this store, and
+    /// the record keeps its row: a declaration retires the hints (`note_global_lexical_names`).
     #[inline(never)]
     fn store_global_name_miss<>(cx, r, ip, i, view) {
         // S7f DESIGN: the global object is a class cell, so its own data field makes no record hint
@@ -5729,15 +5224,15 @@ script_handler! {
 }
 
 script_handler! {
-    /// `name_row` of a global, past its record's hint: an
-    /// initialized global lexical binding of
-    /// the name, which the general path's search finds first there; else the global object's
-    /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
-    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general
-    /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
-    /// `undefined`.
+    /// `name_row` of a global, past its record's hint: an initialized global lexical binding of the name, which the
+    /// general path's search finds first there, and which a `LEXICAL` row's hint locates by index; else the global
+    /// object's own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
+    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general path for an
+    /// uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`. A global row that
+    /// finds a lexical binding keeps no hint: its row reads the global object's hint, which a lexical index must not
+    /// name, so the read repeats here until a declaration retires the hints (`note_global_lexical_names`).
     #[inline(never)]
-    fn global_name_refresh_miss<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
+    fn global_name_refresh_miss<KIND: u8, SCOPED: bool, LEXICAL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -5745,27 +5240,19 @@ script_handler! {
         // A read the general path found past a scope that could declare the name holds only
         // until some scope does (`Vm::note_dynamic_scope_name`).
         if SCOPED && vm.scope_names.declared(atom) {
-            requicken(ip, exit_lane);
             return exit(ip);
         }
         let value = match vm.global_name_read(code, atom, i.c) {
             quench_runtime::vm::field_cache::GlobalNameRead::Value(value, hint) => {
                 if let Some(hint) = hint {
                     set_field_hint(ip, hint);
-                } else if !SCOPED
+                } else if LEXICAL
                     && let Some(index) = vm.realm.global_lexical_bindings.get_index_of(&atom)
                     && let Ok(index) = u16::try_from(index)
                     && index != NO_CALL_LINK
                 {
-                    // A declared name's read names its binding by index (`FLAG_NAME_LEXICAL`'s row),
-                    // which the global lexical bindings never move.
-                    set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, index));
-                    let load = match KIND {
-                        LOAD_NAME_CALL => quench_runtime::staged::NameLoad::Call,
-                        LOAD_NAME_TYPEOF => quench_runtime::staged::NameLoad::Typeof,
-                        _ => quench_runtime::staged::NameLoad::Read,
-                    };
-                    requicken(ip, name_row::<FLAG_NAME_LEXICAL>(load));
+                    // A declared name's row locates its binding by index, which the global lexical bindings never move.
+                    set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, u32::from(index)));
                 }
                 value
             }
@@ -6116,7 +5603,7 @@ use named_keys::named_key_element;
 pub(crate) mod in_place_natives;
 pub(crate) mod root_bindings;
 use root_bindings::frame_capture_at_root;
-pub mod native_calls; pub(crate) mod regexp_calls; pub(crate) mod getters; pub(crate) mod generator_yields;
+pub mod native_calls; mod builtin_calls; pub(crate) mod regexp_calls; pub(crate) mod getters; pub(crate) mod generator_yields;
 pub(crate) mod lane_roots;
 pub(crate) mod lane_trace;
 pub(crate) mod lane_stack_trace;
@@ -6298,16 +5785,13 @@ script_handler! {
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
-            // Later runs of the site try the plan first. The site notes its callee, which a body
-            // reads to keep the receiver as its field values.
+            // The site notes its callee, which a body reads to keep the receiver as its field values.
             vm.note_site_callee(unsafe { &(*ip).call_link }, crate::compiled::CallTarget {
                 callee: crate::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 {
-                requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>());
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>());
             if let Some(resumed) = complete_activation_in_lane(cx, ip, this) {
                 resume!(cx, resumed)
             }
@@ -6315,9 +5799,6 @@ script_handler! {
         }
         let target = *target;
         if target.forwards() {
-            // The site constructs a forwarding target: later runs enter the keeping
-            // construction directly, which moves the record back for any other target.
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>());
             sibling!(script_construct_keeping_miss, r, ip, Carried::script_in(cx, view))
         }
         let built = if target.initializes() {
@@ -6363,11 +5844,11 @@ script_handler! {
 
 script_handler! {
     /// `script_construct_miss` at a site into a register whose construction was planned
-    /// (`planned_construction_in_lane`), which `script_construct_miss` moves it to: the plan of
+    /// (`planned_construction_in_lane`), installed at load (`specialize_constructs`): the plan of
     /// the callee alone, without resolving its call target. A plan exists only for a callee
     /// whose target constructs by its initializer stores, which its function fixes, and while
     /// it holds the finished object is what the activation would make. Any other construction
-    /// moves the record back to `script_construct_miss`.
+    /// takes the generic step, `script_construct_miss`, in place.
     fn planned_construct_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
@@ -6392,7 +5873,6 @@ script_handler! {
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) } else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -6414,10 +5894,10 @@ script_handler! {
 
 script_handler! {
     /// `planned_construct_miss` at a site whose construction is returned (`RETURN_REGISTER`),
-    /// which `script_construct_miss` moves it to: the planned receiver completes the
+    /// installed at load for a planned site (`specialize_constructs`): the planned receiver completes the
     /// activation that returns it, or the frame's own returning construct where
-    /// `finishes_construction_in_lane` admits it. Any other construction moves the record back
-    /// to `script_construct_miss`.
+    /// `finishes_construction_in_lane` admits it. Any other construction takes the generic step,
+    /// `script_construct_miss`, in place.
     fn planned_construct_returned_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
@@ -6427,7 +5907,6 @@ script_handler! {
             .then(|| unsafe { planned_site_in_lane(vm, cx, ip, r, i) })
             .flatten();
         let Some(this) = planned else {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -6445,12 +5924,8 @@ script_handler! {
         match call_keeping_activation_in_lane(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Err(Some(next)) => next,
-            // A site this form serves since `script_call_prove_miss` saw a keeping target calls
-            // the full form once its callee keeps nothing.
-            Err(None) => {
-                requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
-                sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-            }
+            // A keeping activation that declines takes the full form in place.
+            Err(None) => sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view)),
         }
     }
 }
@@ -6460,10 +5935,10 @@ script_handler! {
 
 script_handler! {
     /// `script_construct_miss` of a target that keeps its passed values
-    /// (`ScriptCallTarget::forwards`), which `script_construct_miss` moves a site to: the
-    /// keeping activation (`construct_keeping_activation_in_lane`). Any other construction moves
-    /// the record back to `script_construct_miss`. Out of line, so ordinary constructions
-    /// keep their code.
+    /// (`ScriptCallTarget::forwards`), installed at load for a proven target that forwards its arguments
+    /// (`specialize_constructs`): the keeping activation (`construct_keeping_activation_in_lane`). Any
+    /// other construction takes the generic step, `script_construct_miss`, in place. Out of line, so
+    /// ordinary constructions keep their code.
     #[inline(never)]
     fn script_construct_keeping_miss<>(cx, r, ip, i, view) {
         // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
@@ -6488,10 +5963,7 @@ script_handler! {
                 frame_return(unsafe { vm(cx) }, ip, this)
             }
             Err(Some(next)) => next,
-            Err(None) => {
-                requicken(ip, protocol_handler::<{ quench_runtime::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>());
-                sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
-            }
+            Err(None) => sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view)),
         }
     }
 }
@@ -6635,7 +6107,7 @@ impl<'a> InlinedRun<'a> {
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`native_frames::advance_into_frames`), then the record its leave names in the innermost, or the
-/// innermost's completion; `body_left_in_lane` adds the leave as feedback (`LaneMethod::feedback`).
+/// innermost's completion. A leave changes no code: it is traced and counted for diagnostics only.
 pub(crate) enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
@@ -6823,8 +6295,7 @@ const RETURNING_BINARY: u8 = 2;
 const RETURNING_OBJECT: u8 = 3;
 const RETURNING_LITERAL: u8 = 4;
 /// A `RETURNING_FIELD` read of a register or `this` at a site that reads neither `name` nor
-/// `length`: the site's primary own entry (`Vm::primary_own_field_hit`), installed by
-/// `row_returning_field_first`.
+/// `length`: the site's primary own entry (`Vm::primary_own_field_hit`). No load installs it now.
 const RETURNING_FIELD_OWN: u8 = 5;
 /// `RETURNING_FIELD_OWN` at a site past one shape (`Vm::polymorphic_field_hit`).
 const RETURNING_FIELD_POLYMORPHIC: u8 = 6;
@@ -7320,57 +6791,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// A returning `GetField`'s first run: a single read that names neither `name` nor
-    /// `length` (`Vm::reads_function_info`) takes `RETURNING_FIELD_OWN`; any other keeps
-    /// `RETURNING_FIELD`, whose cached read prepares them. Every kind keeps the record's leaf
-    /// form (`LEAF`, `LaneView::specialize_leaf_returns`).
-    #[inline(never)]
-    fn row_returning_field_first<LEAF: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let handler = returning_field_first_kind::<LEAF>(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
-        requicken(ip, handler);
-        sibling!(handler, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-
-
-script_handler! {
-    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`,
-    /// `_INHERITED`): the record moves to the kind its site's tier calls for
-    /// (`field_site_tier_in_lane`), as `row_get_field_miss` moves a plain read; the read itself
-    /// takes `RETURNING_FIELD`.
+    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`, `_INHERITED`, `_POLYMORPHIC`): the
+    /// general returning read, which keeps the record. No load installs those kinds now, so only a record that already
+    /// holds one reaches this miss.
     #[inline(never)]
     fn row_returning_field_miss<LEAF: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        // The row's own hint is stale: the primary own entry answers as the single-entry kind did,
-        // and a direct object's hit rebinds the hint the row reads.
-        // S7f DESIGN: the record's primary own entry (`Vm::primary_own_field_hit`) is deleted; the
-        // row takes the tier below.
-        // The single-entry tiers read the object records alone; a receiver in a heap cell
-        // keeps the general cached read.
-        let cell_receiver = unsafe { single_field_base_in_lane(cx, r, i.b) }
-            .is_some_and(|object| object.direct_object_index().is_none());
-        let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
-            // A local base has no single-base kind (`is_single_field_base`).
-            tier if tier != FieldSiteTier::Nested && !is_single_field_base(i.b) => {
-                Some(field_return_row::<LEAF>(RETURNING_FIELD))
-            }
-            FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
-                Some(field_return_row::<LEAF>(RETURNING_FIELD))
-            }
-            FieldSiteTier::Nested => Some(field_return_row::<LEAF>(RETURNING_FIELD_NESTED)),
-            FieldSiteTier::General => Some(field_return_row::<LEAF>(RETURNING_FIELD)),
-            FieldSiteTier::Getter => Some(field_return_row::<LEAF>(RETURNING_FIELD_GETTER)),
-            FieldSiteTier::Polymorphic => Some(field_return_row::<LEAF>(RETURNING_FIELD_POLYMORPHIC)),
-            FieldSiteTier::Holder => Some(field_return_row::<LEAF>(RETURNING_FIELD_HOLDER)),
-            FieldSiteTier::Inherited => Some(field_return_row::<LEAF>(RETURNING_FIELD_INHERITED)),
-            FieldSiteTier::Own => None,
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
+        let _ = i;
         sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
     }
 }
@@ -7400,7 +6826,6 @@ script_handler! {
             {
                 resume!(cx, resumed)
             }
-            requicken(ip, script_call_handler(i.imm()));
             return exit(ip);
         };
         resume!(cx, push_frame_call_in_lane(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0)))

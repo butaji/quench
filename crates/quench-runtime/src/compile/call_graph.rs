@@ -13,6 +13,14 @@ use rustc_hash::FxHashMap;
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
 
+/// One named call site of a function: the callee the site names, the loop depth of the site, and the site's PC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CallEdge {
+    pub callee: u32,
+    pub depth: u32,
+    pub pc: u32,
+}
+
 /// The weight of one loop, or of one recursive call cycle, on a function's static frequency (10^depth).
 pub const LOOP_WEIGHT: u64 = 10;
 
@@ -40,12 +48,20 @@ pub struct CallGraph {
     /// Per regexp literal site (`ResidualProgram::regexp_literal_sites`), the static frequency of its pattern
     /// (`regexp_site_frequencies`).
     regexp_sites: Box<[u64]>,
+    /// Per function, each named call site it makes, in PC order: the callee, the loop depth and the PC of the site.
+    edges: Box<[Box<[CallEdge]>]>,
+    /// Every function, components in callee-first order (a component's callees come before it).
+    callee_first: Box<[u32]>,
+    /// The components on the longest call chain: the passes a fixed point over the graph needs (`chain_depth`).
+    chain_depth: u32,
 }
 
 /// What one scan of the program's bodies reads of its call sites.
 struct Scan {
     /// Per function, each call site that names it: its caller and the loop depth of the site.
     callers: Vec<Vec<(usize, u32)>>,
+    /// Per function, each named call site it makes, in PC order.
+    edges: Vec<Vec<CallEdge>>,
     /// Per function, the call sites that name it, saturating.
     named: Vec<u32>,
     /// Per function, its work per activation.
@@ -60,7 +76,14 @@ impl CallGraph {
     /// The call graph of `program`, its edges the callees `facts` names, and its frequencies solved from it.
     pub fn of(program: &ResidualProgram, facts: &AotFacts) -> Self {
         let count = program.function_count();
-        let mut scan = Scan { callers: vec![Vec::new(); count], named: vec![0; count], work: vec![0; count], size: vec![0; count], unnamed: vec![false; count] };
+        let mut scan = Scan {
+            callers: vec![Vec::new(); count],
+            edges: vec![Vec::new(); count],
+            named: vec![0; count],
+            work: vec![0; count],
+            size: vec![0; count],
+            unnamed: vec![false; count],
+        };
         let callees: Vec<Box<[usize]>> = (0..count)
             .map(|function| program.function_get(function).map_or_else(Vec::new, |body| scan_body(&mut scan, function, body, facts)).into_boxed_slice())
             .collect();
@@ -69,6 +92,8 @@ impl CallGraph {
         let frequency = frequencies(&callees, &components, &scan.callers);
         let stack_subtree = stack_subtrees(&callees, &cycle, &scan.unnamed, &scan.size);
         let regexp_sites = regexp_site_frequencies(program, &frequency);
+        let callee_first: Box<[u32]> = components.iter().flatten().map(|&function| function as u32).collect();
+        let chain_depth = component_depth(&callees, &components);
         Self {
             cycle,
             cycles,
@@ -78,7 +103,30 @@ impl CallGraph {
             closed: facts.closed(),
             stack_subtree,
             regexp_sites,
+            edges: scan.edges.into_iter().map(Vec::into_boxed_slice).collect(),
+            callee_first,
+            chain_depth,
         }
+    }
+
+    /// The named call sites of `function`, in PC order: each one's callee, loop depth and PC, one entry per site (a
+    /// site with several named callees has one entry for each).
+    pub fn call_edges(&self, function: u32) -> &[CallEdge] {
+        match self.edges.get(function as usize) {
+            Some(edges) => &edges[..],
+            None => &[],
+        }
+    }
+
+    /// Every function, a component's callees before the component (`frequencies`' order).
+    pub fn callee_first(&self) -> &[u32] {
+        &self.callee_first
+    }
+
+    /// The number of components on the longest call chain (`component_depth`): the passes a tier fixed point over
+    /// this graph needs before its callers have seen their callees' tiers.
+    pub fn chain_depth(&self) -> u32 {
+        self.chain_depth
     }
 
     /// The static frequency of the pattern regexp literal site `site` creates: the sum of `frequency` over the
@@ -156,6 +204,7 @@ fn scan_body(scan: &mut Scan, function: usize, body: &Function, facts: &AotFacts
             out.push(callee);
             scan.named[callee] = scan.named[callee].saturating_add(1);
             scan.callers[callee].push((function, depth));
+            scan.edges[function].push(CallEdge { callee: callee as u32, depth, pc: at });
         }
     }
     out.sort_unstable();
@@ -219,6 +268,27 @@ fn frequencies(callees: &[Box<[usize]>], components: &[Vec<usize>], callers: &[V
         }
     }
     frequency.into_boxed_slice()
+}
+
+/// The longest chain of components a call walks through, counted in components (a component with no callee in another
+/// component has depth 1). `components` runs callee-first, so each component's callees are measured before it.
+fn component_depth(callees: &[Box<[usize]>], components: &[Vec<usize>]) -> u32 {
+    let mut component = vec![0usize; callees.len()];
+    for (index, members) in components.iter().enumerate() {
+        for &function in members { component[function] = index; }
+    }
+    let mut depth = vec![0u32; components.len()];
+    for (index, members) in components.iter().enumerate() {
+        let below = members.iter()
+            .flat_map(|&function| callees[function].iter())
+            .map(|&callee| component[callee])
+            .filter(|&callee| callee != index)
+            .map(|callee| depth[callee])
+            .max()
+            .unwrap_or(0);
+        depth[index] = below + 1;
+    }
+    depth.into_iter().max().unwrap_or(0)
 }
 
 /// Whether a component of the call graph is a call cycle: several functions, or one that calls itself.

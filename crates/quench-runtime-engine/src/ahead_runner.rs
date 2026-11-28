@@ -28,7 +28,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
     // A function's loop regions enter native code iff its predicted tier compiles it (design decision 4.9: the argmin,
     // or the AOT mode's tier for an image, `ProgramStore::compiled_tier`).
     let loop_regions = vm.programs.compiled_tier(program, function);
-    let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
+    let mut view = crate::dispatch_fast::derive_lane_view(program, function, code, constants, vm, kind, live, sites,
         crate::compiled::admission::record_plan(loop_regions && quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
         vm.programs.reports_on_drop(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.

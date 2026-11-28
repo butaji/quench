@@ -8,8 +8,7 @@
 //!
 //! - the arguments: a leading argument may be a pinned register's value (`call_words`, read from the
 //!   places the planner named; the rest from the caller's window);
-//! - admission (`call_room`): the shared `admit_native` (one validity compare, one room check) plus
-//!   the plain depth bound;
+//! - admission (`call_room`): the shared `admit_native` (one room check) plus the plain depth bound;
 //! - entry (`call_enter`): the callee's plain header, its body in the body table, the lane's new
 //!   tops, then its row entry or lane body entry, a `call reg` only a `call_*` row may make;
 //! - settle (`call_settle`): the pop and the result register's write.
@@ -358,7 +357,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         Some(self.callee_field(offset_of!(CalleeRecord, global_this)))
     }
 
-    /// The cell's validity and room (`admit_native`, less the callee's recovery space) and the plain depth bound.
+    /// The cell's room (`admit_native`, less the callee's recovery space) and the plain depth bound.
     #[inline(always)]
     fn call_room(&mut self, stage: &mut Concrete, _miss: ()) -> Option<Room<u64>> {
         let payload = payload(&self.places.s);
@@ -367,7 +366,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         let (top, end) = (word_at(tops.values_at as usize, 0), word_at(payload, JS_STEP_LANE_VALUES_END));
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
         let reserved = word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64;
-        let (room, fill) = admit_native(stage, cell as u64, self.callee_field(offset_of!(CalleeRecord, expected)), top, end, reserved, ())?;
+        let (room, fill) = admit_native(stage, cell as u64, top, end, reserved, ())?;
         let depth = word_at(tops.plain_at as usize, PLAIN_DEPTH_AT);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) + 1;
         // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames

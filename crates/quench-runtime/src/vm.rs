@@ -974,7 +974,7 @@ struct FieldAddCache {
 }
 // Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<FieldAddCache>() == 48);
+const _: () = assert!(size_of::<FieldAddCache>() == 56);
 /// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
 /// first, before an entry interns them as its chain.
 #[derive(Clone, Copy)]
@@ -2371,10 +2371,6 @@ pub struct Vm {
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
-    /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
-    /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
-    /// as the atoms.
-    pub intrinsic_natives: Vec<Option<Native>>,
     /// The entry that runs each native's call, by discriminant (`Vm::call_native_dispatch`).
     native_table: &'static native_table::NativeTable,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
@@ -3468,7 +3464,6 @@ impl Vm {
         self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
-        self.intrinsic_natives.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);
@@ -3485,7 +3480,6 @@ impl Vm {
         self.runtime_atoms = self.intern_runtime_atoms();
         self.field_caches = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_cache_writes = Some(Vec::new());
-        program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
         self.inherited_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.accessor_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
@@ -3688,9 +3682,8 @@ impl Vm {
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
-    /// Primes every looping function of an installed `program` to expand on first entry.
+    /// Lays out the inline-cache sites of an installed `program`.
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
-        program.prime_loop_decoding();
         self.append_cache_layout(id, program.cache_site_counts());
     }
 

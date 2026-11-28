@@ -39,7 +39,7 @@ impl Shadows {
                 Some(class) => { self.classes.insert((class, atom)); }
                 None => { self.names.insert(atom); }
             },
-            (Change::Field(atom), Owner::This(classes) | Owner::Object(classes)) => self.field(classes, atom),
+            (Change::Field(atom), Owner::This(classes) | Owner::Object(classes) | Owner::Host(_, classes)) => self.field(classes, atom),
         }
     }
 
@@ -332,9 +332,9 @@ pub(super) fn accessor_arms(call: &Call, atom: u32, setter: bool, census: &Censu
 
 /// The accessor one field access runs (`accessor_arms`), with whether it is a setter (its one argument, the stored value).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccessorArms {
-    pub(crate) setter: bool,
-    pub(crate) arms: Box<[Arm]>,
+pub struct AccessorArms {
+    pub setter: bool,
+    pub arms: Box<[Arm]>,
 }
 
 /// The class a named field read off an object of `site` takes its field from (`Types::holder`): the object's own class, or,

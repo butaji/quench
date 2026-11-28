@@ -5,11 +5,9 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
-use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
+use crate::bytecode::{Function, ResidualProgram};
 use crate::compile::call_graph::CallGraph;
 pub use crate::jit_mode::Tier;
-use crate::staged::meaning::{means, Meaning};
-use crate::staged::Operation;
 #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
@@ -43,13 +41,6 @@ pub const PROTOTYPE_UNROLL_LINKS: u32 = 4;
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub const POLYMORPHISM: usize = 4;
-
-/// Whether a closed-set call's plan inlines its arms' bodies, so the call is lowered as the class-layout compare chain
-/// (`closed_set_by_layout`) rather than the indirect call through the class's method vector (`closed_set_indirect`):
-/// at most three arms, each of which the rule `inlines` admits.
-pub fn arms_inline(plan: &crate::compile::call_plan::CallPlan, graph: &CallGraph, program: &ResidualProgram) -> bool {
-    plan.arms.len() <= 3 && plan.arms.iter().all(|arm| inlines(graph, program, arm.function))
-}
 
 /// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
 /// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, and a mode
@@ -192,62 +183,6 @@ pub const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 /// the image. The bound stays a resource limit: the image is loaded whole.
 pub const AHEAD_BODY_MAX_CODE_BYTES: usize = 4 * LANE_BODY_MAX_CODE_BYTES;
 
-/// The growth a unit's inlining may add, in percent of its root body's instructions (design decision 4.6): the callee
-/// instructions one unit copies in all are at most this share of the root's own size, spent on the call sites in
-/// program order (`lane_unit`'s planner). A callee with exactly one call site adds no growth (`charges_growth`).
-pub const INLINE_GROWTH_PERCENT: usize = 10;
-
-/// The longest body a callee with no call in it inlines: an accessor, an arithmetic helper. Its copy costs code at
-/// each site, and its call costs most relative to its work (design decision 4.6: 64).
-pub const INLINE_LEAF_MAX_INSTRUCTIONS: usize = 64;
-
-/// The longest body a callee with exactly one call site in the closed world inlines. That one site takes the one copy
-/// the body makes, so its bound is the compile time a unit may spend on one body, not the code its copies cost.
-pub const INLINE_SINGLE_SITE_MAX_INSTRUCTIONS: usize = 400;
-
-/// The longest body an accessor-shaped callee inlines (`accessor_shaped`): a field read, compare or store of `this`
-/// and the moves and returns around them, whose call is the whole of its cost.
-pub const INLINE_ACCESSOR_MAX_INSTRUCTIONS: usize = 12;
-
-/// Whether inlining `callee` adds code to its unit: a callee with one call site in the closed world moves its one body
-/// rather than copying it, so it adds no growth and is not charged to `INLINE_GROWTH_PERCENT`.
-pub fn charges_growth(graph: &CallGraph, callee: u32) -> bool {
-    !graph.single_call_site(callee)
-}
-
-/// Whether the callee `callee` of `program` inlines at a call site the planner has proved a single target for
-/// (an arm of its call plan). The one rule every tier asks, and it reads only static
-/// facts: the body's size and shape, and the program's call graph (`CallGraph::single_call_site`). A callee inlines
-/// where (a) it is a leaf, with no call, under `INLINE_LEAF_MAX_INSTRUCTIONS`; or (b) it has exactly one call site in
-/// the closed world, under `INLINE_SINGLE_SITE_MAX_INSTRUCTIONS`; or (c) it is accessor-shaped, under
-/// `INLINE_ACCESSOR_MAX_INSTRUCTIONS`. Size is the instruction count of the callee's body.
-pub fn inlines(graph: &CallGraph, program: &ResidualProgram, callee: u32) -> bool {
-    let Some(body) = program.function_get(callee as usize) else { return false };
-    let size = body.instructions().count();
-    let leaf = !body.instructions().any(|instruction| means(instruction, Meaning::Call) || means(instruction, Meaning::Construct));
-    (leaf && size <= INLINE_LEAF_MAX_INSTRUCTIONS)
-        || (graph.single_call_site(callee) && size <= INLINE_SINGLE_SITE_MAX_INSTRUCTIONS)
-        || (size <= INLINE_ACCESSOR_MAX_INSTRUCTIONS && accessor_shaped(body))
-}
-
-/// Whether `body` is accessor-shaped: it reads or writes a field of `this` (a `FieldLookup::Atom` on `FieldBase::THIS`),
-/// and every other instruction is a number operation, a move, a constant, a `this` load, or a `Return`.
-fn accessor_shaped(body: &Function) -> bool {
-    let mut touches_this = false;
-    let shaped = body.instructions().all(|instruction| match Operation::<u64, ()>::of(instruction) {
-        Some(Operation::GetField { .. } | Operation::SetField { .. }) => match instruction.field_lookup() {
-            Some(FieldLookup::Atom { base, .. }) if base == FieldBase::THIS => {
-                touches_this = true;
-                true
-            }
-            _ => false,
-        },
-        Some(Operation::Number(_) | Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadThis { .. } | Operation::Return { .. }) => true,
-        _ => false,
-    });
-    shaped && touches_this
-}
-
 // Lane bodies: history, recurrence and loop views (lane_body_tier, dispatch_frame, program_store)
 /// The tier a function runs in under default mode (design decision 4.9): the interpreter, or a compiled body. `Tier`
 /// names the compiled tiers only, so the interpreter is this enum's own variant.
@@ -268,45 +203,53 @@ pub const UJIT_IR_PER_OP: u64 = 4;
 pub const BJIT_COMPILE_IR_PER_OP: u64 = 60;
 /// IR instructions the u-jit's one-time compile of a body spends per bytecode of the body.
 pub const UJIT_COMPILE_IR_PER_OP: u64 = 3000;
-/// IR instructions an interpreted call of a function spends on its frame, per call.
+/// IR instructions an interpreted call of a function spends on its frame, per call. Not re-derived: the interpreter's
+/// push is the `push_in_loop_call` chain (`vm/dispatch.rs`, `push_general_user_frame`), too long to count by reading,
+/// so this keeps its earlier value until the first build measures it.
 pub const ENTRY_IR_INTERPRETER: u64 = 40;
-/// IR instructions a b-jit body's entry spends per call: the stencil crossing and its lane frame.
-pub const ENTRY_IR_BJIT: u64 = 150;
-/// IR instructions a u-jit body's entry spends per call: its entry record and its prologue.
-pub const ENTRY_IR_UJIT: u64 = 300;
+/// The b-jit entry's fixed IR per call of a body from a b-jit direct row (one IR per machine instruction, read off the
+/// code; the row's stage counts are read, not measured): the row's `entry_rows` hop (`stencils/entry.rs`: sub, call,
+/// add, ret = 4), and the direct row's room check (~4), header, tops, depth and register stores (~8), and settle: pop,
+/// result store and ended check (~8). 4 + 20 = 24.
+pub const ENTRY_IR_BJIT_BASE: u64 = 24;
+/// The b-jit entry's IR per register of the callee: the window's registers past the arguments are written `undefined`
+/// at the push (`DirectFrame`'s fill), one store each. The callee's `registers` bounds them.
+pub const ENTRY_IR_BJIT_PER_REGISTER: u64 = 1;
+/// The u-jit entry's fixed IR per call: every native entry to a u-jit body passes the body shim (`lane_body_abi::body_shim`:
+/// its prologue, `call_indirect` and return, 6 instructions), then the body's prologue (stack check 3, frame 2), its
+/// epilogue (3), and the caller's status test (2). 6 + 3 + 2 + 3 + 2 = 16.
+pub const ENTRY_IR_UJIT_BASE: u64 = 16;
+/// The u-jit entry's IR per register of the callee: one save and one restore per register, the upper bound on the
+/// callee-saved registers its body keeps live across a call. Conservative, not measured.
+pub const ENTRY_IR_UJIT_PER_REGISTER: u64 = 2;
+/// The IR of a call that enters a b-jit body from a u-jit caller through the body ABI (`entry_body`, 20 instructions),
+/// over the `entry_rows` hop a b-jit direct call pays (4): 20 - 4 = 16.
+pub const CROSSING_IR_INTO_BJIT: u64 = 16;
 
 // The tier order is locked: each compiled tier runs a bytecode for less IR than the one before it, and compiles for more.
 const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
 const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
 
-/// The tier a function runs in: the argmin over the three tiers of its predicted IR. Its entries are its static frequency
-/// (`CallGraph::frequency`), which already weighs each call site `LOOP_WEIGHT` per loop it sits in: a run of the
-/// function costs its work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in)
-/// times the tier's cost per bytecode, for each entry; each entry pays its tier's entry cost (`ENTRY_IR_*`); a compiled
-/// tier adds its one-time compile over the bytecodes, once for the body. Ties go to the tier that compiles less: the
-/// interpreter, then the b-jit. Pure: no count and no clock.
-pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32) -> PredictedTier {
-    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
-    let entries = graph.frequency(function);
-    let work = graph.loop_work(function);
-    let run = |per_op: u64| entries.saturating_mul(work).saturating_mul(per_op);
-    let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
-    let entry = |per_call: u64| entries.saturating_mul(per_call);
-    let interpreter = run(INTERPRETER_IR_PER_OP).saturating_add(entry(ENTRY_IR_INTERPRETER));
-    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_BJIT));
-    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_UJIT));
-    if interpreter <= base && interpreter <= ultra {
-        PredictedTier::Interpreter
-    } else if base <= ultra {
-        PredictedTier::Base
-    } else {
-        PredictedTier::Ultra
-    }
+// The solver that picks every function's tier from the call graph (`predicted_tiers`, `predicted_cost`).
+mod cost;
+// The inlining rule and the lane's decision for each call site of a host (`inline_plan`).
+mod inline;
+pub use inline::{
+    arms_inline, charges_growth, inline_plan, inlines, lane_callee, returns_or_keeps, INLINE_ACCESSOR_MAX_INSTRUCTIONS,
+    INLINE_GROWTH_PERCENT, INLINE_LEAF_MAX_INSTRUCTIONS, INLINE_SINGLE_SITE_MAX_INSTRUCTIONS, LANE_CALLEE_MAX_INSTRUCTIONS,
+};
+pub use cost::{predicted_cost, predicted_tiers};
+
+
+/// Whether `function` runs from fixed-width instructions (`HotDecoding`), decided once at its first interpreted entry:
+/// its static frequency (`CallGraph::frequency`) is above one, or it loops, since one entry can dispatch without bound.
+/// A loop-free function entered once runs from packed code and holds no decoded copy. Pure: no count and no clock.
+pub fn decodes_wide(graph: &CallGraph, program: &ResidualProgram, function: u32) -> bool {
+    graph.frequency(function) > 1 || program.function_get(function as usize).is_some_and(Function::loops)
 }
 
-
 /// The predicted tier of a lane body (design decision 4.9): the u-jit in an AOT program (`aot`), whose
-/// image compiles every function, otherwise the argmin `predicted` (`predicted_tier`).
+/// image compiles every function, otherwise the fixed-point pick `predicted` (`predicted_tiers`).
 pub fn body_tier(aot: bool, predicted: PredictedTier) -> PredictedTier {
     if aot { PredictedTier::Ultra } else { predicted }
 }

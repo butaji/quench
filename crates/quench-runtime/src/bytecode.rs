@@ -981,64 +981,56 @@ const _: () = {
     }
 };
 
-/// Entries after which a function's packed code is expanded into fixed-width instructions.
-/// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
-/// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
-/// A function with a loop is primed to expand on its first entry instead (`prime_loop`):
-/// one entry can dispatch without bound.
-const HOT_DECODE_ENTRIES: u32 = 64;
-
+/// A function's packed code expanded into fixed-width instructions, when the function runs decoded. The decision is
+/// made once, at its first interpreted entry, from the static facts the caller passes (`tier_policy::decodes_wide`);
+/// the expansion is a pure cache of the packed code and its wide table, so it is never observed.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HotDecoding {
-    entries: std::cell::Cell<u32>,
-    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    // A thin pointer: every `Function` pays for this field, almost all stay cold. `None` is the decision to run packed.
     #[allow(clippy::box_collection)]
-    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
+    code: std::cell::OnceCell<Option<Box<Vec<WideInstruction>>>>,
 }
 
 impl HotDecoding {
-    /// Counts one entry and returns the expanded code once the function is hot.
+    /// The expanded code of a function that runs decoded, else `None`. `decodes` is asked once, at the first call.
     #[inline(always)] pub(crate) fn on_entry(
         &self,
         code: &[Instr],
         wide: &[WideInstruction],
+        decodes: impl FnOnce() -> bool,
     ) -> Option<&[WideInstruction]> {
-        if let Some(decoded) = self.code.get() {
-            return Some(decoded);
-        }
-        let entries = self.entries.get() + 1;
-        self.entries.set(entries);
-        if entries >= HOT_DECODE_ENTRIES {
-            return Some(self.expand(code, wide));
-        }
-        None
-    }
-
-    /// Makes a function whose code loops expand on its first entry. Priming at installation
-    /// leaves the entry path itself unchanged.
-    pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
-        if self.entries.get() == 0 && back_edges_of(code.iter().map(|&packed| widen(packed, wide))).next().is_some() {
-            self.entries.set(HOT_DECODE_ENTRIES - 1);
+        match self.code.get() {
+            Some(decided) => decided.as_ref().map(|decoded| decoded.as_slice()),
+            None => self.decide(code, wide, decodes),
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+    fn decide(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+        decodes: impl FnOnce() -> bool,
+    ) -> Option<&[WideInstruction]> {
         self.code
             .get_or_init(|| {
-                code.iter()
-                    .map(|packed| {
-                        if packed.is_wide() {
-                            wide[packed.wide_index()]
-                        } else {
-                            packed.as_wide()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .into()
+                decodes().then(|| {
+                    Box::new(
+                        code.iter()
+                            .map(|packed| {
+                                if packed.is_wide() {
+                                    wide[packed.wide_index()]
+                                } else {
+                                    packed.as_wide()
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
             })
-            .as_slice()
+            .as_ref()
+            .map(|decoded| decoded.as_slice())
     }
 }
 
@@ -1221,7 +1213,7 @@ pub struct Function {
     pub wide: Vec<WideInstruction>,
     pub registers: u16,
     pub dispatch: DispatchClass,
-    /// Fixed-width view of `code`, derived once the function proves hot.
+    /// Fixed-width view of `code`, derived at the function's first interpreted entry when it runs decoded.
     pub(crate) decoded: HotDecoding,
     /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
     /// proof, else derived on the first read (`plain_local`). The binary codec writes them for a
@@ -4234,17 +4226,13 @@ impl ResidualProgram {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
             let rewrites_pending = self.rewrite_ranges.defers(index);
-            let function = self.lower_unlowered(index, unlowered, rewrites_pending);
-            function.decoded.prime_loop(&function.code, &function.wide);
-            return function;
+            return self.lower_unlowered(index, unlowered, rewrites_pending);
         }
         // A Wasm module's function lowers from its bytes through the frontend, which a build
         // without `jit` does not carry: its images archive every record.
         #[cfg(feature = "jit")]
         if let Some(lazy) = &self.wasm_lazy {
-            let function = lazy.lower(index, &self.constants);
-            function.decoded.prime_loop(&function.code, &function.wide);
-            return function;
+            return lazy.lower(index, &self.constants);
         }
         #[cfg(not(feature = "jit"))]
         if self.wasm_lazy.is_some() {
@@ -4285,8 +4273,6 @@ impl ResidualProgram {
                 }
             },
         };
-        // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
-        function.decoded.prime_loop(&function.code, &function.wide);
         function
     }
 
@@ -4511,14 +4497,6 @@ impl ResidualProgram {
             fields: self.cache_sites.capacity(),
             methods: self.method_sites.capacity(),
             objects: self.object_sites.capacity(),
-        }
-    }
-
-    /// Primes the loop decoding of every function record the program holds; a released
-    /// record primes as it compiles again (`ResidualProgram::function`).
-    pub(crate) fn prime_loop_decoding(&self) {
-        for function in self.functions.iter().filter_map(FunctionSlot::record) {
-            function.decoded.prime_loop(&function.code, &function.wide);
         }
     }
 

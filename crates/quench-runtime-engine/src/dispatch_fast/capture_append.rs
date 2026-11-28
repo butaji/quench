@@ -6,83 +6,9 @@
 use crate::ext_traits::*;
 use super::*;
 
-// Positions in the recognized body. The load record retains its capture immediate when
-// quickened, so the target needs no separate copy of its capture slot.
+// The load record retains its capture immediate when quickened, so the target needs no separate copy of its
+// capture slot. The recognized body's positions are the shared form's (`compile::body_forms::appends_capture`).
 const LOAD_CAPTURE_PC: usize = 2;
-const RESULT_PC: usize = 5;
-const RETURN_PC: usize = RESULT_PC + 1;
-
-/// The parameter the recognized body appends: its register is the parameter's own.
-const CHUNK_PARAMETER: u16 = 0;
-
-/// Whether `body` is `null !== chunk && (binding += chunk); return true;` over its first
-/// parameter and one capture of its own environment, as each instruction's role says.
-pub(crate) fn recognizes(body: &Function, constants: &[quench_runtime::bytecode::Constant]) -> bool {
-    if body.params == 0 || !body.handlers.is_empty() {
-        return false;
-    }
-    let Some(&[test, branch, load, add, store, result, done]) = body.code.get(..=RETURN_PC) else {
-        return false;
-    };
-    let [test, branch, load, add, store, result, done] =
-        [test, branch, load, add, store, result, done].map(|packed| body.widened(packed));
-    tests_chunk_is_not_null(test, constants)
-        && skips_append_unless(branch, test)
-        && loads_own_capture(load)
-        && appends_chunk(add, load)
-        && stores_back(store, add, load)
-        && returns_true(result, done, constants)
-}
-
-/// A write that leaves the chunk parameter's register for the append to read.
-fn spares_chunk(instruction: WideInstruction) -> bool {
-    instruction.result_flags() == 0 && instruction.result_register() != CHUNK_PARAMETER
-}
-
-/// `null !== chunk`, into a register other than the chunk's.
-fn tests_chunk_is_not_null(test: WideInstruction, constants: &[quench_runtime::bytecode::Constant]) -> bool {
-    quench_runtime::staged::binary(test.op())
-        && spares_chunk(test)
-        && test.binary_operator() == STRICT_INEQUALITY_OPERATOR
-        && test.operand_b().register_index() == Some(CHUNK_PARAMETER)
-        && test.operand_c().kind() == Some(quench_runtime::bytecode::OperandKind::Constant)
-        && matches!(constants.get(usize::from(test.operand_c().payload())), Some(quench_runtime::bytecode::Constant::Null))
-}
-
-/// A false test jumps over the append to the result.
-fn skips_append_unless(branch: WideInstruction, test: WideInstruction) -> bool {
-    quench_runtime::staged::jumps_when_false(branch.op())
-        && branch.register_a() == test.result_register()
-        && branch.jump_target() as usize == RESULT_PC
-}
-
-/// A capture of the body's own environment, into a register other than the chunk's.
-fn loads_own_capture(load: WideInstruction) -> bool {
-    quench_runtime::staged::reads_capture(load.op()) && spares_chunk(load) && load.capture_depth() == 0
-}
-
-/// `binding + chunk`, in that order.
-fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
-    quench_runtime::staged::binary(add.op())
-        && add.result_flags() == 0
-        && add.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
-        && add.operand_b().register_index() == Some(load.result_register())
-        && add.operand_c().register_index() == Some(CHUNK_PARAMETER)
-}
-
-/// The sum, stored to the capture the load read.
-fn stores_back(store: WideInstruction, add: WideInstruction, load: WideInstruction) -> bool {
-    quench_runtime::staged::writes_capture(store.op()) && store.register_a() == add.result_register() && store.imm() == load.imm()
-}
-
-/// `return true`, whether or not the append ran.
-fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[quench_runtime::bytecode::Constant]) -> bool {
-    quench_runtime::staged::loads_constant(result.op())
-        && result.result_flags() & !quench_runtime::bytecode::RETURN_REGISTER == 0
-        && matches!(constants.get(result.constant_index()), Some(quench_runtime::bytecode::Constant::Boolean(true)))
-        && quench_runtime::staged::returns(done.op())
-        && done.register_a() == result.result_register()
-}
 
 /// The recognized call, without activating it. No guest code or collection runs here.
 ///
@@ -127,6 +53,7 @@ unsafe fn writable_binding(target: &ScriptCallTarget) -> Option<(*const usize, u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quench_runtime::compile::body_forms::appends_capture;
     use quench_runtime::{Engine, test_host::TestHost};
     use std::{cell::RefCell, rc::Rc};
 
@@ -232,7 +159,7 @@ print(JSON.stringify(out));
     }
 
     #[test]
-    fn capture_append_leaf_uses_writable_capture_and_never_read_memoizes() {
+    fn capture_append_leaf_uses_writable_capture() {
         let source = r#"
           function make() {
             let text = "";
@@ -258,10 +185,6 @@ print(JSON.stringify(out));
             assert_eq!(lines, ["xy".repeat(128)]);
             let target = append_target(&vm);
             assert!(capture_stores(target.capture).is_some(), "the primitive calls must admit direct writes");
-            assert!(
-                vm.lane_stack.read_memos.iter().all(|memo| memo.callee != target.callee),
-                "a mutating call must never populate the pure read memo"
-            );
         }
     }
 
@@ -319,7 +242,7 @@ print(JSON.stringify(out));
         let admitted: Vec<_> = (0..program.functions.len())
             .filter_map(|index| {
                 let body = program.function_get(index)?;
-                recognizes(body, &program.constants)
+                appends_capture(body, &program.constants)
                     .then(|| program.atoms[body.name.unwrap() as usize].to_string())
             })
             .collect();

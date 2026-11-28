@@ -1222,15 +1222,6 @@ impl Heap {
         })
     }
 
-    /// Marks the object `object`'s values as held by code (`Object::mark_constant`): its next
-    /// value write or layout change retires the readers subscribed under its exact shape and
-    /// clears the mark. No extras are made, so once written it takes every fast store again
-    /// (a prototype mark's extras would keep it off them for good). `None` for a non-object.
-    pub(crate) fn mark_own_constant(&mut self, object: Value) -> Option<()> {
-        self.object_mut(object)?.mark_constant();
-        Some(())
-    }
-
     #[inline] pub fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
@@ -4544,25 +4535,6 @@ impl Heap {
     /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()
-    }
-
-    /// The held type a tracked store row through the hint `(layout, slot)` is installed for
-    /// (`slot_store::HELD_*`): the type slot `slot` of the layout's shape holds now, where a row
-    /// keeps a store of it in place (an arena-form hint, `hinted_arena`, while tracking); else
-    /// `HELD_NONE`, the tracked row's store.
-    pub fn tracked_store_held(&self, layout: u32, slot: u16) -> u8 {
-        use crate::staged::slot_store::{hinted_arena, HELD_INT32, HELD_NONE, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-        use crate::typed_ir::SlotType;
-        if !self.properties.tracks() || !hinted_arena(layout, false) { return HELD_NONE; }
-        let shape = crate::staged::ic::layout_shape(layout);
-        if usize::from(slot) >= self.properties.shape_length(shape) { return HELD_NONE; }
-        match self.properties.slot_observation(shape, usize::from(slot)) {
-            SlotType::Int32 => HELD_INT32,
-            SlotType::DirectObject => HELD_OBJECT,
-            SlotType::DirectObjectOrNull => HELD_OBJECT_OR_NULL,
-            SlotType::Tagged => HELD_TAGGED,
-            _ => HELD_NONE,
-        }
     }
 
     /// The base addresses of the arena's slot owner tables: `shape_chains`, `chain_owners`,

@@ -13,7 +13,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
         if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u32, storage_len: names.len(),
                 storage: None, ty, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None }]))
         } else { None }
     }));

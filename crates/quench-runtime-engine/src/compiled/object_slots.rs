@@ -44,7 +44,7 @@ pub(crate) enum ObjectRecord {
     /// A record address already admitted by the region's receiver entry.
     Address(ir::Value),
     /// The class cell of a fixed class (`AotFacts::class_fixed_cell`): every instance is this cell from birth, so no record
-    /// exists, and no presence, departed or class test is made. The cell is `class_base + granule * 8`, whose fields are the
+    /// exists, and no presence or class test is made. The cell is `class_base + granule * 8`, whose fields are the
     /// union slots (`offset_address`); the granule is the cell's record id in the class space (`Stage::store_gate`).
     FixedCell { cell: ir::Value, granule: ir::Value },
 }
@@ -313,8 +313,20 @@ impl NativeFieldLoad {
     pub(crate) fn slot_dependency(self) -> Option<quench_runtime::code_dependencies::SlotDependency> {
         use quench_runtime::typed_ir::Type;
         (self.ty != Type::ANY && self.ty != Type::NEVER).then_some(quench_runtime::code_dependencies::SlotDependency {
-            shape: self.holder.unwrap_or(self.shape), slot: self.slot, ty: self.ty,
+            shape: self.holder.unwrap_or(self.shape), slot: self.field_index() as u16, ty: self.ty,
         })
+    }
+
+    /// The logical field index the load's slot word names (`field_cache_layout::field_index_of`): a spilled class
+    /// field's index in its class's union, else the slot itself.
+    pub(crate) fn field_index(self) -> usize {
+        quench_runtime::staged::field_cache_layout::field_index_of(self.slot) as usize
+    }
+
+    /// The inline slot of a shape-keyed load, which never spills: a record's `u16` field index.
+    pub(crate) fn record_slot(self) -> u16 {
+        debug_assert!(self.class.is_none() && !quench_runtime::staged::field_cache_layout::is_spilled_slot(self.slot));
+        self.slot as u16
     }
 
     /// Whether a miss of a site's `loads` asks the VM's caches before it leaves: a slot held
@@ -333,7 +345,7 @@ impl NativeFieldLoad {
     }
     pub(crate) fn valid(self) -> bool {
         self.shape & quench_runtime::value_vec::DICTIONARY_STORAGE == 0
-            && usize::from(self.slot) < self.storage_len
+            && self.field_index() < self.storage_len
             && (self.storage != Some(PlainPropertyStorage::PackedInline)
                 || self.storage_len <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count)
     }

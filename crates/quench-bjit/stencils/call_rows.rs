@@ -25,7 +25,7 @@
 //! `CallRecord`. A checked row compares the callee word (the `_unchecked` row, whose callee a Stable fact
 //! holds, does not read the callee register) and (sloppy) binds the receiver (an arrow, lexical, binds
 //! none: its body finds its `this` in its environment, as `body_call_helper` passes it), admits the call with the
-//! shared `admit_native` row (one validity compare, one room check) plus the plain depth bound,
+//! shared `admit_native` row (one room check) plus the plain depth bound,
 //! writes `N` arguments and `undefined` for the rest into the callee's window at the lane
 //! stack's top, pushes the body's plain header (depth bumped, its body in the body table), calls the cell's entry with the body ABI (context,
 //! this, captures, window) and handles the returned (status, word) as the u-jit's direct call

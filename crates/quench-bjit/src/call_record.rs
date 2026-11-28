@@ -69,8 +69,8 @@ pub enum DirectHole {
 /// Bytes of one register slot of the frame window (`size_of::<Value>()`, a word).
 pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 
-/// The callee's record of a direct call: the words that are the callee's (its closure identity, its cell and the
-/// validity the call was planned under, its captures, its sloppy global, its function, its descriptor, its closure
+/// The callee's record of a direct call: the words that are the callee's (its closure identity, its cell, its captures,
+/// its sloppy global, its function, its descriptor, its closure
 /// environment and captures pointer, its window size and sloppiness). One per bound callee; a site's
 /// `CallRecord` names it by address (`callee_record`), and a closed-set indirect call reads it from its class's
 /// method vector (`layouts::class_methods`), so one callee record serves every site that reaches that callee.
@@ -80,7 +80,6 @@ pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 pub struct CalleeRecord {
     pub callee: u64,
     pub cell: u64,
-    pub expected: u64,
     /// The callee's capture word (`CONTEXT_BODY`).
     pub captures: u64,
     pub global_this: u64,

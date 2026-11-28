@@ -49,7 +49,7 @@ use crate::compile::aot_facts::AotFacts;
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub struct LaneStack {
-    /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
+    /// Per call record (by its `call_link`'s address), the callees it resolved,
     /// in the order first seen, up to `tier_policy::POLYMORPHISM` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
@@ -124,9 +124,6 @@ pub struct LaneStack {
     /// every object the plan read keeps its values and layout, and the chains above them their
     /// layouts.
     pub construct_watches: Box<[Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS]>,
-    /// The reads call sites answered (`ReadMemo`), each in the slot its record names
-    /// (`CallOperand::memo`).
-    pub read_memos: Vec<ReadMemo>,
     /// The store sites a general store called a setter at (`setters::met_setter`), one bit per
     /// cache index modulo `SETTER_SITE_BITS`; empty until the first such call, so a
     /// VM that never meets a setter holds none of it. Only a filter: a clear bit sends the
@@ -167,9 +164,6 @@ pub struct LaneStack {
     /// (`ScriptActivation::record`). A completion drops its activation's, and a materialization
     /// its frame's own state takes over: the environment the eval promoted.
     pub records: Vec<(usize, Box<crate::vm::activation::FrameRecord>)>,
-    /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
-    /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
-    pub forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
     /// The activation count at which a JavaScript lane call leaves for
     /// `script_call_frame_in_lane`: the activations' capacity, the guest calls the thread still
     /// admits (the activations hold no guards; their frames take them when they materialize,
@@ -642,8 +636,8 @@ pub struct StringCaseFilter {
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
 /// Two 64-byte lines whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56,
-/// `proven` 64, `numbers` 72, `uses_this` 80, `proven_entry` 88, `proven_body` 96, `stub` 104.
+/// below): `entry` 0, `body` 8, `facts` 16, `recovery` 24, `counters` 32, `scalar` 40, `rows` 48,
+/// `proven` 56, `numbers` 64, `uses_this` 72, `proven_entry` 80, `proven_body` 88, `stub` 96.
 /// Writers: `entry`, `scalar`, `recovery`, `body`, `rows`, `proven`, `numbers`, `uses_this`, `proven_entry` and `proven_body` by `publish`/`withdraw`;
 /// `facts` once per function (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
@@ -655,9 +649,6 @@ pub struct EntryCell {
     /// The function's registers, room, parameters and entry kind (`CellFacts`), which a native
     /// call's admission reads.
     pub facts: std::cell::Cell<u64>,
-    /// What the body's native callers compare to admit a call (the layout epoch the body was
-    /// published under).
-    pub validity: std::cell::Cell<u64>,
     /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
     pub recovery: std::cell::Cell<usize>,
     /// The entry cell's run counters word, which the native code lays out and no run writes.
@@ -1103,18 +1094,6 @@ pub struct PlainFrames {
     pub bound: std::cell::Cell<usize>,
 }
 
-/// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
-/// program it was made in, as `ScriptCallTarget` is.
-#[derive(Clone, Copy)]
-pub struct ReadMemo {
-    /// The call record that made it, whose slot (`CallOperand::memo`) it is.
-    pub site: Ip,
-    pub callee: Value,
-    pub admission: Admission,
-    pub this_binding: ThisBinding,
-    pub read: MemoRead,
-}
-
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
 /// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
 /// under hold, which its `generation` names. A target serves calls from `program`, the
@@ -1153,11 +1132,11 @@ pub struct ScriptCallTarget {
     /// does not end at a function environment or its storage is sparse. The storage of a live environment never
     /// moves, and the generation retires the target at the next collection.
     pub capture: *const usize,
-    /// The `LaneStack::forwarded_methods` index of a constructor body forwarding to a method
-    /// of `this` (`Function::forwarded_this_method`), which a construction may activate
-    /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
-    /// cache entry its size.
-    pub forwarded_method: u16,
+    /// Whether the target is a constructor body that forwards its construction to a method of
+    /// `this` under its call plan (`CallPlan::forwards_arguments`) and shape. Which method is
+    /// read from the function's record (`dispatch_fast::forwarded_method_of`), so a target
+    /// keeps its cache entry's size.
+    pub forwards_method: bool,
 }
 
 /// Where the call row's one guard (`staged::call::guard_bound_target`) reads a `ScriptCallTarget`: its
@@ -1219,7 +1198,7 @@ pub struct WasmJitDiagnostics {
 /// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
 pub type WithChain = SmallVec<[Value; WITH_CHAIN_INLINE_OBJECTS]>;
 
-/// A generation and a program in one word, so admitting a cached target or memo against the
+/// A generation and a program in one word, so admitting a cached target against the
 /// running lane (`LaneStack::admission`) is one compare.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Admission(pub u64);
@@ -1500,14 +1479,13 @@ impl BoundClosure {
     }
 }
 
-pub use super::fact_edge::{ExitFact, FactMissing};
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
-/// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
+pub use super::fact_edge::ExitFact;
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per compile and kept by
+/// the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
 pub struct ExitTable {
     pub sigs: Vec<ExitSig>,
     pub sites: Vec<ExitSite>,
-    pub crossings: Box<[std::cell::Cell<u32>]>,
 }
 
 
@@ -1631,26 +1609,6 @@ pub struct LoopTier {
     pub code: Option<Rc<crate::code_dependencies::PublishedCode<CompiledOsrRegion>>>,
     /// The compile under way, which each entry polls once without blocking.
     pub pending: Option<Box<dyn std::any::Any>>,
-}
-
-/// What a call site's read target answered with (`script_call_memo_miss`), so the site's
-/// next call of the same callee makes the hits alone: the target's read, or a forwarding
-/// body's field and method reads and the read of the method they found. Every part depends
-/// on the callee alone, whose body is fixed, and on the shapes its steps name.
-#[derive(Clone, Copy)]
-pub enum MemoRead {
-    Leaf(MemoLeaf),
-    Forward {
-        /// The forwarding body's field read: the object `base` names, then its method.
-        base: u16,
-        field: crate::vm::FieldCache,
-        method_field: crate::vm::FieldCache,
-        /// The forwarding body's parameters, which it passes on in order.
-        params: u16,
-        /// The method the reads found, a `CallEntry::reads` target, whose `this` is not lexical.
-        method: Value,
-        read: MemoLeaf,
-    },
 }
 
 /// What entering an activation of a `PreparedShape` for one receiver reads
@@ -1963,20 +1921,6 @@ pub struct Inlining {
 
 
 
-/// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
-/// cache entries that answered them (`Vm::record_field_entry_hit`), so a step is one shape
-/// test. A read of a polymorphic or inherited entry, which probes further, has no memo.
-#[derive(Clone, Copy)]
-pub enum MemoLeaf {
-    /// The field of the object `base` names (`read_base_in_lane`).
-    Field { base: u16, field: crate::vm::FieldCache },
-    /// That field's array, then its dense element the parameter `index` names.
-    Element { base: u16, field: crate::vm::FieldCache, index: u16 },
-    /// That field's array, then its `length` (`Vm::array_length_field`).
-    Length { base: u16, field: crate::vm::FieldCache },
-    /// That field's object, then its own field `second`.
-    Nested { base: u16, field: crate::vm::FieldCache, second: crate::vm::FieldCache },
-}
 
 
 
@@ -2502,7 +2446,7 @@ pub union LaneOperand {
     /// A `GetField` record's immediate and the receiver shape of its own-field hint
     /// (`LaneInstruction::field_hint`).
     pub field: FieldOperand,
-    /// A call record's immediate and its read memo's slot (`CallOperand::memo`).
+    /// A call record's immediate and its callee link slot (`CallOperand::memo`).
     pub call: CallOperand,
     pub jump: isize,
     pub constant: Value,
@@ -2530,10 +2474,8 @@ pub struct NestedField {
     pub constructs: bool,
 }
 
-/// A call record's operand: its immediate, and the slot of `LaneStack::read_memos` its read
-/// memo was made in (`memoize_read_in_lane`), `NO_READ_MEMO` before its first. The slot is the
-/// site's alone until the table refills (`READ_MEMOS`), so which sites keep a memo does not
-/// depend on where their records lie.
+/// A call record's operand: its immediate, and the script call cache slot its callee link names
+/// (`Vm::script_call_index`), which holds no entry before the record's first link.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct CallOperand {
@@ -2950,23 +2892,14 @@ pub enum JobEnd {
 /// digits (`quench_runtime_engine`'s `AHEAD_BUILD_ID_MARK`, which names the engine and the core).
 pub const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
 
-/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
-/// guards by identity, the exact shape it depends on (whose write retires the body), and the
-/// value the member holds while the object is marked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OwnConstant {
-    pub object: Value,
-    pub shape: u32,
-    pub value: Value,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeFieldLoad {
     pub shape: u32,
     /// The exact shape of the receiver's prototype, an object record, that holds the slot;
     /// `None` for the receiver's own (`FieldCache::holder`).
     pub holder: Option<u32>,
-    pub slot: u16,
+    /// The slot word: a field index, or a spilled class field's `spilled_slot` (`field_cache_layout`).
+    pub slot: u32,
     pub storage_len: usize,
     pub storage: Option<PlainPropertyStorage>,
     /// The slot's type when the plan was made (`Heap::slot_type`), which every store maintains:
@@ -3458,8 +3391,8 @@ pub struct LeafCall {
     /// The form the call ran as, which decides what its activation takes from the caller
     /// (`materialize_leaf_in_lane`): a published body's entry (`enter_cell_body_in_lane`) runs as `CONTEXT_LEAF`.
     pub form: LeafForm,
-    /// The caller's program, for a leaf of another program (`cross_leaf_call_in_lane`), which
-    /// its return enters again; `None` for one of the caller's own.
+    /// The caller's program, for a leaf of another program, which its return enters again;
+    /// `None` for one of the caller's own.
     pub caller_program: Option<ProgramId>,
 }
 
@@ -3600,7 +3533,6 @@ impl Default for LaneStack {
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
-            read_memos: Vec::new(),
             setter_sites: Vec::new(),
             native_identities: NativeIdentities::new(),
             native_stack: crate::stack::StackLimit::CLOSED,
@@ -3610,7 +3542,6 @@ impl Default for LaneStack {
             bound_call: None,
             with_objects: Vec::new(),
             records: Vec::new(),
-            forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
             admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
@@ -3748,7 +3679,7 @@ pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     fill: 0,
     entry: CallEntry::framed(Framed::Activates),
     capture: std::ptr::null(),
-    forwarded_method: NO_FORWARDED_METHOD,
+    forwards_method: false,
 };
 
 pub const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
@@ -3821,9 +3752,6 @@ pub const CALLBACK_RESULT: u16 = 0;
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 pub const NO_CALL_LINK: u16 = u16::MAX;
 
-/// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
-/// forwarding bodies than the index spans leaves the rest unrecorded.
-pub const NO_FORWARDED_METHOD: u16 = u16::MAX;
 
 /// Entries per set: the one most recently resolved first, then the one before it, so two
 /// callees whose indices share a set both stay resolved.
@@ -3851,16 +3779,16 @@ pub enum Frameless {
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
-    /// parameter, and returns it (`element_read_body`), which a call answers likewise.
+    /// parameter, and returns it (`body_forms::element_read_body`), which a call answers likewise.
     ReadsElement,
     /// Its body returns a call of a method of a field of `this` or a parameter with its
-    /// parameters in order (`forwarding_read_body`), which a call answers where that method
+    /// parameters in order (`body_forms::forwarding_read_body`), which a call answers where that method
     /// is a `Reads` or `ReadsElement` target whose read hits.
     ForwardsRead,
-    /// Its body returns one of its captures (`capture_read_body`), as a bundler's export
+    /// Its body returns one of its captures (`body_forms::capture_read_body`), as a bundler's export
     /// getter `() => binding` compiles, which a call answers by reading the capture.
     ReadsCapture,
-    /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
+    /// Its body returns its `this` (`body_forms::this_read_body`), as `get self() { return this; }`
     /// compiles, which a call answers with the receiver it binds.
     ReadsThis,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
@@ -4246,7 +4174,6 @@ impl LaneStack {
         self.cross_targets.clear();
         *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        self.read_memos.clear();
     }
 
     /// Drops the callees a collection swept from the sites' records before any allocation
@@ -4261,7 +4188,7 @@ impl LaneStack {
     }
 
     /// Retires everything this stack resolved before the collection that ended under `key`
-    /// (the new epoch and the realm): call targets, function targets and read memos name
+    /// (the new epoch and the realm): call targets and function targets name
     /// callees, environments and storages the collection may have swept, whose heap indices
     /// the next allocations reuse. The collector calls it, so a lane run that continues past
     /// any call out that collected (a native such as `gc()`, a host callback, an allocation
@@ -4278,7 +4205,7 @@ impl LaneStack {
         self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
     }
 
-    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a
+    /// Whether no cached target admits a call (`Admission::REFUSED`): while a
     /// construction's callee is pending (`Vm::construct_target`), under which a lane call leaves
     /// the lane, so the cached paths need not test it (`Vm::refresh_call_refusal`).
     #[inline]
@@ -4613,7 +4540,7 @@ impl Admission {
     /// Where the program sits in the word: above the generation.
     pub const PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
 
-    /// A bit no target's or memo's admission has: the lane's carries it while a condition
+    /// A bit no target's admission has: the lane's carries it while a condition
     /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
     /// admission fails, and the paths that resolve again decide.
     pub const REFUSED: u64 = 1 << 63;
@@ -4955,8 +4882,7 @@ impl Admission {
     /// A bit the lane's admission carries while the tier's diagnostics count every entry
     /// (`LaneStack::set_diagnosed`), which a proved call does not: no entry proved before they
     /// were enabled admits a proved call, and none is proved while they are. Unlike the
-    /// conditions, targets and memos made under them carry it too (`current_admission`), so
-    /// the unproved paths still hit.
+    /// conditions, targets made under them carry it too, so the unproved paths still hit.
     pub const DIAGNOSED: u64 = 1 << 60;
     /// The bits the lane's admission takes from `LaneStack::refused`.
     pub const LANE_BITS: u64 = Self::CONDITIONS | Self::DIAGNOSED;
@@ -4992,7 +4918,7 @@ impl LaneStack {
         self.frames_innermost().nth(above)
     }
 
-    /// Takes a new generation, which retires every target and memo resolved before
+    /// Takes a new generation, which retires every target resolved before
     /// (`enter_generation`, `Vm::enter_with_scope`).
     pub fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);

@@ -670,13 +670,6 @@ impl Heap {
         self.held_cell_receiver(value)
     }
 
-    /// The object part of a function, inline: the receiver an own read of a function's static
-    /// field guards (`CELL_OWN_SITE`); `None` for any other value.
-    #[inline(always)]
-    pub fn function_receiver(&self, value: Value) -> Option<&Object> {
-        value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
-    }
-
     /// `held_other_receiver` of a function, ordinary builtin or typed array. A typed array is held
     /// here though `ordinary_builtin_object` leaves it out: a held read is of its site's one atom,
     /// recorded where the read reached a prototype, which a typed array's numeric key never does

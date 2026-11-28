@@ -202,7 +202,6 @@ impl Vm {
             concat_memo: Default::default(),
             regexp_matchers: Default::default(),
             atom_classes: vec![],
-            intrinsic_natives: Vec::new(),
             native_table: super::native_table::NativeTable::all(),
             first_chunks: Default::default(), streamed_stubs: Default::default(),
             dynamic_strings: None,

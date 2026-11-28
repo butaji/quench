@@ -8,7 +8,7 @@ use super::flow::{Call, FunctionFlow, Target};
 use super::scope::Scope;
 use super::shape::{Change, Owner};
 use super::value::{Key, Origin, Word};
-use crate::typed_ir::{Classes, Sites};
+use crate::typed_ir::{Cell, Classes, Identity, Sites};
 use std::collections::BTreeSet;
 
 /// The argument types a builtin runs no guest code for: a conversion of an object runs `valueOf`, of a Number none.
@@ -123,6 +123,8 @@ pub(super) struct Proofs {
     defined: bool,
     /// Some store names a key the analysis cannot name (`Change::Any`).
     any_change: bool,
+    /// The global names of the builtins some call may define properties on (`handed`): a member of one may change.
+    changed: BTreeSet<u32>,
     /// The global names the program writes.
     pub(super) written: BTreeSet<u32>,
     /// The property names the program stores or defines by name.
@@ -149,6 +151,11 @@ impl Proofs {
                 proofs.any_change = true;
             }
             for shape in &flow.shapes {
+                // A change through an object the closed world holds as a builtin or the global object is a write to it.
+                if let Owner::Host(identity, _) = shape.owner {
+                    proofs.host_change(identity, shape.change);
+                    continue;
+                }
                 // A store or delete reaches a builtin's own property only through an object that may be one: any object
                 // (`Classes::Many`) or a prototype object. An instance of a program class (`Classes::Set`) is none.
                 let builtin = match shape.owner {
@@ -168,20 +175,59 @@ impl Proofs {
         proofs
     }
 
+    /// A change the program makes through an object the closed world holds as `identity`: a store or delete of a builtin's
+    /// property names it (`Field`), and any other change may name any of the builtin's (`Any`, `Define`). On the global object a
+    /// store names a global (`Field`, as `binding_stores` records it), and a delete or define may name any.
+    fn host_change(&mut self, identity: Identity, change: Change) {
+        match (identity, change) {
+            (Identity::Builtin(_), Change::Field(atom)) => {
+                self.stored.insert(atom);
+            }
+            (Identity::Builtin(_), Change::Any | Change::Define) => self.any_change = true,
+            (_, Change::Field(atom)) => {
+                self.written.insert(atom);
+            }
+            (_, Change::Any) => self.global_wild = true,
+            (_, Change::Define) => self.defined = true,
+        }
+    }
+
+    /// A value a call may define properties on (`identity::builtin_proofs`). A value that is exactly a builtin changes the
+    /// members of its global. A value that may be any object (`Identity::Many`, `Classes::Many`) may be one of the `leaked`
+    /// builtins, so it changes each of those. The global object is `defined`, which fails `global_object_fixed`.
+    pub(super) fn handed(&mut self, cell: &Cell, leaked: &BTreeSet<u32>) {
+        match cell.identity {
+            Identity::Builtin(path) => {
+                self.changed.insert(path.global);
+            }
+            Identity::Many => self.changed.extend(leaked),
+            _ => {}
+        }
+        if cell.classes == Classes::Many {
+            self.changed.extend(leaked);
+        }
+        if matches!(cell.identity, Identity::GlobalObject) || cell.global {
+            self.defined = true;
+        }
+    }
+
     /// Whether the proof `quiet` holds for the whole program. An own-field read is decided by the body, not here.
     pub(super) fn proves(&self, quiet: Quiet) -> bool {
         match quiet {
             Quiet::Declared(atom) => !self.wild && !self.defined && self.written.contains(&atom),
             Quiet::Intrinsic { object: None, name } => self.intrinsic(name),
-            Quiet::Intrinsic { object: Some(object), name } => self.intrinsic(object) && !self.stored.contains(&name) && !self.any_change,
+            Quiet::Intrinsic { object: Some(object), name } => {
+                self.intrinsic(object) && !self.stored.contains(&name) && !self.any_change && !self.changed.contains(&object)
+            }
             Quiet::OwnField(_) => false,
         }
     }
 
-    /// Whether a String method named `atom` is still the host's: no store or definition names it, and nothing the analysis
-    /// cannot follow may reach a builtin prototype.
-    pub(super) fn string_method(&self, atom: u32) -> bool {
-        !self.wild && !self.defined && !self.any_change && !self.stored.contains(&atom)
+    /// Whether a String method named `atom` is still the host's: no store or definition names it, and no call the analysis
+    /// cannot follow may be handed `String` or its prototype (`changed` names the global `string`, String.prototype's).
+    pub(super) fn string_method(&self, atom: u32, string: Option<u32>) -> bool {
+        !self.wild && !self.defined && !self.any_change && string.is_none_or(|global| !self.changed.contains(&global))
+            && !self.stored.contains(&atom)
     }
 
     /// Whether global `atom` is still the builtin the host installed: the program never writes it, nor reaches the

@@ -1697,12 +1697,13 @@ impl Vm {
     pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
-        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
-        let slot = u16::try_from(cache.slot).ok()?;
+        let slot = cache.slot;
+        // A shape-keyed entry never spills: its slot is an inline field index.
+        if !is_class_key(cache.receiver) && is_spilled_slot(slot) { return None; }
         let shape = cache.receiver_shape();
         let storage_len = self.shapes.get(shape as usize)?.storage_len();
-        if usize::from(slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(shape, usize::from(slot));
+        if field_index_of(slot) as usize >= storage_len { return None; }
+        let ty = self.heap.slot_type(shape, field_index_of(slot) as usize);
         Some(crate::vm::engine_types::NativeFieldLoad {
             shape, holder: None, slot, storage_len, storage: None, ty,
             inherited: None, function_shape: false, formed: None, holder_cell: None,
@@ -1764,14 +1765,15 @@ impl Vm {
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
-        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
-        let slot = u16::try_from(entry.slot).ok()?;
+        let slot = entry.slot;
         let class = is_class_key(entry.receiver).then_some(entry.receiver & !CLASS_KEY);
+        // A shape-keyed entry never spills: its slot is an inline field index.
+        if class.is_none() && is_spilled_slot(slot) { return None; }
         let shape = entry.receiver_shape();
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(shape) as usize)?.storage_len();
-        if usize::from(slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(holder.unwrap_or(shape), usize::from(slot));
+        if field_index_of(slot) as usize >= storage_len { return None; }
+        let ty = self.heap.slot_type(holder.unwrap_or(shape), field_index_of(slot) as usize);
         // A class-keyed held entry names the holder cell by granule, read live: it has no inherited
         // constant. A shape-keyed one keeps the holder's layout id where it kept one, which the plan
         // checks names the holder's shape before a read guards by it.
@@ -1779,7 +1781,7 @@ impl Vm {
             (Some(_), Some(_)) => (Some(entry.holder_cell), None),
             (Some(holder), None) => (
                 (entry.holder_cell != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_cell),
-                self.inherited_constant(holder, slot),
+                self.inherited_constant(holder, field_index_of(slot) as u16),
             ),
             (None, _) => (None, None),
         };
@@ -2090,19 +2092,6 @@ impl Vm {
         self.heap.live_class_key(object).unwrap_or(shape)
     }
 
-    /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
-    /// object records, at `site`: the receiver's layout id and the slot, where the site's own
-    /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
-    pub fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
-        let cache = self.field_cache_entry(site);
-        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        // A spilled slot names a run's word: the generated own read addresses inline words, so no hint.
-        let slot = u16::try_from(cache.slot).ok()?;
-        Some((self.receiver_layout_hint(object)?, slot))
-    }
-
     /// The data field a live class cell's held entry names (`class_held_field_hit`): the read a
     /// class-keyed site answers beside `cell_own_field_hit`.
     #[inline(always)]
@@ -2284,36 +2273,9 @@ impl Vm {
         self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
     }
 
-    /// The entry tier of a single-read site, in the order the four `field_site_*` predicates
-    /// test it: an accessor, the megamorphic entries, a prototype holder, then an inherited
-    /// entry, else the primary own entry. The site's cache index is derived once, so each
-    /// table is read at the same index without re-deriving the active cache layout.
-    pub fn field_site_tier(&self, site: u16) -> crate::vm::engine_types::FieldSiteTier {
-        use crate::vm::engine_types::FieldSiteTier;
-        let index = self.field_cache_index(site);
-        if self.accessor_field_indices.get(index) != NO_ACCESSOR_FIELD {
-            FieldSiteTier::Getter
-        } else if self.megamorphic_field_indices.get(index) != NO_MEGAMORPHIC_FIELD {
-            FieldSiteTier::Polymorphic
-        } else if self.field_caches.get(index).holder != NO_FIELD_HOLDER {
-            FieldSiteTier::Holder
-        } else if self.inherited_field_indices.get(index) != NO_INHERITED_FIELD {
-            FieldSiteTier::Inherited
-        } else {
-            FieldSiteTier::Own
-        }
-    }
-
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
     pub(super) fn field_site_getter(&self, site: u16) -> bool {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
-    }
-
-    /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
-    /// Whether the site cached no entry yet: its first read has not recorded one.
-    pub fn field_site_empty(&self, site: u16) -> bool {
-        let entry = self.field_caches.get(self.field_cache_index(site));
-        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
     }
 
     /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
@@ -2414,14 +2376,6 @@ impl Vm {
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         self.heap.held_other_receiver(object)
-    }
-
-    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
-    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
-    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
-    /// proves the shape, form and prototype link of a function's or cell's record too.
-    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
-        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
@@ -2585,14 +2539,6 @@ impl Vm {
     /// `polymorphic_field_hit` then sees every entry the site has recorded.
     pub fn field_site_polymorphic(&self, site: u16) -> bool {
         self.megamorphic_field_indices.get(self.field_cache_index(site)) != NO_MEGAMORPHIC_FIELD
-    }
-
-    /// Whether the site's megamorphic entries moved to the hash (`FieldCacheSet::overflow`),
-    /// which only `polymorphic_field_hit` probes.
-    pub fn field_site_hashed(&self, site: u16) -> bool {
-        let table_index = self.megamorphic_field_indices.get(self.field_cache_index(site));
-        table_index != NO_MEGAMORPHIC_FIELD
-            && self.megamorphic_fields.get(table_index as usize).is_some_and(|set| set.overflow.is_some())
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
@@ -2862,13 +2808,6 @@ impl Vm {
             && self.field_cache_atom_eligible(atom)
     }
 
-
-    /// Whether a number primitive's read of `atom` in `p` can take the `Number.prototype`
-    /// data property its site caches (`number_prototype_field_hit`): a number has no own
-    /// properties, so any name the field cache admits.
-    pub fn number_field_site_cacheable(&self, p: &ResidualProgram, atom: Atom) -> bool {
-        self.specialized && p.specialized && self.number_proto.is_heap() && self.field_cache_atom_eligible(atom)
-    }
 
 
 
@@ -4878,7 +4817,7 @@ impl Vm {
         {
             return;
         }
-        let Ok(slot) = u16::try_from(slot) else {
+        let Ok(slot) = u32::try_from(slot) else {
             return;
         };
         let guarded = self.guarded_field_add(&guard);

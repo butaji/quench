@@ -7,8 +7,8 @@ use crate::Value;
 fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
     let mut stage = Concrete::over(heap);
     let record = heap.object(object)?.record_only()? as *const Object as u64;
-    let records = heap.object_record_base()? as u64;
-    run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
+    // The object record table is gone (S7f): no table base reaches the ops.
+    run(&mut stage, ops, Reached::bare(record), None, ()).map(Value::from_bits)
 }
 
 /// An array of `prototype` whose named properties are `values`, in slots from 1. An ordinary object is a class

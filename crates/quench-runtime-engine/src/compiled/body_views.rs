@@ -15,7 +15,7 @@ pub(crate) fn body_views(vm: &Vm, function: u32, unit: &super::lane_unit::Unit) 
         .map_or(quench_runtime::vm::engine_types::ElementViews::Dense, |kind| quench_runtime::vm::engine_types::ElementViews::Typed(Some(kind)))
 }
 
-/// The typed kind the element records of `view` at `pcs` were switched to (`requicken_typed`), where they agree: the
+/// The typed kind the element records of `view` at `pcs` were given at load (`element_typed_row`), where they agree: the
 /// view a compiled body's loop arrays take (`lane_region::lower_body`). A record no run reached yet (a loop not entered
 /// so far) names no kind. `None` where none is typed, or two kinds are.
 fn quickened_typed_kind(view: &crate::dispatch_fast::LaneView, pcs: impl Iterator<Item = usize>) -> Option<quench_runtime::tier_surface::TypedArrayKind> {
@@ -30,7 +30,7 @@ fn quickened_typed_kind(view: &crate::dispatch_fast::LaneView, pcs: impl Iterato
     kind
 }
 
-/// An element access whose record in the function's own code was switched to a typed kind (`requicken_typed`): the
+/// An element access whose record in the function's own code was given a typed kind at load (`element_typed_row`): the
 /// kind's view is proved for that kind alone (`kind_at`). The access's type is not this record's: the solve proves it
 /// (`FunctionFacts::cell_after`), and the kind names no element class the solve keeps.
 #[derive(Clone, Copy)]
@@ -45,7 +45,7 @@ pub(crate) fn kind_at(kinds: &[ObservedKind], pc: usize) -> Option<quench_runtim
 }
 
 /// The element accesses of `unit` whose records in `function`'s own code were switched to a typed kind
-/// (`requicken_typed`), each as an observed access of that kind. Either proves its view for that kind alone (`kind_at`).
+/// (`element_typed_row`), each as an access of that kind. Either proves its view for that kind alone (`kind_at`).
 /// An access of any other base leaves at the view's proof.
 pub(crate) fn typed_reads(vm: &Vm, function: u32, unit: &super::lane_unit::Unit) -> Vec<ObservedKind> {
     let Some(view) = vm.programs.views_in_lane(vm.active_program).and_then(|views| views.get(function as usize))

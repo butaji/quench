@@ -91,7 +91,7 @@ pub(crate) fn list_activation_in_lane(
         };
         return Some(activate_passed_in_lane(cx, r, ip, &activated, args, this));
     }
-    // The site's memo slot links the callee's target (`forwarded_target_in_lane`).
+    // The site's `CallOperand::memo` slot links the callee's target (`forwarded_target_in_lane`).
     let mut resolved = None;
     let Some(target) = forwarded_target_in_lane(cx, ip, callee, length, &mut resolved).copied() else {
         // A user function that needs a frame takes it in place (`passed_frame_call_in_lane`), with

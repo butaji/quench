@@ -50,6 +50,19 @@ impl GlobalShape {
         &self.builtins
     }
 
+    /// The names the closed world's scripts declare with `let`, `const` or `class` at top level (`Function::global_lexical_atoms`
+    /// of every function that declares one), sorted and deduped, as `AotFacts::global_lexical_names` reads them. Empty in any
+    /// world but `World::Closed`: a script of an open world may declare a name later, so no name is fixed.
+    pub(super) fn global_lexical_names(program: &ResidualProgram, world: World) -> Vec<u32> {
+        if world != World::Closed {
+            return Vec::new();
+        }
+        let names: BTreeSet<u32> = (0..program.function_count())
+            .flat_map(|id| program.with_record(id, |function| function.global_lexical_atoms().to_vec()))
+            .collect();
+        names.into_iter().collect()
+    }
+
     /// The shape of the global object as the closed world fixes it, `None` in any world but `World::Closed`, and where
     /// `Proofs::global_object_fixed` fails: a store, define or delete reaches the global object by a name the analysis
     /// cannot follow, or a store through a computed key may write a global name while the global object is a value.

@@ -18,7 +18,7 @@ impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle;
 
     /// A new loop site's body. A loop's body runs once per iteration, a loop weight above its function's frequency,
-    /// so its predicted tier is a compiled one (`tier_policy::predicted_tier`, which never picks the interpreter
+    /// so its predicted tier is a compiled one (`tier_policy::predicted_tiers`, which never picks the interpreter
     /// for a frequency that high); it compiles where the process runs Cranelift function tiers (the b-jit tier runs none).
     pub(crate) fn initial() -> Self {
         if quench_runtime::vm::tier_policy::cranelift_runs() { Self::IDLE } else { Self::Declined }
@@ -121,7 +121,7 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    let direct = |vm: &mut Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { caller: own },
