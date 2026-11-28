@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The class ids of a program: a function id for each body no split touches, and a synthetic id above `functions` for each
 /// (body, key) pair a construction names where the body is stored under two or more binding keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[quench_macros::test_visible]
 pub(crate) struct ClassIds {
     /// The number of functions of the program: the first synthetic id.
     functions: u32,
