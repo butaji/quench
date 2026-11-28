@@ -251,9 +251,37 @@ impl Vm {
         if entry.constructor != constructor || entry.start != start {
             let mut derived = self.derive_preshaped_receiver(constructor, start);
             derived.union = u8::try_from(self.union_capacity(constructor)).unwrap_or(u8::MAX);
+            self.seed_union_domains(constructor, start);
             self.preshaped_receivers[index] = derived;
         }
         index
+    }
+
+    /// Seeds the observation of each union field's slot (`AotFacts::slot_domain`) along the receiver template chain of
+    /// `constructor` from `start`: union field `k` is the name the chain's `k`-th transition adds, as the constructor's
+    /// defines add it, and its slot takes the field's settled domain (`seed_slot_type`). Only a template named by
+    /// `constructor` itself, as `new constructor` makes it (`ShapeTransition::Constructed` with `new_target` the constructor),
+    /// is seeded: that root is keyed by the class, so its transitions are reached only by the class's own constructions
+    /// and the slot owners they share hold no other class's stores. A template of another root (an anonymous constructor,
+    /// or a `new.target` that is not the constructor) is shared, and is left unseeded.
+    fn seed_union_domains(&mut self, constructor: Value, start: u32) {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
+        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) { return; }
+        if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 { return; }
+        let Some(facts) = self.programs.aot_facts(program) else { return };
+        let Some(layout) = facts.class_union_layout(class) else { return };
+        let domains: Vec<(u32, crate::typed_ir::Cell)> = layout.fields.iter()
+            .map_while(|(atom, _)| facts.slot_domain(class, *atom).map(|cell| (*atom, cell)))
+            .collect();
+        let mut shape = start;
+        for (slot, (atom, cell)) in domains.into_iter().enumerate() {
+            if self.is_private_name(atom) { return; }
+            shape = self.transition_shape(shape, atom);
+            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 { return; }
+            if crate::typed_ir::SlotType::from_type(cell.ty) != crate::typed_ir::SlotType::Tagged {
+                self.heap.seed_slot_type(shape, slot, cell.ty);
+            }
+        }
     }
 
     /// The fields a receiver of `constructor` from template shape `start` gets a class cell for: the largest of
