@@ -92,19 +92,6 @@ pub struct Priors {
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
 pub struct LaneBody {
-    /// The executions a site's record is credited with before its statistics are read: a bound a static fact supplies,
-    /// no count of the run.
-    pub site_executions: u16,
-    /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
-    /// leaves on, before it specializes again.
-    pub reoptimize_share: u8,
-    /// The most compiles of one function's body from its entry: a request of another plan past
-    /// them is declined, so what each came to is the last that holds.
-    pub(crate) max_compiles: u8,
-    /// The same for each loop entry (OSR) of a function: its own budget, which the entry
-    /// compiles of the function do not draw on and which they do not exhaust.
-    pub(crate) max_osr_compiles: u8,
-    pub late_call_calls: u32,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
@@ -191,21 +178,13 @@ impl crate::vm::Vm {
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
-    lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { compile_poll_interval: 0, ..MEASURED.lane_body },
     wasm: Wasm { backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
     stress: true,
     admits_all: true,
 };
-
-impl LaneBody {
-    /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
-    pub fn compile_bound(&self, osr: bool) -> u8 {
-        if osr { self.max_osr_compiles } else { self.max_compiles }
-    }
-
-}
 
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
@@ -253,14 +232,7 @@ pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    lane_body: LaneBody {
-        site_executions: 400,
-        reoptimize_share: 1,
-        max_compiles: 3,
-        max_osr_compiles: 3,
-        late_call_calls: 4096,
-        compile_poll_interval: 64,
-    },
+    lane_body: LaneBody { compile_poll_interval: 64 },
     wasm: Wasm { backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
     stitch: Stitch {
         max_total_instructions: 96,
@@ -772,8 +744,6 @@ mod tests {
 
     #[test]
     fn the_tier_table_is_consistent() {
-        let lane = &TierRows::PROCESS.table().lane_body;
-        assert!(lane.site_executions > 0);
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.

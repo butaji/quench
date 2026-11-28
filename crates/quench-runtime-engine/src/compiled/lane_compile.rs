@@ -490,9 +490,8 @@ impl Vm {
         called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
-        // A function whose compiles from this entry are spent plans nothing; one whose last plan
-        // from it did not pay at its size is not planned again until its entries would pay for that size.
-        let site = (self.active_program.raw(), function, entry);
+        // One whose last plan from this entry did not pay at its size is not planned again until its
+        // entries would pay for that size.
         let tiers = self.programs.tiers();
         // The body's tier is its predicted tier through the policy (`lane_body_tier`): the interpreter's pick compiles
         // nothing, whoever calls the function.
@@ -503,12 +502,11 @@ impl Vm {
         // A function that calls itself back through other functions runs a call tree per entry,
         // as a loop does, before any of its calls is direct (`CallGraph::in_cycle`).
         let recursive = entry.is_none() && graph.in_cycle(function);
-        // Phase A: the compile bound (`admission::LanePlan`).
-        let compiles_left = self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some()));
+        // Phase A: the tier the policy picked (`admission::LanePlan`).
         let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,
-            facts: super::admission::UnitFacts { compiles_left, called_by_regions: caller.called_by_regions(), ..Default::default() } }) {
+            facts: super::admission::UnitFacts { called_by_regions: caller.called_by_regions(), ..Default::default() } }) {
             super::admission::Decision::Compile(unit) => unit,
-            super::admission::Decision::Declined => { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
+            super::admission::Decision::Declined => { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Declined); }
             super::admission::Decision::Unpaid => return Err(Unstarted::Unpaid),
             super::admission::Decision::Short => return Err(Unstarted::Short),
         };
@@ -559,7 +557,6 @@ impl Vm {
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), entry));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if !self.programs.admit_lane_compile(&key, tiers.lane_body.compile_bound(entry.is_some())) { refuse(self, Refusal::CompileBound); return Err(Unstarted::Declined); }
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
         // The functions the lowering reads: its own, its inlined callees' and its direct callees'.
         let functions: Vec<u32> = std::iter::once(function).chain(unit.frames.iter().map(|frame| frame.target.function))

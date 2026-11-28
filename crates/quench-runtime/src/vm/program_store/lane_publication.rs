@@ -69,22 +69,6 @@ impl ProgramStore {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
     }
 
-    /// Counts a compile of `key`'s function from the entry it starts at (the function's own, or
-    /// one loop's: each has its own count); whether the bound `max` on them allows it.
-    pub fn admit_lane_compile(&self, key: &LaneKey, max: u8) -> bool {
-        let mut compiles = self.lane_compiles.borrow_mut();
-        let count = compiles.entry((key.0, key.1, key.2)).or_insert(0);
-        let admitted = *count < max;
-        *count = count.saturating_add(u8::from(admitted));
-        admitted
-    }
-
-    /// Whether a compile of `site`'s function from its entry is still within `max`
-    /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
-    pub fn compiles_left_in_lane(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
-        self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
-    }
-
     /// Records `published` as the body of `key`.
     pub fn note_installed_lane(&self, key: LaneKey, published: &Rc<PublishedLaneMethod>) {
         self.lane_installed.borrow_mut().insert(key, Rc::downgrade(published));

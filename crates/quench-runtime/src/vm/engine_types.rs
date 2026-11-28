@@ -2725,7 +2725,6 @@ miss_reasons! {
     PlanNoUnit => "plan:no-unit",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
-    PlanCompileBound => "plan:compile-bound",
     PlanNothingNative => "plan:nothing-native",
     PlanNotAmortized => "plan:not-amortized",
     PlanDependencies => "plan:dependencies",
