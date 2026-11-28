@@ -236,8 +236,9 @@ impl Lowering<'_, '_> {
         // An in-place native's or lookup's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
-            // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity here.
-            if !self.callee_is_builtin(pc, instruction.register_b()) {
+            // The callee the solve proves is the builtin this call names (`named_builtin`) is no compare of its identity here.
+            let named = definition_before(self.unit, pc, instruction.register_b()).and_then(|defined| self.named_builtin(defined));
+            if !named.is_some_and(|expected| self.proves_builtin(pc, instruction.register_b(), expected)) {
                 let same = self.is_identity(held, callee);
                 emit_js_guard(&mut self.builder, same, exit);
             }
@@ -375,8 +376,8 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
-        // A fixed callee the closed world proves is a builtin at the call (`callee_is_builtin`) is no compare of its identity.
-        if !(fixed && self.callee_is_builtin(pc, callee)) {
+        // A fixed callee the solve proves is the builtin it names (`named_builtin`) is no compare of its identity.
+        if !(fixed && self.named_builtin(defined).is_some_and(|expected| self.proves_builtin(pc, callee, expected))) {
             let same = self.is_identity(entry, identity);
             emit_js_guard(&mut self.builder, same, exit);
         }

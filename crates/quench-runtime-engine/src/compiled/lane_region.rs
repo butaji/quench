@@ -1178,7 +1178,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// edge keeps native code.
     fn conform_object(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
         let index = usize::from(register);
-        if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() {
+        if ty == Type::DIRECT_OBJECT_FAMILY && !state.values[index].value.ty.is_direct_object_family() && !self.solver_object(target, register) {
             let exit = self.guard_exit(state, target as u32);
             let bits = self.tagged(state, register);
             let object = quench_runtime::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
@@ -2865,9 +2865,12 @@ impl Lowering<'_, '_> {
                     if !(call.recovery == super::lane_unit::CallRecovery::RestartCall && numeric)
                         && let Some(root) = aliases[usize::from(call.receiver)] {
                         let recovery = ReceiverRecovery::for_body(body);
-                        if let Some((_, required)) = receivers.iter_mut().find(|(owner, _)| *owner == root) {
-                            if recovery == ReceiverRecovery::Object { *required = recovery; }
-                        } else { receivers.push((root, recovery)); }
+                        // A receiver the solve proves a direct object (its solver type) needs no recovery guard at entry.
+                        if !self.solver_object(pc, call.receiver) {
+                            if let Some((_, required)) = receivers.iter_mut().find(|(owner, _)| *owner == root) {
+                                if recovery == ReceiverRecovery::Object { *required = recovery; }
+                            } else { receivers.push((root, recovery)); }
+                        }
                         call_receivers.insert(frame);
                     }
                     if call.alternative.is_none()
@@ -5427,13 +5430,6 @@ impl Lowering<'_, '_> {
         }
         self.return_value(terminal.map_or(own, |(record, _)| record), bits);
     }
-}
-
-/// Continue only when `condition` is false; `fallback` otherwise.
-fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fallback: ir::Block) {
-    let passed = builder.create_block();
-    emit(builder).branch_if(condition, (fallback, &[]), (passed, &[]));
-    builder.switch_to_block(passed);
 }
 
 #[cfg(test)]
