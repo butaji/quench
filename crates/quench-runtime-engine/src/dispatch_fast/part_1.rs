@@ -88,37 +88,9 @@ pub(super) const fn field_store_row_at<const FLAG: u8>(store: FieldStore) -> Han
 /// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
 pub(super) const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
 
-/// Whether site `site` is a read through a prototype hint.
-pub(crate) const fn held_site(site: u8) -> bool {
-    site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
-}
-
-/// Whether site `site` reads `this` or a register as its record says at run time, not as a
-/// site fact: a cold row kept to one instantiation for both bases.
-pub(crate) const fn runtime_base(site: u8) -> bool {
-    site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS || entry_site(site)
-}
-
 pub(crate) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
 
-pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
-
-/// Whether site `site` is a nested read, `NESTED_SITE` or one of its formed instances.
-pub(crate) const fn nested_site(site: u8) -> bool {
-    site == NESTED_SITE || site == NESTED_FLAT_FLAT || site == NESTED_FLAT_INLINE || site == NESTED_INLINE_FLAT
-        || site == NESTED_INLINE_INLINE
-}
-
-/// The storage form each hop of nested site `site` fixes, the record's hint's first: a flat run
-/// (`Form::Arena`) or packed inline values (`Form::Packed`) as its instance names; `Form::Either`
-/// where it names none (`NESTED_SITE`).
-pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
-    if site == NESTED_FLAT_FLAT { [Form::Arena, Form::Arena] }
-    else if site == NESTED_FLAT_INLINE { [Form::Arena, Form::Packed] }
-    else if site == NESTED_INLINE_FLAT { [Form::Packed, Form::Arena] }
-    else if site == NESTED_INLINE_INLINE { [Form::Packed, Form::Packed] }
-    else { [Form::Either, Form::Either] }
-}
+pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE }
 
 pub(crate) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
 
@@ -175,21 +147,6 @@ pub(crate) fn sink_operands(cx: *mut LaneContext, i: &LaneInstruction) -> Option
     code.field_sites.get(i.imm() as usize)?.sink
 }
 
-/// Whether site `site` reads through a VM entry lookup (`FieldPlan::Entry`, `FieldPlan::Hinted`).
-pub(crate) const fn entry_site(site: u8) -> bool {
-    site == POLYMORPHIC_SITE || site == HASHED_SITE || site == HOLDER_SITE || site == INHERITED_WALK_SITE
-}
-
-/// The entry lookup a non-polymorphic entry site makes (`EntryKind`); the polymorphic site's own
-/// plan is `FieldPlan::Hinted`, whose entry is `EntryKind::Polymorphic` too.
-pub(crate) const fn entry_kind(site: u8) -> quench_runtime::staged::property::EntryKind {
-    use quench_runtime::staged::property::EntryKind;
-    if site == POLYMORPHIC_SITE { EntryKind::Polymorphic }
-    else if site == HASHED_SITE { EntryKind::Hashed }
-    else if site == HOLDER_SITE { EntryKind::Holder }
-    else { EntryKind::Inherited }
-}
-
 pub(crate) const fn private_field_site(site: u8) -> bool {
     site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
 }
@@ -201,29 +158,14 @@ pub(crate) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_B
 /// Saturating: a const branch for a site of another family still instantiates the call.
 pub(crate) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNING_BASE) / 2 }
 
-/// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
-/// (`returning_site`): the leaf call's reads recognise it as the own read it is.
-pub(super) fn returning_own_row(handler: *const ()) -> bool {
-    handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, NOT_LEAF)) as *const ()
-        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, NOT_LEAF)) as *const ()
-}
-
 /// Whether site `site` is a trusted own-field read of a fixed class's cell (`TRUSTED_OWN_*`, `TRUSTED_RUN_*`).
 pub(crate) const fn trusted_site(site: u8) -> bool {
     site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER
 }
 
-/// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
-pub(crate) const fn inherited_site(site: u8) -> bool {
-    site == INHERITED_THIS || site == INHERITED_REGISTER || inherited_other_site(site)
-}
-
-pub(crate) const fn inherited_other_site(site: u8) -> bool { site == INHERITED_OTHER_THIS || site == INHERITED_OTHER_REGISTER }
-
-/// Whether held site `site` reads any receiver's object part, not a direct object's alone.
-pub(crate) const fn held_other_site(site: u8) -> bool {
-    site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER || site == HELD_CELL_REGISTER
-}
+/// Whether site `site` is a nested read of two proven fixed cells (`NESTED_TRUSTED`): the first hop's word is the
+/// operand's, the second the record's mode.
+pub(crate) const fn nested_trusted_site(site: u8) -> bool { site == NESTED_TRUSTED }
 
 /// Whether own-field or held site `site` reads `this`.
 pub(crate) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
@@ -278,34 +220,6 @@ pub(super) fn set_field_hint(ip: Ip, entry: quench_runtime::vm::FieldCache) {
     set_record_hint(ip, entry.receiver, entry.record_slot());
 }
 
-/// Makes inherited entry `index` the hint of the `GetField` record at `ip`
-/// (`Vm::hinted_inherited_field_hit`), where `call_link` can name it.
-#[inline(always)]
-pub(super) fn set_inherited_hint(ip: Ip, index: u32) {
-    if let Ok(index) = u16::try_from(index)
-        && index != NO_CALL_LINK
-    {
-        set_record_hint(ip, INHERITED_HINT, index);
-    }
-}
-
-/// Makes the prototype's answer `hold` keeps (`Vm::hold_holder_hint`, `Vm::hold_string_hint`)
-/// the hint of the `GetField` record at `ip`, in place of the one it holds, which `hold` takes.
-/// Out of line, so the reads that keep their hint keep their registers.
-#[cold]
-#[inline(never)]
-pub(super) fn set_prototype_hint(ip: Ip, hold: impl FnOnce(Option<u16>) -> Option<u16>) {
-    if holds_loop_site(ip) {
-        return;
-    }
-    // SAFETY: `ip` is a `GetField` record of a live view.
-    let i = unsafe { &*ip };
-    let owned = (unsafe { i.operand.field.shape } == HOLDER_HINT).then(|| i.call_link.get());
-    if let Some(index) = hold(owned) {
-        set_record_hint(ip, HOLDER_HINT, index);
-    }
-}
-
 /// Whether the field record at `ip` runs a trusted own-field row (`trusted_site`): its operand word holds the field's
 /// slot the load chose (`trusted_named_read`), so no hint may overwrite it. Its general misses write no hint either.
 #[inline(always)]
@@ -322,6 +236,9 @@ pub(crate) fn holds_trusted_record(record: &LaneInstruction) -> bool {
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS) as *const ()
         || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_THIS) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_REGISTER) as *const ()
+        || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_TRUSTED) as *const ()
 }
 
 /// Writes a field record's hint, `shape` and `link`, unless it is a held loop header (`holds_loop_site`) or a trusted
@@ -339,139 +256,12 @@ pub(super) fn set_record_hint(ip: Ip, shape: u32, link: u16) {
 
 /// Whether the field record at `ip` is a held loop header's, whose `call_link` names its
 /// site (`header_site_in_lane`), so it keeps no hint: an empty hint's link is `NO_CALL_LINK`,
-/// and a held one's shape a recorded one, `INHERITED_HINT` or `HOLDER_HINT`.
+/// and a held one's shape a recorded one.
 #[inline(always)]
 pub(super) fn holds_loop_site(ip: Ip) -> bool {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
     (unsafe { i.operand.field.shape }) == quench_runtime::vm::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
-}
-
-/// The polymorphic read of `object` by the `GetField` record at `ip` (`RETURNING_FIELD_POLYMORPHIC`):
-/// its hint, the last own entry that answered it, first, then the site's inline entries, whose own
-/// hit becomes the hint; with whether a prototype's entry answered, which no hint holds.
-#[inline(always)]
-pub(super) fn polymorphic_read(vm: &mut Vm, code: &ResidualProgram, ip: Ip, object: Value) -> Option<(Value, bool)> {
-    use quench_runtime::vm::object::PolymorphicHit;
-    // SAFETY: `ip` is a `GetField` record of a live view.
-    let i = unsafe { &*ip };
-    let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
-    if let PolymorphicHit::Own(entry) = hit {
-        set_field_hint(ip, vm.form_hint(entry, object));
-    }
-    Some((value, matches!(hit, PolymorphicHit::Holder(_))))
-}
-
-/// The polymorphic read of `object` by the `GetField` record at `ip` (`FieldPlan::Hinted`,
-/// `POLYMORPHIC_SITE`), past the record's own hint: the site's inline entries, own or of the
-/// immediate prototype (`hinted_polymorphic_field_hit`). An own hit becomes the record's hint; a
-/// prototype's hit holds the prototype hint (`hold_holder_hint`), kept while its watch is live, and
-/// a record whose hint is a prototype's first tests that hint (`holder_hint_hit`).
-#[inline]
-pub(super) fn polymorphic_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value> {
-    use quench_runtime::vm::object::PolymorphicHit;
-    // SAFETY: the context's program outlives the lane run; `ip` is a live `GetField` record.
-    let code = unsafe { &*(*cx).code };
-    let vm = unsafe { vm(cx) };
-    let i = unsafe { &*ip };
-    let holds_holder = unsafe { i.operand.field.shape } == HOLDER_HINT;
-    if holds_holder && let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
-        return Some(value);
-    }
-    // The other receivers' prototype hints, held in the record's `mode` (`hold_holder_arm`).
-    if let Some(value) = vm.holder_arms_hit(i.mode, i.imm(), object) {
-        return Some(value);
-    }
-    let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
-    match hit {
-        PolymorphicHit::Own(entry) => {
-            if !holds_holder {
-                set_field_hint(ip, vm.form_hint(entry, object));
-            }
-        }
-        PolymorphicHit::Holder(_) => {
-            // A live hint another receiver of this site answers stays: rewriting it at every
-            // receiver switch re-marked and re-watched the prototype each time (V8-v7 Richards:
-            // 0.71M rewrites, 5% of its run).
-            if !(holds_holder && vm.holder_hint_live(i.call_link.get())) {
-                set_prototype_hint(ip, |owned| {
-                    if owned.is_some_and(|index| vm.holder_hint_live(index)) {
-                        return None;
-                    }
-                    vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
-                });
-            } else {
-                hold_holder_arm(vm, ip, object, value);
-            }
-        }
-        PolymorphicHit::Hint => {}
-    }
-    Some(value)
-}
-
-/// Holds the prototype's answer `value` for `object`, a receiver the record's own prototype hint
-/// does not name, as one of the up to four arms of the polymorphic record at `ip` (its `mode`,
-/// sixteen bits each, a hint index plus one): an empty arm or one whose watch retired takes it;
-/// with all four live it holds none. Out of line, as `set_prototype_hint`.
-#[cold]
-#[inline(never)]
-pub(super) fn hold_holder_arm(vm: &mut Vm, ip: Ip, object: Value, value: Value) {
-    if holds_loop_site(ip) {
-        return;
-    }
-    // SAFETY: `ip` is a `GetField` record of a live view.
-    let i = unsafe { &*ip };
-    let mode = i.mode;
-    let Some(k) = (0..4).find(|k| {
-        let arm = (mode >> (16 * k)) as u16;
-        arm == 0 || !vm.holder_hint_live(arm - 1)
-    }) else {
-        return;
-    };
-    let arm = (mode >> (16 * k)) as u16;
-    if let Some(index) = vm.hold_holder_hint((arm != 0).then(|| arm - 1), i.imm(), object, value, NO_CALL_LINK - 1) {
-        let mode = (mode & !(0xffff << (16 * k))) | u64::from(index + 1) << (16 * k);
-        // SAFETY: as `set_record_hint`; the polymorphic row reads `mode` only as its arms.
-        unsafe { (*ip.cast_mut()).mode = mode };
-    }
-}
-
-/// The hashed entries of the `GetField` record at `ip` (`HASHED_SITE`): the site's hashed entries
-/// past the inline ones, own or of the immediate prototype (`Vm::polymorphic_field_hit`), as an AST
-/// walk reads `type` of a node of any of dozens of shapes. Any other read takes `lane_get_field`.
-pub(super) fn hashed_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run; `ip` is a live `GetField` record.
-    let code = unsafe { &*(*cx).code };
-    let i = unsafe { &*ip };
-    unsafe { vm(cx) }.polymorphic_field_hit(code, object, i.c)
-}
-
-/// The site's primary holder entry of `object` (`HOLDER_SITE`): a direct object's record
-/// (`Vm::primary_holder_field_hit`), else a receiver any heap cell holds, such as a function whose
-/// prototype holds the method (`Vm::cell_holder_field_hit`), as `f.apply`. Holds no hint.
-pub(super) fn holder_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value> {
-    // SAFETY: as `hashed_entry`.
-    let code = unsafe { &*(*cx).code };
-    let i = unsafe { &*ip };
-    let vm = unsafe { vm(cx) };
-    if object.direct_object_index().is_some() {
-        // A live class cell's held entry is class-keyed, so it reads through the class (`class_holder_field_hit`).
-        vm.primary_holder_field_hit(code, object, i.c).or_else(|| vm.class_holder_field_hit(code, object, i.c))
-    } else {
-        vm.cell_holder_field_hit(code, object, i.c)
-    }
-}
-
-/// The inherited entry of `object` walked past its immediate prototype (`INHERITED_WALK_SITE`):
-/// the site's entries and their chain walk, which proves one again (`Vm::inherited_field_entry_hit`);
-/// the entry that answered becomes the record's inherited hint.
-pub(super) fn inherited_entry(cx: *mut LaneContext, ip: Ip, object: Value) -> Option<Value> {
-    // SAFETY: as `hashed_entry`.
-    let code = unsafe { &*(*cx).code };
-    let i = unsafe { &*ip };
-    let (value, entry) = unsafe { vm(cx) }.inherited_field_entry_hit(code, object, i.c)?;
-    set_inherited_hint(ip, entry);
-    Some(value)
 }
 
 /// The intrinsic geometry getter's value of `atom` on `base` (`Vm::typed_array_geometry_read`)
@@ -493,31 +283,6 @@ pub(super) fn length_read(vm: &mut Vm, receiver: Value) -> Option<Value> {
     vm.arguments_object_length(receiver)
         .or_else(|| vm.plain_function_length(receiver))
         .or_else(|| vm.typed_array_geometry_read_inline(receiver, atom))
-}
-
-/// A nested `GetField`'s value (`this.a.b`, `r.a.b`), each step one shape compare and one
-/// load where it is monomorphic: the first step through the record's own-field hint
-/// (`lane_nested_hinted_first`) and the second through its site's primary own entry or an
-/// array's or a string's own `length` (`nested_last_step`). A second step past its primary
-/// entry is read alone from the first's value (`lane_nested_second_value`), and a first step
-/// past the hint takes both steps' polymorphic entries (`lane_nested_polymorphic_value`),
-/// which refreshes the hint. `None` leaves the read to the general one. The site reads
-/// neither `name` nor another `length` (`lane_field_site_tier`).
-///
-/// # Safety
-/// `cx` is the running lane's context and `i` the nested record at `ip`.
-#[inline(always)]
-pub(super) unsafe fn lane_nested_value(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run; a nested record names its site.
-    let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
-    match unsafe { lane_nested_hinted_first(cx, r, i, site) } {
-        Some(first) => {
-            let vm = unsafe { vm(cx) };
-            nested_last_step(vm, code, site, first).or_else(|| lane_nested_second_value(vm, code, site, first))
-        }
-        None => unsafe { nested_polymorphic_value_in_lane(cx, r, ip) },
-    }
 }
 
 /// The first step of the nested read `site` of record `i`: the own field its own-field hint
@@ -559,43 +324,7 @@ pub(super) fn lane_nested_second_value(
     }
 }
 
-/// `lane_nested_value` past the record's hint: each step's site's entries, the primary own
-/// one, else the stub cache's and the polymorphic ones, inline or hashed
-/// (`Vm::megamorphic_field_entry_hit`), as an AST walk's `node.loc.start` reads nodes of many
-/// shapes, and a string's own `length`, as a tokenizer's `this.input.length` reads (`lane_cached_field`); none runs guest code. The own
-/// entry that answered the first step becomes the record's hint. Out of line, so the hinted
-/// probe keeps its registers; `None` leaves the read to `lane_get_field`.
-///
-/// # Safety
-/// As for `lane_nested_value`.
-#[inline(never)]
-pub(super) unsafe fn nested_polymorphic_value_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run; a nested record names its site.
-    let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked((*ip).imm() as usize) };
-    let base = unsafe { field_base_in_lane(cx, r, site.base) }?;
-    let vm = unsafe { vm(cx) };
-    let (first, own) = match vm.primary_own_field_hit(code, base, site.first.1) {
-        Some(value) => (value, Some(vm.field_cache_entry(site.first.1))),
-        None => match vm.megamorphic_field_entry_hit(code, base, site.first.0, site.first.1)? {
-            (value, quench_runtime::vm::object::PolymorphicHit::Own(entry)) => (value, Some(entry)),
-            (value, _) => (value, None),
-        },
-    };
-    if let Some(entry) = own {
-        set_field_hint(ip, entry);
-    }
-    match site.second {
-        None => Some(first),
-        Some((atom, _)) if atom == vm.length_atom => own_length(vm, first),
-        Some((atom, cache)) => vm
-            .primary_own_field_hit(code, first, cache)
-            .or_else(|| vm.megamorphic_field_hit(code, first, atom, cache)),
-    }
-}
-
-/// A nested site's read of `base` where both steps hit primary own entries
-/// (`lane_nested_value`), which runs no guest code.
+/// A nested site's read of `base` where both steps hit primary own entries, which runs no guest code.
 #[inline(always)]
 pub(crate) fn nested_own_field_hit(
     vm: &mut Vm,
@@ -651,7 +380,7 @@ pub(super) fn nested_last_step(
 }
 
 /// The own `length` of an array or a string, which no prototype shadows, as a nested
-/// read's last step reads it (`nested_own_field_hit`, `nested_polymorphic_value_in_lane`).
+/// read's last step reads it (`nested_own_field_hit`).
 #[inline(always)]
 pub(super) fn own_length(vm: &Vm, object: Value) -> Option<Value> {
     // The staged row answers either by the value's tag; a form it leaves is read through the
@@ -660,13 +389,6 @@ pub(super) fn own_length(vm: &Vm, object: Value) -> Option<Value> {
         Some(text) => Some(Value::length(text.len())),
         None => vm.array_length_field(object, vm.length_atom),
     })
-}
-
-/// The second hop and base of a formed nested record's `mode` word: the intermediate object's layout id (bits 0..32),
-/// its slot (32..48), and the site's base (48..64).
-#[inline(always)]
-pub(crate) const fn nested_mode_parts(mode: u64) -> (u32, u16, quench_runtime::bytecode::FieldBase) {
-    (mode as u32, (mode >> 32) as u16, quench_runtime::bytecode::FieldBase((mode >> 48) as u16))
 }
 
 /// The base of a `GetField` of a register or `this` that a frameless activation makes in

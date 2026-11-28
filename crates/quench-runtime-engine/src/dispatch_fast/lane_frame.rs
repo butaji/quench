@@ -461,7 +461,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
     elements: Option<ElementSteps>,
     /// The VM's geometry and length reads a host read row runs (`GeometrySteps`), where the row is
-    /// one that reads a view's geometry or a length (`TYPED_LENGTH_SITE`, `GEOMETRY_SITE`).
+    /// one that reads a view's geometry or a length (`TYPED_LENGTH_SITE`).
     geometry: Option<GeometrySteps>,
     /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
     stores: Option<FieldStores>,
@@ -473,9 +473,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     typed: Option<(quench_runtime::staged::typed_elements::NativeKind, (*const usize, usize))>,
     /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
     math: Option<MathCalls>,
-    /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
-    /// one (`PropertyFrame::field_entry`); none elsewhere.
-    entries: Option<EntryReads>,
     /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
@@ -494,22 +491,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The activation entries of the running lane context, for a staged prologue row (`PrologueFrame`);
     /// none elsewhere.
     entry: Option<EntryHost>,
-}
-
-/// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
-/// frame names no `H`: `field_entry` makes the one `kind` names. Runs no guest code.
-#[derive(Clone, Copy)]
-struct EntryReads {
-    context: *mut (),
-    site: Ip,
-}
-
-impl EntryReads {
-    /// The entry lookups of the running lane's `cx` at the row's site `ip`.
-    #[inline(always)]
-    fn of(cx: *mut LaneContext, ip: Ip) -> Self {
-        Self { context: cx.cast(), site: ip }
-    }
 }
 
 /// The element steps of the running lane, erased of its host so the frame names no `H`: the
@@ -654,12 +635,7 @@ pub(crate) struct RecordPlan {
     /// How many of `ops` the plan runs.
     len: usize,
     records: u64,
-    /// The heap whose arrays, functions and ordinary builtins a plan any receiver runs
-    /// (`IcOp::Held`) finds the object part of (`Heap::held_other_receiver`); `None` where the
-    /// plan runs over direct objects alone.
-    other: Option<*const Vm>,
-    /// Whether the plan starts from the receiver's word rather than its object record
-    /// (`IcOp::HeldString`).
+    /// Whether the plan starts from the receiver's word rather than its object record (`length`).
     word: bool,
     /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
     /// (`StorePlan::Add`); `None` for a read's plan.
@@ -668,78 +644,36 @@ pub(crate) struct RecordPlan {
     /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
     /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
     nested: Option<([(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
-    /// A read the frame's host answers (`FieldPlan::Geometry`, `FieldPlan::Length`), which addresses
-    /// no record: the receiver's word is its operand. `None` for every other plan.
+    /// A read the frame's host answers (`FieldPlan::Fixed`, `FieldPlan::FixedChain`, `FieldPlan::Length`, `FieldPlan::Private`),
+    /// which addresses no record: the receiver's word is its operand. `None` for every other plan.
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
-    /// The VM's entry lookup the plan takes where its ops miss, or alone where `len` is zero
-    /// (`FieldPlan::Entry`, `FieldPlan::Hinted`); `None` for every other plan.
-    entry: Option<quench_runtime::staged::property::EntryKind>,
     /// An own read of the hint's `(layout, slot)` held by value (`FieldPlan::Own`), in place of
     /// `ops`, so the row's plan never lives in a list it addresses; `None` for every other plan.
     own: Option<(u32, u16)>,
 }
 
 impl RecordPlan {
-    /// The polymorphic read of the record's hint `(layout, slot)`: the own-slot read of the hint, else
-    /// the site's inline or hashed entries through the VM (`EntryKind::Polymorphic`).
-    #[inline(always)]
-    pub(crate) fn polymorphic(layout: u32, slot: u16, records: u64) -> Self {
-        Self { entry: Some(quench_runtime::staged::property::EntryKind::Polymorphic), ..Self::own(layout, slot, records) }
-    }
-
-    /// A read the VM's entry lookup of `kind` answers alone, over the object records the lane bound.
-    #[inline(always)]
-    pub(crate) fn entry(kind: quench_runtime::staged::property::EntryKind, records: u64) -> Self {
-        let none = quench_runtime::staged::ic::IcOp::GuardLayout(0);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: None,
-            host: None, entry: Some(kind), own: None }
-    }
-
     /// The private name's read of the record (`FieldPlan::Private`), whose atom the lookup names.
     #[inline(always)]
     pub(crate) fn private(atom: u32) -> Self {
         Self::host_read(quench_runtime::staged::property::FieldPlan::Private { atom })
     }
-}
 
-impl RecordPlan {
     /// The own-slot read of the hint `(layout, slot)`: one compare of the record's layout id,
     /// whose storage form the site fixed where it fixed one (`own_formed_handler`).
     #[inline(always)]
     pub(crate) fn own_word(layout: u32, slot: u16, records: u64) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: None, host: None,
-            entry: None, own: Some((layout, slot)) }
-    }
-
-    /// `own_word` as ops, which a polymorphic read (`polymorphic`) extends.
-    #[inline(always)]
-    pub(crate) fn own(layout: u32, slot: u16, records: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let load = IcOp::LoadSlot { slot, form: quench_runtime::staged::ic::form_of_layout(layout), storage_len: usize::from(slot) + 1,
-            rep: quench_runtime::typed_ir::Representation::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, nested: None, host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, word: false, store: None, nested: None, host: None, own: Some((layout, slot)) }
     }
 
     /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(crate) fn length(length: quench_runtime::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
+        Self { ops: [length, length], len: 1, records: 0, word: true, store: None, nested: None, host: None, own: None }
     }
 
-    /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
-    /// (`IcOp::Held`).
-    #[inline(always)]
-    pub(crate) fn held(guard: u64, watch: u64, value: u64, records: u64,
-        other: Option<*const Vm>) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None, nested: None, host: None, entry: None, own: None }
-    }
-}
-
-impl RecordPlan {
     /// The own-field store of the hint `(layout, slot)`: one compare of the record's layout id,
     /// whose entry names the storage form (`StorePlan::Layout`); what it refuses is the VM's.
     #[inline(always)]
@@ -748,7 +682,7 @@ impl RecordPlan {
         use quench_runtime::staged::property::{StoreJoin, StorePlan};
         let none = IcOp::GuardLayout(layout);
         let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), nested: None, host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, word: false, store: Some(store), nested: None, host: None, own: None }
     }
 
     /// The tracked store the hint `(layout, slot)` proves (`StorePlan::Hinted`, not narrow), a refusal leaving
@@ -767,58 +701,38 @@ impl RecordPlan {
         Self { store: Some(quench_runtime::staged::property::StorePlan::Host), ..Self::own_store(0, 0, records) }
     }
 
-    /// The read of a string receiver through a `String.prototype` hint whose operands are
-    /// `watch` and `value` (`IcOp::HeldString`), from the receiver's word.
-    #[inline(always)]
-    pub(crate) fn held_string(watch: u64, value: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
-    }
-
-    /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
-    /// and `value` (`IcOp::HeldNumber`), from the receiver's word.
-    #[inline(always)]
-    pub(crate) fn held_number(watch: u64, value: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let held = IcOp::HeldNumber { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
-    }
-}
-
-impl RecordPlan {
-    /// The nested read `a.b.c` of two own hops: `first` the record's hint (the layout and slot
-    /// of the first object), `second` the site's entry for the intermediate object, each with the
-    /// storage form its site fixed, and `base` the base the first hop reads. One shape compare and
-    /// one slot load per hop.
+    /// The nested read `a.b.c` of two own hops, the sinking read's: `first` the record's hint (the layout and slot
+    /// of the first object), `second` the site's entry for the intermediate object, each with the storage form its
+    /// site fixed, and `base` the base the first hop reads. One shape compare and one slot load per hop.
     #[inline(always)]
     pub(crate) fn nested(first: (u32, u16, Form), second: (u32, u16, Form), base: quench_runtime::bytecode::FieldBase,
         records: u64) -> Self {
         use quench_runtime::staged::ic::IcOp;
         let none = IcOp::GuardLayout(first.0);
         let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardShape(second.0), second.1, second.2)];
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: Some((hops, base)), host: None, entry: None, own: None }
+        Self { ops: [none, none], len: 0, records, word: false, store: None, nested: Some((hops, base)), host: None, own: None }
     }
 
-    /// `nested` whose second hop is the intermediate object's layout id `layout` in the fixed `form`
-    /// (`IcOp::GuardFormed`): one compare of the record's own word proves its shape and form, so the hop
-    /// reads its slot untested.
+    /// The nested read `a.b.c` of two proven fixed cells (`FieldPlan::FixedChain`, `trusted_read`): `first` and `second`
+    /// the slot words of the base's field and the intermediate object's, each with its hole bit, and `base` the site's
+    /// base. No guard runs.
     #[inline(always)]
-    pub(crate) fn nested_formed(first: (u32, u16, Form), (layout, slot, form): (u32, u16, Form),
-        base: quench_runtime::bytecode::FieldBase, records: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let none = IcOp::GuardLayout(first.0);
-        let bits = if matches!(form, Form::Packed) { quench_runtime::value_vec::INLINE_FORM } else { 0 };
-        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardFormed { id: layout, form: bits }, slot, form)];
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, nested: Some((hops, base)), host: None, entry: None, own: None }
+    pub(crate) fn nested_trusted(base: quench_runtime::bytecode::FieldBase, first: u32, second: u32) -> Self {
+        use quench_runtime::staged::property::FieldPlan;
+        let hole = crate::dispatch_fast::TRUSTED_HOLE;
+        Self::host_read(FieldPlan::FixedChain {
+            base,
+            first: (first & !hole, first & hole != 0),
+            second: (second & !hole, second & hole != 0),
+        })
     }
 
-    /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
-    /// no record is addressed, so the plan's operands are the receiver's word alone.
+    /// A read the frame's host answers (`plan`): no record is addressed, so the plan's operands are the receiver's
+    /// word alone.
     #[inline(always)]
     pub(crate) fn host_read(plan: quench_runtime::staged::property::FieldPlan<'static>) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, nested: None, host: Some(plan), entry: None, own: None }
+        Self { ops: [none, none], len: 0, records: 0, word: false, store: None, nested: None, host: Some(plan), own: None }
     }
 }
 
@@ -829,7 +743,6 @@ pub(crate) struct LanePlans {
     store: Option<quench_runtime::staged::property::StorePlan<'static>>,
     nested: Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]>,
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
-    entry: Option<quench_runtime::staged::property::EntryKind>,
     own: Option<(u32, u16)>,
 }
 
@@ -839,11 +752,7 @@ impl quench_runtime::staged::property::PlanSource for LanePlans {
         if let Some(host) = self.host { return Some(host); }
         use quench_runtime::staged::property::FieldPlan;
         if let Some((layout, slot)) = self.own { return Some(FieldPlan::Own { layout, slot }); }
-        match (self.read.as_ref(), self.entry) {
-            (Some((ops, len)), Some(entry)) if *len > 0 => Some(FieldPlan::Hinted { ops: &ops[..*len], entry }),
-            (_, Some(entry)) => Some(FieldPlan::Entry(entry)),
-            (read, None) => read.map(|(ops, len)| FieldPlan::Ops(&ops[..*len])),
-        }
+        self.read.as_ref().map(|(ops, len)| FieldPlan::Ops(&ops[..*len]))
     }
     /// A nested read's two own hops, as the record holds them.
     #[inline(always)]
@@ -861,7 +770,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, trust_this: false, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1834,7 +1743,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
             store: self.plan.and_then(|plan| plan.store),
             nested: self.plan.and_then(|plan| plan.nested.map(|(hops, _)| hops)),
             host: self.plan.and_then(|plan| plan.host),
-            entry: self.plan.and_then(|plan| plan.entry),
         }
     }
 
@@ -1899,27 +1807,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         let steps = self.geometry?;
         // SAFETY: as `geometry_read`.
         (steps.length)(steps.context, Value::from_bits(object)).map(Value::to_bits)
-    }
-
-    /// The VM's entry lookup of `kind` for `object` (`EntryReads`): the polymorphic, hashed, holder
-    /// or inherited answer at the row's site, which the row's record keeps as its hint where it does.
-    #[inline(always)]
-    fn field_entry(&mut self, _stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64,
-        kind: quench_runtime::staged::property::EntryKind, _miss: ()) -> Option<u64> {
-        use quench_runtime::staged::property::EntryKind;
-        let entries = self.entries?;
-        // The row names the lookup its own `kind` reads, so each runs as a direct call the
-        // compiler can inline into the row: an erased call per field read costs more than the hit.
-        // SAFETY: the context is the lane context this frame runs in, and `site` its live record.
-        let cx = entries.context.cast::<LaneContext>();
-        let object = Value::from_bits(object);
-        let value = match kind {
-            EntryKind::Polymorphic => super::polymorphic_entry(cx, entries.site, object),
-            EntryKind::Hashed => super::hashed_entry(cx, entries.site, object),
-            EntryKind::Holder => super::holder_entry(cx, entries.site, object),
-            EntryKind::Inherited => super::inherited_entry(cx, entries.site, object),
-        };
-        value.map(Value::to_bits)
     }
 
     /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the
@@ -2307,7 +2194,7 @@ pub(crate) const FLAG_REGISTERS: u8 = 19;
 pub(crate) const FLAG_COMPLETING: u8 = 20;
 /// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`) whose `a` names a numeric local target's
 /// frame slot: the row computes into that register number, moves the value to the slot and puts the register
-/// back (`numeric_local_slot`, as `Vm::run_row_completed`). Other rows' `FLAG`s are site facts (21 is `HELD_OTHER_THIS`).
+/// back (`numeric_local_slot`, as `Vm::run_row_completed`). Other rows' `FLAG`s are site facts.
 pub(crate) const FLAG_LOCAL_RESULT: u8 = 21;
 pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_LOCAL_RESULT && (op == quench_runtime::staged::BINARY_ROW || op == quench_runtime::staged::NUMERIC_ADD_ROW) }
 
@@ -3558,15 +3445,15 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
 
 view_handler! {
     /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the own
-    /// read past its record's hint, which reads through the site's cache and rebinds the hint; a held
-    /// read, the site's holder entry. Out of the row's body, so each row instance holds one jump here
-    /// rather than this chain at each of its misses.
+    /// read past its record's hint, which reads through the site's cache and rebinds the hint. Out of the
+    /// row's body, so each row instance holds one jump here rather than this chain at each of its misses.
     #[inline(never)]
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
         let script: *mut LaneContext = view.memory.bytes.cast();
-        // A trusted read's miss (a field the class may leave absent): the general read, which keeps the record.
-        if const { crate::dispatch_fast::trusted_site(FLAG) } {
+        let _ = i;
+        // A trusted read's miss (a field the class may leave absent, or a nested chain's hop): the general read, which keeps the record.
+        if const { crate::dispatch_fast::trusted_site(FLAG) || crate::dispatch_fast::nested_trusted_site(FLAG) } {
             sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::general_site(FLAG) } {
@@ -3577,42 +3464,13 @@ view_handler! {
             // The general read and store, which repeats the side-effect-free reads.
             sibling!(crate::dispatch_fast::row_get_field_sink, r, ip, Carried::script_in(script, view))
         }
-        if const { crate::dispatch_fast::entry_site(FLAG) } {
-            // The polymorphic read past its inline entries probes the hash (`row_polymorphic_miss`); the
-            // hashed read, the holder's and the inherited walk's take the general read, which moves the record on.
-            if const { FLAG == crate::dispatch_fast::POLYMORPHIC_SITE } {
-                sibling!(crate::dispatch_fast::row_polymorphic_miss, r, ip, Carried::script_in(script, view))
-            }
-            if const { FLAG == crate::dispatch_fast::HASHED_SITE } {
-                sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
-            }
-            sibling!(crate::dispatch_fast::row_get_field_miss, r, ip, Carried::script_in(script, view))
-        }
         if const { crate::dispatch_fast::returning_field_site(FLAG) } {
-            // A returning read's stale hint: the returning miss answers and moves the record on.
+            // A returning read's miss: the returning miss answers and moves the record on.
             by_leaf!(crate::dispatch_fast::returning_leaf(FLAG), |L| sibling!(crate::dispatch_fast::row_returning_field_miss::<L>, r, ip, Carried::script_in(script, view)))
         }
         if const { crate::dispatch_fast::private_field_site(FLAG) } {
             // A method, accessor or missing private field: the general private read.
             sibling!(get_private_field_miss, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::held_site(FLAG) && !crate::dispatch_fast::held_other_site(FLAG) } {
-            // A direct object's miss; the read of any other receiver's object part.
-            if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
-                sibling!(generated_row!(OP, ACC, crate::dispatch_fast::HELD_OTHER_THIS), r, ip, Carried::script_in(script, view))
-            }
-            sibling!(generated_row!(OP, ACC, crate::dispatch_fast::HELD_OTHER_REGISTER), r, ip, Carried::script_in(script, view))
-        }
-        if const { FLAG == crate::dispatch_fast::STRING_SITE } {
-            sibling!(row_get_field_string_refresh, r, ip, Carried::script_in(script, view))
-        }
-        if const { FLAG == crate::dispatch_fast::NUMBER_SITE } {
-            sibling!(crate::dispatch_fast::row_get_field_number_refresh, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::nested_site(FLAG) } {
-            // A nested read whose hops the record does not hold (or whose steps miss): the hand
-            // read that refreshes the hint from the steps' entries.
-            sibling!(get_field_nested_miss, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::length_site(FLAG) } {
             // Another receiver, or a form the row does not read: the general length reads.
@@ -3622,31 +3480,7 @@ view_handler! {
             // A receiver the host read does not answer: an array's or a string's length is the array row's.
             sibling!(generated_row!(OP, ACC, crate::dispatch_fast::ARRAY_LENGTH_SITE), r, ip, Carried::script_in(script, view))
         }
-        if const { FLAG == crate::dispatch_fast::GEOMETRY_SITE } {
-            // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
-            sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::inherited_site(FLAG) && !crate::dispatch_fast::inherited_other_site(FLAG) } {
-            // A direct object's miss; the read of any other receiver's object part.
-            if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
-                sibling!(generated_row!(OP, ACC, crate::dispatch_fast::INHERITED_OTHER_THIS), r, ip, Carried::script_in(script, view))
-            }
-            sibling!(generated_row!(OP, ACC, crate::dispatch_fast::INHERITED_OTHER_REGISTER), r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::inherited_other_site(FLAG) } {
-            // The inherited chain walk (`INHERITED_WALK_SITE`) answers what the record's hint did not.
-            sibling!(generated_row!(OP, ACC, crate::dispatch_fast::INHERITED_WALK_SITE), r, ip, Carried::script_in(script, view))
-        }
-        if const { FLAG == crate::dispatch_fast::HELD_CELL_REGISTER } {
-            sibling!(row_get_field_holder_cell_refresh, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::held_other_site(FLAG) } {
-            if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
-                sibling!(row_get_field_holder_refresh::<true>, r, ip, Carried::script_in(script, view))
-            }
-            sibling!(row_get_field_holder_refresh::<false>, r, ip, Carried::script_in(script, view))
-        }
-        if (const { crate::dispatch_fast::own_site_this(FLAG) } || (const { crate::dispatch_fast::runtime_base(FLAG) } && i.b == quench_runtime::bytecode::FieldBase::THIS.0)) {
+        if const { crate::dispatch_fast::own_site_this(FLAG) } {
             sibling!(row_get_field_own_refresh::<true, true>, r, ip, Carried::script_in(script, view))
         }
         sibling!(row_get_field_own_refresh::<false, true>, r, ip, Carried::script_in(script, view))

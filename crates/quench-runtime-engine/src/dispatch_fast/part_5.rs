@@ -127,13 +127,14 @@ pub(super) fn writes_in_lane(instruction: WideInstruction, register: u16) -> boo
 /// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form:
 /// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`. A returning
 /// `GetField` takes its row at load: a private name its private row (`Vm::is_private_name`, the atom alone decides),
-/// any other the general returning read, which no fact here narrows (a returning own row reads its record's hint).
-pub(super) fn returning_handler(kind: u8, vm: &Vm, instruction: WideInstruction) -> Handler {
+/// a read whose base a fact proves its trusted returning row (`trusted`, `trusted_read`), any other the general
+/// returning read.
+pub(super) fn returning_handler(kind: u8, vm: &Vm, instruction: WideInstruction, trusted: Option<Handler>) -> Handler {
     match kind {
         RETURNING_FIELD if instruction.b() != quench_runtime::bytecode::FieldBase::NESTED && vm.is_private_name(instruction.imm()) => {
             field_return_row::<NOT_LEAF>(RETURNING_FIELD_PRIVATE)
         }
-        RETURNING_FIELD => field_return_row::<NOT_LEAF>(RETURNING_FIELD),
+        RETURNING_FIELD => trusted.unwrap_or_else(|| field_return_row::<NOT_LEAF>(RETURNING_FIELD)),
         RETURNING_UNARY => returning_row_of!(quench_runtime::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
         RETURNING_BINARY => returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
         RETURNING_OBJECT => returning_row_of!(quench_runtime::bytecode::OBJECT_PAIR, RETURNING_OBJECT, NOT_LEAF) as Handler,
@@ -322,7 +323,8 @@ pub(crate) fn derive_lane_view<'live>(
                 // `super(...)`: the parent pushed in place in the frame the lane runs (`derived_frames`).
                 Some(LaneHandler { handler: derived_frames::super_construct_in_frame as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
-                Some(LaneHandler { handler: returning_handler(kind, vm, instruction), produces: false })
+                let trusted = trusted_read(facts, vm, sites, function_id, pc as u32, instruction).map(|(handler, _, _)| handler);
+                Some(LaneHandler { handler: returning_handler(kind, vm, instruction, trusted), produces: false })
             } else if let Some(index) = typed_element.filter(|_| acc == ACC_NONE) {
                 Some(LaneHandler {
                     handler: element_typed_row(quench_runtime::staged::element_read_family(op), index),
@@ -344,7 +346,7 @@ pub(crate) fn derive_lane_view<'live>(
                     if let Some(handler) = named_store_row(facts, function_id, pc as u32, instruction, row.handler) {
                         return Some(LaneHandler { handler, ..row });
                     }
-                    Some(match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, program, instruction, facts, function_id, pc as u32)).flatten() {
+                    Some(match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, program, instruction, facts, sites, function_id, pc as u32)).flatten() {
                         Some(handler) => LaneHandler { handler, ..row },
                         None => row,
                     })
@@ -376,10 +378,10 @@ pub(crate) fn derive_lane_view<'live>(
                     chosen
                 }
             });
-            // The trusted row a fact chose (`named_read_row`) reads its slot from the record's operand word: its
-            // field operand keeps the atom and holds the slot word (`trusted_read_word`), where that row was chosen.
-            let trusted_word = trusted_read_word(facts, function_id, pc as u32, instruction)
-                .filter(|(handler, _)| selected.is_some_and(|chosen| chosen.handler as usize == *handler as usize));
+            // The trusted row a fact chose (`trusted_read`) reads its slot from the record's operand word: its field operand
+            // keeps the atom and holds the slot word, and a nested read's second word is its mode, where that row was chosen.
+            let trusted = trusted_read(facts, vm, sites, function_id, pc as u32, instruction)
+                .filter(|(handler, _, _)| selected.is_some_and(|chosen| chosen.handler as usize == *handler as usize));
             // The closure read a fact chose (`named_read_row`) reads the closure cell its record's `mode` word addresses.
             let closure_cell = selected.is_some_and(|chosen| chosen.handler as usize == closure_cell_handler() as usize)
                 .then(|| closure_cell_of(vm, program, facts, function_id, pc as u32, instruction))
@@ -401,8 +403,8 @@ pub(crate) fn derive_lane_view<'live>(
             let name_native = named_program.as_ref().and_then(|(residual, _)| name_native_operand(residual, op, handler, instruction.imm()));
             LaneInstruction {
                 handler,
-                operand: match trusted_word {
-                    Some((_, word)) => LaneOperand { field: quench_runtime::vm::engine_types::FieldOperand { imm: instruction.imm(), shape: word } },
+                operand: match trusted {
+                    Some((_, word, _)) => LaneOperand { field: quench_runtime::vm::engine_types::FieldOperand { imm: instruction.imm(), shape: word } },
                     None => typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(operand).unwrap_or(LaneOperand { imm: 0 }),
                 },
                 a: instruction.a(),
@@ -415,9 +417,9 @@ pub(crate) fn derive_lane_view<'live>(
                     instruction.c()
                 },
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
-                // A closure read's record holds its closure cell's address here (`closure_cell_read`), its
-                // operand keeping the atom.
-                mode: closure_cell.map_or(0, |cell| cell as u64),
+                // A closure read's record holds its closure cell's address here (`closure_cell_read`); a trusted nested
+                // read's, its second slot word (`trusted_nested`).
+                mode: closure_cell.map_or_else(|| trusted.map_or(0, |(_, _, mode)| mode), |cell| cell as u64),
             }
         })
         .collect();
@@ -1533,48 +1535,35 @@ fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
     }
 }
 
-/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's classes: the
-/// base's cell is a proven closed set of classes (`cell_at` of a register, `this_classes` of `this`), each class `C` of
-/// the set has its instances as fixed cells (`class_form`) and holds the field (`field_slot`), and all of them read the
-/// same slot word and form (`trusted_operand`), so one row and one word serve every class of the set. Returns the row and
-/// the operand word it reads (`FieldOperand::shape`): the field's slot in the cell, a spilled slot word past the cell's
-/// spill slot (`spill_from`), with `TRUSTED_HOLE` where a class may leave the field absent. `None` for a local or nested
-/// base, and where no fact proves the classes.
-pub(super) fn trusted_named_read(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
-    instruction: WideInstruction) -> Option<(Handler, u32)> {
-    if !quench_runtime::staged::field_read_family(instruction.op()) {
-        return None;
-    }
-    trusted_read_of(facts?, function_id, pc, instruction.b(), instruction.imm())
-}
-
-/// `trusted_named_read` for the read of `atom` on the base word `base` at `pc`: the same trusted row and slot word, for
-/// any read of the base's field (a getter's inlined field read, `inlined_getter`, names a field other than its read's).
-fn trusted_read_of(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32, base: u16, atom: u32)
-    -> Option<(Handler, u32)> {
-    let base = quench_runtime::bytecode::FieldBase(base);
+/// The classes a trusted read's base proves at `pc`, with whether the base is `this`: `this`'s (`this_classes`, where the
+/// receiver is trusted) or a register's cell's, each a closed set of classes of direct objects. A class alone names no
+/// object, and an unbound or undefined base has none, so the base must hold a direct object in every run. `None` for a
+/// nested or local base, and where no fact proves the set.
+fn trusted_base(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32, base: quench_runtime::bytecode::FieldBase)
+    -> Option<(bool, quench_runtime::typed_ir::Classes)> {
     if base.0 == quench_runtime::bytecode::FieldBase::NESTED || base.local_index().is_some() {
         return None;
     }
     let this = base == quench_runtime::bytecode::FieldBase::THIS;
-    let function = facts.function_facts(function_id);
-    // The base must hold a direct object in every run (`receiver_trusted` for `this`, the cell's type for a register): a
-    // class alone names no object, and an unbound or undefined base has none.
     let classes = if this {
         if !receiver_trusted(Some(facts), function_id) {
             return None;
         }
         facts.this_classes(function_id)
     } else {
-        let cell = function.cell_at(pc, base.register_index()?)?;
+        let cell = facts.function_facts(function_id).cell_at(pc, base.register_index()?)?;
         if cell.ty == quench_runtime::typed_ir::Type::NEVER || !cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY) {
             return None;
         }
         cell.classes
     };
-    if !classes.proven() {
-        return None;
-    }
+    classes.proven().then_some((this, classes))
+}
+
+/// The one form and operand word every class of `classes` shares for a trusted read of `atom` (`trusted_operand`), so one
+/// row and one word serve the whole set. `None` where a class lacks the field or the classes disagree.
+fn trusted_shared(facts: &quench_runtime::compile::aot_facts::AotFacts, classes: quench_runtime::typed_ir::Classes, atom: u32)
+    -> Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> {
     let mut shared: Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> = None;
     for &class in classes.ids() {
         let operand = trusted_operand(facts, class, atom)?;
@@ -1583,7 +1572,24 @@ fn trusted_read_of(facts: &quench_runtime::compile::aot_facts::AotFacts, functio
         }
         shared = Some(operand);
     }
-    let (form, word) = shared?;
+    shared
+}
+
+/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's classes
+/// (`trusted_base`, `trusted_shared`). Returns the row and the operand word it reads (`FieldOperand::shape`): the field's
+/// slot in the cell, a spilled slot word past the cell's spill slot (`spill_from`), with `TRUSTED_HOLE` where a class may
+/// leave the field absent.
+pub(super) fn trusted_named_read(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    trusted_read_of(facts, function_id, pc, instruction.b(), instruction.imm())
+}
+
+/// `trusted_named_read` for the read of `atom` on the base word `base` at `pc`: the same trusted row and slot word, for
+/// any read of the base's field (a getter's inlined field read, `inlined_getter`, names a field other than its read's).
+fn trusted_read_of(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32, base: u16, atom: u32)
+    -> Option<(Handler, u32)> {
+    let (this, classes) = trusted_base(facts, function_id, pc, quench_runtime::bytecode::FieldBase(base))?;
+    let (form, word) = trusted_shared(facts, classes, atom)?;
     let handler = match (form, this) {
         (quench_runtime::compile::aot_facts::ClassForm::Own, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS),
         (quench_runtime::compile::aot_facts::ClassForm::Own, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER),
@@ -1591,6 +1597,65 @@ fn trusted_read_of(facts: &quench_runtime::compile::aot_facts::AotFacts, functio
         (quench_runtime::compile::aot_facts::ClassForm::Run, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER),
     };
     Some((handler, word))
+}
+
+/// The trusted returning read of the `GetField` at `pc` (`RETURNING_TRUSTED_THIS`, `RETURNING_TRUSTED_REGISTER`): the slot
+/// word `trusted_named_read` proves, read with no guard and completed by its return (`returning_field_site`).
+pub(super) fn trusted_returning_read(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    let (this, classes) = trusted_base(facts, function_id, pc, quench_runtime::bytecode::FieldBase(instruction.b()))?;
+    let (_, word) = trusted_shared(facts, classes, instruction.imm())?;
+    let handler = if this {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_THIS)
+    } else {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_REGISTER)
+    };
+    Some((handler, word))
+}
+
+/// The nested read `a.b.c` of the record's site `sites[imm]` at `pc`, whose two hops are trusted (`NESTED_TRUSTED`): the base
+/// proves one class `C1` holding `a`'s field `b` at a slot word, and `hop_class` proves `b`'s value is one class `C2` holding
+/// `c` at its word. Returns the row, `b`'s word (the operand's) and `c`'s (the record's mode).
+fn trusted_nested(facts: &quench_runtime::compile::aot_facts::AotFacts, vm: &quench_runtime::vm::Vm,
+    sites: &[quench_runtime::bytecode::FieldSite], function_id: u32, pc: u32, instruction: WideInstruction)
+    -> Option<(Handler, u32, u32)> {
+    let site = sites.get(instruction.imm() as usize)?;
+    let (first, _) = site.first;
+    let (second, _) = site.second?;
+    if vm.is_private_name(first) || vm.is_private_name(second) {
+        return None;
+    }
+    let (_, classes) = trusted_base(facts, function_id, pc, site.base)?;
+    let [class] = classes.ids() else { return None };
+    let (_, first_word) = trusted_operand(facts, *class, first)?;
+    let next = facts.hop_class(*class, first)?;
+    let (_, second_word) = trusted_operand(facts, next, second)?;
+    Some((generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_TRUSTED), first_word, second_word))
+}
+
+/// The trusted row a load-time fact chooses for the field read `instruction` at `pc`, with the operand word it reads and the
+/// record's mode: a returning read's returning row (`trusted_returning_read`), a nested read's chain (`trusted_nested`), else
+/// a getter's inlined field read (`inlined_getter`), else the named row (`trusted_named_read`). A private name's read takes none. The caller keeps the row only where it chose that
+/// row, so the word goes only with the handler it was proven for.
+fn trusted_read(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, vm: &quench_runtime::vm::Vm,
+    sites: &[quench_runtime::bytecode::FieldSite], function_id: u32, pc: u32, instruction: WideInstruction)
+    -> Option<(Handler, u32, u64)> {
+    let facts = facts?;
+    let nested = instruction.b() == quench_runtime::bytecode::FieldBase::NESTED;
+    if !quench_runtime::staged::field_read_family(instruction.op()) || (!nested && vm.is_private_name(instruction.imm())) {
+        return None;
+    }
+    if returning_kind(instruction) == Some(RETURNING_FIELD) {
+        return trusted_returning_read(facts, function_id, pc, instruction).map(|(handler, word)| (handler, word, 0));
+    }
+    if nested {
+        return trusted_nested(facts, vm, sites, function_id, pc, instruction)
+            .map(|(handler, first, second)| (handler, first, u64::from(second)));
+    }
+    if runs_getter(Some(facts), function_id, pc) {
+        return inlined_getter(Some(facts), function_id, pc, instruction).map(|(handler, word)| (handler, word, 0));
+    }
+    trusted_named_read(facts, function_id, pc, instruction).map(|(handler, word)| (handler, word, 0))
 }
 
 /// The storage form and operand word a trusted read of `atom` in instances of `class` takes: the form of the class's
@@ -1631,17 +1696,6 @@ fn inlined_getter(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, 
     let read = facts.returning_read(arm.function)
         .filter(|read| read.base == quench_runtime::compile::body_forms::ReadBase::This)?;
     trusted_read_of(facts, function_id, pc, instruction.b(), read.atom)
-}
-
-/// The trusted row and operand word a `GetField` at `pc` reads its slot with (`named_read_row`'s choice, the record's word):
-/// the inlined getter's where the read runs one (`inlined_getter`), else the trusted read of its own atom.
-fn trusted_read_word(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
-    instruction: WideInstruction) -> Option<(Handler, u32)> {
-    if runs_getter(facts, function_id, pc) {
-        inlined_getter(facts, function_id, pc, instruction)
-    } else {
-        trusted_named_read(facts, function_id, pc, instruction)
-    }
 }
 
 /// The row of a `GetField` the census names a getter for (`runs_getter`): the getter's inlined trusted row where it is
@@ -1710,12 +1764,13 @@ fn closure_cell_of(vm: &quench_runtime::vm::Vm, program: quench_runtime::vm::Pro
 /// name reads through its private row (`Vm::is_private_name`: the atom's text decides it). A read the census names an
 /// accessor for takes the getter's inlined trusted row (`inlined_getter`), else the getter protocol row, whose call
 /// the read makes (`get_field_getter_miss`). A read whose result is one proven closure takes the closure row
-/// (`closure_cell_of`). A `length` read takes the trusted row where a fact proves its class (`trusted_named_read`), else the
+/// (`closure_cell_of`). A `length` read takes the trusted row where a fact proves its class (`trusted_read`), else the
 /// length row of its register base (`length_row`), else the general read (`Vm::reads_function_info`: the VM's fixed atoms decide it). Any other read
 /// takes the trusted row where a fact proves its class, else the own-field row, whose misses reach the general read.
 /// `None` for a local base, which `row_get_field_first` reads, and for any other opcode.
 fn named_read_row(vm: &quench_runtime::vm::Vm, program: quench_runtime::vm::ProgramId, instruction: WideInstruction,
-    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32) -> Option<Handler> {
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, sites: &[quench_runtime::bytecode::FieldSite], function_id: u32,
+    pc: u32) -> Option<Handler> {
     let base = instruction.b();
     let atom = instruction.imm();
     if !quench_runtime::staged::field_read_family(instruction.op()) || quench_runtime::bytecode::FieldBase(base).local_index().is_some() {
@@ -1735,7 +1790,7 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, program: quench_runtime::vm::Prog
     if closure_cell_of(vm, program, facts, function_id, pc, instruction).is_some() {
         return Some(closure_cell_handler());
     }
-    if let Some((handler, _)) = trusted_named_read(facts, function_id, pc, instruction) {
+    if let Some((handler, _, _)) = trusted_read(facts, vm, sites, function_id, pc, instruction) {
         return Some(handler);
     }
     if vm.reads_function_info(atom) && atom == vm.length_atom {

@@ -144,7 +144,7 @@ fusion_recipes! {
                     site.sink = Some(sink);
                 }
                 // A one-hop read keeps its own row and the store its own: the lane's sinking row plans
-                // only a nested read's two hops (`NESTED_SITE`), so a one-hop sink took the general
+                // only a nested read's two hops, so a one-hop sink took the general
                 // read and store every time.
                 crate::bytecode::FieldLookup::Atom { .. } => return None,
             }

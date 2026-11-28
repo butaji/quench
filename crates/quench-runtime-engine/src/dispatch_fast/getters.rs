@@ -121,9 +121,6 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
         _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(AccessorForward::Receiver),
         // SAFETY: a `Reads` target of the running program holds its returning record first.
         _ if target.entry == CallEntry::frameless(Frameless::Reads) => match unsafe { LeafRead::of(target) }? {
-            LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
-                Some(AccessorForward::Field(vm.field_cache_entry(cache)))
-            }
             LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 let answer = vm.site_private_field_entry(site, environment)?;
                 let receiver = vm.heap_reads().object_record(object)?;

@@ -1,22 +1,5 @@
-//! Field and call reads in a lane: the returning field hit, call reads, captured reads, and answered calls.
+//! Field and call reads in a lane: call reads, captured reads, and answered calls.
 use super::*;
-
-/// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
-/// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
-#[inline(always)]
-pub(in super::super) fn returning_field_hit<const KIND: u8>(
-    vm: &mut Vm,
-    code: &ResidualProgram,
-    object: Value,
-    cache: u16,
-) -> Option<Value> {
-    match KIND {
-        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, cache),
-        RETURNING_FIELD_POLYMORPHIC => vm.inline_polymorphic_field_hit(code, object, cache),
-        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, cache),
-        _ => vm.inherited_field_hit(code, object, cache),
-    }
-}
 
 /// The value a frameless read target (`CallEntry::reads`, `CallEntry::frameless(Frameless::ForwardsRead)`)
 /// returns for a call passing `arguments.get(k)` as parameter `k` (`None` where not passed) on

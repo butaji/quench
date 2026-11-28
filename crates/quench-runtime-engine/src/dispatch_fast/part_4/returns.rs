@@ -254,13 +254,7 @@ pub(in super::super) const fn returning_operator_miss_of<const LEAF: u8>(operato
 pub(in super::super) fn field_return_row<const LEAF: u8>(kind: u8) -> Handler {
     by_leaf!(LEAF, |L| match kind {
         RETURNING_FIELD => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler,
-        RETURNING_FIELD_OWN => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_OWN, L) as Handler,
-        RETURNING_FIELD_POLYMORPHIC => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, L) as Handler,
-        RETURNING_FIELD_HOLDER => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, L) as Handler,
-        RETURNING_FIELD_INHERITED => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, L) as Handler,
-        RETURNING_FIELD_NESTED => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, L) as Handler,
         RETURNING_FIELD_PRIVATE => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, L) as Handler,
-        RETURNING_FIELD_GETTER => returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, L) as Handler,
         _ => unreachable!("a returning GetField's kind is a field kind"),
     })
 }
