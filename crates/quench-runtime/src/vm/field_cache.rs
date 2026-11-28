@@ -244,7 +244,7 @@ impl Vm {
         let receiver = self.heap.object(object)?;
         let holder = self.heap.object(receiver.proto())?;
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
-        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get_ref(holder, usize::from(entry.slot)))?
+        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get_ref(holder, entry.slot as usize))?
     }
 
     /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a

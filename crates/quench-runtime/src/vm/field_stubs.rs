@@ -131,7 +131,7 @@ impl Vm {
             // SAFETY: the entry is a copy of a site's own entry for this exact shape (`insert`),
             // which matches only outside dictionary storage and names a data slot the shape
             // holds, as for `cached_field_hit`.
-            let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.property_get_flat(receiver, entry.slot as usize) };
             self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 0);
             return Some((value, PolymorphicHit::Own(entry)));
         }
@@ -142,7 +142,7 @@ impl Vm {
         // SAFETY: as for a site's prototype entry (`polymorphic_field_entries_hit`): the
         // receiver's exact shape lacks the name and the holder's exact shape holds a data
         // property at the slot.
-        let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
+        let value = unsafe { self.heap.holder_property_get_flat(holder, entry.slot as usize) };
         self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 1);
         Some((value, PolymorphicHit::Holder(entry)))
     }

@@ -782,7 +782,9 @@ const REALM_FOLLOWING_PROTOTYPES: [Native; 8] = [
 pub struct FieldCache {
     pub receiver: u32,
     pub holder: u32,
-    pub slot: u16,
+    /// The field's slot word (`field_cache_layout::spilled_slot` where a class cell's field spills past its inline
+    /// words): an inline slot below `SPILLED_SLOT`, else a spilled one.
+    pub slot: u32,
     /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
     /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
     /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare. A
@@ -802,9 +804,17 @@ impl FieldCache {
         }
     }
 
+    /// The inline slot of a shape-keyed entry (a record's field): a shape key's entry never spills, so its slot is
+    /// below `SPILLED_SLOT` and fits a record's `u16` field index.
+    #[inline(always)]
+    pub fn record_slot(&self) -> u16 {
+        debug_assert!(!field_cache_layout::is_spilled_slot(self.slot) && self.slot <= u32::from(u16::MAX), "a record's entry names an inline slot");
+        self.slot as u16
+    }
+
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
-    pub const fn own(receiver: u32, slot: u16) -> Self {
+    pub const fn own(receiver: u32, slot: u32) -> Self {
         Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_cell: field_cache_layout::NO_HOLDER_LAYOUT }
     }
 }
@@ -913,7 +923,7 @@ const FIELD_ADD_CACHE_WAYS: usize = 4;
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: field_cache_layout::EMPTY.receiver,
     holder: field_cache_layout::EMPTY.holder,
-    slot: field_cache_layout::EMPTY.slot as u16,
+    slot: field_cache_layout::EMPTY.slot,
     holder_cell: field_cache_layout::EMPTY.holder_cell,
 };
 /// Stored as its `FieldCacheWords`, which complement the entry against `EMPTY`, so the empty entry is zero words.
@@ -921,12 +931,12 @@ impl site_table::SiteEntry for FieldCache {
     type Stored = FieldCacheWords;
     #[inline(always)]
     fn store(self) -> FieldCacheWords {
-        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot), self.holder_cell)
+        FieldCacheWords::encode(self.receiver, self.holder, self.slot, self.holder_cell)
     }
     #[inline(always)]
     fn load(stored: FieldCacheWords) -> Self {
         let (receiver, holder, slot, holder_cell) = stored.decode();
-        Self { receiver, holder, slot: slot as u16, holder_cell }
+        Self { receiver, holder, slot, holder_cell }
     }
 }
 // SAFETY: four `u32` words, with no padding, and every bit pattern valid.
@@ -947,7 +957,8 @@ struct FieldAddCache {
     atom: Atom,
     source_shape: u32,
     target_shape: u32,
-    slot: u16,
+    /// The added field's slot word (`field_cache_layout::spilled_slot` where a class cell's field spills).
+    slot: u32,
     /// The layouts of the receiver that recorded the add and of the record it moves to
     /// (`Transition::layouts`), which the staged rows guard and store.
     layouts: [u32; 2],
@@ -992,7 +1003,9 @@ impl FieldAddCache {
     /// The shape transition the entry caches, as the staged add row takes it.
     #[inline(always)]
     fn transition(&self) -> Transition {
-        Transition { before: self.source_shape, after: self.target_shape, slot: self.slot, layouts: self.layouts }
+        // The shape transition names the field index; a spilled class add's cell takes the add through the heap (its
+        // fits guard refuses the inline store), which reads the spill slot from the entry's `slot` word.
+        Transition { before: self.source_shape, after: self.target_shape, slot: field_cache_layout::field_index_of(self.slot) as u16, layouts: self.layouts }
     }
     /// Whether the chain proof (`proved`, `proved_prototype`) holds for a receiver whose
     /// prototype `link` names: then the chain needs no walk.

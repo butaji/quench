@@ -201,6 +201,8 @@ heap_reads! {
     fn store_watch_word() -> usize;
     /// The class space's base, which a direct object's granule is added to (`Heap::class_space_base`).
     fn class_space_base() -> usize;
+    /// The class space's spill arena base (`Heap::native_spill_base`), which `JsStepHead::spill_base` takes.
+    fn native_spill_base() -> usize;
     /// The record id a direct object names (`Heap::record_id`): its stub's header, the record table's index;
     /// `None` for a live class cell, which has no record.
     fn record_id(object: crate::value::ObjectRef32) -> Option<u32>;

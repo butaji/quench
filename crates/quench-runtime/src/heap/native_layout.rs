@@ -11,8 +11,9 @@ impl Heap {
     }
 
     /// One monotone counter over every change to the record bases and mark blocks native code
-    /// caches: a collection, or a new block of any record family or class cell region (the first
-    /// reserves the family's range; each can move the block list `native_object_mark_blocks` names).
+    /// caches: a collection, a new block of any record family or class cell region (the first
+    /// reserves the family's range; each can move the block list `native_object_mark_blocks` names), or a move
+    /// of the class space's spill arena (`JsStepHead::spill_base`).
     /// Equal values mean the record bases, the class space's, and the mark blocks are as last read. A
     /// snapshot restore or another heap draws a new `layout_id`, so equal values are never a different layout.
     #[inline]
@@ -20,6 +21,7 @@ impl Heap {
         self.collections + (self.layout_id << Self::LAYOUT_ID_SHIFT)
             + (self.object_records.block_count() + self.function_records.block_count() + self.array_records.block_count()
                 + self.string_records.block_count() + self.class_space.block_count()) as u64
+            + self.class_space.spill_moves()
     }
 
     /// The fixed base of the string record range once it has been reserved: native readers

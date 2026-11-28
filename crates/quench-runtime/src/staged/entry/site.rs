@@ -38,6 +38,7 @@ pub fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S
         stage.guard(never, miss)?;
     }
     let slot = entry_slot(stage, entry);
+    inline_slot(stage, slot, miss)?;
     let open = if gated {
         let old = cell_field(stage, cell, slot);
         super::super::slot_store::int_over_int_gate(stage, (StagedRecordSpace::Class, granule, old), value)

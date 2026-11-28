@@ -21,6 +21,48 @@ pub const fn is_class_key(key: u32) -> bool {
     key & CLASS_KEY != 0 && key != NO_RECEIVER
 }
 
+/// The bit of a spilled slot: a class-keyed entry whose field lies past its cell's inline words names the field in the
+/// cell's spill run (`heap::spill`), not in the cell. The bit is a fact of the entry, set at fill from the class's
+/// `spill_from` (`spilled_slot`); it is never a test of the object. Field indices are below `1 << 15`, so the bit is clear
+/// in every inline slot.
+pub const SPILLED_SLOT: u32 = 1 << 31;
+
+/// The shift of a spilled slot's spill slot (`spill_from`, the inline slot that holds the spill word) above its index.
+pub const SPILL_FROM_SHIFT: u32 = 16;
+
+/// The mask of a spilled slot's index into the run: the field is `run[index]` where the run starts at `spill_from`.
+pub const SPILL_INDEX_MASK: u32 = (1 << SPILL_FROM_SHIFT) - 1;
+
+/// The slot word of a field `spill_from + index` that spills: the spill bit, `spill_from` shifted above the index.
+#[inline(always)]
+pub const fn spilled_slot(spill_from: u32, index: u32) -> u32 {
+    SPILLED_SLOT | (spill_from << SPILL_FROM_SHIFT) | index
+}
+
+/// Whether the slot word `slot` names a field of a spill run (`spilled_slot`), not an inline field.
+#[inline(always)]
+pub const fn is_spilled_slot(slot: u32) -> bool {
+    slot & SPILLED_SLOT != 0
+}
+
+/// The spill slot a spilled slot word names: the inline slot that holds the run's offset.
+#[inline(always)]
+pub const fn spill_from_of(slot: u32) -> u32 {
+    (slot & !SPILLED_SLOT) >> SPILL_FROM_SHIFT
+}
+
+/// The index into the run of a spilled slot word: the field is `run[spill_index_of(slot)]`.
+#[inline(always)]
+pub const fn spill_index_of(slot: u32) -> u32 {
+    slot & SPILL_INDEX_MASK
+}
+
+/// The field index a slot word names: the inline slot, or a spilled slot's `spill_from + index`.
+#[inline(always)]
+pub const fn field_index_of(slot: u32) -> u32 {
+    if is_spilled_slot(slot) { spill_from_of(slot) + spill_index_of(slot) } else { slot }
+}
+
 /// The layout id of no holder: layout 0 is the all-zero header, which no holder record takes
 /// (`heap::layouts`), so a zero `holder_cell` word names no id.
 pub const NO_HOLDER_LAYOUT: u32 = 0;
