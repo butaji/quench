@@ -31,11 +31,6 @@ impl Vm {
         };
         // SAFETY: an environment activation's window holds a local for each slot the function binds.
         let arguments = unsafe { ParameterHome::of(entries, body, usize::from(slot)) }.read(self.heap_reads());
-        // S7f DESIGN: the window depth is a field of the arguments object's record (`set_window_depth`), and no
-        // ordinary object is a record (`object_record_mut` answers arrays and functions only). A mapped arguments
-        // object therefore keeps no owner depth and its element writes find no parameter. Ruling needed: the cell-side home of the depth.
-        if let Some(object) = self.object_record_mut(arguments) {
-            object.set_window_depth(depth);
-        }
+        self.note_arguments_window_depth(arguments, depth);
     }
 }
