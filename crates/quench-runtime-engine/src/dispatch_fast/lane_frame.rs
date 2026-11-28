@@ -470,7 +470,7 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The form hint the VM's own-field store left for the store record, which the row writes to
     /// the record once the store completes (`PropertyFrame::field_store_host`).
     stored: Option<quench_runtime::vm::FieldCache>,
-    /// The element kind a typed element row (`TYPED_KIND_SITES`) observed, and the typed array record
+    /// The element kind a typed element row (`TYPED_KIND_SITES`) serves, and the typed array record
     /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
     typed: Option<(quench_runtime::staged::typed_elements::NativeKind, (*const usize, usize))>,
     /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
@@ -2315,10 +2315,10 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
     }
 }
 
-/// `generated_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) reads it
-/// from the record until its first run, which requickens the record to the instantiation of its flag
-/// (`FLAG_CLEAR`, `FLAG_SET`), so the flag is a static operand the row folds (an increment and a
-/// decrement are two handlers of one row). For any other row, `FLAG_SET` states a fact the view
+/// `generated_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) takes its
+/// instantiation of the flag (`FLAG_CLEAR`, `FLAG_SET`) at load, from the record's immediate (`flag_row`), so
+/// the flag is a static operand the row folds (an increment and a decrement are two handlers of one row).
+/// For any other row, `FLAG_SET` states a fact the view
 /// proved of the record's immediate: its high half is zero (`row_near`).
 pub(crate) const FLAG_UNREAD: u8 = 0;
 pub(crate) const FLAG_CLEAR: u8 = 1;
@@ -2789,6 +2789,22 @@ pub(crate) fn row_near<const OP: u16>(handler: *const ()) -> Option<Handler> {
 #[inline(always)]
 pub(crate) fn register_operands(i: &LaneInstruction) -> bool {
     (i.b | i.c) >> 14 == 0
+}
+
+/// Opcode `OP`'s row at the boolean flag its record's immediate names (`FLAG_SET` where `set`, else `FLAG_CLEAR`),
+/// for `handler`, its plain row (`FLAG_UNREAD`) at any accumulator field. `None` where `handler` is no plain row of `OP`.
+pub(crate) fn flag_row<const OP: u16>(handler: *const (), set: bool) -> Option<Handler> {
+    let plain: [Handler; ACC_POSITIONS] = [generated_row!(OP, ACC_NONE, FLAG_UNREAD), generated_row!(OP, ACC_A, FLAG_UNREAD),
+        generated_row!(OP, ACC_B, FLAG_UNREAD), generated_row!(OP, ACC_C, FLAG_UNREAD), generated_row!(OP, ACC_PAIR, FLAG_UNREAD)];
+    let at = plain.iter().position(|row| *row as *const () == handler)?;
+    let flagged: [Handler; ACC_POSITIONS] = if set {
+        [generated_row!(OP, ACC_NONE, FLAG_SET), generated_row!(OP, ACC_A, FLAG_SET),
+            generated_row!(OP, ACC_B, FLAG_SET), generated_row!(OP, ACC_C, FLAG_SET), generated_row!(OP, ACC_PAIR, FLAG_SET)]
+    } else {
+        [generated_row!(OP, ACC_NONE, FLAG_CLEAR), generated_row!(OP, ACC_A, FLAG_CLEAR),
+            generated_row!(OP, ACC_B, FLAG_CLEAR), generated_row!(OP, ACC_C, FLAG_CLEAR), generated_row!(OP, ACC_PAIR, FLAG_CLEAR)]
+    };
+    Some(flagged[at])
 }
 
 /// Opcode `OP`'s row at `FLAG_REGISTERS` for `handler`, its plain row (`FLAG_UNREAD`) at any accumulator field.
