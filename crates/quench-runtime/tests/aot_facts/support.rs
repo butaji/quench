@@ -1,5 +1,6 @@
 //! Shared helpers of the AOT facts tests: programs, lookups and the facts each test reads.
 
+use quench_runtime::staged::glue_prelude::*;
 use quench_runtime::compile::aot_facts::{analyze, AotFacts, BuiltinPath};
 use quench_runtime::Engine;
 use quench_runtime::bytecode::ResidualProgram;

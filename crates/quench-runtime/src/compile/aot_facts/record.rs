@@ -21,6 +21,7 @@ use crate::staged::glue_prelude::*;
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[quench_macros::test_visible]
 pub(crate) struct ElementStore {
     pub(crate) class: ElementClass,
     pub(crate) indices: Indices,
