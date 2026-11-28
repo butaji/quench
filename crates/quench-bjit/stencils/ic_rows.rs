@@ -16,7 +16,8 @@
 //! `HOLE_NEXT`, the site's next entry; the last entry's miss, and a destination that cannot hold
 //! the value, leave through exit 0 with nothing written, so the interpreter runs the
 //! instruction. Receiver proofs are per-execution facts, proved once per row; the object record table is
-//! gone (S7f), so a direct object is read through its class cell (`IC_*_CLASS_ROW`) and the known-object rows decline.
+//! gone (S7f), so a direct object is read through its class cell (`IC_*_CLASS_ROW`), and the known-object rows
+//! are read through the class rows too.
 //!
 //! Expected code of a flat own get on a frame destination: load the receiver word, test its
 //! family, mask the id, scale it and add the record table base, compare the record's exact shape
@@ -43,7 +44,7 @@ use crate::staged::entry::{class_held_field, class_key_cell, class_own_field, cl
 use crate::staged::ic::IcOp;
 use crate::staged::object::Form;
 use crate::typed_ir::Representation;
-use crate::staged::{Stage, StagedRecordSpace, Step, op_kind, step_property_of};
+use crate::staged::{Stage, StagedRecordSpace, Step, op_kind, step_property_of, value};
 use crate::words::hole;
 
 /// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
@@ -90,15 +91,6 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
     finish_chained::<CHAINED>(places.s, step, |s, _| Out::Next(s))
 }
 
-/// The known-object rows (`IC_KNOWN_*`) read a direct object's record in the table, which no longer exists
-/// (S7f). Each declines to the row that follows it in its entry (`finish_chained`'s unresolved step), so the
-/// site row answers. The rows keep their codes; a live path for these ordinary objects is the class-keyed rows.
-// S7f DESIGN: the known-object rows decline until they are retargeted at the class cell (`IC_*_CLASS_ROW`).
-#[inline(always)]
-fn known_declined(s: S) -> Out {
-    Out::Next(s)
-}
-
 /// A class-keyed get (`IC_GET_CLASS_ROW`, `IC_GET_HELD_CLASS_ROW`): the receiver (above the destination in hole 0) is a
 /// direct object whose live class cell is the class hole 2 names, and the word is that cell's field at hole 3 (a field
 /// index); the held read takes the field of the holder cell whose granule is hole 4 (`entry::class_held_field`). A miss
@@ -142,12 +134,18 @@ fn class_set_row<const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out 
     finish_chained::<CHAINED>(s, stored.map_or(Step::Unresolved, Step::Value), |s, _| Out::Next(s))
 }
 
-/// The receiver proof row (`IC_PROOF_ROW`) continued where the object register at hole 0 is a direct object with a
-/// record in the table. The table is gone (S7f), so the row always leaves through exit 0.
-// S7f DESIGN: the proof is retargeted at the class cell (`IC_*_CLASS_ROW`); until then it declines.
+/// The receiver proof row (`IC_PROOF_ROW`): continues where the object register at hole 0 is a direct object, whose
+/// live class cell the class rows that follow test by its class word (`GuardClass`); any other word leaves with
+/// nothing written.
 #[inline(always)]
 fn proof(s: S) -> Out {
-    Out::Exit(s)
+    let object = word_at(s.frame, hole::<0>());
+    let mut stage = StencilStage::from_hole(0);
+    let direct = value::is_direct_object(&mut stage, object);
+    match stage.guard(direct, ()) {
+        Some(()) => Out::Next(s),
+        None => Out::Exit(s),
+    }
 }
 
 /// The cache row `KIND` (a code of `codes.rs`); `CHAINED` as above; `D` is a get's destination
@@ -163,10 +161,12 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_HELD_CLASS_ROW => class_get_row::<true, CHAINED, D>(s, payload),
         IC_SET_CLASS_ROW => class_set_row::<CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s),
-        // Known-object rows decline to their site row (`known_declined`).
-        IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW
-        | IC_KNOWN_SET_INT_ADMITTED_ROW | IC_KNOWN_GET_FLAT_ROW | IC_KNOWN_SET_FLAT_ROW | IC_KNOWN_SET_INT_FLAT_ROW
-        | IC_KNOWN_SET_FLAT_ADMITTED_ROW | IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW => known_declined(s),
+        // The known-object rows read through the class rows: their entry's key is the class key the class rows test,
+        // and a shape key equals no live cell's class key, so the row leaves where the class row does.
+        IC_KNOWN_GET_ROW | IC_KNOWN_GET_FLAT_ROW => class_get_row::<false, CHAINED, D>(s, payload),
+        IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW | IC_KNOWN_SET_INT_ADMITTED_ROW
+        | IC_KNOWN_SET_FLAT_ROW | IC_KNOWN_SET_INT_FLAT_ROW | IC_KNOWN_SET_FLAT_ADMITTED_ROW
+        | IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW => class_set_row::<CHAINED, A>(s, payload),
         _ => set_row::<false, CHAINED, A>(s, payload),
     }
 }

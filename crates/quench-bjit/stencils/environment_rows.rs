@@ -6,11 +6,13 @@
 
 use crate::words::{hop, word_at};
 use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, number_word};
 use crate::places::{DEST, LEFT, Places, settle};
 use crate::places_property::run_lexical;
 use crate::stage::StencilStage;
-use crate::staged::{Operation, Stage, environment, op_kind, step_names_of};
+use crate::staged::entry::class_store;
+use crate::staged::object::cell_at_granule;
+use crate::staged::{Operation, Stage, StagedRecordSpace, environment, op_kind, step_names_of};
 use crate::words::hole64;
 use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 
@@ -77,14 +79,25 @@ fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
     settle(frame, step, Out::Next)
 }
 
-/// The first operand stored to the global object's slot (hole 0: the record id). The global object is an
-/// ordinary class cell now, and the object record table it was stored in is gone, so the row declines
-/// (exit, nothing written) to the call-out.
-// S7f DESIGN: the global store is retargeted at the global's class cell (`StagedRecordSpace::Class`) in the lane slice;
-// until then the store declines. The `GATED` and `A` operands are unused by the declining row.
+/// The first operand (hole 1, a Number) stored to the global's slot, the slot word at hole 2: the global is a class
+/// cell, whose granule hole 0 names (`cell_at_granule`), so the store takes the class-cell path (`class_store`) once the
+/// cell's store gate admits the value (`StagedRecordSpace::Class`). A non-Number or a refused gate leaves with nothing
+/// written, to the call-out.
 #[inline(always)]
-fn global_store_row<const A: u8, const GATED: bool>(s: S, _payload: usize) -> Out {
-    Out::Exit(s)
+fn global_store_row<const A: u8>(s: S) -> Out {
+    let Some(word) = number_word::<A, HOLE_A>(&s) else { return Out::Exit(s) };
+    let granule = hole64::<0>();
+    let slot = hole64::<HOLE_B>();
+    let mut stage = StencilStage::from_hole(0);
+    let cell = cell_at_granule(&mut stage, granule);
+    let open = stage.store_gate(StagedRecordSpace::Class, granule, word);
+    match stage.guard(open, ()) {
+        Some(()) => {
+            class_store(&mut stage, cell, slot, word);
+            Out::Next(s)
+        }
+        None => Out::Exit(s),
+    }
 }
 
 /// The global lexical binding at the address in hole 1 into the destination, as the staged `LoadName` whose binding is
@@ -125,7 +138,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s
         ENV_ROW => env_row::<D>(s),
         ENV_SET_ROW => env_set_row::<A>(s),
         GLOBAL_READ_ROW => global_read_row::<D>(s, payload),
-        GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
+        GLOBAL_STORE_ROW => global_store_row::<A>(s),
         LEXICAL_READ_ROW => lexical_read_row::<D>(s),
         LEXICAL_WRITE_ROW => lexical_write_row::<A>(s),
         CALLEE_CAPTURE_ROW => callee_capture_row::<D>(s),

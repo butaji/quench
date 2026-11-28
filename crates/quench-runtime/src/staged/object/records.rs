@@ -1,5 +1,5 @@
 //! Cells: the cell of a granule and its class word and fields. An ordinary object is a class cell; the
-//! object record table is gone (`Heap::object_records` never held a live record), so no hop reaches one.
+//! object record table is gone, so no hop reaches one.
 
 use super::*;
 
