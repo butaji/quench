@@ -1111,15 +1111,22 @@ pub(super) fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mu
     }
 }
 
+/// Whether `handler` is the test `TEST`'s row: its plain row, or for a comparison jump any instance a record takes
+/// once `specialize_compare_jumps` forms it (`compare_instances`). Every instance decodes the record's own comparison.
+fn test_row<const TEST: u16>(handler: *const ()) -> bool {
+    lane_frame::plain_row::<TEST>(handler)
+        || (TEST == quench_runtime::staged::COMPARE_JUMP_ROW && compare_instances::is_compare_instance(handler))
+}
+
 /// Whether the target run holds: `PREFIX` (when there is one) at the target, `COPY` (when there is one)
 /// after it, then `TEST`. With no prefix, `TEST` is the target record itself.
 pub(super) fn target_run_holds<const PREFIX: u16, const COPY: u16, const TEST: u16>(target: *const (), after: &dyn Fn(usize) -> *const ()) -> bool {
     if const { PREFIX == quench_runtime::staged::NO_LINK } {
-        lane_frame::plain_row::<TEST>(target)
+        test_row::<TEST>(target)
     } else if const { COPY == quench_runtime::staged::NO_LINK } {
-        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<TEST>(after(1))
+        lane_frame::plain_row::<PREFIX>(target) && test_row::<TEST>(after(1))
     } else {
-        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<COPY>(after(1)) && lane_frame::plain_row::<TEST>(after(2))
+        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<COPY>(after(1)) && test_row::<TEST>(after(2))
     }
 }
 
@@ -1377,7 +1384,7 @@ fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, functio
 pub(super) fn target_test_word<'a>(run: impl Fn(usize) -> Option<&'a LaneInstruction>) -> u64 {
     use quench_runtime::staged::{COMPARE_JUMP_ROW as TEST, FUSED_TARGET_COPY_ROWS as C, FUSED_TARGET_PREFIX_ROWS as P};
     let passes = |h| plain_row::<{ P[0] }>(h) || plain_row::<{ P[1] }>(h) || plain_row::<{ P[2] }>(h) || plain_row::<{ C[0] }>(h);
-    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| plain_row::<TEST>(record.handler));
+    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| test_row::<TEST>(record.handler));
     test.map_or(0, |record| u64::from(lane_frame::target_comparison(record)) << lane_frame::TARGET_TEST_SHIFT)
 }
 

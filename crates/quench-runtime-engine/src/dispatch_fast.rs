@@ -2299,6 +2299,7 @@ view_handler! {
 pub(crate) mod lane_frame;
 pub(crate) mod protocol_misses; use protocol_misses::*;
 pub(crate) mod derived_frames;
+pub(crate) mod compare_instances;
 pub(crate) mod window_bodies;
 pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;

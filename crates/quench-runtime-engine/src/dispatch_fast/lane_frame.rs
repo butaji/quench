@@ -3051,7 +3051,7 @@ macro_rules! row_decode {
 
 /// The first `FLAG` of a comparison jump whose operator its instance fixes (`compare_jump_row`):
 /// `FLAG_COMPARE + compare_slot(operator)`, past every other flag.
-const FLAG_COMPARE: u8 = 200;
+pub(crate) const FLAG_COMPARE: u8 = 200;
 /// The operators a comparison jump's instance fixes: the comparison operator codes (`binary_operator`):
 /// the equalities and relations (0 to 7), then `in` and `instanceof`.
 const COMPARE_OPERATORS: u8 = 10;
@@ -3402,7 +3402,7 @@ pub(crate) fn formed_compare_jump(record: &mut LaneInstruction, constants: &[Val
 }
 
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
-fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
+pub(crate) fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
     macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
     guarded!(0 1 2 3 4 5 6 7)
 }
