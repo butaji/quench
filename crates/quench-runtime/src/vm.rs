@@ -3489,7 +3489,6 @@ impl Vm {
         self.runtime_atoms = self.intern_runtime_atoms();
         self.field_caches = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_cache_writes = Some(Vec::new());
-        program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
         self.inherited_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.accessor_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
@@ -3692,9 +3691,8 @@ impl Vm {
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
-    /// Primes every looping function of an installed `program` to expand on first entry.
+    /// Lays out the inline-cache sites of an installed `program`.
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
-        program.prime_loop_decoding();
         self.append_cache_layout(id, program.cache_site_counts());
     }
 

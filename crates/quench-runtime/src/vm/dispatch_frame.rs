@@ -24,19 +24,20 @@ mod tests {
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         let error = vm.execute_native_program(&native, true).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
+        assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
         for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
             vm.set_execution_mode(mode);
             let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
-            assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
             assert!(cursor.lane.is_null() && !cursor.back_edges,
                 "linked code must not prepare an interpreter lane");
         }
 
         let mut interpreter = Vm::new(crate::test_host::TestHost::default());
         interpreter.initialize_for_snapshot(&program).unwrap();
-        program.prime_loop_decoding();
         let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
-        assert!(!cursor.decoded.is_null(), "an interpreted loop still expands its dispatch cache");
+        assert!(!cursor.decoded.is_null(), "an interpreted function expands its dispatch cache on its first entry");
         let error = interpreter.execute(&program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
     }
@@ -201,16 +202,16 @@ impl Vm {
         // loop reads its packed code there, without a second, expanded copy.
         let lane_runs_wasm = !view.is_null() && program.kind == crate::bytecode::ProgramKind::Wasm;
         let decoded = if interprets && !lane_runs_wasm {
-            function_code.decoded.on_entry(&function_code.code, &function_code.wide)
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide).as_ptr()
         } else {
-            None
+            std::ptr::null()
         };
         GeneralCodeCursor {
             program: program_id,
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
-            decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
+            decoded,
             lane: view,
             // A JavaScript activation deferred its view; a back edge derives it where the function's predicted tier compiles it.
             back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm && self.programs.compiled_tier(program_id, function),
@@ -501,7 +502,7 @@ impl Vm {
             decoded: if !view.is_null() && p.kind == crate::bytecode::ProgramKind::Wasm {
                 std::ptr::null()
             } else {
-                body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
+                body.decoded.on_entry(&body.code, &body.wide).as_ptr()
             },
             lane: view,
             back_edges: false,

@@ -123,7 +123,6 @@ impl ResidualProgram {
         }
         // Every register is a root and starts `undefined`: no liveness runs for it.
         function.register_roots = RegisterRoots::new(false);
-        function.decoded.prime_loop(&function.code, &function.wide);
         let tier0 = slot.tier0.get_or_init(|| Box::new(Tier0 { record: Rc::new(function), pinned: Cell::new(false) }));
         Some(tier0.record())
     }
