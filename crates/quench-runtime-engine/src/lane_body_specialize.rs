@@ -7,7 +7,7 @@ use super::*;
 
 /// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
 fn mode_compiles_bodies() -> bool {
-    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default(), fresh: false }).compiled().is_some()
+    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).is_some()
 }
 
 #[quench_macros::ext(LaneViewSpecializeOps)]
@@ -75,7 +75,7 @@ impl LaneView {
         }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
-                let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
+                let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(quench_runtime::vm::tier_policy::COMPILE_POLL_INTERVAL);
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks }
             }
             crate::compiled::LaneBodyOutcome::Published(published) => {

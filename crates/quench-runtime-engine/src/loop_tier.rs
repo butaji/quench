@@ -47,7 +47,7 @@ impl LoopTier {
         let program = vm.programs.get(vm.active_program);
         match crate::compiled::pending_osr(pending).poll(vm, program.as_deref()) {
             Err(pending) => {
-                self.wait = site.tiers.lane_body.compile_poll_interval;
+                self.wait = crate::compiled::tier_policy::COMPILE_POLL_INTERVAL;
                 self.pending = Some(pending);
                 return true;
             }

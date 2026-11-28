@@ -44,7 +44,7 @@ fn compiler() -> NativeCompiler {
 /// The unit of a regexp program's compile, which the one specializer clears.
 fn unit() -> Option<CompiledUnit> {
     use crate::compiled::admission::{specialize, UnitFacts, UnitKind, UnitRequest};
-    specialize(UnitRequest { kind: UnitKind::Regexp, facts: UnitFacts::default() }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Regexp, facts: UnitFacts::default() })
 }
 
 /// The stencil tier's search of `plan`, stitched at once (`stitch`).

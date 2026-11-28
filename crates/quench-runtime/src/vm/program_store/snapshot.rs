@@ -115,7 +115,7 @@ impl ProgramEntry {
             class_prototypes: _,
             planned_targets: _,
             planned_registered: _,
-            lane_deferred: _,
+            lane_loops: _,
             // Derived from the residual program on first use, as `ProgramEntry::new` leaves them.
             aot_facts: _,
             call_graph: _,
@@ -268,7 +268,7 @@ impl ProgramEntry {
             class_prototypes: Default::default(),
             planned_targets: Default::default(),
             planned_registered: std::cell::Cell::new(false),
-            lane_deferred: super::zeroed_counts(functions),
+            lane_loops: super::zeroed_counts(functions),
             aot_facts: std::cell::OnceCell::new(),
             call_graph: std::cell::OnceCell::new(),
             selectors: std::cell::OnceCell::new(),

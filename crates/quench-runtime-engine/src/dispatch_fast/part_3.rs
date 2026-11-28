@@ -996,7 +996,7 @@ pub(super) fn body_inlined_activation_in_lane(
         // the body first (`ProgramStore::retire_dead_native_calls`), so a miss resolves the callee again.
         // Resolved now: the activation recovery makes is one whose runs all ran inlined, so none
         // counted toward the callee's view (`resolve_call_target_in_lane`).
-        |vm, code, callee| vm.resolve_call_target_in_lane(code, callee, true),
+        |vm, code, callee| vm.resolve_call_target_in_lane(code, callee),
         // The registers native code held for the frame, which the leave's PC `at` keeps live; the
         // rest the activation keeps (`lane_region`'s liveness).
         |call, at, sink| {

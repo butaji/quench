@@ -41,7 +41,6 @@ use super::activation::FrameRecord;
 
 
 use crate::compile::aot_facts::AotFacts;
-use super::tier_policy::Tiers;
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -280,8 +279,6 @@ pub struct LaneView {
     /// entry cost, and its record does not read the accumulator. Kept apart
     /// from the records, which only the lane reads.
     pub entries: Box<[u64]>,
-    /// The thresholds its VM's tier controllers read, as the VM held them when the view was derived.
-    pub tiers: &'static Tiers,
     pub memory_register: Option<u16>,
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
@@ -1033,8 +1030,6 @@ pub struct LoopSite {
     pub enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     pub diagnostics: bool,
-    /// The thresholds its VM's tier controllers read.
-    pub tiers: &'static Tiers,
     pub lane_backedge_count: std::cell::Cell<u64>,
     pub native_entry_attempts: std::cell::Cell<u64>,
     pub native_region_runs: std::cell::Cell<u64>,
@@ -1562,7 +1557,7 @@ pub enum LaneBody {
     Unspecialized,
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
-    /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
+    /// as far apart after each of its `looks`, up to `tier_policy::COMPILE_POLL_INTERVAL`:
     /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
     /// one pays few looks. `wait` counts the entries left before the next.
     Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8 },
@@ -1624,9 +1619,8 @@ pub type LeafForm = crate::staged::call_leaf::LeafForm;
 pub enum LoopBody {
     /// Not yet compiled.
     Idle,
-    /// Its code compiling on the code generator's thread; `wait` counts the backedges left
-    /// before the next look.
-    Compiling { pending: Box<dyn std::any::Any>, wait: u16 },
+    /// Its code compiling on the code generator's thread, polled at each backedge.
+    Compiling { pending: Box<dyn std::any::Any> },
     /// Its code, which a run enters at the loop's header.
     Ready { method: std::rc::Rc<PublishedLaneMethod> },
     Declined,
@@ -1640,7 +1634,7 @@ pub struct LoopTier {
     pub views: ElementViews,
     pub code: Option<Rc<crate::code_dependencies::PublishedCode<CompiledOsrRegion>>>,
     /// The compile under way, and the entries left before the next look for its code
-    /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
+    /// (`tier_policy::COMPILE_POLL_INTERVAL`, as a lane body's).
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
 }
@@ -4194,10 +4188,8 @@ impl JsEntryFacts {
 
     #[inline]
 
-    pub fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
-        let has_calls = function.instructions().any(|instruction|
-            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
-        Self { candidate: function_candidate(function, program) && (!priced || has_calls || pays_native_entry(function)) }
+    pub fn of(program: &ResidualProgram, function: &Function) -> Self {
+        Self { candidate: function_candidate(function, program) }
     }
 }
 
