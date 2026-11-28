@@ -124,12 +124,11 @@ impl<W, C> Reached<W, C> {
     }
 }
 
-#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The value `ops` read from `start`, prototypes found in the record table at `records`, or
 /// `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
 /// before a load.
 #[inline(always)]
-pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
+pub fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     for op in ops {
         if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
@@ -143,7 +142,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
 /// there kept every arm and counted holes at run time. Only that site unrolls: inlined at every
 /// `run`, the copies tripled the compile time of a heap shard.
 #[inline(always)]
-pub(crate) fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
+pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     // The first ops one by one, then any rest in a loop: a stencil row's list is a constant of at most
     // `UNROLLED` ops, so each step folds to its op's arm and the row makes no call (a loop over the list
@@ -222,26 +221,12 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
     Continue(())
 }
 
-/// The own field a site's hint proved: the value at `slot` of `object` where its exact shape
-/// is `shape`, else `None` (the interpreter's `GetField` hit: `GuardShape` then `LoadSlot`, the
-/// ops `run` interprets, through `Concrete`), through the arena of `heap`.
-///
-/// # Safety
-/// `object` is a live record of `heap`, and its run lies in `heap`'s arena; a hint's slot is one its shape covers.
-#[inline(always)]
-pub unsafe fn concrete_own_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
-    shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    let record = object as *const crate::heap::Object as u64;
-    own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
-}
-
 /// The own field of the object record at `record` where its exact shape is `shape`: the interpreter's
 /// `GetField` hit (`concrete_own_field_hit`) and a stencil's inline-cache read (`quench-bjit/stencils/ic_rows.rs`)
 /// alike. The auxiliary word proves the shape and, by its storage-form bits, where the values live, so a flat
 /// run is one test away; `None`, leaving at `miss`, for another shape.
 #[inline(always)]
-pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     let expected = stage.shape_site(shape);
     // The word is the shape with no storage-form bit: that shape, its values a wide flat run, on one compare.
@@ -252,30 +237,6 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
         let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
         Some(read_slot(stage, layout, slot, Representation::Tagged))
     }, |stage| own_field_miss(stage, record, word, expected, slot, miss))
-}
-
-/// `concrete_own_field_hit` of the global object, whose values the native tiers' planning moves behind
-/// extras (`global_values_table`): the exact word's flat run on one compare, as there, and the extras'
-/// run on a second (`proved_own_layout`) instead of the formed walk of `own_field_miss`, which
-/// any other word still takes.
-/// # Safety
-/// As for `concrete_own_field_hit`.
-#[inline(always)]
-pub unsafe fn concrete_global_field_hit(object: &crate::heap::Object, heap: &crate::heap::Heap,
-    shape: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    let record = object as *const crate::heap::Object as u64;
-    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    // Each arm's form is a constant, so its layout tests no bit.
-    let layout = if word == u64::from(shape) {
-        super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), 0, usize::from(slot) + 1)
-    } else if word == u64::from(shape | OBJECT.extras_form) {
-        super::object::proved_own_layout(&mut stage, super::Shaped::of_guard(record), OBJECT.extras_form, usize::from(slot) + 1)
-    } else {
-        // Any other form takes the general hit's formed walk.
-        return unsafe { concrete_own_field_hit(object, heap, shape, slot) };
-    }?;
-    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)))
 }
 
 /// The own field of a record whose shape is `expected` but whose storage form is not the exact-shape word's, read through its formed layout.
@@ -297,184 +258,10 @@ pub const HINTED_FORM: u32 = u32::MAX;
 /// shape table stops short of it (`vm::push_child`).
 pub const SYMBOLIC_SHAPE: u32 = 1 << 30;
 
-/// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a layout
-/// id (`Object::hint_shape`): one compare of the record's own word proves the exact shape and
-/// the storage form, which the id's entry then tells.
-///
-/// A fixed `FORM` is the form of every hint a record of it holds: its handler is chosen from
-/// the hint it is installed with (`own_formed_handler`), and a later hint either re-chooses it
-/// or names no object's layout (a cleared hint), so equality proves `FORM` too.
-///
-/// # Safety
-/// As for `concrete_own_field_hit`; for a fixed `FORM`, a hint some object's layout equals
-/// names `FORM`.
-#[inline(always)]
-pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
-    heap: &crate::heap::Heap, hint: u32, slot: u16) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    let record = object as *const crate::heap::Object as u64;
-    let word = layout_id(&mut stage, record);
-    // A fixed form's hint names it (the caller's contract), so equality proves that form
-    // and its layout is read without testing the bits; no narrow run's layout matches it.
-    // The same row a specializer runs (`IcOp::GuardLayout`, then the proved form's layout):
-    // one compare proves shape and form, and the layout tests no form bit.
-    let at = Reached { word: Some(word), ..Reached::bare(record) };
-    let shaped = guard_layout(&mut stage, &at, hint, ())?;
-    debug_assert!(FORM == HINTED_FORM || layout_form(hint) == FORM, "a fixed form's matched hint names it");
-    let bits = if FORM == HINTED_FORM { layout_form(hint) } else { FORM };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), shaped: Some(shaped), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
-    let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
-    Some(crate::Value::from_bits(word))
-}
-
-/// The own data value the field cache entry of the site `offset` bytes into `entries` (the
-/// running program's table, `Vm::active_field_entries`) names in `object`, which the object
-/// record table at `records` holds: the interpreter's primary read of a site, `site_own_read`
-/// through `Concrete`, the own arm of the row the stencil build compiles from `site_read`. `None`
-/// where it misses, or the entry names a prototype holder.
-///
-/// # Safety
-/// `entries` is the table of the running program and `offset` a site's byte offset in it,
-/// `records` the object record reservation of `heap`, whose arena holds the record's run; none outlives the call.
-#[inline(always)]
-pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
-}
-
-/// `site_read` through `Concrete`: own and prototype-held entries alike.
-///
-/// # Safety
-/// As `concrete_site_own_read`.
-#[cfg(test)]
-pub(crate) unsafe fn concrete_site_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    super::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
-}
-
-/// The value `object.first.second` reads through the field cache entries `first` and `second`
-/// (byte offsets into `entries`): `site_own_chain` through `Concrete`, one proof of the tables for
-/// both reads. `None` where either misses.
-///
-/// # Safety
-/// As `concrete_site_own_read`, for both offsets.
-#[inline(always)]
-pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
-    let mut stage = super::Concrete::over(heap);
-    super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
-}
-
-/// The store of `value` into the own data field the site's entry `offset` bytes into `entries`
-/// names in `object`: `site_store` through `Concrete` over `heap`, which admits it where the
-/// write barrier needs no log. False changes nothing.
-///
-/// # Safety
-/// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
-#[inline(always)]
 #[cfg(not(stencil_build))]
-pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
-    let mut stage = super::Concrete::over(heap);
-    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
-}
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::heap::{Heap, Object};
-    use crate::staged::Concrete;
-    use crate::Value;
-
-    /// The interpreter's reading of `run`: `None` for a miss.
-    fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
-        let mut stage = Concrete::over(heap);
-        let record = heap.object(object)?.record_only()? as *const Object as u64;
-        let records = heap.object_record_base()? as u64;
-        run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
-    }
-
-    /// A prototype's read guards the receiver's and the prototype's shapes; a receiver of
-    /// another shape, a prototype of another, or a record with no object prototype misses.
-    #[test]
-    fn an_op_list_reads_a_prototype_slot_and_misses_past_its_guards() {
-        let mut heap = Heap::new();
-        for shape in 1..=2_u32 {
-            heap.register_property_shape(shape, shape as usize, None);
-        }
-        let prototype = heap.alloc_object(Object::new(Value::NULL));
-        heap.property_add(prototype, Value::number(1.5), 1);
-        heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc_object(Object::new(prototype));
-        heap.property_add(object, Value::number(7.0), 1);
-        heap.property_add(object, Value::number(8.0), 2);
-        let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
-        let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
-        assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
-        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
-        assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
-        assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
-        assert_eq!(concrete(&heap, &read(holder, holder), object), None);
-        assert_eq!(concrete(&heap, &read(own, own), object), None);
-        assert_eq!(concrete(&heap, &read(holder, holder), prototype), None);
-    }
-
-    /// A prototype-selected constant answers for the link of the receiver's prototype and
-    /// misses for any other.
-    #[test]
-    fn a_prototype_constant_is_selected_by_the_receivers_link() {
-        let mut heap = Heap::new();
-        let prototype = heap.alloc_object(Object::new(Value::NULL));
-        heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc_object(Object::new(prototype));
-        let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
-        let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
-        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
-        assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
-    }
-
-    /// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),
-    /// which routing through `run` made slower (deltablue +1.6%); it reads what the staged
-    /// `LoadPrototypeSlot` reads at every slot of a prototype, of narrow and wide layouts.
-    #[test]
-    fn the_interpreters_prototype_read_agrees_with_the_staged_one() {
-        let mut heap = Heap::new();
-        let wide = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
-        for shape in 1..=wide as u32 {
-            heap.register_property_shape(shape, shape as usize, None);
-        }
-        for len in [1, wide] {
-            let prototype = heap.alloc_object(Object::new(Value::NULL));
-            for slot in 0..len {
-                heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
-            }
-            heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-            let object = heap.alloc_object(Object::new(prototype));
-            let holder = heap.object(prototype).unwrap();
-            for slot in 0..len {
-                // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
-                let interpreter = unsafe { heap.holder_property_get_flat(holder.record_only().unwrap(), slot) };
-                assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
-                    "slot {slot} of {len}");
-            }
-        }
-    }
-
-    /// A row calls `site` in an order its operand values never change: the same ops over two
-    /// sites give one trace and differ only in what the holes took.
-    #[test]
-    fn site_values_change_holes_not_the_trace() {
-        let read = |shape: u32, slot: u16| {
-            let mut trace = super::super::trace::Trace::default();
-            let at = Reached::bare(0);
-            let record = trace.constant(0);
-            let at = Reached { record, ..at };
-            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
-            run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
-            trace
-        };
-        let (first, second) = (read(5, 1), read(6, 0));
-        assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
-        // Either form reads through one operand, the flat byte offset (`object::site_offset`).
-        assert_eq!(first.holes, [5, 8]);
-        assert_eq!(second.holes, [6, 0]);
-    }
-}
+mod tests;

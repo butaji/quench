@@ -6,7 +6,7 @@ use super::*;
 /// stores in its word at `offset`, complemented by `complement`: the stored word and the
 /// record's shape complemented differ by zero.
 #[inline(always)]
-pub(super) fn shape_matches<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, (offset, complement): (usize, u32), miss: S::Miss) -> Option<()> {
+pub fn shape_matches<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, (offset, complement): (usize, u32), miss: S::Miss) -> Option<()> {
     let exact = super::super::object::exact_shape(stage, record);
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, offset as i32);
     let complement = stage.constant(u64::from(complement));
@@ -18,7 +18,7 @@ pub(super) fn shape_matches<S: Stage>(stage: &mut S, record: S::Word, entry: S::
 
 /// Whether the entry at `entry` is an own entry: its holder word is the stored own holder.
 #[inline(always)]
-pub(super) fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
+pub fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_offset as i32);
     stage.eq_imm(stored, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder))
 }
@@ -34,7 +34,7 @@ pub fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
 /// (leaving at `miss`) where its values are not plain (extras displaced them). Packed values
 /// decode from the record, flat ones read from the arena run.
 #[inline(always)]
-pub(in super::super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
@@ -45,7 +45,7 @@ pub(in super::super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, sl
 /// storage (`plain_payload`): packed values decode from the record, flat ones read from the arena
 /// run; `None` (leaving at `miss`) for a narrow run (`object::flat_run`).
 #[inline(always)]
-pub(super) fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let inline = inline_storage(stage, record);
     stage.choose_leaving(inline, #[inline(always)] |stage| {
         let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
