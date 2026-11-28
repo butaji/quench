@@ -12,6 +12,7 @@ use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::{Region, ShapeFact, Shaped, Stage};
 use super::field_plans::LanePlans;
+use super::fixed_cells::entry_fixed_record;
 use super::frame::calls;
 use quench_runtime::staged::ic::Reached;
 use quench_runtime::staged::property::Owner;
@@ -151,6 +152,20 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     fn receiver_record(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, readable: bool,
         miss: ir::Block) -> Option<Reached<ir::Value, ir::Value>> {
         let entry = self.entry()?;
+        // A receiver the entry proved a fixed class's cell is no record: it has no shape to guard, so a shape-keyed read leaves
+        // here. A class-keyed read takes the cell instead (`plan_receiver`, `receiver_cell`); a named read of it is `fixed_cells`.
+        let fixed = if self.is_receiver(owner) { entry_fixed_record(entry, None) } else {
+            match owner {
+                Owner::This => entry_fixed_record(entry, None),
+                Owner::Register(register) => entry_fixed_record(entry, Some(register)),
+                Owner::Temporary => None,
+            }
+        };
+        if fixed.is_some() {
+            let never = stage.ult(object, object);
+            stage.guard(never, miss)?;
+            return None;
+        }
         if self.is_receiver(owner) {
             // The entry proved a direct object's record, or none: a function `this` (a method of a
             // constructor) reads its own record here, a store of it leaves.
