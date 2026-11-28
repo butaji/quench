@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::getters::{lane_read_getter, set_getter_hint, GetterMemo, LaneGetterAnswer};
+use super::getters::{lane_read_getter, GetterMemo, LaneGetterAnswer};
 use quench_runtime::staged::call_getter::step_getter_answer_of;
 use quench_runtime::staged::Concrete;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};
@@ -56,33 +56,22 @@ impl AccessorCall {
         lane_read_getter(self.cx, r, ip, i, getter, base)
     }
 
-    /// What the getter the site cached answers for `base` (`step_getter_answer_of`), made the record's
-    /// hint where the getter returns an own field of its receiver; any other getter moves the record
-    /// to `get_field_getter_miss` for good.
+    /// What the getter the site cached answers for `base` (`step_getter_answer_of`). The record moves to
+    /// `get_field_getter_miss` for good: no getter's own field becomes the record's hint.
     ///
     /// # Safety
     /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
+    // S7f DESIGN: a getter that returns its receiver's own field made that field the record's hint, through the
+    // receiver's object record (`object_record_by_id(record_id(base))`), which no ordinary object has. Until the
+    // hint reads the receiver's shape from the class cell, every getter read requickens to the miss row.
     pub(crate) unsafe fn hold_getter_hint(&self, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
         let getter = vm.cached_field_getter(base, i.imm(), site)?;
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
         let value = step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, base)?;
-        let slot = self
-            .getter_field_slot(getter, base)
-            .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
-        if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
-        }
+        requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
         Some(value)
-    }
-
-    /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
-    /// by the field cache entry its record answers with.
-    // S7f DESIGN: the getter's receiver record (`object_record_by_id(record_id(base))`) is gone for every ordinary
-    // object, so the own-field hint declines until the receiver shape is read from the class cell.
-    fn getter_field_slot(&self, _getter: Value, _base: Value) -> Option<u16> {
-        None
     }
 
     /// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`
