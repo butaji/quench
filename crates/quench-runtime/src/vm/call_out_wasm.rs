@@ -3,7 +3,7 @@
 //! same reads: the tier's values for the operand registers, the running frame's for the rest.
 use super::*;
 use crate::bytecode::Register;
-use crate::staged::protocol_wasm::{WasmHostStep, operands};
+use crate::staged::protocol_wasm::{WasmHostFieldsProtocolWasmExt, WasmHostStep, operands};
 use super::wasm_table::copy_length_type;
 
 /// The value of register `register` the helper reads: the tier's value where `register` is one of

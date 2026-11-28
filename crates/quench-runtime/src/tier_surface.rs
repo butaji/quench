@@ -19,8 +19,9 @@ pub use crate::heap::{
     RootId, StackData, TableTarget, TableWords, TypedArrayKind, WasmGcRecord, WeakHandle,
 };
 
-/// The class cell region of `fields` fields (`heap::cell_region_for`), which a class's id names (`ProtoLink::class`).
-pub fn cell_region_for(fields: usize) -> Option<u32> {
+/// The class cell region of `fields` fields (`heap::cell_region_for`), which a class's id names (`ProtoLink::class`):
+/// past the largest region it is the largest, and the cell spills the rest, so every field count has one.
+pub fn cell_region_for(fields: usize) -> u32 {
     crate::heap::cell_region_for(fields)
 }
 

@@ -943,8 +943,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         let address = self.wasm_direct_address(f, i)?;
         let memory = self.read(f, i.register_b());
-        let value = access
-            .read(&self.wasm_memory_bytes(memory)?, address)
+        let value = crate::staged::wasm_memory::AccessWasmMemoryExt::read(access, &self.wasm_memory_bytes(memory)?, address)
             .map_err(JsError::wasm_trap_error)?;
         let value = self.encode_wasm_value(value);
         self.write(f, i.result_register(), value);
@@ -963,8 +962,7 @@ impl Vm {
         let address = self.wasm_direct_address(f, i)?;
         let memory = self.read(f, i.register_b());
         let value = self.decode_wasm_value(self.read(f, i.register_a()), access.ty)?;
-        access
-            .write(&mut self.wasm_memory_mut(memory)?, address, value)
+        crate::staged::wasm_memory::AccessWasmMemoryExt::write(access, &mut self.wasm_memory_mut(memory)?, address, value)
             .map_err(JsError::wasm_trap_error)
     }
 
