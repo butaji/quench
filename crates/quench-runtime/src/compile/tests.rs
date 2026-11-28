@@ -375,7 +375,6 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
         crate::compile::LOWER_AT_LOAD.with(|flag| flag.set(false));
         let eager = eager.unwrap();
         assert_eq!(lazy.functions.len(), eager.functions.len(), "{source}");
-        eager.prime_loop_decoding();
         let mut compared = 0;
         for index in 0..lazy.functions.len() {
             if eager.functions[index].is_released() {
