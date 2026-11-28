@@ -87,7 +87,7 @@ fn emitted_own_reads_agree_with_the_interpreter_or_leave() {
             for (object, values) in &objects {
                 let data = heap.object(*object).unwrap().record_only().unwrap();
                 let Some(expected) = values.get(usize::from(slot)) else { continue };
-                let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.property_values_base() as u64) });
+                let read = Value::from_bits(unsafe { run(data as *const Object as u64, heap.arena_values_base() as u64) });
                 let storage = data.plain_property_storage();
                 let expected = if handles(form, storage) { *expected } else { Value::DELETED };
                 assert_eq!(read, expected, "{form:?} slot {slot} {storage:?}");

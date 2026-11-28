@@ -4,7 +4,6 @@
 
 use crate::compiled::forced_miss;
 use quench_runtime::vm::tier_events::{Event, TierEvents};
-use quench_runtime::vm::Vm;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::{Engine, ExecutionMode, JitMode, Value};
 use std::{cell::RefCell, rc::Rc};
@@ -65,7 +64,7 @@ impl Run {
 pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode) -> Run {
     let program = Engine::specialize(source, "oracle.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, mode);
     vm.programs.enable_js_lane_methods();

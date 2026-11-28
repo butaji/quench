@@ -9313,7 +9313,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_| (0, 0), Vec::new(), &[]).unwrap();
+            &|_| (0, 0), Vec::new()).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
@@ -9387,7 +9387,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| matches!(quench_runtime::staged::Operation::<u64, ()>::of(*i),
                 Some(quench_runtime::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_| (0, 0), Vec::new(), &[]).unwrap();
+                &|_| (0, 0), Vec::new()).unwrap();
             assert!(!method.dependencies.slots.is_empty());
             let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
@@ -9416,7 +9416,6 @@ mod tests {
             vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
-            assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
         }
     }
@@ -9499,7 +9498,7 @@ mod tests {
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
+        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new()).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.

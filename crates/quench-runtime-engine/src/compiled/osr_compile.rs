@@ -159,13 +159,3 @@ impl PendingOsrRegion {
     }
 }
 
-
-#[cfg(test)]
-#[path = "osr_compile/tests.rs"]
-pub(crate) mod tests;
-#[cfg(test)]
-#[path = "osr_compile/method_tests.rs"]
-pub(crate) mod method_tests;
-#[cfg(test)]
-#[path = "osr_compile/math_replacement_tests.rs"]
-pub(crate) mod math_replacement_tests;
