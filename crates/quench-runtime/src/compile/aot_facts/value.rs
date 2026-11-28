@@ -208,6 +208,9 @@ impl Word {
 
     /// The word both describe: the join of their cells, from the origin both share.
     pub(super) fn join(self, other: Self) -> Self {
+        // No value (`Cell::NEVER`) is the join's identity: the other side's value, and its origin, is the whole of the join.
+        if self.cell == Cell::NEVER { return other; }
+        if other.cell == Cell::NEVER { return self; }
         Self { cell: self.cell.join(other.cell), origin: if self.origin == other.origin { self.origin } else { None } }
     }
 

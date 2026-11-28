@@ -186,6 +186,8 @@ struct Solver<'a> {
     in_register: &'a [bool],
     /// The global names of the builtins a join made no longer one object (`FunctionFlow::leaked`).
     leaked: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// The registers live at entry (`ResidualProgram::register_root_masks` at PC 0), where liveness covers the function.
+    entry_live: Option<crate::compile::liveness::RegisterSet>,
 }
 
 /// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
@@ -198,7 +200,7 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, classes: &super::class_ids::ClassIds, accessors: &std::collections::BTreeSet<u32>,
+    entry_live: Option<crate::compile::liveness::RegisterSet>, resolved: &std::collections::BTreeMap<Key, u32>, classes: &super::class_ids::ClassIds, accessors: &std::collections::BTreeSet<u32>,
     types: Option<&super::types::Types>, feedback: &super::length_settle::Feedback) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
@@ -212,6 +214,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         classes,
         registers: usize::from(function.registers),
         tracked_locals: tracked_locals(function),
+        dynamic_scope: function.has_dynamic_scope_access(),
         whole_literals: &whole[..],
         types,
         decode,
@@ -225,7 +228,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let thresholds = typing::thresholds(relational_bounds(function, scope));
     let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
     let in_register = bound_parameters(function);
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register, leaked: Default::default() };
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register, leaked: Default::default(), entry_live };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
     let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words[..ctx.registers].to_vec())).collect();
@@ -425,9 +428,14 @@ impl Solver<'_> {
         for index in 0..self.function.params {
             if let Some(slot) = self.function.promoted_register(index).and_then(|register| written.get_mut(usize::from(register))) { *slot = true; }
         }
+        // A register dead at entry is written before any read: no value of entry reaches a read of it, so it starts with none
+        // (`Cell::NEVER`, the join's identity), and a loop header's join keeps what its writes put there.
         for (register, word) in state[..self.ctx.registers].iter_mut().enumerate() {
-            if !written[register] && register >= usize::from(self.function.params) {
+            if register < usize::from(self.function.params) { continue; }
+            if !written[register] {
                 *word = Word::of(Type::language(crate::ValueType::Undefined));
+            } else if self.entry_live.is_some_and(|live| crate::compile::liveness::register_dead(live, register)) {
+                *word = Word::of_cell(Cell::NEVER);
             }
         }
         if let Some(types) = self.ctx.types {

@@ -41,6 +41,9 @@ pub(super) struct Ctx<'a> {
     /// `registers + slot` is what the last load of plain frame local `slot` read, refined by the tests since, until a
     /// write of the slot resets it to `Word::UNKNOWN`. 0 where the solve follows none.
     pub(super) tracked_locals: usize,
+    /// Whether the function's names may resolve through a dynamic scope (`Function::has_dynamic_scope_access`: a `with` object
+    /// or a sloppy direct `eval`'s variables), where a store to an environment slot may run a setter of that scope.
+    pub(super) dynamic_scope: bool,
     /// Per PC, whether the `MakeArray` there is a literal whose element definitions cover every index, so it
     /// holds no hole (`flow::whole_literals`).
     pub(super) whole_literals: &'a [bool],
@@ -130,6 +133,14 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
         Some(Operation::SetField { atom, .. }) if ctx.accessors.contains(&atom) => true,
         Some(Operation::SetField { base: None, .. }) => false,
         Some(Operation::LoadEnvLocal { .. } | Operation::LoadCapture { .. }) => false,
+        // A store to an environment slot writes the slot: only a dynamic scope's object may hold the name instead, and run its setter.
+        Some(Operation::StoreEnvLocal { .. }) => ctx.dynamic_scope,
+        // A read of a name no accessor of the program defines, off a program closure or an object of the program's own classes or
+        // literal sites, reads a data property or a host accessor, neither of which runs guest code: no program object is a proxy.
+        Some(Operation::GetField { lookup: FieldLookup::Atom { atom, base, .. }, .. }) if !ctx.accessors.contains(&atom) =>
+            !base_fact(ctx, base, state).is_some_and(|base| program_object(ctx, base)),
+        // A store of such a name onto such an object writes a data property, or runs a host setter, which runs no guest code.
+        Some(Operation::SetField { base: Some(base), .. }) => !program_object(ctx, state[usize::from(base)]),
         Some(Operation::Number(number)) => !numbers_over_numbers(ctx, state, number),
         Some(Operation::Binary { left, right, .. }) => !(is_number(ctx, state, left) && is_number(ctx, state, right)),
         // Strict equality runs nothing; loose equality runs nothing when an operand is null or undefined (no ToPrimitive).
@@ -138,6 +149,29 @@ pub(super) fn runs_guest_code(ctx: &Ctx<'_>, instruction: WideInstruction, state
             !strict && !(is_nullish(ctx, state, left) || is_nullish(ctx, state, right)),
         Some(Operation::CompareJump { comparison, .. }) => comparison.runs_guest_code(),
         Some(operation) => operation.effects().may_call_js,
+    }
+}
+
+/// Whether every object `word` may be is the program's own: a closure of one body, or an instance of a class or a literal of a
+/// site the solve names (no `Many`), and not the global object.
+fn program_object(ctx: &Ctx<'_>, word: Word) -> bool {
+    let cell = word.cell;
+    if cell.global || cell.ty == Type::NEVER { return false; }
+    if cell.ty.body_index().is_some() { return true; }
+    if let Some(Origin::Prototype(super::value::PrototypeBase::Closure(class))) = word.origin { return own_prototype(ctx, class); }
+    let holders = Holders::of(cell);
+    !holders.is_none() && holders.classes != Classes::Many && holders.sites != Sites::Many
+}
+
+/// Whether class `class`'s prototype is the object its constructor was made with, or a literal the program puts there: no store of
+/// `prototype` the solve sees puts another object on the constructor, or on an object of no one class (`Key::MemberAny`).
+fn own_prototype(ctx: &Ctx<'_>, class: u32) -> bool {
+    let (Some(types), Some(prototype)) = (ctx.types, ctx.scope.prototype) else { return false };
+    if types.written(Key::MemberAny(prototype)) { return false; }
+    let key = Key::MemberOn { class, instance: false, atom: prototype };
+    !types.written(key) || {
+        let holders = Holders::of(types.cell(key));
+        holders.classes == Classes::Never && matches!(holders.sites, Sites::Set { .. })
     }
 }
 

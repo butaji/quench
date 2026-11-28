@@ -172,6 +172,11 @@ impl Census {
         self.wild_owner = flows.iter().map(|flow| flow.wild_owner).collect();
     }
 
+    /// The holders of the objects the stores under name `atom` write on (`member_bases`); any object for a name no store records.
+    pub(super) fn member_holders(&self, atom: u32) -> Holders {
+        self.member_bases.get(&atom).copied().unwrap_or(Holders::ANY)
+    }
+
     /// The closures stored under name `atom` (`members`): the closed set a method call of that name may
     /// reach, where it holds at least one and at most `MAX_CANDIDATES`.
     pub(super) fn method_closures(&self, atom: u32) -> Option<&BTreeSet<u32>> {
