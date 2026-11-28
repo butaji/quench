@@ -1,10 +1,10 @@
 //! The key and iteration rows: the fast arms of `RequireIteratorResult`, `ToPropertyKey`,
-//! `typeof`, `instanceof` and `for-in`. Each row builds the staged `Operation` the interpreter
+//! `typeof` and `for-in`. Each row builds the staged `Operation` the interpreter
 //! decodes for its instruction, over the row's places, and runs its family step on `StencilStage`
 //! (`staged/{steps,generic,control,names,heap}.rs`). The frame methods those steps call on `Places`
 //! live in `places_names.rs` (`typeof_entry`, `call_out_fast`).
 
-use crate::codes::{MEM, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW};
+use crate::codes::{MEM, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW};
 use crate::numeric::{HOLE_B, Out, S};
 use crate::places::{DEST, LEFT, Places, finish_fast};
 use crate::stage::StencilStage;
@@ -50,20 +50,6 @@ fn typeof_string_row(s: S) -> Out {
     finish_fast(frame, done)
 }
 
-/// The fast arm of `instanceof` of a held constructor: the value operand (the frame offset above the destination's in
-/// hole 0) walked along its prototype chain for the link above `HELD_LINK_AT` in hole 1 (`object::instanceof_by_words`),
-/// where the constructor operand (the frame offset in hole 1's low half) holds exactly the identity of hole 2. The boolean
-/// is written to the destination (hole 0), or the row leaves into the helper step.
-///
-/// The operands are frame offsets packed into the holes, not registers, so `Operation::InstanceOf` (whose operands
-/// are the registers `Frame::tagged` reads) cannot name them; the row runs the walk `InstanceOf` runs on the same words.
-#[inline(always)]
-fn instanceof_row(s: S) -> Out {
-    // S7f DESIGN: the walk ran over object records (`instanceof_by_words`), which are gone; the row declines to the VM
-    // until the walk reads class cells.
-    finish_fast(Places::new::<MEM, MEM, MEM>(s), false)
-}
-
 /// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is
 /// not, where `NEGATED`), as a boolean in the destination (hole 0). `Operation::TypeofTest` with the
 /// index the row's hole 2 holds (`control::typeof_test`).
@@ -98,7 +84,6 @@ pub(crate) fn run<const KIND: u8>(s: S, _payload: usize) -> Out {
         TYPEOF_STRING_ROW => typeof_string_row(s),
         TYPEOF_IS_ROW => typeof_is_row::<false>(s),
         TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
-        INSTANCEOF_ROW => instanceof_row(s),
         _ => for_in_row(s),
     }
 }

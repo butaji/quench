@@ -16,7 +16,7 @@ use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
-use quench_runtime::code_dependencies::{InstanceofFact, Invalidation};
+use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::vm::global_facts::GlobalTable;
 use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
@@ -156,7 +156,6 @@ impl LaneMethod {
 
 /// The facts of a program's sites that its code folds (`Vm::site_facts`).
 struct SiteFacts {
-    constructors: Vec<Option<Value>>,
     presences: Vec<Option<quench_runtime::vm::in_presence::InPresence>>,
     globals: Option<quench_runtime::vm::global_facts::GlobalReads>,
 }
@@ -194,13 +193,11 @@ impl Vm {
         RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
     }
 
-    /// The facts of the program's sites the code folds, where it `folds`: the constructors its
-    /// `instanceof` rows name, its membership tests, and its global names' accesses, which read the
-    /// global object's slots under its layout.
-    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, (code, parameters): (&[WideInstruction], &[Value]), body: &quench_runtime::bytecode::Function) -> SiteFacts {
-        if !folds { return SiteFacts { constructors: Vec::new(), presences: Vec::new(), globals: None }; }
+    /// The facts of the program's sites the code folds, where it `folds`: its membership tests, and its global names'
+    /// accesses, which read the global object's slots under its layout.
+    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
+        if !folds { return SiteFacts { presences: Vec::new(), globals: None }; }
         SiteFacts {
-            constructors: self.instanceof_constructors(program, code, parameters),
             presences: self.membership_facts(code),
             globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
         }
@@ -277,22 +274,18 @@ impl Vm {
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
-        let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (region.instructions(), parameters), body);
+        let SiteFacts { presences, globals } = self.site_facts(folds, program, function, region.instructions(), body);
         let classes = self.class_prototypes(program, function, region.instructions(), parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
-        let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
-        let names = |site: u16, atom| self.native_function_name(site, atom);
         let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
             program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             adds: folds.then_some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
-            names: folds.then_some(&names as &dyn Fn(u16, quench_runtime::bytecode::Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
-            instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
             fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
@@ -397,8 +390,8 @@ pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: 
     // boolean, a Number), and any other constant is the deleted marker, which no constant row takes (`value_row`).
     let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
-        program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None, names: None,
-        invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
+        program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None,
+        invalidation: None, constants: &constants, typeof_names: &[], presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, seen: &[], facts: Some(facts), typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).

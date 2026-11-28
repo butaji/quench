@@ -12,10 +12,10 @@ pub fn heap_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage:
         allocate @ Operation::Allocate { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::ALLOCATE]) } { allocation_step_of::<KIND, _, _>(stage, frame, allocate) } else { unreachable!() },
         define @ Operation::DefineElement { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::DEFINE_ELEMENT]) } { element_define_step_of::<KIND, _, _>(stage, frame, define) } else { unreachable!() },
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => if const { super::op_kind::admits(KIND, &[super::op_kind::INDEX_SET_HELPER, super::op_kind::FIELD_STORE_MISS]) } { helper_step_of::<KIND, _, _>(stage, frame, helper) } else { unreachable!() },
-        site @ (Operation::AddSite { .. } | Operation::NamingSite { .. } | Operation::InstanceOf { .. }) => if const { super::op_kind::admits(KIND, &[super::op_kind::ADD_SITE, super::op_kind::NAMING_SITE, super::op_kind::INSTANCE_OF]) } { site_step_of::<KIND, _, _>(stage, frame, site) } else { unreachable!() },
+        site @ (Operation::AddSite { .. } | Operation::InstanceOf { .. }) => if const { super::op_kind::admits(KIND, &[super::op_kind::ADD_SITE, super::op_kind::INSTANCE_OF]) } { site_step_of::<KIND, _, _>(stage, frame, site) } else { unreachable!() },
         array @ (Operation::DirectArray { .. } | Operation::ArrayLength { .. } | Operation::TypedLength { .. }
             | Operation::ArrayAppend { .. }) => if const { super::op_kind::admits(KIND, &[super::op_kind::DIRECT_ARRAY, super::op_kind::ARRAY_LENGTH, super::op_kind::TYPED_LENGTH, super::op_kind::ARRAY_APPEND]) } { array_step_of::<KIND, _, _>(stage, frame, array) } else { unreachable!() },
-        index => if const { super::op_kind::outside(KIND, &[super::op_kind::ALLOCATE, super::op_kind::DEFINE_ELEMENT, super::op_kind::INDEX_SET_HELPER, super::op_kind::FIELD_STORE_MISS, super::op_kind::ADD_SITE, super::op_kind::NAMING_SITE, super::op_kind::INSTANCE_OF, super::op_kind::DIRECT_ARRAY, super::op_kind::ARRAY_LENGTH, super::op_kind::TYPED_LENGTH, super::op_kind::ARRAY_APPEND]) } { index_step_of::<KIND, _, _>(stage, frame, index) } else { unreachable!() },
+        index => if const { super::op_kind::outside(KIND, &[super::op_kind::ALLOCATE, super::op_kind::DEFINE_ELEMENT, super::op_kind::INDEX_SET_HELPER, super::op_kind::FIELD_STORE_MISS, super::op_kind::ADD_SITE, super::op_kind::INSTANCE_OF, super::op_kind::DIRECT_ARRAY, super::op_kind::ARRAY_LENGTH, super::op_kind::TYPED_LENGTH, super::op_kind::ARRAY_APPEND]) } { index_step_of::<KIND, _, _>(stage, frame, index) } else { unreachable!() },
     }
 }
 
@@ -26,16 +26,14 @@ pub fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
     heap_step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
-/// The property-add and naming sites over the frame's miss edge: a hit defines the written word, a
-/// decline leaves the record to the VM (`add::site_add`, `naming::site_name`).
+/// The property-add and `instanceof` sites over the frame's miss edge: a hit defines the written word, a
+/// decline leaves the record to the VM (`add::site_add`).
 #[inline(always)]
 fn site_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let (word, done) = match operation {
         Operation::AddSite { object, edge, value, .. } =>
             if const { super::op_kind::admits(KIND, &[super::op_kind::ADD_SITE]) } { (value, add::site_add(stage, object, edge, value, frame.miss())) } else { unreachable!() },
-        Operation::NamingSite { records, function, naming, form, name } =>
-            if const { super::op_kind::admits(KIND, &[super::op_kind::NAMING_SITE]) } { (name, naming::site_name(stage, records, function, naming, form, name, frame.miss())) } else { unreachable!() },
         Operation::InstanceOf { destination, value, constructor } => if const { super::op_kind::admits(KIND, &[super::op_kind::INSTANCE_OF]) } { {
             let (value, constructor) = (frame.tagged(stage, value), frame.tagged(stage, constructor));
             let Some(holds) = frame.instance_of(stage, value, constructor) else { return Step::Unresolved };
@@ -43,7 +41,7 @@ fn site_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mu
             frame.write(stage, destination, boolean, fact);
             (boolean, Some(()))
         } } else { unreachable!() },
-        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::ADD_SITE, super::op_kind::NAMING_SITE, super::op_kind::INSTANCE_OF]) } { return Step::Unresolved } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::ADD_SITE, super::op_kind::INSTANCE_OF]) } { return Step::Unresolved } else { unreachable!() },
     };
     match done {
         Some(()) => Step::Value(word),

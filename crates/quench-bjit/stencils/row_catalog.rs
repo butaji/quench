@@ -169,13 +169,6 @@ macro_rules! catalog {
     CALLEE_CAPTURE_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(c_closure_read) = Heap::CalleeCapture,
     // Value 26 is unused: the numbering has always left it free.
     reserve 1,
-    /// A fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
-    /// frame slot named by the value operand's offset above the destination's in hole 0 is walked along its prototype chain
-    /// for the link above `HELD_LINK_AT` in hole 1, whose low half is the constructor operand's frame offset; hole 2 is the
-    /// constructor's identity, which the slot must hold, else the row leaves. A hit writes the boolean to the destination and
-    /// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
-    /// the helper step after the row.
-    INSTANCEOF_ROW: uses(Unread, Unread, Unread, Never) twin: kernel(v_instanceof) = Heap::Instanceof,
     /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
     /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
     REALM_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Realm,
@@ -191,16 +184,6 @@ macro_rules! catalog {
     /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
     /// leaves through EXIT0 into it.
     APPEND_ROW: uses(Unread, Src, Unread, Never) twin: kernel(arr_push) = Heap::Append,
-    /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
-    /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
-    /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid out
-    /// after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
-    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Packed, this: false },
-    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Arena, this: false },
-    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Either, this: false },
-    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Packed, this: true },
-    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Arena, this: true },
-    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Either, this: true },
     /// The class-keyed add (`add::class_add`): the value operand (hole 1) joins the live class cell of the object
     /// register at the frame offset hole 2 carries, by the class transition holes 0 and 2 carry (`ADD_AFTER_AT`,
     /// the before-key low, the after-class high; the slot below `ADD_SLOT_BITS`). A hit continues at TAKEN.
@@ -210,13 +193,6 @@ macro_rules! catalog {
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
     /// miss leaves through EXIT0 into it.
     FOR_IN_ROW: uses(Unread, Unread, Unread, Never) twin: kernel(v_for_in) = Heap::ForIn,
-    /// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
-    /// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
-    /// `ADD_SLOT_BITS`), moving from the before-layout to the after-layout hole 0 carries as an add's does, where it
-    /// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
-    /// step laid out after the row; a miss leaves through EXIT0 into it.
-    NAME_EITHER_ROW: uses(Unread, Unread, Unread, Never) twin: none("function naming; no kernel isolates it") = Heap::Name { form: Form::Packed | Form::Either },
-    NAME_ARENA_ROW: uses(Unread, Unread, Unread, Never) twin: none("function naming; no kernel isolates it") = Heap::Name { form: Form::Arena },
     /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
     /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
     /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
