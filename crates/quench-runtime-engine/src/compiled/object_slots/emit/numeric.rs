@@ -56,7 +56,7 @@ impl Emit<'_, '_> {
         self.choose_arms(cond, then, otherwise, true)
     }
 
-    fn choose_arms(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+    pub(super) fn choose_arms(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value, cold_then: bool) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         if cold_then { self.builder.set_cold_block(then_block); }
