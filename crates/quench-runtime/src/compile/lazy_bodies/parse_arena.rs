@@ -4,7 +4,7 @@
 use oxc_allocator::Allocator;
 
 /// Arena bytes reserved per source byte for a parse: the whole program's parse reserves as
-/// much (`Compiler::specialize_with_mode_and_private_names`), and pages it does not touch
+/// much (`Compiler::specialize_with_private_names`), and pages it does not touch
 /// cost no memory.
 const ARENA_BYTES_PER_SOURCE_BYTE: usize = 32;
 

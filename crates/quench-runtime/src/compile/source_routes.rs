@@ -7,7 +7,7 @@
 //! `--disallow-code-generation-from-strings` (`Vm::require_source_compilation`).
 use super::{
     AtomPrefix, Constant, Diagnostic, EvalRegExpLiteral, ParameterSite, ParsedProgramShape, ReleasedRecords,
-    SpecializationMode, StaticModuleAnalysis, StaticModuleOutcome,
+    StaticModuleAnalysis, StaticModuleOutcome,
 };
 #[cfg(feature = "source")]
 use super::Engine;
@@ -18,7 +18,7 @@ type Specialized = Result<ResidualProgram, Vec<Diagnostic>>;
 
 /// The routes `enable` installs.
 pub(crate) struct SourceRoutes {
-    pub(crate) specialize: fn(&str, &str, SpecializationMode, &dyn AtomPrefix, SourceType, bool, bool, bool,
+    pub(crate) specialize: fn(&str, &str, &dyn AtomPrefix, SourceType, bool, bool, bool,
         &[(String, String)], &[String], ParsedProgramShape<'_>, ReleasedRecords, Option<SourceText>) -> Specialized,
     pub(crate) first_call_chunk: fn(&ResidualProgram, u32, SourceSpan, &dyn AtomPrefix, Option<&super::statement_stream::StreamRun>) -> Specialized,
     pub(crate) append_first_call_chunk: fn(&ResidualProgram, u32, &dyn AtomPrefix) -> Option<ChunkDelta>,

@@ -46,13 +46,12 @@ impl<'a> Compiler<'a> {
         self.load_encoding.is_none() && self.may_defer_kept_rewrites()
     }
 
-    /// Whether the rewrites of a kept function may wait for its first read, as far as the
-    /// load's mode goes. A kept record is not released, so the load's encoding of released
-    /// records does not bind it: its record is encoded when the program is, unlowered and
-    /// unrewritten (`binary::encode_program`), and its first read settles the rewrites.
+    /// Whether the rewrites of a kept function may wait for its first read. A kept record is not
+    /// released, so the load's encoding of released records does not bind it: its record is
+    /// encoded when the program is, unlowered and unrewritten (`binary::encode_program`), and its
+    /// first read settles the rewrites.
     fn may_defer_kept_rewrites(&self) -> bool {
         crate::DYNAMIC_EXECUTION_ENABLED
-            && self.mode == SpecializationMode::Enabled
             && !lowers_at_load()
             && !cfg!(feature = "profile-aggregate")
     }

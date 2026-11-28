@@ -9488,17 +9488,14 @@ mod tests {
     }
 
     #[test]
-    fn typed_native_loops_preserve_stores_in_native_only_and_unspecialized_execution() {
+    fn typed_native_loops_preserve_stores_in_native_only_execution() {
         let source = "function tail(node) { while(node.next!==null) { node.mark=node.mark+1; node=node.next; } return node; } const end={next:null,mark:0}; const head={next:end,mark:0}; for(let i=0;i<40;i++) { if(tail(head)!==end) throw 'identity'; } throw head.mark;";
-        for specialized in [false, true] {
-            let mut program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
-            program.specialized = specialized;
-            let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
-            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::number(40.0)));
-        }
+        let program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
+        let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(40.0)));
     }
 
 

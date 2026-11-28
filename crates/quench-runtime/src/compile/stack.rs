@@ -27,22 +27,21 @@ mod tests {
     fn regression_generated_accessor_parser_preserves_resource_exhaustion() {
         let source = "class C { accessor x; }";
         assert!(Engine::specialize(source, "<accessor>").is_ok());
-        for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
-            let mut guards = Vec::new();
-            while let Ok(guard) = crate::stack::StackGuard::enter() {
-                guards.push(guard);
-            }
-            // A class declaration fits in one remaining statement transition;
-            // its generated getter/setter bodies require additional transitions.
-            drop(guards.pop());
-            let errors = specialize(source, "<accessor-budget>").err().unwrap();
-            assert!(
-                errors.iter().any(|error| error.is_stack_exhausted()),
-                "{errors:?}"
-            );
-            drop(guards);
-            assert!(specialize(source, "<recovery>").is_ok());
+        let specialize = Engine::specialize;
+        let mut guards = Vec::new();
+        while let Ok(guard) = crate::stack::StackGuard::enter() {
+            guards.push(guard);
         }
+        // A class declaration fits in one remaining statement transition;
+        // its generated getter/setter bodies require additional transitions.
+        drop(guards.pop());
+        let errors = specialize(source, "<accessor-budget>").err().unwrap();
+        assert!(
+            errors.iter().any(|error| error.is_stack_exhausted()),
+            "{errors:?}"
+        );
+        drop(guards);
+        assert!(specialize(source, "<recovery>").is_ok());
     }
 
     #[test]
@@ -66,12 +65,11 @@ mod tests {
                 ];
                 for (index, source) in cases.iter().enumerate() {
                     assert!(Engine::static_module_analysis(source, "<deep-parser>").early_error.is_none());
-                    for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
-                        let errors = specialize(source, "<deep-parser>").err().unwrap();
-                        assert_eq!(errors.len(), 1, "case {index}");
-                        assert!(errors[0].is_stack_exhausted(), "case {index}: {errors:?}");
-                        assert!(specialize("1 + 2", "<recovery>").is_ok());
-                    }
+                    let specialize = Engine::specialize;
+                    let errors = specialize(source, "<deep-parser>").err().unwrap();
+                    assert_eq!(errors.len(), 1, "case {index}");
+                    assert!(errors[0].is_stack_exhausted(), "case {index}: {errors:?}");
+                    assert!(specialize("1 + 2", "<recovery>").is_ok());
                 }
             })
             .unwrap()
@@ -89,23 +87,22 @@ mod tests {
                 let source = std::iter::repeat_n("1", AST_STRESS_DEPTH)
                     .collect::<Vec<_>>()
                     .join("+");
-                for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
-                    let diagnostics = specialize(&source, "<deep-ast>").err().unwrap();
-                    assert_eq!(diagnostics.len(), 1);
-                    assert!(diagnostics[0].is_stack_exhausted());
-                    assert!(
-                        diagnostics[0]
-                            .to_string()
-                            .ends_with(crate::stack::STACK_EXHAUSTED_MESSAGE)
-                    );
-                    assert!(specialize("1 + 2", "<recovery>").is_ok());
-                    let syntax = specialize("let =", "<syntax>").err().unwrap();
-                    assert!(
-                        syntax
-                            .iter()
-                            .all(|diagnostic| !diagnostic.is_stack_exhausted())
-                    );
-                }
+                let specialize = Engine::specialize;
+                let diagnostics = specialize(&source, "<deep-ast>").err().unwrap();
+                assert_eq!(diagnostics.len(), 1);
+                assert!(diagnostics[0].is_stack_exhausted());
+                assert!(
+                    diagnostics[0]
+                        .to_string()
+                        .ends_with(crate::stack::STACK_EXHAUSTED_MESSAGE)
+                );
+                assert!(specialize("1 + 2", "<recovery>").is_ok());
+                let syntax = specialize("let =", "<syntax>").err().unwrap();
+                assert!(
+                    syntax
+                        .iter()
+                        .all(|diagnostic| !diagnostic.is_stack_exhausted())
+                );
             })
             .unwrap()
             .join()

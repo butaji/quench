@@ -135,15 +135,10 @@ print(JSON.stringify(out));
     #[test]
     fn capture_append_leaf_preserves_coercion_tdz_const_and_collection() {
         let name = "capture-append-effects.js";
-        for (specialized, compiled) in [(false, false), (true, false), (true, true)] {
-            let program = if specialized {
-                Engine::specialize(EFFECTS_SOURCE, name)
-            } else {
-                Engine::compile(quench_runtime::ExecutionRequest::script(EFFECTS_SOURCE, name))
-            }
-            .unwrap();
+        let program = Engine::specialize(EFFECTS_SOURCE, name).unwrap();
+        for compiled in [false, true] {
             let (_, lines) = printed(&program, true, compiled);
-            assert_eq!(lines, [EFFECTS_PRINTED], "specialized={specialized} compiled={compiled}");
+            assert_eq!(lines, [EFFECTS_PRINTED], "compiled={compiled}");
         }
     }
 

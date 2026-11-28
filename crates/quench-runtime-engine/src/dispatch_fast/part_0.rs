@@ -83,10 +83,7 @@ pub(super) fn edge_rewrite(ip: Ip, handler: Handler) {
             (*ip.cast_mut()).handler = general_step_in_lane as Handler as *const ();
             return;
         }
-        // A trusted row stays trusted: its view's `this` trust was fixed at derivation (`receiver_trusted`).
-        let trusted = trusted_this_form((*ip).handler).is_some();
-        let next = match trusted_this_form(handler as *const ()) { Some(form) if trusted => form, _ => handler as *const () };
-        (*ip.cast_mut()).handler = next;
+        (*ip.cast_mut()).handler = handler as *const ();
     }
 }
 

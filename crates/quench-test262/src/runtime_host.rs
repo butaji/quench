@@ -388,7 +388,7 @@ impl Test262RuntimeHost {
                 prepared.as_ref().expect("native preparation").entry.clone()
             } else { match kind {
                 SourceKind::Script => Engine::specialize(source, name),
-                SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
+                SourceKind::Module => Engine::specialize_module(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
             .map_err(|errors| compile_failure(&errors, CompilationSite::Entry))? };
@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
-        let program = super::Engine::specialize_unspecialized(r#"
+        let program = super::Engine::specialize(r#"
             function calculate(n = 8) {
                 let sum = 0;
                 for (let i = 0; i < n; i++) {

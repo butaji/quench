@@ -709,14 +709,6 @@ impl LaneView {
 
 
 
-/// The generated rows of the hot `this` sites (a `this` own read, a formed `this` store, a `this`
-/// nested read's first hop) and their trusted forms (`lane_frame::trusted_this_rows`).
-const TRUSTED_THIS_ROWS: [(Handler, Handler); 3] = [
-    (generated_row!(53, ACC_NONE, 14), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 14>),
-    (generated_row!(62, ACC_NONE, 42), lane_frame::trusted_this_rows::generated_row::<62, ACC_NONE, 42>),
-    (generated_row!(53, ACC_NONE, 8), lane_frame::trusted_this_rows::generated_row::<53, ACC_NONE, 8>),
-];
-
 /// Whether `function`'s `this` is a direct object in every activation, by the solve's receiver cell
 /// (`FactKey::Receiver`): the function's rows and code take it as one, with no tag test. A live receiver
 /// (`AotFacts::live`: new code may call the function with any `this`) is never trusted, since no edge
@@ -728,17 +720,6 @@ pub(crate) fn receiver_trusted(facts: Option<&quench_runtime::compile::aot_facts
         && cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY)))
 }
 
-/// The trusted form of a row that reads `this` (`TRUSTED_THIS_ROWS`), `None` for a row with no trusted form.
-pub(crate) fn trusted_this_form(handler: *const ()) -> Option<*const ()> {
-    TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler).map(|(_, trusted)| *trusted as *const ())
-}
-
-/// Gives each row of a view whose receiver is trusted (`receiver_trusted`) its trusted form.
-pub(crate) fn trust_this_rows(records: &mut [quench_runtime::vm::engine_types::LaneInstruction]) {
-    for record in records.iter_mut() {
-        if let Some(trusted) = trusted_this_form(record.handler) { record.handler = trusted; }
-    }
-}
 
 
 
@@ -4371,8 +4352,7 @@ impl Vm {
                     // lane runs while the report reads them.
                     let handler = unsafe { (*fresh.records[pc].get()).handler };
                     let settled = settled.map_or_else(|| "-".to_owned(), |view| format!("{:x}", unsafe { (*view.records[pc].get()).handler }.addr()));
-                    eprintln!("LANEPLAN {index} {function} {pc} {:x} {settled} | {}", handler.addr(), instruction.text()); // merge: HEAD-only fused_width column dropped.
-                }
+                    eprintln!("LANEPLAN {index} {function} {pc} {:x} {settled} | {}", handler.addr(), instruction.text());                }
             }
         }
     }
@@ -6443,12 +6423,6 @@ const CAPTURE_WRITE: u16 = quench_runtime::staged::STORE_CAPTURE_ROW;
 
 
 
-// merge: theirs' fused capture update (`specialize_capture_updates`, `lane_update_capture_int32`)
-// is not ported: it fuses `lane_operator_int32` and `lane_store_capture_load`, which ours does not
-// have. Its records run unfused, with the same semantics.
-
-
-
 
 
 
@@ -7188,9 +7162,6 @@ pub(crate) mod instruction_set_tests;
 pub(crate) mod update_fusion_tests;
 pub(crate) mod on_demand_metadata;
 use on_demand_metadata::lane_completes_return;
-
-#[cfg(test)]
-pub(crate) mod numeric_pair_tests;
 
 #[cfg(test)]
 pub(crate) mod leaf_call_tests;

@@ -2426,7 +2426,6 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::with_layout 6
 function-lines crates/quench-runtime/src/compile.rs::Engine::module_link_plan 44
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_eval_with_context 64
 function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_parsing 307
-function-lines crates/quench-runtime/src/compile.rs::Engine::specialize_with_mode_and_private_names 45
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_exports_of 74
 function-lines crates/quench-runtime/src/compile.rs::Engine::static_module_throw_of 51
 function-lines crates/quench-runtime/src/compile.rs::append_module_link_statement 52

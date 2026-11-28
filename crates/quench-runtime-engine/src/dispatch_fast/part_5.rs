@@ -172,8 +172,6 @@ pub(crate) fn derive_lane_view<'live>(
     planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
     let heap = vm.heap_reads();
-    // The receiver fact picks the trusted forms of the rows that read `this` (`receiver_trusted`, `trust_this_rows`).
-    let this_trusted = receiver_trusted(facts, function_id);
     // Boxed before the records name it: a planned record's `mode` points at its site, which the view keeps in place.
     let planned = planned.into_boxed_slice();
     let loop_tier = plan.loop_sites;
@@ -561,7 +559,6 @@ pub(crate) fn derive_lane_view<'live>(
         .map(|(pc, _)| pc as u32)
         .collect();
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
-    if this_trusted { trust_this_rows(&mut records); }
     let records = Records::new(records);
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.

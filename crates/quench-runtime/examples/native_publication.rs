@@ -79,7 +79,7 @@ fn measure() -> Result<(), String> {
     let path = args.next().ok_or("usage: native_publication SCRIPT [ROUNDS]")?;
     let rounds = args.next().map(|rounds| rounds.parse::<usize>().map_err(|error| error.to_string())).transpose()?.unwrap_or(DEFAULT_ROUNDS);
     let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let program = Engine::specialize_unspecialized(&source, &path).map_err(|errors| format!("{errors:?}"))?;
+    let program = Engine::specialize(&source, &path).map_err(|errors| format!("{errors:?}"))?;
     let order = [Subject::Interpreter, Subject::Aot];
     let mut samples: [Samples; 2] = Default::default();
     for round in 0..rounds {

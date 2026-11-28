@@ -39,23 +39,17 @@ var result = out.join("|");
 /// absence, holes and inherited elements, array-likes, strings and typed arrays on the native's
 /// loop, the length read once, a strict callback's `this`, collections inside callbacks,
 /// throws, nesting, callbacks that become frames, and bound and native callbacks behave as
-/// Node's (`node --expose-gc`), specialized or not.
+/// Node's (`node --expose-gc`).
 #[test]
 fn lane_reducers_keep_reduce_semantics() {
     let source = SOURCE;
-    for specialized in [false, true] {
-        let mut vm = quench_runtime::test_support::vm(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(source, "lane-reducers.js")
-        } else {
-            Engine::compile(quench_runtime::ExecutionRequest { source, name: "lane-reducers.js", kind: quench_runtime::SourceKind::Script })
-        }
+    let mut vm = quench_runtime::test_support::vm(TestHost::default().with_test262());
+    let program = Engine::specialize(source, "lane-reducers.js")
         .unwrap();
-        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-        let name = vm.intern_atom("result");
-        let value = vm.own_property(vm.realm.globals, name).unwrap();
-        assert_eq!(vm.to_string(&program, value).unwrap(), "62|4,32,21,10|5:7@4|7:5@2|0p2|TypeError|TypeError|init|7|>a0c2|CBA|123|6|true|60|59|r3|3.3|6|15|NaN");
-    }
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&program, value).unwrap(), "62|4,32,21,10|5:7@4|7:5@2|0p2|TypeError|TypeError|init|7|>a0c2|CBA|123|6|true|60|59|r3|3.3|6|15|NaN");
 }
 
 const PLAIN_CALLBACKS: &str = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
@@ -85,23 +79,17 @@ var result = out.join("|");
 /// over plain frames, a receiver shortened mid-iteration (the native's loop takes the holes),
 /// a throw, collections inside callbacks, `thisArg`, and a returning call (which spills the
 /// header into the step's record) behave as the specification says (expected string worked by
-/// hand, not yet checked against `node --expose-gc`), specialized or not.
+/// hand, not yet checked against `node --expose-gc`).
 #[test]
 fn lane_plain_array_steps_keep_semantics() {
-    for specialized in [false, true] {
-        let mut vm = quench_runtime::test_support::vm(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(PLAIN_CALLBACKS, "lane-plain-steps.js")
-        } else {
-            Engine::compile(quench_runtime::ExecutionRequest { source: PLAIN_CALLBACKS, name: "lane-plain-steps.js", kind: quench_runtime::SourceKind::Script })
-        }
+    let mut vm = quench_runtime::test_support::vm(TestHost::default().with_test262());
+    let program = Engine::specialize(PLAIN_CALLBACKS, "lane-plain-steps.js")
         .unwrap();
-        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-        let name = vm.intern_atom("result");
-        let value = vm.own_property(vm.realm.globals, name).unwrap();
-        assert_eq!(
-            vm.to_string(&program, value).unwrap(),
-            "2,4,6,8|2,4|10|10|10|4321|true|true|3|2|4,6,8,10|1,2,,,|m3|51,52,53,54|true|1,2,3,4"
-        );
-    }
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(
+        vm.to_string(&program, value).unwrap(),
+        "2,4,6,8|2,4|10|10|10|4321|true|true|3|2|4,6,8,10|1,2,,,|m3|51,52,53,54|true|1,2,3,4"
+    );
 }
