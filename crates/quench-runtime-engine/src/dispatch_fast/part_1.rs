@@ -121,14 +121,6 @@ pub(crate) const fn math_arity(site: u8) -> usize {
 /// Whether site `site` is a sinking read (`SINK_SITE`).
 pub(crate) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
 
-/// The store `(atom, cache)` of the sinking read `i` (`SINK_SITE`): its site's sink.
-#[inline(always)]
-pub(crate) fn sink_operands(cx: *mut LaneContext, i: &LaneInstruction) -> Option<(quench_runtime::bytecode::Atom, u16)> {
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    code.field_sites.get(i.imm() as usize)?.sink
-}
-
 pub(crate) const fn private_field_site(site: u8) -> bool {
     site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
 }
@@ -156,15 +148,6 @@ pub(crate) const fn nested_trusted_site(site: u8) -> bool { site == NESTED_TRUST
 
 /// Whether own-field or held site `site` reads `this`.
 pub(crate) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
-
-/// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
-pub(crate) const fn own_site_form(site: u8) -> u32 {
-    let index = (site.wrapping_sub(1) / 2) as usize;
-    if index < OWN_FORMS.len() { OWN_FORMS[index] }
-    else if index == OWN_FORMS.len() + 7 { 0 }
-    else if index == OWN_FORMS.len() + 33 { quench_runtime::value_vec::EXTRAS_FORM }
-    else { HINTED_FORM }
-}
 
 /// The `OWN_FORMS` index of the storage form layout id `hint` names (`0`, the hinted form, for none).
 /// A narrow run's hint names neither inline values nor extras, so those tests fold away. Record slots are

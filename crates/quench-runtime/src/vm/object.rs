@@ -2157,7 +2157,7 @@ impl Vm {
     }
 
     /// `inherited_field_hit` with the index of the entry that answered, which a lane record
-    /// keeps as its hint (`inherited_hint_operands`).
+    /// keeps as its hint.
     #[inline(always)]
     pub fn inherited_field_entry_hit(
         &mut self,
@@ -2205,29 +2205,6 @@ impl Vm {
             return None;
         }
         self.proved_inherited_entry_value(index, object)
-    }
-
-    /// The operands of inherited hint `index` for a read of `atom` (`IcOp::Held`): the layout id
-    /// of the receivers its proof last answered, the watch on its answer and the answer's bits;
-    /// `None` where no proved entry of that atom is held, or its slot holds no constant yet.
-    /// `others`: a function, array or builtin receiver reads it too, which the entry answers
-    /// only where functions may stand on its chain and a builtin's own lookup is its shape's.
-    #[inline(always)]
-    pub fn inherited_hint_operands(&self, index: u16, atom: Atom, others: bool) -> Option<(u64, u64, u64)> {
-        let cache = self.heap.dependencies().inherited_get(u32::from(index))?;
-        if cache.atom != atom || !cache.proved {
-            return None;
-        }
-        if others && !(cache.function_links && self.inherited_entry_answers(super::field_cache::InheritedReceiver::Builtin, u32::from(index))) {
-            return None;
-        }
-        // An absent name answers `undefined` while the proof holds, which the read tests above
-        // each time: its watch is one never retired.
-        let (watch, value) = match cache.answer {
-            InheritedFieldAnswer::Absent => (super::holder_hints::never_retired(), Value::UNDEFINED),
-            InheritedFieldAnswer::Slot(_) => (std::rc::Rc::as_ptr(cache.constant_watch.as_ref()?), cache.constant),
-        };
-        Some((u64::from(cache.proved_layout), watch as u64, value.to_bits()))
     }
 
     /// The value inherited entry `index` answers for `object` while its proof holds: its
@@ -2305,15 +2282,6 @@ impl Vm {
         self.holder_hint_hit_in(index, atom, self.hinted_receiver(object)?)
     }
 
-    /// The operands of prototype hint `index` for a read of `atom` (`IcOp::Held`): its guard
-    /// word, its watch's address and its value's bits; `None` where no hint of that atom is held.
-    /// The watch lives as long as the hint, which outlives the read it is given to.
-    #[inline(always)]
-    pub fn holder_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u64)> {
-        let hint = self.holder_hints.holder.get(usize::from(index))?;
-        (hint.atom == atom).then(|| (hint.guard, std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
-    }
-
     /// `holder_hint_hit` of the object part `receiver` (`hinted_receiver`).
     #[inline(always)]
     pub(super) fn holder_hint_hit_in(&self, index: u16, atom: Atom, receiver: &crate::heap::Object) -> Option<Value> {
@@ -2350,24 +2318,6 @@ impl Vm {
     #[inline(always)]
     pub fn holder_hint_live(&self, index: u16) -> bool {
         self.holder_hints.holder.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
-    }
-
-    /// The operands of string hint `index` for a read of `atom` (`IcOp::HeldString`): its watch's
-    /// address and its value's bits; `None` where no `String.prototype` hint of that atom is held.
-    #[inline(always)]
-    pub fn string_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
-        let hint = self.holder_hints.holder.get(usize::from(index))?;
-        (hint.atom == atom && hint.holder == self.string_proto)
-            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
-    }
-
-    /// The operands of number hint `index` for a read of `atom` (`IcOp::HeldNumber`): its watch's
-    /// address and its value's bits; `None` where no `Number.prototype` hint of that atom is held.
-    #[inline(always)]
-    pub fn number_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
-        let hint = self.holder_hints.holder.get(usize::from(index))?;
-        (hint.atom == atom && hint.holder == self.number_proto)
-            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
 
     /// The object part of a direct object, array, function or ordinary builtin, whose own

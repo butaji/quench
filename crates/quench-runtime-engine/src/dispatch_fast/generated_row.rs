@@ -30,8 +30,7 @@ view_handler! {
         // the generic ones (the call-out's, below), not a named read's plan.
         let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(quench_runtime::bytecode::Decoder::Property))
             && (OP == crate::dispatch_fast::FIELD_LEAF_READ || LaneFields::<OP, FLAG>::OPCODE.field_store().is_some()) };
-        // A named store (`SetField` and its `this` and strict forms): its record's own-field hint
-        // as a layout store (`RecordPlan::own_store`); whatever it refuses, the store handlers.
+        // A named store (`SetField` and its `this` and strict forms): the general store handlers (`store_miss!`).
         let store = const { LaneFields::<OP, FLAG>::OPCODE.field_store().is_some() };
         let this_store = const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_store(),
             Some(quench_runtime::bytecode::FieldStore { receiver: quench_runtime::bytecode::StoreReceiver::This, .. })) };
@@ -131,36 +130,11 @@ view_handler! {
                 unsafe { vm(script) }.heap_reads().typed_view_directory()));
         }
         if store {
-            let script: *mut LaneContext = view.memory.bytes.cast();
-            // The live record table: a direct object receiver proves it reserved, and any other
-            // receiver leaves at the row's family test before it is addressed.
-            // S7f DESIGN: the object record table is gone; a plan that addresses it declines to the miss row.
-            let records: u64 = property_miss!();
-            // A method cache that may name the atom must see the store (`store_admitted`).
-            if unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
-            // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
-            // a plain own-field store row keeps the record's `this` and no call on its path.
-            if this_store {
-                frame.this = if const { FLAG == FLAG_UNREAD } { r.this() }
-                    else { unsafe { crate::dispatch_fast::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
-            }
-            // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
-            // its siblings), at every plain store row.
-            frame.stores = Some(FieldStores::of(script));
-            frame.plan = Some(if const { FLAG == crate::dispatch_fast::GENERAL_SITE } {
-                RecordPlan::general_store(records)
-            } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
-                let hint = i.field_hint();
-                RecordPlan::own_hinted(hint.receiver, hint.record_slot(), records)
-            } else {
-                let hint = i.field_hint();
-                RecordPlan::own_store(hint.receiver, hint.record_slot(), records)
-            });
+            // A named store reads no record: every ordinary object is a class cell, so the store takes the general
+            // write at its miss (`store_miss!`), chosen at load.
+            store_miss!()
         } else if property {
-            // The record's plan: its own-field hint over the object records the lane bound; an
-            // unbound table is the miss's to bind.
-            // A JavaScript view carries its context (`script_handler!`); an own-field row is
-            // installed only once the lane bound the object records (`row_get_field_own_refresh`).
+            // A JavaScript view carries its context (`script_handler!`).
             let script: *mut LaneContext = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
             if const { crate::dispatch_fast::math_site(FLAG) } {
@@ -175,31 +149,9 @@ view_handler! {
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 frame.plan = Some(RecordPlan::nested_trusted(site.base, unsafe { i.operand.field.shape }, i.mode as u32));
             } else if const { crate::dispatch_fast::sink_site(FLAG) } {
-                // A nested read that stores its value to `this` (`this.a = this.b.c`): the record's hint is the first
-                // hop and the site's second entry the second, both primary own entries.
-                let machine = unsafe { vm(script) };
-                let code = unsafe { &*(*script).code };
-                let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
-                let Some((_, cache)) = site.second else { property_miss!() };
-                let entry = machine.field_cache_entry(cache);
-                let hint = i.field_hint();
-                if entry.holder != quench_runtime::vm::NO_FIELD_HOLDER || entry.receiver == quench_runtime::vm::NO_FIELD_RECEIVER
-                    || hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER {
-                    property_miss!()
-                }
-                // The store's operands are the site's, and the names the reads make decline to the general path
-                // (`Vm::reads_function_info`); the store is to the frame's `this`.
-                if site.sink.is_none() || machine.reads_function_info(site.first.0)
-                    || site.second.is_some_and(|(atom, _)| machine.reads_function_info(atom)) {
-                    property_miss!()
-                }
-                frame.this = r.this();
-                frame.stores = Some(FieldStores::of(script));
-                let form = quench_runtime::staged::Form::Either;
-                // S7f DESIGN: the lane's object record table (`live_object_records`) is gone; the plan that addresses it
-                // declines to the miss row.
-                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.record_slot(), form), (entry.receiver, entry.record_slot(), form), site.base,
-                    property_miss!()));
+                // A nested read that stores its value to `this` reads through its general path (`row_get_field_sink`),
+                // as the read's record names no object record.
+                property_miss!()
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
@@ -228,43 +180,11 @@ view_handler! {
                 frame.geometry = Some(GeometrySteps::of(script));
                 frame.plan = Some(RecordPlan::host_read(quench_runtime::staged::property::FieldPlan::Length));
             } else {
-            // S7f DESIGN: the lane's object record base is gone, so it reads as absent and the zero checks decline.
-            let records = 0_u64;
-            if const { crate::dispatch_fast::own_site_form(FLAG) == HINTED_FORM } {
-                // The form of no particular hint is the row a site starts on, before the lane bound
-                // its object records: its first miss binds them.
-                if records == 0 {
-                    if const { crate::dispatch_fast::own_site_this(FLAG) } {
-                        sibling!(row_get_field_own_refresh::<true, false>, r, ip, Carried::script_in(script, view))
-                    }
-                    sibling!(row_get_field_own_refresh::<false, false>, r, ip, Carried::script_in(script, view))
-                }
-            }
-            debug_assert_ne!(records, 0, "an own-field row runs over bound object records");
-            if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-            let hint = i.field_hint();
-            let form = const { crate::dispatch_fast::own_site_form(FLAG) };
-            let fixed = (form != HINTED_FORM).then_some(form);
-            // A fixed form is the hint's layout's own (`own_formed_handler` chose the row by it),
-            // stated so the read takes it as a constant, not from the layout table.
-            if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == form) } }
-            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
+                // An own-field read that no class-keyed or load-time plan proves reads through its general path.
+                property_miss!()
             }
         }
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Value(_) if store => {
-                let script: *mut LaneContext = view.memory.bytes.cast();
-                // The form the VM's own-field store left for the record (`field_store_host`): the hint the row reads
-                // next time. No row is re-chosen here. A narrow run's layout is no store's hint, so its object misses
-                // every store row to the general step.
-                if let Some(hint) = frame.stored {
-                    if quench_runtime::tier_surface::layouts::auxiliary(hint.receiver) & quench_runtime::value_vec::STORAGE_FORM != quench_runtime::value_vec::NARROW_FORM {
-                        set_field_hint(ip, hint);
-                    }
-                }
-                next!(script, r, following(ip), Carried::script_in(script, view))
-            }
-            Step::Unresolved if store => store_miss!(),
             Step::Value(value) if property && const { crate::dispatch_fast::returning_field_site(FLAG) } => {
                 // A returning read's value completes its activation as a returning record does
                 // (`lane_return_value!`), so it writes no register.
@@ -275,18 +195,6 @@ view_handler! {
             Step::Value(value) if property => {
                 let value = Value::from_bits(value);
                 let script: *mut LaneContext = view.memory.bytes.cast();
-                // A sinking read stores its value to `this` before its register is written: a refused
-                // store repeats the read from the registers as they were.
-                if const { crate::dispatch_fast::sink_site(FLAG) } {
-                    let Some((atom, site)) = crate::dispatch_fast::sink_operands(script, i) else {
-                        sibling!(crate::dispatch_fast::row_get_field_sink, r, ip, Carried::script_in(script, view))
-                    };
-                    if quench_runtime::staged::property::PropertyFrame::sink_store(&mut frame, &mut stage, atom, site, value.to_bits()).is_none() {
-                        sibling!(crate::dispatch_fast::row_get_field_sink, r, ip, Carried::script_in(script, view))
-                    }
-                    r.set(i.a & quench_runtime::bytecode::REGISTER_MASK, value);
-                    next!(script, r, following(ip), Carried::script_in(script, view))
-                }
                 r.set(i.a, value);
                 if const { crate::dispatch_fast::math_site(FLAG) } {
                     // The Math call the value feeds: its copies and the call are written here, or the

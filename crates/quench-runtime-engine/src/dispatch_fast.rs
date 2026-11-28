@@ -249,8 +249,7 @@ const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 #[quench_macros::ext(LaneInstructionOps1)]
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
-    /// slot of its own data field, as the site's primary entry proved it
-    /// (`row_get_field_own_refresh`).
+    /// slot of its own data field, as the site's primary entry proved it.
     /// Between shape compactions, which clear every hint (`LaneView::invalidate_shape_bindings`), a
     /// shape's slots never change, so the pair holds whatever the entry holds now.
     #[inline(always)]
@@ -2659,19 +2658,6 @@ script_handler! {
 
 use quench_runtime::staged::HINTED_FORM;
 
-script_handler! {
-    /// the own-field row (`own_formed_handler`) past its record's hint: the site's primary own entry, whose hit
-    /// becomes the hint; any other read goes through `row_get_field_miss`.
-    #[inline(never)]
-    fn row_get_field_own_refresh<THIS: bool, BOUND: bool>(cx, r, ip, i, view) {
-        // S7f DESIGN: the record-hint own row's hit (`own_entry_hit`: a record's primary own entry) is deleted with the
-        // object-record family; an ordinary receiver is a class cell, whose class-keyed entry the miss path reads.
-        let _ = (i, THIS, BOUND);
-        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-
 /// The opcode of the catalog's field leaf read (`Traits::FIELD_LEAF`), whose generated row
 /// (`generated_row`) an own-field read's record runs once its hint is bound (`own_formed_handler`).
 const FIELD_LEAF_READ: u16 = {
@@ -2781,8 +2767,7 @@ pub(crate) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
 
 
 /// The site fact of a named store into a field whose domain is narrower than Any (`AotFacts::store_form`
-/// Tracked), chosen at load: the row stores through the record's hint in place of the untracked own store
-/// (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`); a refusal takes the general step.
+/// Tracked), chosen at load: its row takes the general write at its miss (`store_miss!`), as every named store does.
 pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
 
 /// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
@@ -2797,8 +2782,8 @@ pub(crate) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
 pub(crate) const MATH_CALL2_SITE: u8 = own_site(false, OWN_FORMS.len() + 45);
 pub(crate) const MATH_CALL2_CONST_SITE: u8 = own_site(false, OWN_FORMS.len() + 46);
 
-/// The site fact of a nested read that stores its value to `this` (`this.a = this.b.c`), the
-/// read's flag `SET_THIS_REGISTER` its row's store (`PropertyFrame::sink_store`).
+/// The site fact of a nested read that stores its value to `this` (`this.a = this.b.c`): its row
+/// reads through the general path (`row_get_field_sink`), which makes the store.
 pub(crate) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
 
 
@@ -2894,15 +2879,7 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// A miss of a single-entry read (the own-field row, or a nested read's base): the general read, which keeps the
-    /// record. The row was chosen at load (`named_read_row`); no miss rewrites it.
-    #[inline(never)]
-    fn row_get_field_miss<>(cx, r, ip, i, view) {
-        let _ = i;
-        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-    }
-}
+
 
 
 
@@ -4586,7 +4563,7 @@ script_handler! {
     /// The out-of-line form of a call row, so the plain call keeps its registers: a receiver
     /// whose binding reads the heap (`call_this_in_lane`), a forwarding target, which takes
     /// `script_call_keeping_miss`, and a target whose body is a read (`CallEntry::frameless(Frameless::Reads)`,
-    /// `CallEntry::frameless(Frameless::ReadsElement)`), whose hit (`call_read_in_lane`) completes the
+    /// whose hit (`call_read_in_lane`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee. A site that called such a target calls this form directly, so it
@@ -5043,21 +5020,6 @@ enum NameResolution {
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
-    /// The global name store past the row's hint (`global_name_store`), which a global store's row takes at load: the
-    /// global object's own writable data field, which becomes the hint where no realm declares the name lexically
-    /// (`Vm::global_name_hintable`). Where a realm declares it, the store leaves to the general path at this store, and
-    /// the record keeps its row: a declaration retires the hints (`note_global_lexical_names`).
-    #[inline(never)]
-    fn store_global_name_miss<>(cx, r, ip, i, view) {
-        // S7f DESIGN: the global object is a class cell, so its own data field makes no record hint
-        // (`Vm::own_data_field_hint` and `Vm::hinted_own_field_store_hit` are deleted); every global
-        // store takes the general path.
-        let _ = (cx, r, i, view);
-        exit(ip)
-    }
-}
-
-script_handler! {
     /// `name_row` of a global, past its record's hint: an initialized global lexical binding of the name, which the
     /// general path's search finds first there, and which a `LEXICAL` row's hint locates by index; else the global
     /// object's own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
@@ -5461,7 +5423,7 @@ pub(crate) use vm_steps::{ahead_general_step, body_general_step, body_string_con
 pub(crate) mod handler_edges;
 pub(crate) use handler_edges::handler_edge;
 use array_steps::*;
-use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler};
+use native_calls::{native_call_handler, reflect_get_call_handler};
 pub(crate) mod wasm_gc;
 
 #[quench_macros::ext(DispatchFastVm4)]
@@ -6156,56 +6118,11 @@ impl ReadArguments {
     fn get(self, parameter: u16) -> Option<Value> {
         (parameter < self.passed).then(|| self.registers.get(self.base + parameter))
     }
-
-    /// The arguments a body of `params` parameters passes on in order.
-    #[inline(always)]
-    fn within(self, params: u16) -> Self {
-        Self { passed: self.passed.min(params), ..self }
-    }
-}
-
-/// The hit a field record of a read body answers with: its quickened primary own entry (`own_formed_handler`).
-/// Each hit is its cache's own validated read, whatever the record's state when it runs.
-#[derive(Clone, Copy)]
-enum FieldHit {
-    Own(u16),
-}
-
-
-impl FieldHit {
-    /// The hit `record`'s quickened handler names; `None` for any other record state.
-    #[inline(always)]
-    fn of(record: &LaneInstruction) -> Option<Self> {
-        let handler = record.handler;
-        if own_bound_handlers().contains(&handler)
-            || math_field_call_handlers().contains(&handler)
-        {
-            Some(Self::Own(record.c))
-        } else {
-            None
-        }
-    }
-
-    /// The hit on `object`; `None` for a miss.
-    #[inline(always)]
-    fn run(self, vm: &mut Vm, code: &ResidualProgram, object: Value) -> Option<Value> {
-        // S7f DESIGN: the record's primary entries are deleted with the record tier; a quickened
-        // field hit declines and the read takes its general path.
-        let _ = (vm, code, object);
-        match self {
-            Self::Own(cache) => {
-                let _ = cache;
-                None
-            }
-        }
-    }
 }
 
 /// The read a `CallEntry::reads` body answers with, by the state its records quickened to.
 #[derive(Clone, Copy)]
 enum LeafRead {
-    /// Its field record's hit, then the dense element the parameter `index` names.
-    Element { base: u16, field: FieldHit, index: u16 },
     /// Its returning private field read (`RETURNING_FIELD_PRIVATE`) of `atom` at its record
     /// `site`, under the home the callee's environment `environment` finds.
     Private { base: u16, atom: quench_runtime::bytecode::Atom, site: usize, environment: Value, function: u32 },
@@ -6221,11 +6138,6 @@ impl LeafRead {
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
         // SAFETY: the program store keeps a derived view alive with its program.
         let entry = unsafe { &*(*target.view).records() };
-        if target.entry == CallEntry::frameless(Frameless::ReadsElement) {
-            // SAFETY: as the function's contract.
-            let element = unsafe { &*(*target.view).records().add(1) };
-            return Some(Self::Element { base: entry.b, field: FieldHit::of(entry)?, index: element.c });
-        }
         let handler = entry.handler;
         if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
@@ -6250,55 +6162,11 @@ impl LeafRead {
     ) -> Option<Value> {
         let base = |base: u16| read_base_in_lane(quench_runtime::bytecode::FieldBase(base), arguments, this);
         match self {
-            Self::Element { base: field_base, field, index } => {
-                let array = field.run(vm, code, base(field_base)?)?;
-                vm.direct_dense_element(array, arguments.get(index)?)
-            }
             // The callee runs frameless, capturing from its closure's environment.
             Self::Private { base: field_base, atom, site, environment, function } => {
                 vm.site_private_field(code, site, (environment, function, false), base(field_base)?, atom)
             }
         }
-    }
-}
-
-/// A `CallEntry::frameless(Frameless::ForwardsRead)` body's reads: the field of `this` or a parameter it reads,
-/// then the method of that field's value it calls.
-#[derive(Clone, Copy)]
-struct ForwardRead {
-    base: u16,
-    field: FieldHit,
-    method: FieldHit,
-}
-
-impl ForwardRead {
-    /// The reads `target`'s records answer with now; `None` for a record state no read hits.
-    ///
-    /// # Safety
-    /// `target` is a `CallEntry::frameless(Frameless::ForwardsRead)` target of the running program, whose view
-    /// holds its method read after its field read.
-    #[inline(always)]
-    unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
-        // SAFETY: the program store keeps a derived view alive with its program.
-        let (field, method) = unsafe {
-            let records = (*target.view).records();
-            (&*records, &*records.add(1))
-        };
-        Some(Self { base: field.b, field: FieldHit::of(field)?, method: FieldHit::of(method)? })
-    }
-
-    /// The method the body calls and its receiver, for a call passing `arguments` on `this`.
-    #[inline(always)]
-    fn method(
-        self,
-        vm: &mut Vm,
-        code: &ResidualProgram,
-        arguments: ReadArguments,
-        this: Value,
-    ) -> Option<(Value, Value)> {
-        let base = read_base_in_lane(quench_runtime::bytecode::FieldBase(self.base), arguments, this)?;
-        let receiver = self.field.run(vm, code, base)?;
-        Some((self.method.run(vm, code, receiver)?, receiver))
     }
 }
 

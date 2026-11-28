@@ -1,9 +1,8 @@
 //! Field and call reads in a lane: call reads, captured reads, and answered calls.
 use super::*;
 
-/// The value a frameless read target (`CallEntry::reads`, `CallEntry::frameless(Frameless::ForwardsRead)`)
-/// returns for a call passing `arguments.get(k)` as parameter `k` (`None` where not passed) on
-/// `this`, where the reads its records have quickened to hit. Answering it at the call
+/// The value a frameless read target (`CallEntry::reads`) returns for a call passing `arguments.get(k)` as
+/// parameter `k` (`None` where not passed) on `this`, where the reads its records have quickened to hit. Answering it at the call
 /// leaves nothing for an activation to observe: each hit runs no guest code and allocates
 /// nothing. `None` for any other record state or a miss, which the call activates to run.
 ///
@@ -18,27 +17,13 @@ pub(in super::super) unsafe fn call_read_in_lane(
 ) -> Option<Value> {
     // SAFETY: the context's program outlives the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
-    // A forwarding body's answer is its method's leaf read on the field it reads, so both
-    // kinds reach one leaf read, which the call handler then holds once.
-    let (target, arguments, this) = if target.entry == CallEntry::frameless(Frameless::ForwardsRead) {
-        // SAFETY: as for `ForwardRead::of`.
-        let (callee, receiver) = unsafe { ForwardRead::of(target) }?.method(vm, code, arguments, this)?;
-        // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
-        let inner = unsafe { &*vm.script_call_entry(callee)? };
-        if !inner.entry.reads() {
-            return None;
-        }
-        let inner_this = direct_call_this_in_lane(vm, inner, receiver)?;
-        // The call passes the parameters in order, so its argument `k` is parameter `k`.
-        (inner, arguments.within(target.params), inner_this)
-    } else {
-        (target, arguments, this)
-    };
     match target.entry {
         // The receiver the call binds (`direct_call_this_in_lane`), which is what it returns.
         _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(this),
         // SAFETY: a capture-read target of the running program.
         _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => unsafe { read_capture_in_lane(vm, target) },
+        // A forwarding body reads through its field's record, which no record holds now: the call activates it.
+        _ if target.entry == CallEntry::frameless(Frameless::ForwardsRead) => None,
         // SAFETY: as for `LeafRead::of`.
         _ => unsafe { LeafRead::of(target) }?.run(vm, code, arguments, this),
     }
