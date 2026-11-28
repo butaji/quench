@@ -61,10 +61,10 @@ mod tests {
         let own_site = site("readOwn");
         let cell_site = site("readCell");
         let inherited_site = site("readInherited");
-        assert_eq!(vm.primary_own_field_hit(program, own, own_site), Some(Value::integer(7)));
+        assert_eq!(vm.cell_own_field_hit(program, own, own_site), Some(Value::integer(7)));
         assert_eq!(vm.cell_own_field_hit(program, function, cell_site), Some(Value::integer(8)));
-        assert_eq!(vm.primary_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
-        assert_eq!(vm.primary_record_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
+        assert!(matches!(vm.cached_field_hit(program, inherited, inherited_site), FieldCacheProbe::Hit(value)
+            if value == Value::integer(9)));
         assert!(matches!(vm.cached_field_hit(program, function, cell_site), FieldCacheProbe::Hit(value)
             if value == Value::integer(8)));
         assert_eq!(vm.cell_own_field_hit(program, accessor, own_site), None,
@@ -2809,15 +2809,15 @@ impl Vm {
     }
 
     /// A string primitive's `GetField` where no lookup can run guest code, in the order
-    /// `get_field_cached` takes: its `length`, then the `String.prototype` data property
-    /// its site cache holds (`string_prototype_field_hit`). An index, or any other key, is
+    /// `get_field_cached` takes: its `length`, then a name the `String.prototype` chain lacks (`undefined`). A data
+    /// property of that chain is left to the general read, which the site records. An index, or any other key, is
     /// left to the general path.
     pub fn cached_string_field_hit(
         &self,
         p: &ResidualProgram,
         object: Value,
         atom: Atom,
-        site: u16,
+        _site: u16,
     ) -> Option<Value> {
         if atom == self.length_atom {
             return self.string_length_value(object);
@@ -2830,12 +2830,10 @@ impl Vm {
         // prototype chain, which the string's own index and `length` keys never shadow. A
         // present one the site has not recorded is left to the general read, which records
         // it (`get_string_field_miss`), so the site's later reads hit.
-        self.string_prototype_field_hit(site).or_else(|| {
-            match self.plain_property_lookup(self.string_proto, PropertyKey::string(atom)) {
-                Some(None) => Some(Value::UNDEFINED),
-                _ => None,
-            }
-        })
+        match self.plain_property_lookup(self.string_proto, PropertyKey::string(atom)) {
+            Some(None) => Some(Value::UNDEFINED),
+            _ => None,
+        }
     }
 
     /// A number, boolean, symbol or bigint primitive's `GetField` where no lookup can run guest
