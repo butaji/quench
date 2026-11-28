@@ -85,7 +85,7 @@ pub(crate) fn operand_in_lane(
             field: FieldOperand { imm: instruction.imm(), shape: quench_runtime::vm::NO_FIELD_RECEIVER },
         },
         _ if instruction.op().makes_script_call() => LaneOperand {
-            call: CallOperand { imm: instruction.imm(), memo: NO_READ_MEMO },
+            call: CallOperand { imm: instruction.imm(), memo: NO_OPERAND_LINK },
         },
         _ => LaneOperand {
             imm: instruction.imm(),

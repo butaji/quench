@@ -258,15 +258,15 @@ fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     body_activate_in_lane(cx, call, target, this, false, how)
 }
 
-/// The value `target`'s read answers `call` with: memoized at the record where its layout has a
-/// memo form (a register call's window), else read from the values it passes.
+/// The value `target`'s read answers `call` with: read from the window the call passes, else from the
+/// values it passes.
 ///
 /// # Safety
 /// As `call_read_in_lane`.
 unsafe fn body_read_answer(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value) -> Option<Value> {
-    if let (true, Arguments::Window { first, count }) = (call.memoizes(), call.site.arguments) {
+    if let Arguments::Window { first, count } = call.site.arguments {
         let passed = ReadArguments { registers: call.registers, base: first, passed: count };
-        return unsafe { answered_call_in_lane(cx, call.ip, target, passed, this) };
+        return unsafe { answered_call_in_lane(cx, target, passed, this) };
     }
     // SAFETY: the registers do not move while the read runs.
     let values = unsafe { call.values() };

@@ -130,7 +130,7 @@ pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<cra
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
     let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
     let history = vm.lane_stack.call_sites.borrow();
-    // The callees the site resolved or memoized, in the order first seen (`LaneStack::note_site_callee`).
+    // The callees the site resolved, in the order first seen (`LaneStack::note_site_callee`).
     let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
     // A collection since the site linked retires its entry; the callee's own entry of this
     // generation, where a call resolved it again, is the same target. A linked entry another
@@ -157,7 +157,7 @@ pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<cra
                 .take(crate::compiled::tier_policy::POLYMORPHISM)
                 .collect()
         }
-        // A site that runs only in its function's lane body, or that a read memo answers,
+        // A site that runs only in its function's lane body,
         // links nothing current: the callees it recorded, else the body's own inlined calls
         // (`lane_unit::InlinedCall`), are its targets.
         None => match recorded {

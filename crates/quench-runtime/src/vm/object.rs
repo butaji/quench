@@ -1762,48 +1762,6 @@ impl Vm {
         }
     }
 
-    /// `entry`, which just answered a read of the direct object `object`, as a call memo's step
-    /// (`record_field_formed_hit`): its receiver shape, and its holder's where it names one,
-    /// as layout ids (`Object::hint_shape`), so each compare also proves the storage
-    /// form. An entry the objects do not match stays as recorded.
-    pub fn formed_entry(&self, entry: FieldCache, object: Value) -> FieldCache {
-        let Some(receiver) = self.heap.object_record(object) else {
-            return entry;
-        };
-        if receiver.exact_shape() != entry.receiver {
-            return entry;
-        }
-        if entry.holder == NO_FIELD_HOLDER {
-            return FieldCache { receiver: receiver.hint_shape(), ..entry };
-        }
-        match receiver.proto_link().object_granule().map(|granule| self.heap.object_record_by_granule(granule)) {
-            Some(holder) if cached_holder_matches(holder, entry.holder) =>
-                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), holder_cell: NO_FIELD_HOLDER_LAYOUT, ..entry },
-            _ => entry,
-        }
-    }
-
-    /// `record_field_entry_hit` of a call memo's step (`formed_entry`), whose shapes are whole
-    /// auxiliary words: `None` where either differs, storage form included.
-    #[inline(always)]
-    pub fn record_field_formed_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
-        self.record_field_formed_hit_in(cache, self.heap.object_record(object)?)
-    }
-
-    /// `record_field_formed_hit` of a direct object's record.
-    #[inline(always)]
-    pub fn record_field_formed_hit_in(&self, cache: FieldCache, receiver: &crate::heap::Object) -> Option<Value> {
-        if cache.holder == NO_FIELD_HOLDER {
-            return self.own_field_hint_hit::<{ crate::staged::HINTED_FORM }>(cache, receiver);
-        }
-        let holder = self.heap.object_record_by_granule(receiver.proto_link().object_granule()?);
-        if cache.receiver != receiver.hint_shape() || holder.hint_shape() != cache.holder {
-            return None;
-        }
-        // SAFETY: as for `record_field_entry_hit`: the holder's exact shape holds the slot.
-        Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
-    }
-
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
     /// shape and slot, which `record_field_entry_hit` reads while the shape, dictionary or not,
     /// holds. `None` for any other object, dictionary storage, a shape edited in place

@@ -86,31 +86,23 @@ pub(in super::super) unsafe fn read_capture_in_lane(vm: &mut Vm, target: &Script
 /// The values a call that a read answers passed (`call_read_in_lane`): parameter `k` is the
 /// call window's register `base + k` while `k < passed`, else unpassed. A concrete value,
 /// not a closure, so the reads it feeds are one copy whatever forwarded them.
-/// `call_read_in_lane` of the call at `site`, memoized when it answers (`note_read_in_lane`). Out
-/// of line: the read's calls take stack temporaries, which a handler inlining them would hold
-/// on its common path.
+/// `read_answer_in_lane` of a call's read, out of line: the read's calls take stack temporaries,
+/// which a handler inlining them would hold on its common path.
 ///
 /// # Safety
 /// As `call_read_in_lane`.
 #[inline(never)]
 pub(in super::super) unsafe fn answered_call_in_lane(
     cx: *mut LaneContext,
-    site: Ip,
     target: &ScriptCallTarget,
     arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
     // SAFETY: the caller's contract.
-    let value = unsafe { read_answer_in_lane(cx, target, arguments, this) };
-    // A mutating operation must never enter the pure read memo.
-    if value.is_some() && target.entry != CallEntry::frameless(Frameless::AppendsCapture) {
-        note_read_in_lane(cx, site, target, arguments, this);
-    }
-    value
+    unsafe { read_answer_in_lane(cx, target, arguments, this) }
 }
 
-/// The value `target`'s read answers a call with, or what a capture append returns, without the
-/// site's memo: what a call whose record has no memo form (a method call's) is answered by.
+/// The value `target`'s read answers a call with, or what a capture append returns.
 ///
 /// # Safety
 /// As `call_read_in_lane`.
@@ -132,4 +124,20 @@ pub(in super::super) fn own_bound_handlers() -> [*const (); OWN_FORMS.len() + OW
     if cfg!(not(feature = "jit")) { return [std::ptr::null(); OWN_FORMS.len() + OWN_FORMS.len()]; }
     macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as *const () } }
     own_sites!(row)
+}
+
+/// The object a read body's field record names: `this`, or the parameter its activation
+/// would hold in that register; `None` for an unpassed one, whose `undefined` no read hits.
+#[inline(always)]
+pub(in super::super) fn read_base_in_lane(
+    base: quench_runtime::bytecode::FieldBase,
+    arguments: ReadArguments,
+    this: Value,
+) -> Option<Value> {
+    match base.register_index() {
+        Some(register) => arguments.get(register),
+        // A local base (`FieldBase::local`) names no activation register; the call runs.
+        None if base.local_index().is_some() => None,
+        None => Some(this),
+    }
 }

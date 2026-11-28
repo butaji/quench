@@ -1,5 +1,5 @@
 //! A lane run that continues past a collection a native call made (`gc()`) resolves again
-//! what it cached before it: call targets, function targets, read memos and capture storages
+//! what it cached before it: call targets, function targets and capture storages
 //! (TOD-1807). Node prints the same two lines.
 use std::process::Command;
 

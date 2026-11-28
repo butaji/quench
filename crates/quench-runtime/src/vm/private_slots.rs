@@ -158,8 +158,8 @@ impl Vm {
     }
 
     /// The own-field entry (`FieldCache::own`) of the private field site `site` read last
-    /// under the home `environment` finds: a call memo's step (`MemoLeaf`), which holds while
-    /// the memo's callee, and so its environment and home, does.
+    /// under the home `environment` finds, which holds while the callee, and so its environment
+    /// and home, does.
     pub fn site_private_field_entry(&self, site: usize, environment: Value) -> Option<FieldCache> {
         let (shape, slot) = self.private_site_homes.field_entry(site, environment)?;
         Some(FieldCache::own(shape, u16::try_from(slot).ok()?))

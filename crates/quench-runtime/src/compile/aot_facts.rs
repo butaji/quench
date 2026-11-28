@@ -200,7 +200,7 @@ pub struct AotFacts {
     /// `FunctionFacts::names_static`. A bytecode property, so it holds in every world.
     names_static: std::collections::BTreeSet<u32>,
     /// Per body (function id), the body forms `body_forms` classifies from the function and its bytecode, computed once by the
-    /// pipeline (`pipeline::body_forms`). The readers `body_entry`, `returning_read`, `read_shape` and `forwards_args` index it.
+    /// pipeline (`pipeline::body_forms`). The readers `body_entry`, `returning_read` and `forwards_args` index it.
     bodies: Box<[BodyForm]>,
 }
 
@@ -211,8 +211,6 @@ pub(crate) struct BodyForm {
     entry: Option<CallEntry>,
     /// The `return this.f` or `return p.f` read the body is (`body_forms::returning_read`).
     returning: Option<ReturningRead>,
-    /// The memo shape of the body's frameless read (`body_forms::read_shape`).
-    read: Option<u8>,
     /// Whether a call of the body forwards its arguments (`body_forms::forwards_args`).
     forwards: bool,
 }
@@ -526,12 +524,6 @@ impl AotFacts {
     /// this reader is narrower, a base of `this` or a parameter and no handler, so it names the field alone.
     pub fn returning_read(&self, body: u32) -> Option<ReturningRead> {
         self.bodies.get(body as usize)?.returning
-    }
-    /// The memo shape `MemoRead::shape` takes for the frameless read body `body` answers with (`body_forms::read_shape`):
-    /// `MEMO_FIELD` for a returning field of `this` or a parameter, `MEMO_ELEMENT` for an element of one. None for a nested or
-    /// local field (its shape is the program's field sites') and for a forwarded read (its shape is the forwarded callee's).
-    pub fn read_shape(&self, body: u32) -> Option<u8> {
-        self.bodies.get(body as usize)?.read
     }
     /// Whether a call of body `body` forwards its arguments (`body_forms::forwards_args`), the static form of
     /// `ScriptCallTarget::forwards`: a rest body or one whose plan keeps its arguments, where no settling, environment or frame form

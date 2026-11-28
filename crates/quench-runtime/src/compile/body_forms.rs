@@ -1,19 +1,11 @@
 //! The body forms of script functions, classified once from the function record and its bytecode: the entry a
-//! call of a body takes (`body_entry`), the read a body returns (`returning_read`, `read_shape`), and whether a
+//! call of a body takes (`body_entry`), the read a body returns (`returning_read`), and whether a
 //! call of a body forwards its arguments (`forwarding_form`, `forwards_args`). The VM classifies a target with
 //! these at link time (`quench-runtime-engine`'s `call_body_forms` and `dispatch_fast::closure_targets`), and the
 //! AOT facts read the same functions (`AotFacts::body_entry` and its siblings), so both name one classification.
 
 use crate::bytecode::{CallPlan, Constant, FieldBase, FieldLookup, Function, ImmediateLayout, ImmediateRole, Instr, OperandKind, RETURN_REGISTER, Traits, WideInstruction};
 use crate::vm::engine_types::{CallEntry, Framed, Frameless};
-
-/// The memo shapes of a frameless read (`MemoRead::shape`): a field of `this` or a parameter, an element of one, a
-/// length, a nested read, and a forwarded read (`MEMO_FORWARD`, OR'd with the shape of the read it forwards to).
-pub const MEMO_FIELD: u8 = 0;
-pub const MEMO_ELEMENT: u8 = 1;
-pub const MEMO_LENGTH: u8 = 2;
-pub const MEMO_NESTED: u8 = 3;
-pub const MEMO_FORWARD: u8 = 4;
 
 /// The operator `!==`, as the oxc operator's index in a binary record's immediate.
 pub const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
@@ -93,18 +85,6 @@ pub fn returning_read(body: &Function) -> Option<ReturningRead> {
         ReadBase::Parameter(base.register_index().filter(|&register| register < body.params)?)
     };
     Some(ReturningRead { atom, base })
-}
-
-/// The memo shape (`MemoRead::shape`) of the frameless read `body` answers a call with, for a body whose read the
-/// body alone decides: a returning field of `this` or a parameter (`MEMO_FIELD`, `returning_read`), and an element
-/// of one (`MEMO_ELEMENT`, `element_read_body`). None for a nested or local field, whose shape the program's field
-/// sites decide, and for a forwarding read, whose shape is the forwarded method's at run time (`MEMO_FORWARD`).
-pub fn read_shape(body: &Function) -> Option<u8> {
-    let first = body.widened(*body.code.first()?);
-    if returning_field(first) {
-        return returning_read(body).map(|_| MEMO_FIELD);
-    }
-    element_read_body(body).then_some(MEMO_ELEMENT)
 }
 
 /// The framed form a call of `body` with `plan` takes when the call forwards its arguments: `Gathers` for a rest

@@ -159,7 +159,7 @@ print(JSON.stringify(out));
     }
 
     #[test]
-    fn capture_append_leaf_uses_writable_capture_and_never_read_memoizes() {
+    fn capture_append_leaf_uses_writable_capture() {
         let source = r#"
           function make() {
             let text = "";
@@ -185,10 +185,6 @@ print(JSON.stringify(out));
             assert_eq!(lines, ["xy".repeat(128)]);
             let target = append_target(&vm);
             assert!(capture_stores(target.capture).is_some(), "the primitive calls must admit direct writes");
-            assert!(
-                vm.lane_stack.read_memos.iter().all(|memo| memo.callee != target.callee),
-                "a mutating call must never populate the pure read memo"
-            );
         }
     }
 
