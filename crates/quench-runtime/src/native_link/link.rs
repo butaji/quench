@@ -179,6 +179,17 @@ impl NativeSupport {
         })
     }
 
+    /// The identity of the support's libraries as built (path, length and modification time of each), for keying what
+    /// a link of them computes (`aot::host_operations`'s closure cache): a rebuild of any library changes it.
+    pub fn build_stamp(&self) -> String {
+        let libraries = [Some(&self.host), Some(&self.runtime), self.engine.as_ref(), self.layers.as_ref(), self.alloc.as_ref(), self.built_std.as_ref()];
+        libraries.into_iter().flatten().map(|path| {
+            let metadata = std::fs::metadata(path).ok();
+            let modified = metadata.as_ref().and_then(|metadata| metadata.modified().ok()).and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+            format!("{}:{}:{}\n", path.display(), metadata.map_or(0, |metadata| metadata.len()), modified.map_or(0, |time| time.as_nanos()))
+        }).collect::<String>() + &format!("{}:{}:{:?}", self.optimization, self.rust_lto, self.executable_link_args)
+    }
+
     /// Fails unless the engine library is the build this compiler is (`AHEAD_BUILD_ID_MARK`, which
     /// names the engine and the core under it): an image this compiler lowers runs only on the
     /// build it was lowered for, so a library rebuilt from a changed tree would link an executable

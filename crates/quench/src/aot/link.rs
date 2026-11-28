@@ -18,6 +18,8 @@ impl NativeSupport {
             .map(|support| Self(support.with_executable_link_args(EXECUTABLE_LINK_ARGS)))
     }
     /// Fails unless the support's runtime library is this compiler's own build (`native_link::NativeSupport::check_build`).
+    /// The support's build identity (`native_link::NativeSupport::build_stamp`).
+    pub fn build_stamp(&self) -> String { self.0.build_stamp() }
     pub fn check_build(&self) -> Result<(), String> { self.0.check_build() }
     pub fn report(&self) -> serde_json::Value {
         let mut report = self.0.report();
