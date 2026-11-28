@@ -5,6 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set
 /// `scalar::checkable` names (a String, an array or a plain object included). A BigInt, Symbol or a mixed set with Number is not checked here.

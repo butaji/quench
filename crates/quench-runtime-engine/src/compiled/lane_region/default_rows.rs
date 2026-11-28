@@ -10,6 +10,7 @@ use super::*;
 use super::super::{emit_js_payload_word, emit_lane_call, JsStepDispatch, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED, LANE_CALL_RAISED};
 use crate::compiled::base_region::steps::STEP_WRITES;
 use quench_runtime::staged::machine::{Lane, Relation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// An instruction no specialized arm made: a Number row by its staged definition (`number_row`), else its

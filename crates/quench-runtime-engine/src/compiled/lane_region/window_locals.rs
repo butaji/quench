@@ -12,6 +12,7 @@ use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::bytecode::InstructionField;
 use quench_runtime::staged::environment::{environment_slot, environment_slot_define, environment_slot_open, environment_slot_store};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What an instruction does to an environment-owned slot.
 #[derive(Clone, Copy)]

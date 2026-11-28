@@ -5,6 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Traits;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The tier that asks whether an inlined callee's instruction may be inlined. The two answer
 /// differently, by design: a loop region takes an instruction by its opcode's `INLINABLE` trait

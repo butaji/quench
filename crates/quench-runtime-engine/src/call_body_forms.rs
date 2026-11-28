@@ -6,6 +6,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{FieldBase, FieldLookup, Operand, OperandKind};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether `base` reads `this` or a parameter: no nested chain and no local.
 fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {

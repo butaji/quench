@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot};
 use quench_runtime::staged::GlobalBinding;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// `LoadName` or `LoadNameCall` at `pc` of a name the global scope resolves: an immutable

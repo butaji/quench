@@ -11,6 +11,7 @@ use super::{AotFunction, AotImage, CallSite, LaneImage, base::BaseImage, symbols
 use crate::compiled::AHEAD_BUILD_ID;
 use quench_runtime::vm::engine_types::{ExitFact, ExitKind, ExitSig, ExitSite, ExitTable, LiveValue, Source, WasmRows};
 use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x09";
 /// The memory slot of Wasm rows whose entry reads no memory.

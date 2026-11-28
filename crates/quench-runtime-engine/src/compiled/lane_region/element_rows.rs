@@ -10,6 +10,7 @@ use super::*;
 use quench_runtime::staged::typed_elements::{typed_read_integer, TypedView, ViewKind};
 use quench_runtime::staged::{Operation, Stage, Step};
 use quench_runtime::staged::NumericStage as _;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.

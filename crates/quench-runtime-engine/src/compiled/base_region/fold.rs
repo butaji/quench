@@ -12,6 +12,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::call_plan::{CallForm, CallShape};
 use quench_runtime::staged::native_row::{native_row_of, NativeRow};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A field read folded into the call that invokes it: the read's PC, the call's, the call's row (which leaves at the read) and a
 /// returning call's completion.

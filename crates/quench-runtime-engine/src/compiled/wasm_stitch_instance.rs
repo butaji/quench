@@ -40,6 +40,7 @@ use crate::compiled::{CONTEXT_MEMORY_GROW, CONTEXT_MEMORY_LENGTH};
 use super::{Planned, World, codes, row, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_memory::Memory;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The rows of the instance operation `step` at `pc`, or `None` where it has none (every operation
 /// but `memory.grow`, see the module docs). A growth must leave the memory's base in place

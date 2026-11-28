@@ -10,6 +10,7 @@ use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_instance::{Instance, InstanceWasmInstanceExt, Storage, WasmInstance, global_get, global_set, local_register};
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use cranelift_codegen::ir;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The width of a word held as `storage`.
 const fn storage_width(storage: Storage) -> Width {

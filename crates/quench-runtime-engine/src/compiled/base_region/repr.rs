@@ -3,6 +3,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::typed_ir::{Representation, Type};
 use crate::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The representation of each web, by its number: `None` is unseen (a web no writer reaches), else
 /// how its values are held. A register takes the widest of what its writers produce.

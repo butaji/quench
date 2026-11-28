@@ -22,6 +22,7 @@ use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::staged::{self as staged, Domain, NegativeZero, NumberOperation, Overflow};
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use std::collections::{BTreeSet, VecDeque};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The generated predictions, from this crate's manifest directory.
 const PREDICTIONS: &str = "../quench-tier-corpus/ir_predict.txt";

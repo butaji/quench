@@ -8,6 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Function;
 use quench_runtime::staged::{DecodeContext, HandlerEdge, Operation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The row of the plain `throw` at `pc` whose handler the function's code can jump to, the edge `Operation::handler_edge`
 /// names: a catch that binds nothing is the jump; one that binds is the `Step::Catch` row, which moves the thrown value

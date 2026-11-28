@@ -27,6 +27,7 @@ pub(crate) use quench_runtime::vm::engine_types::BoundCalls;
 use quench_runtime::vm::engine_types::BoundRecords as Records;
 
 use quench_runtime::vm::engine_types::Held;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 

@@ -29,6 +29,7 @@ use quench_runtime::staged::wasm_exception::{Exception, PayloadType};
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use quench_runtime::wasm::tag::ExceptionInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The bytes of one word of an operand block or a result.
 const WORD: usize = size_of::<u64>();

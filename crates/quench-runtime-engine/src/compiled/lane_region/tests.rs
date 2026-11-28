@@ -14,6 +14,7 @@ fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
 use super::*;
 use quench_runtime::value::EXACT_I64_TRUNCATION_LIMIT;
 use cranelift_codegen::ir::condcodes::FloatCC;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[test]
 fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {

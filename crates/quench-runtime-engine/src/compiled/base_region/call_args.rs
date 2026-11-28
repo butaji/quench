@@ -16,6 +16,7 @@ use super::span::Span;
 use super::webs::Webs;
 use quench_runtime::bytecode::{Constant, Function, Register, WideInstruction};
 use quench_runtime::typed_ir::Type;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame registers of the pinned int32 and double webs the body's entry guards at its header (`entry_rows`'s pin
 /// rows, which every entry runs): `(int32s, doubles)`.

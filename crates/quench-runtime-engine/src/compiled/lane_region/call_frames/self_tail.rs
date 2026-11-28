@@ -1,4 +1,5 @@
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl<'a, 'f> Lowering<'a, 'f> {
     /// The callee of a self tail call (DESIGN.md 4.4): the returning call at `pc` of the function's own body, whose one owned

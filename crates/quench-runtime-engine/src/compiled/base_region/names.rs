@@ -11,6 +11,7 @@ use super::*;
 use quench_runtime::staged::add_plan::Transition;
 use quench_runtime::staged::naming::name_form;
 use quench_bjit::{padded_holes, HOLES};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What one `SetFunctionName` instruction runs: the site's edge, whose slot is the function's `name`
 /// slot, and the word of the name's string.

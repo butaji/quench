@@ -32,6 +32,7 @@ extern crate quench_stencils;
 /// The core's staged forms, at the path the stencil layout files the tests mount name them by.
 #[cfg(test)]
 pub(crate) use quench_runtime::staged;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 /// The differential oracle the engine's tier tests run a program through.
 #[cfg(test)]
 pub(crate) mod test_oracle;

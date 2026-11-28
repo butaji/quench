@@ -12,6 +12,7 @@ use quench_runtime::typed_ir::{arithmetic, IntRange, Type};
 use quench_runtime::staged::{DecodeContext, NumberOperation, Operation};
 use quench_runtime::value::Value;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The range of an operand: a register's by its type, a constant's by its value.
 pub(crate) type Lookup<'a> = &'a dyn Fn(Operand) -> Option<IntRange>;

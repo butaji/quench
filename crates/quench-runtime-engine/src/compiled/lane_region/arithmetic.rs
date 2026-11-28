@@ -10,6 +10,7 @@ use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
 use quench_runtime::staged::{Domain, NegativeZero, NumberOperation, Operation, Overflow};
 use quench_runtime::vm::global_facts::GlobalRead;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What a Number arithmetic step reads and writes: its result register and its operands.
 type Operands = (Register, [Operand; 2]);

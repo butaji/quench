@@ -9,6 +9,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The callouts a function's rows call, by address.
 pub(crate) struct Callouts {

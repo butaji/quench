@@ -32,6 +32,7 @@ use quench_runtime::staged::Stage;
 #[path = "loop_versions/affine_reach.rs"] pub(crate) mod affine_reach;
 pub(crate) use plan::{Nest, Resolved, Shape};
 use affine_reach::Linears;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's
 /// entering edge.

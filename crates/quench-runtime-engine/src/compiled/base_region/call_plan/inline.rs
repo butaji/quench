@@ -41,6 +41,7 @@ use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
 use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A callee the stitcher may inline, as its function and the call site's records show it.
 pub(crate) struct Callee<'f> {

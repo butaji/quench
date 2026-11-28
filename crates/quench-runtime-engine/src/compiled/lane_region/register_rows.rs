@@ -5,6 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is a plain row whose registers this unit holds, and

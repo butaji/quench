@@ -15,6 +15,7 @@ use super::*;
 use quench_runtime::compile::liveness::transfer;
 use quench_runtime::dataflow::{solve, Dataflow};
 use std::num::NonZeroUsize;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

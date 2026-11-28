@@ -33,6 +33,7 @@ use quench_runtime::wasm::reference::{NonNullCheck, ReferenceTarget};
 use quench_runtime::WasmTypes;
 use cranelift_codegen::ir;
 use std::convert::Infallible;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The context word that holds the Wasm GC record range's base (`CallContext::wasm_gc_records`).
 const CONTEXT_WASM_GC_RECORDS: i32 = std::mem::offset_of!(CallContext, wasm_gc_records) as i32;

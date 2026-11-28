@@ -9,6 +9,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{nullish_of, Comparison, Domain, Operation};
 use quench_runtime::vm::operations::NumberRelation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The comparison-jump row of `instruction`, where it decodes to one.

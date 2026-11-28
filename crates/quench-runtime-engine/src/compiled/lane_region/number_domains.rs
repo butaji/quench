@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The machine view a block entry keeps a register of fact type `ty` in: the unboxed view of
 /// a Number type, tagged bits for any other. Entry states and edges both take it from the

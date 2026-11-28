@@ -15,6 +15,7 @@ use super::{Bound, Decision, Hoist};
 use super::super::super::facts::Point;
 use super::super::super::operations::NumberArithmetic;
 use super::super::tag_proofs::decides_flat_strings;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The loops of `loops` the region lowers whole.

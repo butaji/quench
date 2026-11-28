@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The byte offset of the field cache entry of `site` in the program's table.
 fn entry_offset(site: u16) -> u64 {

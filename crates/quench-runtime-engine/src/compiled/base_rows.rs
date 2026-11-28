@@ -20,6 +20,7 @@ use quench_bjit::Stencil;
 /// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
 use quench_bjit::catalog;
 use quench_bjit::numeric::row_names;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
 /// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.

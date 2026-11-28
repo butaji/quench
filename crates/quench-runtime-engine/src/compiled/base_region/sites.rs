@@ -10,6 +10,7 @@ use crate::ext_traits::*;
 use quench_runtime::vm::Vm;
 use super::*;
 use quench_runtime::vm::in_presence::InPresence;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The operator of a comparison that is a `Binary`, which writes a boolean to a register, or a `JumpBinaryFalse`, which branches
 /// where the comparison fails.

@@ -5,6 +5,7 @@ use quench_bjit::numeric::supernodes::Node;
 use quench_bjit::{padded_holes, HOLES};
 use super::super::LaneHelper;
 use super::call_plan::ChainRead;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.

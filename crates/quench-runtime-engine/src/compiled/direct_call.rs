@@ -3,6 +3,7 @@
 use crate::ext_traits::*;
 use super::{CompiledJsFunction, native_poll_page};
 use quench_runtime::Value;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `compiled`'s result on `arguments`, which its body proves Numbers once at entry; `None`
 /// where one is no Number, too few are passed, or the run was interrupted.

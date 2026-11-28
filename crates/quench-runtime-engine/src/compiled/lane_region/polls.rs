@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Specializes the interrupt owner at the polls no reentry reaches (`retain_closed_polls`); with
 /// none, the owner's call (`interrupt_owner_call`) is removed.

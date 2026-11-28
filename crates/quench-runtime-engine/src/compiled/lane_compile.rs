@@ -722,6 +722,7 @@ impl LanePlan {
 #[path = "lane_compile/dependencies.rs"]
 pub(crate) mod dependencies;
 pub(crate) use dependencies::LaneDependencies;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] pub(crate) mod tests;
 

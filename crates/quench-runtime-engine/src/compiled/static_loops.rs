@@ -9,6 +9,7 @@ use super::{facts, lane_unit::Unit};
 use quench_runtime::{Value, bytecode::{ControlFlowLayout, Operand, OperandKind, ResidualProgram, WideInstruction}};
 use quench_runtime::staged::{BinaryClass, Operation};
 use quench_runtime::vm::operations::{NumberF64Stage, NumberRelation, PartialOrderStage};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Small functions keep transient register facts on the compiler's stack.
 const INLINE_CONSTANT_REGISTERS: usize = 16;

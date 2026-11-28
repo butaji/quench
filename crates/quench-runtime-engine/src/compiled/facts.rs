@@ -504,6 +504,7 @@ pub(crate) use quench_runtime::compile::aot_facts::constant_type;
 pub(crate) use binary::{heap_operator, heap_primitive_binary};
 pub(crate) use lengths::IndexProof;
 pub(crate) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] pub(crate) mod decode_ratchet;

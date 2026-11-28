@@ -8,6 +8,7 @@ use crate::compiled::CodeMemory;
 use quench_runtime::vm::Vm;
 use quench_runtime::{Engine, WasmCallableType, WasmFunctionBody, WasmTypes, WasmValue};
 use wasmparser::{BinaryReaderError, FuncType, Operator, ValType};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 fn body(ty: u32, locals: Vec<ValType>, operators: Vec<Operator<'static>>) -> WasmFunctionBody<Vec<Result<Operator<'static>, BinaryReaderError>>> {
     WasmFunctionBody { ty: WasmCallableType::Declared(ty), locals, operators: operators.into_iter().map(Ok).collect() }

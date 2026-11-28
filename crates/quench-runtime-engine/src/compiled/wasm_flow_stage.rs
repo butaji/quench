@@ -12,6 +12,7 @@ use quench_runtime::staged::machine::{MachineFlow, MachineStage};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_flow::{Flow, Leave};
 use cranelift_codegen::ir;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Emitter<'_, '_> {
     /// Lowers a flow step; whether control continues to the next instruction.

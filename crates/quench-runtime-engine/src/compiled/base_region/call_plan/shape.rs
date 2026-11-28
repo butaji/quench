@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// How a body makes a call, by the instruction's operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

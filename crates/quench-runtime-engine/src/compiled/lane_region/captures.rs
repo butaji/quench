@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.
 #[derive(Clone, Copy, PartialEq, Eq)]

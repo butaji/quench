@@ -195,6 +195,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
 
 /// The tiers of the JIT mode, as the specializer names them.
 pub(crate) use quench_runtime::vm::tier_policy::Tier;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
 #[inline]

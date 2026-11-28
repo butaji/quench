@@ -7,6 +7,7 @@ use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, LaneBody};
 #[cfg(feature = "jit")]
 use crate::aot_image::{self, ImageTarget};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(AheadImagesLifted160)]
 impl AheadImages {

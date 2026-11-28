@@ -17,6 +17,7 @@ use quench_runtime::staged::wasm_simd::Simd;
 use quench_runtime::staged::wasm_step::{Family, Step};
 use quench_runtime::wasm::memory::MemoryLoad;
 use quench_runtime::wasm::simd::SimdOperator;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Each operator tag is the runtime's `SimdOperator` discriminant, checked at compile time: a
 /// reordered table fails the build here, not in a row.

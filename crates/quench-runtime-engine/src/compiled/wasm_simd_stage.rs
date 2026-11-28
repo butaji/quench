@@ -22,6 +22,7 @@ use quench_runtime::wasm::V128_BYTES;
 use quench_runtime::wasm::simd::SimdKernel;
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::Variable;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl WasmSimd for Emitter<'_, '_> {
     type Value = ir::Value;
