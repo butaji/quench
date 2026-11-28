@@ -3,6 +3,13 @@
 //! test is made only where the type cannot prove the tag. A direct object's solver type proves its family (a non-nullable
 //! object record, never a function), so the family and presence tests on it are redundant too.
 use super::*;
+use quench_runtime::typed_ir::{BuiltinPath, Identity};
+
+/// Whether `instruction` loads a binding of the global scope by name: the solver's `is_global_load`, the name a builtin path
+/// is named by (`named_builtin`).
+fn loads_global_name(instruction: WideInstruction) -> bool {
+    instruction.op().loads_name() && instruction.op().traits().has(quench_runtime::bytecode::Traits::GLOBAL_NAME_ACCESS)
+}
 
 /// Whether register `register` holds `tag`'s language types at this point, by its solver type in `state`. A tag site
 /// asks this before it emits its tag test.
@@ -39,11 +46,41 @@ pub(crate) fn decides_flat_strings(operator: u32) -> bool {
 }
 
 impl Lowering<'_, '_> {
-    /// Whether the call at unit PC `pc` calls a builtin through its callee register `callee`: the cell the solve proves for
-    /// the register before the call names one (`Identity::Builtin`, proven in every run by the closed world). The call's
-    /// identity guard is then not emitted.
-    pub(crate) fn callee_is_builtin(&self, pc: usize, callee: Register) -> bool {
-        matches!(self.cell_before(pc, callee).identity, quench_runtime::typed_ir::Identity::Builtin(_))
+    /// Whether the solve proves unit register `register` holds the builtin `expected` just before the unit instruction at `pc`
+    /// (`Identity::Builtin(expected)`, proven in every run by the closed world). A site that would compare the register's
+    /// identity with that builtin's value emits no compare. Some other builtin does not prove it.
+    pub(crate) fn proves_builtin(&self, pc: usize, register: Register, expected: BuiltinPath) -> bool {
+        self.cell_before(pc, register).identity == Identity::Builtin(expected)
+    }
+
+    /// The builtin the value the unit instruction at `defined` reads by name stands for, named from the program's own atoms
+    /// in the solver's naming (`BuiltinPath`, `aot_facts::effects`): a name load of global `g` is `{g, None}`, and a field
+    /// read `m` off the register a name load of `g` defined is `{g, Some(m)}`. None where the read names no builtin so.
+    /// A wrong name only keeps a guard: `proves_builtin` must match the solve's identity exactly.
+    pub(crate) fn named_builtin(&self, defined: usize) -> Option<BuiltinPath> {
+        let instruction = self.unit.instructions[defined];
+        if loads_global_name(instruction) {
+            return Some(BuiltinPath { global: instruction.atom_index(), member: None });
+        }
+        let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup() else { return None };
+        let owner = super::native_calls::definition_before(self.unit, defined, base.register_index()?)?;
+        let global = self.unit.instructions[owner];
+        loads_global_name(global).then(|| BuiltinPath { global: global.atom_index(), member: Some(atom) })
+    }
+
+    /// Whether the solve proves unit register `register` holds a direct object's record just before the unit instruction at
+    /// `pc`, by its solver type (the known-types law): a family or presence test on it is redundant.
+    pub(crate) fn solver_object(&self, pc: usize, register: Register) -> bool {
+        proves_object(self.cell_before(pc, register).ty)
+    }
+
+    /// The settled type of field `atom` of the fixed class `owner` holds (`AotFacts::slot_domain`), where the class holds the
+    /// field before any read (`field_always_stored`): every read of that slot yields a value of the type. None otherwise.
+    pub(crate) fn fixed_slot_domain(&self, pc: usize, owner: Option<Register>, atom: u32) -> Option<Type> {
+        let facts = self.vm.facts?;
+        let class = self.fixed_class(pc, owner)?;
+        if !facts.field_always_stored(class, atom) { return None; }
+        facts.slot_domain(class, atom).map(|cell| cell.ty)
     }
 
     /// Whether the value `register` holds after the unit instruction at `pc` is the one closure of body `body`

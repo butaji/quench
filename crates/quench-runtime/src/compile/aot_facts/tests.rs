@@ -9,6 +9,9 @@ use crate::staged::Operation;
 use crate::typed_ir::{Cell, ElementClass, FactKey, Identity, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
 use crate::ValueType;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 fn program(source: &str) -> ResidualProgram {
     Engine::specialize(source, "aot-facts.js").unwrap()
@@ -1218,4 +1221,34 @@ fn a_program_naming_reflect_construct_has_no_fixed_cell() {
     let program = program("function Scheduler() { this.count = 0; } var s = Reflect.construct(Scheduler, []);");
     let facts = analyze(&program);
     assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "Reflect.construct takes any new_target");
+}
+
+#[test]
+fn a_script_top_level_this_is_the_global_object() {
+    let program = program("var t = this; t;");
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "a Script's root this is the realm's global object");
+}
+
+#[test]
+fn a_by_name_read_of_global_this_is_the_global_object() {
+    let program = program("var g = globalThis; g.k;");
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "globalThis is the global object, not a builtin");
+}
+
+#[test]
+fn a_program_that_writes_global_this_proves_no_global_object() {
+    let program = program("globalThis = 1; var g = globalThis;");
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "the program writes globalThis, so its reads are Many");
+}
+
+#[test]
+fn a_sloppy_function_only_called_plainly_has_the_global_object_as_this() {
+    let program = program("function f() { return this; } f(); f();");
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "every call of f is plain, and f is sloppy");
+}
+
+#[test]
+fn a_strict_function_only_called_plainly_has_no_global_object_as_this() {
+    let program = program("function f() { 'use strict'; return this; } f(); f();");
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::GlobalObject), "a strict callee's this is undefined");
 }

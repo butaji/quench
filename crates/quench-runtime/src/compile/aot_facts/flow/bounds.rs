@@ -10,6 +10,9 @@ use crate::bytecode::{Function, Operand, OperandKind, WideInstruction, used_regi
 use crate::staged::{Comparison, NumberOperation, Operation};
 use crate::staged::typing;
 use crate::vm::operations::NumberBitwise;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The integer constants the function's relational jumps compare a value against (`typing::thresholds`): the ones
 /// whose operand is a constant. A register operand's bound is the state's, which the narrowing pass tightens to.

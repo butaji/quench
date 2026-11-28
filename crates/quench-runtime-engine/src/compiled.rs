@@ -26,7 +26,6 @@
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use tier_policy::Tiers;
 use crate::dispatch_fast::{frame_word, set_frame_word, Activation};
 use quench_runtime::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::engine_prelude::*;
@@ -1526,8 +1525,6 @@ pub(crate) struct VmFacts<'a> {
     pub(crate) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(crate) diagnostics: bool,
-    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
-    pub(crate) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(crate) online: Option<OnlineFacts<'a>>,
@@ -1575,7 +1572,7 @@ pub(crate) struct HeldAtoms<'a> {
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
+    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
         frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
@@ -1583,7 +1580,7 @@ impl VmFacts<'static> {
 impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
+        VmFacts { html_dda, diagnostics: admission::diagnosing(self), online: None, frozen: false,
             frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }
@@ -1825,7 +1822,7 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
+use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT};
 
 /// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
 #[cfg(target_os = "linux")]
@@ -7475,7 +7472,7 @@ impl Vm {
     pub(crate) fn wasm_module_unit(&self, program: ProgramId) -> Option<admission::CompiledUnit> {
         let code = self.programs.get(program)?;
         let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() };
-        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
+        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts })
     }
 
     pub(crate) fn native_execution_rejections(&self) -> u64 {
@@ -7506,8 +7503,8 @@ impl Vm {
         }
     }
 
-    /// Whether the entry paths claim `function`: a numeric candidate that pays for a native
-    /// entry, or a body a lane body may take.
+    /// Whether the entry paths claim `function`: a numeric candidate the predicted tier compiles
+    /// (`ProgramStore::compiled_tier`), or a body a lane body may take.
     pub(crate) fn js_tier_may_claim(
         &mut self,
         program: &ResidualProgram,
@@ -7524,7 +7521,7 @@ impl Vm {
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
             base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
-            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
+            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).is_none() {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
@@ -7533,14 +7530,13 @@ impl Vm {
         let state = self.programs.js_tier(id, function);
         // Lane bodies claim every function the policy picks compiled: the pick is the entry's (not a loop's), and an
         // interpreted pick claims nothing. A function the numeric tier cannot take is still theirs to claim.
-        let lane_claims = admission::lane_bodies_enrolled(self)
-            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some();
+        let compiled = self.programs.compiled_tier(id, function);
+        let lane_claims = admission::lane_bodies_enrolled(self) && compiled;
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
-        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
-        // Inlining may erase a short body's calls; a call-free candidate still has
-        // to pay for native entry under the same cost policy.
+        // A numeric candidate claims where the same argmin compiles it, with no separate cost test of its entry.
+        let candidate = facts.candidate && compiled;
         candidate || lane_claims
     }
 
@@ -7741,7 +7737,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }) else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -8140,7 +8136,7 @@ impl Vm {
             let build = build_order.into_iter().map(|index| {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
+                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
                 let built = WasmSpecializer {
                     index,
                     plans: &plans,
@@ -8178,7 +8174,7 @@ impl Vm {
                             return None;
                         }
                         let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default(), fresh: false }).compiled()?;
+                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
                         let residual = WasmSpecializer {
                             index,
                             plans: &plans,
@@ -8828,12 +8824,6 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-
-/// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
-/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
-pub(crate) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool {
-    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
-}
 
 pub(crate) use quench_runtime::vm::engine_types::DirectTierEntry;
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;

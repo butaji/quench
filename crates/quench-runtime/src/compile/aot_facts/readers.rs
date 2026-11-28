@@ -27,6 +27,9 @@ use crate::bytecode::{used_registers, Class, FieldLookup, Function, Op, Property
 use crate::compile::liveness::{register_dead, RegisterMasks};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, FactKey, Type};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
 const PROTOCOL_NAMES: [&str; 33] = [

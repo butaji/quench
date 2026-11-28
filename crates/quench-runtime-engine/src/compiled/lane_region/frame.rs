@@ -86,8 +86,6 @@ pub(crate) struct EmitFrame<'a> {
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
     pub(crate) html_dda: bool,
-    /// The compiling VM's thresholds (`VmFacts::tiers`).
-    pub(crate) tiers: &'static super::super::tier_policy::Tiers,
     /// The Stable `prototype` link of the step's `instanceof` constructor.
     pub(crate) prototype: Option<u32>,
     /// The region's entry proofs, whose object record table a prototype walk addresses where the

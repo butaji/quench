@@ -129,19 +129,6 @@ pub(crate) struct UnitRequest {
     pub(crate) facts: UnitFacts,
 }
 
-/// The outcome of `specialize`: a unit cleared to compile, or declined by the mode, the policy or its facts.
-pub(crate) enum Decision<T> {
-    Compile(T),
-    Declined,
-}
-
-impl<T> Decision<T> {
-    /// The unit, where the decision cleared it.
-    pub(crate) fn compiled(self) -> Option<T> {
-        match self { Self::Compile(unit) => Some(unit), _ => None }
-    }
-}
-
 /// A unit cleared to compile. Its fields are private to this module, so `specialize` is the
 /// only way to obtain one; copies of it are the same proof.
 #[derive(Clone, Copy)]
@@ -177,20 +164,17 @@ pub(crate) fn test_unit() -> CompiledUnit {
 
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
 /// mode and memory policy. Every compile entry obtains its unit here.
-pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
+pub(crate) fn specialize(request: UnitRequest) -> Option<CompiledUnit> {
     let UnitRequest { kind, facts } = request;
     // Each kind's gates run in the order its entry always ran them; the first that refuses decides.
     let cleared = match kind {
-        UnitKind::Base => {
-            if !facts.covers { return Decision::Declined; }
-            !facts.indexes_typed
-        }
+        UnitKind::Base => facts.covers && !facts.indexes_typed,
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
-    if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
+    cleared.then(|| CompiledUnit { ceiling: code_ceiling(kind) })
 }
 
 /// The tiers of the JIT mode, as the specializer names them.
@@ -208,7 +192,7 @@ pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabl
 
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() })
 }
 
 /// The unit of a loop region this VM may compile (`region_unit_under` of its memory policy).

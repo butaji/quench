@@ -94,9 +94,11 @@ pub(crate) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {
     let answer = decide_answer(frame, stage, operands, operator);
-    // Two flat strings under an operator the helper answers for strings (`decides_flat_strings`) are a Boolean: no leave.
+    // A strict equality decides every pair (`comparison_decision`: its `strict_equal` is never absent), so its answer is never
+    // `DELETED` and no leave is made. Two flat strings under an operator the helper answers for strings (`decides_flat_strings`) are a Boolean too.
+    let strict = matches!(quench_runtime::vm::operations::equality_operator(operator), Some((true, _)));
     let flat_pair = decides_flat_strings(operator) && operands.iter().all(|&register| state_flat(&*frame.state, register));
-    if !flat_pair {
+    if !strict && !flat_pair {
         let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
         emit_js_guard(stage.builder, decided, miss);
     }

@@ -28,7 +28,7 @@ mod tests {
             vm.set_execution_mode(mode);
             let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
             assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
-            assert!(cursor.lane.is_null() && cursor.back_edges.is_none(),
+            assert!(cursor.lane.is_null() && !cursor.back_edges,
                 "linked code must not prepare an interpreter lane");
         }
 
@@ -52,30 +52,11 @@ pub struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     pub(super) lane: *const crate::vm::engine_types::LaneView,
-    /// The loop work the activation did in the general path while it may still gain a view
-    /// (`note_back_edge`); `None` once it cannot.
-    back_edges: Option<HotLoop>,
+    /// Whether a view-less JavaScript activation may still gain its function's view at a back edge
+    /// (`note_back_edge`); false once it has.
+    back_edges: bool,
 }
 
-/// A view-less JavaScript activation's loops so far (`Vm::note_back_edge`).
-#[derive(Clone, Copy)]
-struct HotLoop {
-    /// Its back edges taken.
-    taken: u16,
-    /// The instructions those back edges spanned, and the span at which the loop has repaid
-    /// a view of the whole function (`LANE_VIEW_LOOP_PAYBACK` per instruction).
-    work: u32,
-    due: u32,
-}
-
-impl HotLoop {
-    fn of(function: &crate::bytecode::Function) -> Self {
-        let instructions = u32::try_from(function.code.len()).unwrap_or(u32::MAX);
-        Self { taken: 0, work: 0, due: instructions.saturating_mul(LANE_VIEW_LOOP_PAYBACK) }
-    }
-}
-
-use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 #[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub struct PendingGeneralCall {
@@ -231,25 +212,16 @@ impl Vm {
             wide: function_code.wide.as_ptr(),
             decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
-            // A JavaScript activation deferred its view; a loop that turns hot derives it.
-            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
-                .then(|| HotLoop::of(function_code)),
+            // A JavaScript activation deferred its view; a back edge derives it where the function's predicted tier compiles it.
+            back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm && self.programs.compiled_tier(program_id, function),
         }
     }
 
-    /// Counts a backward jump of `cursor`'s activation in the general path over `span`
-    /// instructions; at `HOT_LOOP_BACK_EDGES` of them, once their spans repay a view
-    /// (`HotLoop`), its function's lane view is derived, which the lane enters at the loop's
-    /// next instruction.
+    /// Takes a backward jump of `cursor`'s activation in the general path: a view-less activation
+    /// derives its function's lane view now, which the lane enters at the loop's next instruction.
     #[inline(always)]
-    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor, span: usize) {
-        let Some(hot) = cursor.back_edges.as_mut() else {
-            return;
-        };
-        hot.taken = hot.taken.saturating_add(1);
-        hot.work = hot.work.saturating_add(u32::try_from(span).unwrap_or(u32::MAX));
-        if hot.taken >= HOT_LOOP_BACK_EDGES && hot.work >= hot.due {
-            cursor.back_edges = None;
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
+        if std::mem::take(&mut cursor.back_edges) {
             cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
     }
@@ -532,7 +504,7 @@ impl Vm {
                 body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
             },
             lane: view,
-            back_edges: None,
+            back_edges: false,
         }
     }
 
@@ -547,7 +519,7 @@ impl Vm {
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(program, p)
-            || !self.programs.call_may_derive_in_lane(program, id, false, false)
+            || !self.programs.call_may_derive_in_lane(program, id)
         {
             return std::ptr::null();
         }
@@ -2230,7 +2202,7 @@ impl Vm {
                     if truthy == crate::staged::frame_arm::jump_taken(ins) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                            self.note_back_edge(&mut cursor);
                         }
                     }
                     continue;
@@ -2253,7 +2225,7 @@ impl Vm {
                         if !truthy {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
-                                self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                                self.note_back_edge(&mut cursor);
                             }
                         }
                         continue;
@@ -2403,7 +2375,7 @@ impl Vm {
                 FrameArm::Jump if !self.heap.byte_due() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
-                        self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                        self.note_back_edge(&mut cursor);
                     }
                     continue;
                 }

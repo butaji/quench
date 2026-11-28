@@ -111,7 +111,7 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove_readable(builder, bits, records, class_base, functions, exit)
+            ObjectHeader::prove_readable(builder, bits, fact, records, class_base, functions, exit)
         } else {
             let records = object_table(builder, entry, payload);
             let class_base = class_table_base(builder, payload);
@@ -144,7 +144,7 @@ pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut 
 pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, word: ir::Value,
     (expected, fact): (u32, ShapeFact)) {
     if let Some((_, proof, _)) = state.proofs.headers.iter_mut().find(|(known, ..)| *known == word) {
-        proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
+        proof.shape = Some(emit(builder).raw_const(Lane::I32, i64::from(expected)));
         proof.shape_fact = Some(fact);
     }
 }

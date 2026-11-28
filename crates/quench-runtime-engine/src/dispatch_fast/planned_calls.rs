@@ -60,7 +60,7 @@ fn resolve_planned_class(vm: &mut Vm, program: ProgramId, class: u32, prototype:
             debug_assert!(false, "a planned arm's method is an own data property of its class's prototype");
             continue;
         };
-        let Some(target) = vm.resolve_call_target_in_lane(code, closure, true) else {
+        let Some(target) = vm.resolve_call_target_in_lane(code, closure) else {
             debug_assert!(false, "a planned arm's method is a script closure that resolves");
             continue;
         };

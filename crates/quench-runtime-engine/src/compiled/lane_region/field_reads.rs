@@ -135,9 +135,14 @@ impl Lowering<'_, '_> {
         }
         match (cell, live_cell) {
             (_, Some((register, object))) => {
-                let bits = self.tagged(state, register);
-                let same = self.is_identity(bits, object);
-                emit_js_guard(&mut self.builder, same, exit);
+                // The receiver the solve proves is the builtin its global load names is that global's value in every run, so the
+                // live compare with the cell is no guard.
+                let named = super::native_calls::definition_before(self.unit, pc, register).and_then(|defined| self.named_builtin(defined));
+                if !named.is_some_and(|expected| self.proves_builtin(pc, register, expected)) {
+                    let bits = self.tagged(state, register);
+                    let same = self.is_identity(bits, object);
+                    emit_js_guard(&mut self.builder, same, exit);
+                }
             }
             (Some(cell), None) if held_cell => self.hold_global(state, exit, cell.fact, (cell.global, cell.realm_offset)),
             _ => {}
@@ -170,7 +175,10 @@ impl Lowering<'_, '_> {
         let held = known.filter(|field| single && field.ty != Type::ANY).map(|field| field.ty);
         let ty = match held {
             Some(ty) => ty,
-            None => self.prove_held_slot(state, instruction, (value, known.is_none()), exit),
+            None => {
+                let domain = field.filter(|_| single).and_then(|(owner, atom)| self.fixed_slot_domain(pc, owner, atom));
+                self.prove_held_slot(state, instruction, (value, known.is_none()), (domain, exit))
+            }
         };
         // A fused chain can consume an existing first-slot proof, but its guest
         // result names the final slot. Do not retain a new anonymous intermediate
@@ -223,16 +231,22 @@ impl Lowering<'_, '_> {
     /// once here, leaving through `exit` where it fails, so no later use tests it again; a Number
     /// is left untyped, as `define_read_value` proves it where only Number operations read it.
     fn prove_held_slot(&mut self, state: &mut State, instruction: WideInstruction, (value, fresh): (ir::Value, bool),
-        exit: ir::Block) -> Type {
+        (domain, exit): (Option<Type>, ir::Block)) -> Type {
         let Some(ty) = held_slot_type(self.program, self.fields, instruction) else { return Type::ANY };
+        // The slot's settled domain (`fixed_slot_domain`) is the type every read yields, so the test is no guard.
+        let proven = domain.is_some_and(|domain| domain.is_subtype(ty));
         if fresh && (self.division().folds(BindingTime::Site) || self.closed_typed_read(instruction)) && self.reads_covered_slots(state, instruction) {
             self.hold_stable(state, exit);
         } else if ty == Type::INT32 {
-            let integer = is_int_tagged(&mut self.builder, value);
-            emit_js_guard(&mut self.builder, integer, exit);
+            if !proven {
+                let integer = is_int_tagged(&mut self.builder, value);
+                emit_js_guard(&mut self.builder, integer, exit);
+            }
         } else if ty == Type::DIRECT_OBJECT_FAMILY {
-            let object = quench_runtime::staged::value::is_direct_object(&mut emit(&mut self.builder), value);
-            emit_js_guard(&mut self.builder, object, exit);
+            if !proven {
+                let object = quench_runtime::staged::value::is_direct_object(&mut emit(&mut self.builder), value);
+                emit_js_guard(&mut self.builder, object, exit);
+            }
         } else {
             return Type::ANY;
         }

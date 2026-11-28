@@ -33,6 +33,9 @@ use transfer::{Resize, moves_bits, shift_kind, step_of_constant, sum_of_register
 pub(super) use ceilings::{IndexRange, Interval, index_ranges, loops_of, parameter_registers};
 pub(super) use relations::{Relation, proves_below, store_span};
 pub(super) use transfer::{advance, refine};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The most relations a point holds. A relation past it is not recorded, which only loses facts.
 const CAPACITY: usize = 32;

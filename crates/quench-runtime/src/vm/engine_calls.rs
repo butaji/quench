@@ -40,7 +40,6 @@ unsafe extern "Rust" {
     safe fn quench_engine_vm_trap_result_error(this: &mut Vm, p: &ResidualProgram, pending: &PendingGeneralCall, frame: usize, value: Value) -> Option<(u32, JsError)>;
     safe fn quench_engine_vm_completed_call_value(this: &Vm, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value;
     pub(super) safe fn quench_engine_vm_record_native_execution_rejection(this: &mut Vm) -> ();
-    safe fn quench_engine_vm_runs_windows_in_lane(this: &Vm) -> bool;
     pub(super) safe fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), super::JsError>;
     safe fn quench_engine_vm_lane_stack_sites(this: &mut Vm) -> Option<LaneSites>;
     safe fn quench_engine_vm_resolve_native_program(this: &mut Vm, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
@@ -116,7 +115,6 @@ pub trait EngineVm {
     fn trap_result_error(&mut self, p: &ResidualProgram, pending: &PendingGeneralCall, frame: usize, value: Value) -> Option<(u32, JsError)>;
     fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value;
     fn record_native_execution_rejection(&mut self) -> ();
-    fn runs_windows_in_lane(&self) -> bool;
     fn wasm_table_step(&mut self, f: usize, i: WideInstruction) -> Result<(), super::JsError>;
     fn lane_stack_sites(&mut self) -> Option<LaneSites>;
     fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
@@ -215,7 +213,6 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn record_native_execution_rejection(&mut self) -> () { if let Some(record) = self.execution.record_native_execution_rejection { record(self) } }
     #[inline(always)]
-    fn runs_windows_in_lane(&self) -> bool { quench_engine_vm_runs_windows_in_lane(self) }
     #[inline(always)]
     fn wasm_table_step(&mut self, f: usize, i: WideInstruction) -> Result<(), super::JsError> {
         match self.execution.wasm_table_step {
@@ -404,7 +401,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_vm_trap_result_error = fn(&mut Vm, &ResidualProgram, &PendingGeneralCall, usize, Value) -> Option<(u32, JsError)>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_completed_call_value = fn(&Vm, &CallCompletion, usize, crate::bytecode::Register, Value) -> Value;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_record_native_execution_rejection = fn(&mut Vm) -> ();
-    #[allow(non_camel_case_types)] pub type quench_engine_vm_runs_windows_in_lane = fn(&Vm) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_wasm_table_step = fn(&mut Vm, usize, WideInstruction) -> Result<(), super::JsError>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_lane_stack_sites = fn(&mut Vm) -> Option<LaneSites>;
     #[allow(non_camel_case_types)] pub type quench_engine_vm_resolve_native_program = fn(&mut Vm, &str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;

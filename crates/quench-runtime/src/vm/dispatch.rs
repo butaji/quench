@@ -194,7 +194,7 @@ impl Vm {
         let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else { return None };
         let callee = self.read(f, i.register_b());
         let arguments: *const [Value] = self.register_window(f, window);
-        if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
+        if let Some((program, id, env, this)) = self.inline_construct_target(p, f, pc, callee) {
             // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
             return self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
                 i.result_register(), CallCompletion::Constructor(this));

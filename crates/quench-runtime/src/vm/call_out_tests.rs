@@ -153,7 +153,6 @@ fn counted(source: &str) -> (Vec<String>, usize, usize) {
 
 #[test]
 fn a_hot_global_counter_is_written_directly_and_not_by_call_outs() {
-    crate::vm::tier_policy::force_admission();
     let (output, call_outs, direct) = counted(r#"
       globalThis.counter = 0;
       function bump(n) { for (var i = 0; i < n; i++) counter = counter + 1; return counter; }

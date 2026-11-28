@@ -178,7 +178,8 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     // cell's holes are the stores' and the allocations', so the types the solve reads must see them. A round whose feedback is
     // the one it solved with is final, so the facts of the last round are the ones its solve read.
     let mut feedback = length_settle::Feedback::default();
-    let mut built = ClassIds::default();
+    // Without a settled round the table keeps the functions alone (no synthetic class), so its count is the function count.
+    let mut built = ClassIds::build(&[], program.function_count() as u32);
     for round in 0..LENGTH_ROUNDS {
         let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
         let mut settled = false;
@@ -296,6 +297,10 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
         facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
         facts.closures_once = identity::closures_once(program, world);
+        // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.
+        let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
+        facts.global_object_identity = identity::global_object_proof(program, &settled_flows, &facts, &census, &scope, &this_undefined);
+        facts.this_undefined = this_undefined;
         // The settled cells keep only the identities the proofs above keep (`identity::proven`): after this, an `Identity`
         // in a cell is the proof a lane reads.
         let mut registers = std::mem::take(&mut facts.registers);
@@ -304,8 +309,6 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         let mut fact_cells = std::mem::take(&mut facts.cells);
         for cell in fact_cells.values_mut() { *cell = identity::proven(&facts, *cell); }
         facts.cells = fact_cells;
-        let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
-        facts.this_undefined = this_undefined;
         facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
         facts.uncached = globals::uncached_atoms(program, world);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open

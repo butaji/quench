@@ -41,7 +41,6 @@ use super::activation::FrameRecord;
 
 
 use crate::compile::aot_facts::AotFacts;
-use super::tier_policy::Tiers;
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -280,8 +279,6 @@ pub struct LaneView {
     /// entry cost, and its record does not read the accumulator. Kept apart
     /// from the records, which only the lane reads.
     pub entries: Box<[u64]>,
-    /// The thresholds its VM's tier controllers read, as the VM held them when the view was derived.
-    pub tiers: &'static Tiers,
     pub memory_register: Option<u16>,
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
@@ -1033,8 +1030,6 @@ pub struct LoopSite {
     pub enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     pub diagnostics: bool,
-    /// The thresholds its VM's tier controllers read.
-    pub tiers: &'static Tiers,
     pub lane_backedge_count: std::cell::Cell<u64>,
     pub native_entry_attempts: std::cell::Cell<u64>,
     pub native_region_runs: std::cell::Cell<u64>,
@@ -1561,11 +1556,10 @@ pub enum LaneBody {
     /// first entry, and runs in the interpreter).
     Unspecialized,
     /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
-    /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
-    /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
-    /// one pays few looks. `wait` counts the entries left before the next.
-    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8 },
+    /// lane meanwhile. Each entry that finds it polls the worker handle once without blocking
+    /// (`Vm::body_work_in_lane`): the entry that finds the code publishes it on the VM thread
+    /// and leaves this state for `Specialized`.
+    Compiling { pending: Box<dyn std::any::Any> },
     /// The body its prologue record enters directly (`body_entry_in_lane`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -1624,9 +1618,8 @@ pub type LeafForm = crate::staged::call_leaf::LeafForm;
 pub enum LoopBody {
     /// Not yet compiled.
     Idle,
-    /// Its code compiling on the code generator's thread; `wait` counts the backedges left
-    /// before the next look.
-    Compiling { pending: Box<dyn std::any::Any>, wait: u16 },
+    /// Its code compiling on the code generator's thread, polled at each backedge.
+    Compiling { pending: Box<dyn std::any::Any> },
     /// Its code, which a run enters at the loop's header.
     Ready { method: std::rc::Rc<PublishedLaneMethod> },
     Declined,
@@ -1639,10 +1632,8 @@ pub enum LoopBody {
 pub struct LoopTier {
     pub views: ElementViews,
     pub code: Option<Rc<crate::code_dependencies::PublishedCode<CompiledOsrRegion>>>,
-    /// The compile under way, and the entries left before the next look for its code
-    /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
+    /// The compile under way, which each entry polls once without blocking.
     pub pending: Option<Box<dyn std::any::Any>>,
-    pub wait: u16,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -2355,6 +2346,10 @@ pub struct ConstructPlan {
     /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
     /// construction of a recorded class allocates its receiver alone.
     pub recorded: bool,
+    /// The class of the construct site this plan serves (`Vm::construct_site_class`, read from
+    /// `AotFacts::construct_classes` once, where the plan is derived): the callee's body for an ordinary
+    /// site, a synthetic class for a body constructed under several binding keys. The header records under it.
+    pub class: u32,
     /// Where a fixed class (R4-F) allocates its receivers as class cells of its union shape: each field's
     /// union slot (`FixedCellPlan`). `None` for any other plan, whose receivers are records of `shape`.
     pub fixed: Option<FixedCellPlan>,
@@ -3740,6 +3735,8 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     super_parent: Value::UNDEFINED,
     recorded: false,
     fixed: None,
+    // The sentinel's callee is `undefined`, which no construction names, so its class is never read.
+    class: 0,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -4194,10 +4191,8 @@ impl JsEntryFacts {
 
     #[inline]
 
-    pub fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
-        let has_calls = function.instructions().any(|instruction|
-            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
-        Self { candidate: function_candidate(function, program) && (!priced || has_calls || pays_native_entry(function)) }
+    pub fn of(program: &ResidualProgram, function: &Function) -> Self {
+        Self { candidate: function_candidate(function, program) }
     }
 }
 

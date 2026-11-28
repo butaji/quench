@@ -7,7 +7,7 @@ use super::*;
 
 /// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
 fn mode_compiles_bodies() -> bool {
-    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default(), fresh: false }).compiled().is_some()
+    crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).is_some()
 }
 
 #[quench_macros::ext(LaneViewSpecializeOps)]
@@ -32,17 +32,15 @@ impl LaneView {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if awaits_look(body) { return true; }
-        let (outcome, looks) = match std::mem::replace(body, LaneBody::Declined) {
+        let outcome = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized => {
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
-                (work(crate::compiled::LaneBodyWork::Start { caller: self }), 0)
+                work(crate::compiled::LaneBodyWork::Start { caller: self })
             }
-            LaneBody::Compiling { pending, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(pending)), looks.saturating_add(1)),
+            LaneBody::Compiling { pending } => work(crate::compiled::LaneBodyWork::Poll(pending)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, tier, entry, looks);
+        *body = self.body_after(outcome, tier, entry);
         !matches!(body, LaneBody::Declined)
     }
 
@@ -56,16 +54,16 @@ impl LaneView {
         match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry, 0);
+                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry);
             }
             settled => *body = settled,
         }
         !matches!(body, LaneBody::Declined)
     }
 
-    /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
-    /// flight is what it waits on.
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler, looks: u8) -> LaneBody {
+    /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile still
+    /// in flight is polled again at the view's next entry.
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
@@ -75,8 +73,7 @@ impl LaneView {
         }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
-                let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
-                LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks }
+                LaneBody::Compiling { pending }
             }
             crate::compiled::LaneBodyOutcome::Published(published) => {
                 // A body is published only on a route its pick admits, which names its tier (`lane_body_tier`).

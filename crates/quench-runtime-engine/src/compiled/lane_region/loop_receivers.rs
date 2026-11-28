@@ -71,7 +71,8 @@ impl Lowering<'_, '_> {
         let Some(online) = self.vm.online.filter(|_| self.entry.is_some() && self.division().folds(BindingTime::Site)) else { return };
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
         for (register, shape) in self.invariant_receiver_shapes(header, end) {
-            if !(online.shape_stable)(shape) { continue; }
+            // A fixed class's cell has no shape to guard: its class is the fact (`fixed_cells`).
+            if !(online.shape_stable)(shape) || self.entry_fixed(Some(register)) { continue; }
             let exit = self.guard_exit_for(state, header as u32, ExitFact::Shape);
             let proof = self.object_header(state, Some(register), false, exit);
             let word = self.register_word(state, register);

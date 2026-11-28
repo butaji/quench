@@ -80,9 +80,12 @@ impl Lowering<'_, '_> {
         let count = range.min as usize;
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
-        let held = self.tagged(state, instruction.register_b());
-        let same = self.is_identity(held, value);
-        emit_js_guard(&mut self.builder, same, exit);
+        // The construction's callee the solve proves is the builtin it names (`named_builtin`) needs no identity compare.
+        if !self.named_builtin(defined).is_some_and(|expected| self.proves_builtin(pc, instruction.register_b(), expected)) {
+            let held = self.tagged(state, instruction.register_b());
+            let same = self.is_identity(held, value);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         let hole = Value::UNDEFINED;
         let mut elements = smallvec::SmallVec::<[(Variable, Type); ARRAY_LITERAL_WINDOW]>::new();
         for _ in 0..count {

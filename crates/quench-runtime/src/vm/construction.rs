@@ -689,7 +689,39 @@ impl Vm {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(constructed) = self.construction_shortcut(p, callee, new_target, args) {
+        // A construction with no construct site (a native, an embedder, a super call) is an ordinary one: class = body.
+        let class = self.ordinary_class(callee);
+        self.construct_value_as(p, callee, new_target, args, class)
+    }
+
+    /// `construct(callee, args)` at the construct site `pc` of frame `frame`: the class is the site's
+    /// (`construct_site_class`), so the instances it makes record their header under it (`construct_value_as`).
+    pub(super) fn construct_value_at(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        pc: usize,
+        callee: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let body = self.ordinary_class(callee);
+        let caller = &self.frames[frame];
+        let class = self.construct_site_class(caller.program, caller.function, pc, body);
+        self.construct_value_as(p, callee, callee, args, class)
+    }
+
+    /// `construct_value_with_new_target` for the construction of class `class` (a class id: the constructor's body, or the
+    /// synthetic class of its construct site). The class names the receiver's union and header (`capture_constructed_name`,
+    /// `record_class_header`).
+    pub(super) fn construct_value_as(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        new_target: Value,
+        args: &[Value],
+        class: u32,
+    ) -> Result<Value, JsError> {
+        if let Some(constructed) = self.construction_shortcut(p, callee, new_target, args, class) {
             return constructed;
         }
         self.with_call_roots(
@@ -803,7 +835,7 @@ impl Vm {
                     let preserves_origin = native == Native::Object && callee == new_target
                         && args.first().is_some_and(|value| !value.is_null() && !value.is_undefined());
                     if native != Native::Proxy && !preserves_origin {
-                        vm.capture_constructed_value(result, callee, callee == new_target);
+                        vm.capture_constructed_value(result, callee, class, callee == new_target);
                     }
                     return Ok(result);
                 }
@@ -812,10 +844,17 @@ impl Vm {
                 } else {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
                     let mut object = Self::empty_object(proto);
-                    vm.capture_constructed_name(&mut object, callee, callee == new_target);
+                    vm.capture_constructed_name(&mut object, callee, class, callee == new_target);
                     // `callee`'s body runs next on it: its union cell for a fixed class (R4-F), else its constant
                     // layout and the storage `new_target`'s receivers reach (`preshaped_receiver`).
-                    vm.alloc_preshaped_receiver(object, callee, new_target)
+                    let this = vm.alloc_preshaped_receiver(object, callee, new_target, class);
+                    // A base construction records its header as the inline path does (`alloc_construct_receiver`). A
+                    // construction whose new.target is another constructor (a super call's object) is the derived
+                    // class's instance, whose header its own construction records, so this one records nothing.
+                    if callee == new_target {
+                        vm.record_class_header(callee, class, this);
+                    }
+                    this
                 };
                 let previous_target = vm.construct_target;
                 vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
@@ -875,10 +914,14 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
+        pc: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value, Value)> {
         let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, super::ConstructKind::Base)?;
-        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
+        // The construction is the site `pc` of the calling frame: its class is the site's, not the body's (`construct_site_class`).
+        let caller = &self.frames[frame];
+        let class = self.construct_site_class(caller.program, caller.function, pc, id);
+        Some((program_id, id, env, self.inline_construct_receiver(callee, class)?))
     }
 
     /// `new callee(...)` of a derived class constructor that the loop may push in place, as
@@ -917,7 +960,7 @@ impl Vm {
             return Some(SuperConstruction { target, new_target, this: Value::UNDEFINED, completion: CallCompletion::DerivedConstructor });
         }
         let target = self.in_loop_constructor(p, frame, parent, super::ConstructKind::Base)?;
-        let object = self.inline_construct_template_by(new_target, parent)?;
+        let object = self.inline_construct_template_by(new_target, parent, self.ordinary_class(parent))?;
         let this = self.heap.alloc_object(object);
         Some(SuperConstruction { target, new_target, this, completion: CallCompletion::Constructor(this) })
     }
@@ -1006,26 +1049,28 @@ impl Vm {
     /// whose prototype is the callee's own data `prototype`, when that is an object, in the
     /// callee's constant layout (`preshaped_receiver`), as every caller runs its body next.
     /// A construct plan's own allocations take the empty template (`inline_construct_template`):
-    /// a plan records the stores its body adds from it.
-    pub fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
-        let object = self.inline_construct_template(callee)?;
-        Some(self.alloc_construct_receiver(object, callee))
+    /// a plan records the stores its body adds from it. `class` is the construct site's class
+    /// (`construct_site_class`), whose header the receiver records; a path with no site passes the
+    /// callee's body (`ClassIds::body` of the body), which is an ordinary construction.
+    pub fn inline_construct_receiver(&mut self, callee: Value, class: u32) -> Option<Value> {
+        let object = self.inline_construct_template(callee, class)?;
+        Some(self.alloc_construct_receiver(object, callee, class))
     }
 
-    /// The object `inline_construct_receiver` allocates, before it is allocated.
-    pub fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
-        self.inline_construct_template_by(callee, callee)
+    /// The object `inline_construct_receiver` allocates, before it is allocated, as a construction of class `class`.
+    pub fn inline_construct_template(&mut self, callee: Value, class: u32) -> Option<Object> {
+        self.inline_construct_template_by(callee, callee, class)
     }
 
     /// The receiver [[Construct]] of `constructor` makes with `new_target` before its body
     /// runs (OrdinaryCreateFromConstructor): of `new_target`'s own data `prototype`, named by
     /// `constructor` as the general path names it (`capture_constructed_name`).
-    pub fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value) -> Option<Object> {
+    pub fn inline_construct_template_by(&mut self, new_target: Value, constructor: Value, class: u32) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)?;
         self.heap.object(prototype)?;
         let mut object = Self::empty_object(prototype);
-        self.capture_constructed_name(&mut object, constructor, constructor == new_target);
+        self.capture_constructed_name(&mut object, constructor, class, constructor == new_target);
         Some(object)
     }
 

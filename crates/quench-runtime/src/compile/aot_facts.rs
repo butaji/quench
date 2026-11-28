@@ -176,6 +176,9 @@ pub struct AotFacts {
     /// The functions every call of which passes an undefined receiver (`identity::this_undefined`), read by
     /// `FunctionFacts::this_undefined_at_entry`.
     this_undefined: std::collections::BTreeSet<u32>,
+    /// Whether an `Identity::GlobalObject` the settled solve keeps is the realm's global object in every run
+    /// (`identity::global_object_proof`). False where the solve is not closed.
+    global_object_identity: bool,
     /// The atoms no method cache can name (`globals::uncached_atoms`): empty unless the program is closed.
     uncached: std::collections::BTreeSet<u32>,
     /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
@@ -220,6 +223,7 @@ impl AotFacts {
             builtins: None,
             closures_once: std::collections::BTreeSet::new(),
             this_undefined: std::collections::BTreeSet::new(),
+            global_object_identity: false,
             uncached: std::collections::BTreeSet::new(),
             global_shape: None,
         }
@@ -242,6 +246,13 @@ impl AotFacts {
     /// closure identity of `function` in execution. False in an open world.
     pub fn closure_identity(&self, function: u32) -> bool {
         self.closures_once.contains(&function)
+    }
+
+    /// Whether the `Identity::GlobalObject` a cell keeps is the realm's global object in every run: the root's `this` of a Script,
+    /// a by-name read of `globalThis`, and a sloppy function's `this` where its calls are plain (`identity::global_object_proof`).
+    /// Its `global` flag is the may-fact the gate reads; this is the must-fact. False in an open world.
+    pub fn global_object_identity(&self) -> bool {
+        self.global_object_identity
     }
 
     /// Whether a self-recursive call of `function`, whose callee is its own closure, runs in the environment of the entry: the
@@ -409,11 +420,12 @@ impl AotFacts {
     /// The first slot of class `class`'s union that lives in its spill run, or None where the union fits the cell region. The
     /// region is chosen from the union at allocation, so a proven class spills exactly here: the cell keeps slots below it
     /// (one load) and reserves its last slot for the spill pointer, so a slot at or past it takes two loads. Union order is slot
-    /// order, so each field's case is known at compile time. Derived from the union's length against the region capacity
-    /// (`heap::MAX_CELL_FIELDS`, referenced, not copied).
+    /// order, so each field's case is known at compile time. One formula with the allocator: the region it picks for the union
+    /// (`heap::cell_region_for`, the largest region past every capacity) and that region's spill slot (`layouts::spill_from`).
     pub fn spill_from(&self, class: u32) -> Option<u32> {
         let fields = self.unions.get(&class)?.fields.len();
-        (fields > crate::heap::MAX_CELL_FIELDS).then(|| crate::heap::MAX_CELL_FIELDS as u32 - 1)
+        let largest = crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1;
+        crate::heap::layouts::spill_from(crate::heap::cell_region_for(fields).unwrap_or(largest), fields)
     }
 
     /// Whether every instance of class `class` holds field `atom` before any code can read it: the class is a fixed cell

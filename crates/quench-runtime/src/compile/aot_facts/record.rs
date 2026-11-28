@@ -14,6 +14,9 @@ use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::staged::effects::{Affine, Indices};
 use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Identity, Length, Representation, Type, View};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).

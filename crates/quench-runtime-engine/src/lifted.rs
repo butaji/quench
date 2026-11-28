@@ -48,7 +48,7 @@ impl LaneView {
     pub fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if let LaneBody::Compiling { pending, .. } = body { crate::compiled::pending_lane_ref(&**pending).retire_named_shapes(); }
+        if let LaneBody::Compiling { pending } = body { crate::compiled::pending_lane_ref(&**pending).retire_named_shapes(); }
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && method.lease().is_some_and(|method| method.names_shapes)
         {

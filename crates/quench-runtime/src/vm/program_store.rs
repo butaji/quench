@@ -1,5 +1,4 @@
 use crate::vm::EngineLaneView;
-use crate::vm::tier_policy::{TierRows, Tiers};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -132,7 +131,7 @@ impl JsJitCallOutcome {
     }
 }
 
-use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, LANE_VIEW_DEFERRED_RUNS};
+use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -390,6 +389,9 @@ pub(crate) struct RegExpArgumentShare {
 /// arguments (`planned_call_sites`): the derivation's check on the callee's body, which the engine decides.
 pub type PlannedArmAdmission = fn(&ResidualProgram, u32, u16) -> bool;
 
+/// The `ProgramEntry::construct_sites` entry of a construct pc with no construct site fact.
+const NO_CONSTRUCT_CLASS: u32 = u32::MAX;
+
 struct ProgramEntry {
     residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -442,9 +444,12 @@ struct ProgramEntry {
     /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
     /// (`set_class_method`), each of the selectors' count; `layouts::set_class_methods` holds its address.
     class_method_vectors: std::cell::RefCell<FxHashMap<u32, Box<[usize]>>>,
-    /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
-    /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
+    /// Per class id (a function id, or a synthetic class of `AotFacts::classes`): the layout id its constructed instances
+    /// hold, 0 until the first construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
     class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
+    /// Per function, per construct pc: the class of that construct site (`AotFacts::construct_classes`), dense by pc and
+    /// `NO_CONSTRUCT_CLASS` where the site has no fact. Derived once from the facts (`construct_site_table`).
+    construct_sites: std::cell::OnceCell<Box<[Box<[u32]>]>>,
     /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
     /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
     class_prototypes: std::cell::RefCell<std::collections::BTreeMap<u32, Value>>,
@@ -453,9 +458,8 @@ struct ProgramEntry {
     planned_targets: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, u32), Box<crate::vm::engine_types::PlannedTarget>>>,
     /// Whether every function's planned sites have registered their arms' targets (`register_planned_targets`).
     planned_registered: std::cell::Cell<bool>,
-    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
-    /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
-    lane_deferred: Vec<std::cell::Cell<u8>>,
+    /// Per function: whether it loops, and whether that is known (`function_loops`).
+    lane_loops: Vec<std::cell::Cell<u8>>,
     /// Sparse frontend-specific hotness state and compiled artifacts, owned
     /// by one VM-local tier manager.
     jit_tiers: JitTierManager,
@@ -618,14 +622,11 @@ pub struct ProgramStore {
     js_jit_dataview_float64_set_entries: u64,
     /// What the tiers did in this VM (`Vm::tier_events`).
     tier_events: super::tier_events::TierEvents,
-    /// The thresholds this VM's tier controllers read (`TierRows`), fixed at its construction.
-    tiers: &'static Tiers,
 }
 
 impl Default for ProgramStore {
     fn default() -> Self {
         crate::jit_coverage::sample_this_thread();
-        let tiers = TierRows::made();
         Self {
             native_call_bindings: Default::default(),
             lane_installed: Default::default(),
@@ -660,7 +661,6 @@ impl Default for ProgramStore {
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
             tier_events: Default::default(),
-            tiers,
         }
     }
 }
@@ -673,7 +673,7 @@ impl ProgramStore {
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !cfg!(test)); // tests pin tiny fixtures
+            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body);
             #[cfg(any(test, feature = "test-support"))]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
@@ -688,7 +688,12 @@ impl ProgramStore {
     /// shared by every lowering of the program after it.
     pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
         let entry = self.entry(id)?;
-        Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
+        Some(std::sync::Arc::clone(Self::facts_of(entry)))
+    }
+
+    /// The AOT facts of `entry`, solved on its first use (`aot_facts`).
+    fn facts_of(entry: &ProgramEntry) -> &std::sync::Arc<crate::compile::aot_facts::AotFacts> {
+        entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))
     }
 
     /// The method selectors of program `id` (`compile::call_plan::Selectors`), solved on its first call from its AOT facts.
@@ -735,16 +740,41 @@ impl ProgramStore {
         })))
     }
 
-    /// The header cell of class `class` (a class id, `AotFacts::constructed_classes`) in program `id`: the layout id its
-    /// constructed instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then. A
-    /// synthetic class has no cell (`class_header_cell`), so it has no header.
+    /// The header cell of class `class` (a class id, `AotFacts::classes`: a function id or a synthetic class) in program
+    /// `id`: the layout id its constructed instances hold, recorded once by the first construction of the class
+    /// (`Vm::record_class_header`), 0 until then.
     pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
         Self::class_header_cell(self.entry(id)?, class)
     }
 
+    /// The header cells of `entry`, one per class id: the count `AotFacts::classes` gives, which is the functions and the
+    /// synthetic classes. The table is sized on first use, from the facts that count them (`facts_of`).
     fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
-        let headers = entry.class_headers.get_or_init(|| (0..entry.residual.functions.len()).map(|_| std::cell::Cell::new(0)).collect());
+        let headers = entry.class_headers.get_or_init(|| (0..Self::facts_of(entry).classes.count()).map(|_| std::cell::Cell::new(0)).collect());
         headers.get(class as usize)
+    }
+
+    /// The class of the construct site at `pc` of function `function` in program `id` (`AotFacts::construct_classes`), an
+    /// array read of the table `construct_site_table` derived: `None` where the site has no fact (an ordinary construction).
+    pub fn construct_class(&self, id: ProgramId, function: u32, pc: usize) -> Option<u32> {
+        let entry = self.entry(id)?;
+        let sites = entry.construct_sites.get_or_init(|| Self::construct_site_table(entry));
+        let class = *sites.get(function as usize)?.get(pc)?;
+        (class != NO_CONSTRUCT_CLASS).then_some(class)
+    }
+
+    /// The dense site table of `entry`: each function's row holds, at its construct pc, the class the facts give that site,
+    /// and is as long as its last construct site.
+    fn construct_site_table(entry: &ProgramEntry) -> Box<[Box<[u32]>]> {
+        let mut rows = vec![Vec::<u32>::new(); entry.residual.functions.len()];
+        for (&(function, pc), &class) in &Self::facts_of(entry).construct_classes {
+            let row = &mut rows[function as usize];
+            if row.len() <= pc as usize {
+                row.resize(pc as usize + 1, NO_CONSTRUCT_CLASS);
+            }
+            row[pc as usize] = class;
+        }
+        rows.into_iter().map(Vec::into_boxed_slice).collect()
     }
 
     /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
@@ -1221,7 +1251,7 @@ impl ProgramStore {
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = FxHashMap::default();
         let views_in_lane = LaneViews::default();
-        let lane_deferred = zeroed_counts(program.functions.capacity());
+        let lane_loops = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
         self.shared_ids.entry(Rc::as_ptr(&program) as usize).or_insert(id);
@@ -1250,10 +1280,11 @@ impl ProgramStore {
             selectors: std::cell::OnceCell::new(),
             class_method_vectors: Default::default(),
             class_headers: std::cell::OnceCell::new(),
+            construct_sites: std::cell::OnceCell::new(),
             class_prototypes: Default::default(),
             planned_targets: Default::default(),
             planned_registered: std::cell::Cell::new(false),
-            lane_deferred,
+            lane_loops,
             jit_tiers: JitTierManager::default(),
             scope: ProgramScope::Own,
             origin,
@@ -1628,10 +1659,12 @@ impl ProgramStore {
     }
 
     /// Whether the root compile of `function` of Wasm program `id` is due at its first call (`wasm_activation::offer_entry`):
-    /// the function is unattempted, its predicted tier compiles it (`predicted_compiled`), and the root may be admitted.
+    /// the function is unattempted, a compile may start (`tier_policy::may_compile`), its predicted tier compiles it
+    /// (`compiled_tier`), and the root may be admitted.
     pub fn wasm_root_due(&self, id: ProgramId, function: u32) -> bool {
         self.wasm_root_admissible(id, function)
-            && self.predicted_compiled(id, function)
+            && crate::vm::tier_policy::may_compile()
+            && self.compiled_tier(id, function)
             && self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_unattempted(function))
     }
 
@@ -1643,12 +1676,16 @@ impl ProgramStore {
             && self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.claim_wasm_root(function))
     }
 
-    /// Whether the predicted tier of `function` of program `id` compiles it (`tier_policy::lane_body_tier`), read at
-    /// the function's entry: the argmin of design 4.9 that a JavaScript function's entry reads too (`predicted_tiers`).
-    pub(super) fn predicted_compiled(&self, id: ProgramId, function: u32) -> bool {
-        self.predicted_tiers(id)
-            .and_then(|table| table.get(function as usize).map(|row| row[0]))
-            .is_some_and(|pick| crate::vm::tier_policy::lane_body_tier(pick).is_some())
+    /// Whether the predicted tier of `function` of program `id` is a compiled one: the one predicate of design 4.9 that
+    /// every lane derive, entry and back-edge gate and the JavaScript and Wasm entries read. It is the argmin of the
+    /// function's entry column of `predicted_tiers`, or the u-jit of an ahead-of-time image (`tier_policy::body_tier`);
+    /// false for the interpreter's pick and for a function that does not exist. Which compiled tier a build allows is
+    /// the compile sites' question (`tier_policy::lane_body_tier`), not this one's.
+    pub fn compiled_tier(&self, id: ProgramId, function: u32) -> bool {
+        let Some(table) = self.predicted_tiers(id) else { return false };
+        let aot = self.residual(id).is_some_and(|program| self.ahead_images(id, program).is_some());
+        let predicted = table.get(function as usize).map_or(crate::vm::tier_policy::PredictedTier::Interpreter, |row| row[0]);
+        crate::vm::tier_policy::body_tier(aot, predicted) != crate::vm::tier_policy::PredictedTier::Interpreter
     }
 
     pub fn wasm_tier(
@@ -1790,12 +1827,6 @@ impl ProgramStore {
     }
 
     #[inline]
-    pub fn tiers(&self) -> &'static Tiers { self.tiers }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { self.tiers = tiers; }
-
-    #[inline]
     pub fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
@@ -1832,10 +1863,11 @@ impl ProgramStore {
     }
 
     /// Whether an entry of `function` of program `id` compiles it now (`JitTierManager::note_js_entry`).
-    /// A compile is due where the model picks a compiled tier for the function
-    /// (`predicted_compiled`), within the tracking and code budgets.
+    /// A compile is due where a compile may start (`tier_policy::may_compile`) and the model picks a compiled tier for
+    /// the function (`compiled_tier`), within the tracking and code budgets.
     pub fn note_js_function_entry(&mut self, id: ProgramId, function: u32, numeric: bool) -> bool {
-        let (compiled_functions, predicted) = (self.jit_code_cache.js_functions, self.predicted_compiled(id, function));
+        let predicted = crate::vm::tier_policy::may_compile() && self.compiled_tier(id, function);
+        let compiled_functions = self.jit_code_cache.js_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -2371,16 +2403,12 @@ impl ProgramStore {
         (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
-    /// The lane view a general-loop entry of `function` runs with. A function that may loop
-    /// gets it at its first entry; any other once its deferred runs are complete
-    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
-    /// body) runs on the general path instead of first deriving a view of every instruction,
-    /// which costs more than those runs.
+    /// The lane view a general-loop entry of `function` runs with: derived at its first entry where its predicted tier
+    /// compiles it (`compiled_tier`), and not while it still runs unlowered (`ResidualProgram::runs_tier0`).
     pub fn entry_lane_view<'s>(
         &'s self,
         id: ProgramId,
         function: u32,
-        may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
         derive: impl FnOnce(
             &crate::bytecode::Function,
             &[Value],
@@ -2395,29 +2423,19 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
+        if entry.residual.runs_tier0(function as usize) || !self.compiled_tier(id, function) {
             return None;
         }
         Some(store_lane_view(entry, function, code, view, derive))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
-    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
-    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
-    /// general path.
-    /// An unlowered function derives only where `unlowered` (`Vm::call_may_derive_in_lane`); where
-    /// `now`, its deferred runs are skipped, uncounted.
-    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
+    /// Whether a lane call may derive `function`'s view now: it has one, or its predicted tier compiles the function
+    /// (`compiled_tier`). An interpreted function is called from the general path.
+    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        let derived = entry.views_in_lane.derived(function).is_some();
-        derived
-            || entry
-                .lane_deferred
-                .get(function as usize)
-                .is_some_and(|runs| now || deferred_run_completes(runs))
-                && (unlowered || !entry.residual.runs_tier0(function as usize))
+        entry.views_in_lane.derived(function).is_some() || self.compiled_tier(id, function)
     }
 
     pub fn view_in_lane<'s>(
@@ -2689,16 +2707,6 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     )
 }
 
-/// Count one view-less run of a function; true once its deferred runs are complete.
-fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
-    let held = runs.get();
-    if held & loops::DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
-        return true;
-    }
-    runs.set(held + 1);
-    false
-}
-
 /// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).
 /// The table itself is made on the program's first lane use: most programs a process restores
 /// or loads never enter the lane, and a table zeroed for each of their functions cost a
@@ -2887,7 +2895,6 @@ mod lane_diagnostic_tests {
 
 #[cfg(test)]
 mod jit_code_cache_tests {
-    use crate::vm::tier_policy::TierRows;
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,

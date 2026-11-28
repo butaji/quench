@@ -123,7 +123,6 @@ macro_rules! returning_operator_row_of {
 
 use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use quench_runtime::staged::Form;
-use crate::compiled::tier_policy::Tiers;
 use quench_runtime::vm::tier_events::Event;
 use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
@@ -4107,14 +4106,6 @@ impl Vm {
             })
     }
 
-    /// Whether the innermost lane activation runs over a suspended frame's record (a generator's
-    /// or an async function's window, or one a direct eval gave a record): leaving the lane boxes
-    /// that record's state as a frame, which a call waiting for its callee's view would do. The
-    /// innermost is the caller deciding; a window further out only tunes when a callee lowers.
-    pub(crate) fn runs_windows_in_lane(&self) -> bool {
-        self.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| !script.record.is_null())
-    }
-
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
@@ -4616,14 +4607,12 @@ impl Vm {
     /// take a frame without resolving it again.
     #[inline(never)]
     pub(crate) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
-        self.resolve_call_target_in_lane(code, callee, false)
+        self.resolve_call_target_in_lane(code, callee)
     }
 
-    /// `resolve_script_call_target`, deriving the callee's view at once where `now`: an
-    /// activation recovery makes (`body_inlined_activation_in_lane`) for a callee whose runs
-    /// all ran inlined, so none counted toward its view (`call_derives_in_lane`).
+    /// `resolve_script_call_target` for a lane call (`call_may_derive_in_lane`).
     #[inline(never)]
-    pub(crate) fn resolve_call_target_in_lane(&mut self, code: &ResidualProgram, callee: Value, now: bool) -> Option<ScriptCallTarget> {
+    pub(crate) fn resolve_call_target_in_lane(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env) = self.user_target_in_lane(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
@@ -4664,7 +4653,7 @@ impl Vm {
             }
             return Some(target);
         }
-        if !(if now { self.call_derives_in_lane(program, function, true) } else { self.call_may_derive_in_lane(program, function) }) { return None; }
+        if !self.call_may_derive_in_lane(program, function) { return None; }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
@@ -5039,7 +5028,7 @@ impl Vm {
                 let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
                     derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
-                        self.programs.tiers(), facts.as_deref(), planned)
+                        facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -7746,8 +7735,6 @@ const BINDING_VALUE_READ: usize = 5;
 
 
 
-#[cfg(feature = "jit")]
-use crate::compiled::tier_policy::{LANE_ENTRY_MIN_RUN, LANE_ENTRY_MIN_CALL_RUN};
 /// Whether records may read the accumulator. Without sibling calls every
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
@@ -7901,12 +7888,9 @@ impl Vm {
     pub(crate) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         let Some(code) = self.programs.residual(program) else { return std::ptr::null() };
         if !self.runs_lane || !self.may_run_in_lane(program, code) { return std::ptr::null(); }
-        // A Wasm function that may loop, or one of a program with an AOT image, gets its view at entry; any
-        // other derives it once a loop turns hot (`Vm::note_back_edge`).
-        let wasm = code.kind == quench_runtime::bytecode::ProgramKind::Wasm;
         let image = self.programs.ahead_images(program, code).is_some();
         self.programs
-            .entry_lane_view(program, function, |code| image || wasm && may_loop(code), |code, constants, kind, live, sites| {
+            .entry_lane_view(program, function, |code, constants, kind, live, sites| {
                 crate::ahead_runner::view_in_lane(self, program, function, code, constants, kind, live, sites, image)
             })
             .unwrap_or(std::ptr::null())
