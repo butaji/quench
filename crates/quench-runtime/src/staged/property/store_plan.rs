@@ -71,9 +71,6 @@ impl StoreArm {
 pub enum StoreJoin {
     /// The VM's own-field store hit, which a failure leaves at the miss edge.
     Host,
-    /// The same hit through the site's bound slot first, which the frame addressed before the
-    /// run (`PropertyFrame::field_store_bound`).
-    Bound,
     /// The VM's adding entries, which complete a store of any shape without leaving; a frame
     /// that uses it holds no object proof past the store.
     Add,
@@ -98,8 +95,6 @@ pub enum StorePlan<'a> {
     Add,
     /// A setter, a read-only or dictionary property, a proxy: the VM's store.
     Host,
-    /// The VM's store through the slot the entry bound for the site.
-    Bound,
 }
 
 impl<'a> StorePlan<'a> {
@@ -109,7 +104,6 @@ impl<'a> StorePlan<'a> {
         match (arms.is_empty(), join) {
             (false, join) => Self::Own { arms, join },
             (true, StoreJoin::Host) => Self::Host,
-            (true, StoreJoin::Bound) => Self::Bound,
             (true, StoreJoin::Add) => Self::Add,
         }
     }

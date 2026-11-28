@@ -1,7 +1,7 @@
 //! The named store as a staged row: the plan a site proved decides whether the value goes to
 //! an own slot in place (by the first arm whose shape the receiver has), through the slot a
 //! loop's entry projected, or to the VM, and which of the VM's entries completes what no arm
-//! takes (its own-field hit, through the bound slot first, or its adding entries).
+//! takes (its own-field hit, or its adding entries).
 
 use super::ic::{self, Reached};
 use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, PropertyFrame, StoreArm, StoreJoin, StorePlan};
@@ -43,18 +43,17 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             frame.stored(stage, at.0, miss,
                 #[inline(always)] |stage, frame, miss| layout_store(stage, frame, at, (id, slot), value, miss),
                 #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
-                    vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
+                    vm_store(stage, frame, join, at.1, (atom, site), value, miss)
                 })?;
             return Some(value);
         }
         StorePlan::Add => (&[][..], StoreJoin::Add),
         StorePlan::Host => (&[][..], StoreJoin::Host),
-        StorePlan::Bound => (&[][..], StoreJoin::Bound),
     };
     let base = base.map_or(FieldBase::THIS, FieldBase::register);
     let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
     let slow = #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
-        vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
+        vm_store(stage, frame, join, at.1, (atom, site), value, miss)
     };
     if arms.is_empty() {
         slow(stage, frame, miss)?;
@@ -77,14 +76,12 @@ fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (ow
     own_store(stage, at.record, record_id, id, true, slot, value, miss)
 }
 
-/// The VM's completion of the store of `value`: its own-field hit, through the bound slot
-/// first where the plan says the entry bound one, or its adding entries.
+/// The VM's completion of the store of `value` into `object`: its own-field hit, or its adding entries.
 #[inline(always)]
-fn vm_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, join: StoreJoin, (owner, object): (Owner, S::Word),
-    (atom, site): (u32, u16), (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+fn vm_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, join: StoreJoin, object: S::Word,
+    (atom, site): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
     match join {
         StoreJoin::Host => frame.field_store_host(stage, object, atom, site, value, miss),
-        StoreJoin::Bound => frame.field_store_bound(stage, owner, object, (atom, site), (value, fact), miss),
         StoreJoin::Add => frame.field_add(stage, object, atom, site, value, miss),
     }
 }
