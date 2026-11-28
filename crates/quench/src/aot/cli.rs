@@ -353,7 +353,9 @@ fn compile(options: Options) -> Result<(), String> {
             // size-oriented code paths.
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1");
-            if !support.allows_dynamic_source() && profile == "aot-image" {
+            // `QUENCH_TRACE=build-dir` (a diagnostic build) keeps the sysroot's std with its panic messages, so a failing
+            // check in an image names itself.
+            if !support.allows_dynamic_source() && profile == "aot-image" && !quench_runtime::trace::Channel::BuildDir.on() {
                 cargo.args(["-Zbuild-std=std,panic_abort", "-Zbuild-std-features=optimize_for_size", "-Zpanic-immediate-abort",
                     "--config", "profile.aot-image.panic=\"immediate-abort\""]);
             }

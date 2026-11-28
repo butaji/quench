@@ -61,6 +61,9 @@ static COMPLETE_REALM: BuiltinTable = BuiltinTable::ALL;
 /// Computes what `programs` (the entry first, then its units) reach of the build-time realm.
 pub fn reachable_realm(programs: &[&ResidualProgram], roots: RealmRoots<'_>) -> Result<ReachableRealm, JsError> {
     let (entry, _) = programs.split_first().ok_or_else(|| JsError("the closed world needs an entry program".into()))?;
+    // The complete realm holds Intl and Temporal, whose globals a wild closure reads (their lazy installers run):
+    // the compile process links the layer, so it is installed here.
+    super::layer_hooks::install_intl();
     let mut vm = Vm::new_static_with_builtins(crate::SystemHost, &COMPLETE_REALM, &ExecutionTable::ALL);
     vm.initialize_shared(&Rc::new((*entry).clone()), RealmScope::Complete)?;
     vm.close_world(entry, programs, roots)

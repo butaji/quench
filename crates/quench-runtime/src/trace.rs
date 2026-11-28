@@ -85,7 +85,8 @@ setting! {
         JitDump = "jit-dump",
         /// Keep a failed `compile`'s build directory (objects, linker command) and name it, so a
         /// relocation or link defect can be inspected after the failure; and keep every compiled
-        /// image's unstripped executable beside it (`<output>.unstripped`), for a debugger.
+        /// image's unstripped executable beside it (`<output>.unstripped`), for a debugger. A static
+        /// support built under it keeps the sysroot's std and its panic messages (no immediate-abort).
         BuildDir = "build-dir",
         /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
         Residuals = "residuals",
