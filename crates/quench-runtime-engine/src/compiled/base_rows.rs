@@ -76,7 +76,7 @@ pub(crate) enum Heap {
     Store,
     /// `Index` and `Store` of a typed array of the planned `TypedArrayKind` (its discriminant) the loop's entry viewed:
     /// the array's entry words are at the record offset in hole 1 (a read) or hole 0 (a store). The entry proved the
-    /// kind (`LoopTier::select`), so the row, one per kind, tests none.
+    /// kind, so the row, one per kind, tests none.
     TypedIndex(u8),
     TypedStore(u8),
     /// A typed array's `length`: the count its entry words hold (offset in hole 1), an int32.

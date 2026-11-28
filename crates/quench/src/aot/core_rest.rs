@@ -124,7 +124,6 @@ fn execution_table(spec: &ExecutionTableSpec) -> (ExecutionTable, String) {
         run_compiled: linked(spec.wasm, all.run_compiled, "run_compiled", &mut unlinked),
         wasm_table_step: linked(spec.wasm, all.wasm_table_step, "wasm_table_step", &mut unlinked),
         wasm_instance_address: linked(spec.wasm, all.wasm_instance_address, "wasm_instance_address", &mut unlinked),
-        compile_wasm_eagerly: linked(spec.wasm, all.compile_wasm_eagerly, "compile_wasm_eagerly", &mut unlinked),
     };
     (table, format!("static EXECUTION: quench_runtime::ExecutionTable = quench_runtime::ExecutionTable {{ {unlinked}..quench_runtime::ExecutionTable::ALL }};"))
 }

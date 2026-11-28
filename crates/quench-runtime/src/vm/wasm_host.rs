@@ -819,7 +819,9 @@ mod tests {
         let environment = vm
             .root_value(instance.environment)
             .expect("live Wasm instance environment");
-        assert!(vm.install_compiled_diagnostics_for_test(program, environment));
+        for function in 0..module.program.function_count() {
+            assert!(vm.install_compiled_root_for_test(program, environment, function));
+        }
 
         let cases = [
             (7, 2, 10),
@@ -848,13 +850,6 @@ mod tests {
             }
         };
         invoke_cases(&mut vm);
-        let compiled = vm
-            .programs
-            .compiled(program)
-            .flatten()
-            .expect("diagnostic Wasm program");
-        let hits = cases.len() as u64;
-        assert_eq!(compiled.emscripten_memcpy_fast_path_hits(), hits);
 
         let original_view = vm
             .heap
@@ -890,11 +885,6 @@ mod tests {
             (2..12).collect::<Vec<_>>(),
             "an alternate ArrayBuffer must retain ordinary typed-array behavior"
         );
-        assert_eq!(
-            compiled.emscripten_memcpy_fast_path_hits(),
-            hits,
-            "an alternate buffer must not enter the same-memory fast path"
-        );
 
         *vm.heap
             .environment_slot_mut(view_environment, view_slot)
@@ -906,11 +896,6 @@ mod tests {
             &instance,
             1,
             &[WasmValue::I32(7), WasmValue::I32(2), WasmValue::I32(10)],
-        );
-        assert_eq!(
-            compiled.emscripten_memcpy_fast_path_hits(),
-            hits,
-            "a stale view after memory growth must fall back"
         );
 
         let fresh_view_script = vm
@@ -935,11 +920,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_test_memory(&vm, memory), expected);
-        assert_eq!(
-            compiled.emscripten_memcpy_fast_path_hits(),
-            hits + 1,
-            "reloading a current full-memory view re-enables the fast path"
-        );
 
         let custom_method_script = vm
             .compile_embedding_host_script(
@@ -960,11 +940,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(vm.wasm_memory_bytes(memory).unwrap()[0], 99);
-        assert_eq!(
-            compiled.emscripten_memcpy_fast_path_hits(),
-            hits + 1,
-            "a replaced method must be re-read and use the JS fallback"
-        );
         assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
@@ -992,7 +967,6 @@ mod tests {
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
-        assert_eq!(compiled.emscripten_memcpy_fast_path_hits(), hits + 1);
     }
 
     #[derive(Default)]

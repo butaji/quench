@@ -236,8 +236,6 @@ impl Analysis<'_> {
     ) -> Option<()> {
         let callee = u32::from(instruction.known_function_index());
         let compiles = callable.contains(callee as usize);
-        let rooted = self.experimental_root_compilation;
-        (compiles || rooted).then_some(())?;
         let signature = self.signature(callee)?;
         // The VM callout ABI currently carries at most one result: do not admit a residual
         // fallback that would silently discard the remaining Wasm results.

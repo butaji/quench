@@ -108,7 +108,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
         if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None, class: None }]))
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
@@ -165,7 +165,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None, class: None }]))
+                storage: None, ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
@@ -199,7 +199,7 @@ fn own_field_reads_take_no_arena_bound() {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None, class: None }]))
+                ty: Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None }]))
         } else { None }
     }));
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();

@@ -1292,30 +1292,6 @@ pub(super) fn take_jump(
     Resumed::At(r, target, view)
 }
 
-/// Count one backward jump of a crediting run (`LaneContext::backedges_left`); at the budget's
-/// end, credit the running Wasm function with one interpreter entry for the loop work
-/// (`ProgramStore::note_wasm_tier_backedges`) and refill it. A function entered once and
-/// looping hot (JetStream's tsf and zlib) then promotes at its next entry, as one called often
-/// does.
-pub(super) fn count_backedge(cx: *mut LaneContext) {
-    // SAFETY: called from `safepoint_at` with the run's context.
-    let Some(left) = (unsafe { (*cx).backedges_left }) else {
-        return;
-    };
-    if let Some(left) = left.checked_sub(1) {
-        unsafe { (*cx).backedges_left = Some(left) };
-        return;
-    }
-    let machine = unsafe { vm(cx) };
-    let program = unsafe { (*cx).program };
-    let function = machine
-        .lane_stack
-        .top_frame()
-        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function());
-    machine.programs.note_wasm_tier_backedges(program, function);
-    unsafe { (*cx).backedges_left = Some(machine.programs.tiers().wasm.backedges_per_entry) };
-}
-
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).

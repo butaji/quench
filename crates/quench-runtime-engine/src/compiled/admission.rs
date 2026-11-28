@@ -25,8 +25,6 @@ pub(crate) enum Refusal {
     FrameNotAdmitted,
     /// The unit has no instruction at the entry header.
     NoEntry,
-    /// The compiles left for the site, or the compile bound, are spent.
-    CompileBound,
     /// The lowering produced no native code.
     NothingNative,
     /// The compiled body's dependencies would not subscribe.
@@ -51,7 +49,6 @@ impl Refusal {
             Self::NoUnit => Miss::PlanNoUnit,
             Self::FrameNotAdmitted => Miss::PlanFrameNotAdmitted,
             Self::NoEntry => Miss::PlanNoEntry,
-            Self::CompileBound => Miss::PlanCompileBound,
             Self::NothingNative => Miss::PlanNothingNative,
             Self::Dependencies => Miss::PlanDependencies,
             _ => return None,
@@ -80,8 +77,6 @@ pub(crate) enum UnitKind {
     Base,
     /// A Wasm function's specialization (its lowered body and entry): always cleared.
     Wasm,
-    /// A Wasm module compiled whole at its first entry, when the runtime's first-entry flag allows it.
-    WasmEager,
     /// A hot regexp program's native search (`regexp_native::start`): always cleared, since only a VM
     /// under a compiling mode counts its searches toward one (`regexp_native::enable`).
     Regexp,
@@ -117,12 +112,8 @@ pub(crate) struct UnitFacts {
     pub(crate) indexes_typed: bool,
     /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
-    /// The runtime compiles Wasm modules whole at their first entry.
-    pub(crate) wasm_first_entry: bool,
     /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
     pub(crate) wasm_program: bool,
-    /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
-    pub(crate) compiles_left: bool,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
     /// The compile is from the function's own entry, not a loop's (`entry.is_none()`).
@@ -142,7 +133,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Ahead | UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
-        UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
+        UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
             unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
@@ -220,12 +211,11 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
             !facts.indexes_typed
         }
-        UnitKind::WasmEager => facts.wasm_first_entry,
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,
-        // Phase A: the compile bound (the pick decided the tier before this gate).
-        UnitKind::LanePlan => facts.compiles_left,
+        // Phase A: the pick decided the tier before this gate.
+        UnitKind::LanePlan => true,
         // Phase B, during planning: the entry gate.
         UnitKind::LaneEntry(_) => {
             if facts.entry_none && !facts.called_by_bodies && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }

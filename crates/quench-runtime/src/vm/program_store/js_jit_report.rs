@@ -76,8 +76,6 @@ fn function_status(entry: Option<&ProgramEntry>, function: u32, counters: &JsJit
     entry
         .and_then(|entry| entry.jit_tiers.js(function))
         .map(|tier| match tier {
-            JsTierState::Hot { .. } => "hot",
-            JsTierState::PromotionPending => "promotion-pending",
             JsTierState::Rejected { .. } | JsTierState::Unsupported => "unsupported",
             JsTierState::Compiled(_) => "compiled",
         })

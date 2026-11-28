@@ -14790,10 +14790,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
             site.admitted && site.deferred_call,
             "dynamic callback should defer region compilation: {site:?}"
         );
-        assert!(
-            site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
-        );
+        assert!(site.tier_threshold_reached);
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
         let call_pcs = body
@@ -16983,19 +16980,6 @@ fn js_jit_compiles_number_truthiness_branches() {
     }
 }
 
-#[test]
-fn js_jit_tier_tracking_has_a_hard_bound() {
-    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cap.js"))
-        .unwrap();
-    let mut programs = super::program_store::ProgramStore::default();
-    let id = programs.insert(program).unwrap();
-    for function in 0..4096 {
-        assert!(!programs.note_js_function_entry(id, function, false, false));
-    }
-    assert_eq!(programs.js_jit_tracked_function_count(), 2048);
-    assert_eq!(programs.js_jit_tracking_exhaustion_count(), 2048);
-}
-
 #[cfg(not(quench_profiled))]
 const LANE_DYNAMIC_PROPERTIES_RUN_WITH_SHARED_VM_SEMANTICS_SOURCE: &str = r#"
       function read(target, key) {
@@ -17814,98 +17798,11 @@ fn js_jit_failed_install_leaves_the_function_terminal() {
     let mut vm = Vm::new(TestHost::default());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     let id = vm.programs.insert(program.clone()).unwrap();
-    for _ in 0..32 {
-        vm.programs.note_js_function_entry(id, function, false, false);
-    }
     vm.programs.install_js_tier(id, function, None);
     assert!(
         !vm.js_tier_may_claim(&program, id, function),
         "code-cache or codegen exhaustion remains terminal"
     );
-}
-
-#[test]
-fn js_jit_promotion_requires_a_confident_numeric_profile() {
-    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
-        .unwrap();
-    let mut programs = super::program_store::ProgramStore::default();
-    let id = programs.insert(program).unwrap();
-    for observation in 0..16 {
-        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false));
-    }
-    assert!(matches!(
-        programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::Hot {
-            observations: 16,
-            numeric: 15
-        })
-    ));
-}
-
-#[test]
-fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
-
-    fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
-        let n = u32::from(n);
-        let k = u32::from(k);
-        let mut mass = (1.0 - p).powi(n as i32);
-        let mut total = 0.0;
-        for successes in 0..=n {
-            if successes >= k {
-                total += mass;
-            }
-            if successes < n {
-                mass *= (n - successes) as f64 / f64::from(successes + 1) * p / (1.0 - p);
-            }
-        }
-        total
-    }
-
-    // Each fixed look spends alpha/4 under p=0.8. Testing at these points
-    // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in crate::vm::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
-        assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
-        assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
-    }
-
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        "void 0",
-        "js-jit-sequential-profile-gate.js",
-    ))
-    .unwrap();
-    let mut programs = super::program_store::ProgramStore::default();
-    let id = programs.insert(program).unwrap();
-    for observation in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false));
-    }
-    assert!(programs.note_js_function_entry(id, 1, true, false));
-    assert!(matches!(
-        programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::Hot {
-            observations: 32,
-            numeric: 31
-        })
-    ));
-}
-
-#[test]
-fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
-    let program = Engine::compile(crate::ExecutionRequest::script(
-        "void 0",
-        "js-jit-pending-promotion.js",
-    ))
-    .unwrap();
-    let mut programs = super::program_store::ProgramStore::default();
-    let id = programs.insert(program).unwrap();
-    for _ in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, true, false));
-    }
-    assert!(!programs.note_js_function_entry(id, 1, false, false));
-    assert!(matches!(
-        programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::PromotionPending)
-    ));
-    assert!(programs.note_js_function_entry(id, 1, true, false));
 }
 
 #[cfg(quench_profiled)]

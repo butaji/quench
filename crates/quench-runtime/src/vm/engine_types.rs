@@ -432,7 +432,7 @@ pub struct CompiledProgram {
     pub table: Box<[usize]>,
     /// Each function's entry address, which stitched rows call through (`World`).
     pub _entry_cells: Box<[std::cell::Cell<usize>]>,
-    /// The compiled functions in index order: a selective tier holds a few of a module's
+    /// The compiled functions in index order: a root artifact holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     pub functions: Box<[CompiledFunction]>,
     /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
@@ -447,11 +447,6 @@ pub struct CompiledProgram {
     /// back to the interpreter.
     pub fixed_base: Option<i32>,
     pub diagnostics: Option<WasmJitDiagnostics>,
-    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
-    /// site.
-    pub indirect_hits: SiteHits,
-    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
-    pub reference_cache_sites: Vec<(usize, usize, u32)>,
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -551,9 +546,6 @@ pub struct DirectTierEntry {
 /// The set is the lane stack's own (`LaneStack::setter_sites`): a plain load per store, no
 /// thread-local access or borrow.
 pub const SETTER_SITE_BITS: usize = 1 << 16;
-
-/// Per call site, the targets resolved there, ordered by function index.
-pub struct SiteHits(pub RefCell<Vec<Vec<TargetHits>>>);
 
 /// The callee word each in-place native row admits (`staged::call_native::admit_identity`), one
 /// slot per row: the function the lane proved, from its record, to be the row's native, `UNPROVEN`
@@ -1655,7 +1647,6 @@ pub struct LoopTier {
     /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
-    pub compilations: u32,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -1719,13 +1710,6 @@ pub struct SkippedForwarder {
     pub callee: Value,
     pub env: Value,
     pub method: crate::bytecode::ForwardedThisMethod,
-}
-
-/// A target function and how often the callout resolved it at a site.
-#[derive(Clone, Copy)]
-pub struct TargetHits {
-    pub function: u32,
-    pub hits: u64,
 }
 
 /// How a call of a `ScriptCallTarget` binds `this`, one byte so the entry stays one cache
@@ -2395,16 +2379,13 @@ impl FixedUnion {
         &self.atoms[..self.len]
     }
 
-    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: `None` where a name
-    /// is no union name or the names are not in slot order, where the cell's key order would differ from the
-    /// stores' (the plan does not hold then).
+    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: each name's position in
+    /// `atoms()`, whatever the order of `names`. `None` where a name is no union name, which the plan does not hold.
     pub fn cell_slots(&self, names: &[crate::bytecode::Atom]) -> Option<[u8; CONSTRUCT_PLAN_FIELDS]> {
         let mut slots = [0; CONSTRUCT_PLAN_FIELDS];
-        let mut next = 0;
         for (field, name) in names.iter().enumerate() {
-            let slot = next + self.atoms()[next..].iter().position(|atom| atom == name)?;
+            let slot = self.atoms().iter().position(|atom| atom == name)?;
             slots[field] = u8::try_from(slot).ok()?;
-            next = slot + 1;
         }
         Some(slots)
     }
@@ -2779,7 +2760,6 @@ miss_reasons! {
     PlanNoUnit => "plan:no-unit",
     PlanFrameNotAdmitted => "plan:frame-not-admitted",
     PlanNoEntry => "plan:no-entry-instruction",
-    PlanCompileBound => "plan:compile-bound",
     PlanNothingNative => "plan:nothing-native",
     PlanNotAmortized => "plan:not-amortized",
     PlanDependencies => "plan:dependencies",
@@ -3351,12 +3331,6 @@ pub struct LaneContext {
     /// The running program's Wasm signature pool, shared with the program, for the program it is
     /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
     pub signatures: (ProgramId, Option<std::rc::Rc<crate::wasm::WasmSignatures>>),
-    /// Backward jumps left before the running Wasm function is credited with an
-    /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
-    /// when this run's code earns none (`Vm::credits_backedges_in_lane`). A crediting run keeps
-    /// its floor raised, so every backward jump reaches `safepoint_at`, which counts: the
-    /// handlers stay as they are.
-    pub backedges_left: Option<u32>,
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
     /// jump carried to its target (`safepoint_at`), else none.
     pub resumed_acc: Slot<Value>,
@@ -4115,18 +4089,6 @@ impl CompiledProgram {
         self._code.length()
     }
 
-    #[inline]
-
-    pub fn has_function_or_note_fallback(&self, function: usize) -> bool {
-        let available = self.has_function(function);
-        if !available
-            && let Some(stats) = &self.diagnostics
-            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(function)
-        {
-            fallbacks.set(fallbacks.get().saturating_add(1));
-        }
-        available
-    }
 }
 
 impl ExecutionMode {

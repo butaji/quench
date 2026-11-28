@@ -13,10 +13,7 @@ use crate::staged::Operation;
 
 /// The thresholds every tier controller reads.
 pub struct Tiers {
-    pub loops: Loops,
     pub lane_body: LaneBody,
-    pub(crate) js_function: JsFunction,
-    pub wasm: Wasm,
     pub stitch: Stitch,
     pub priors: Priors,
     /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
@@ -92,79 +89,14 @@ pub struct Priors {
     pub plan_ns_per_ir: u64,
 }
 
-/// The loop tier (OSR regions at backward jumps).
-pub struct Loops {
-    /// The backward jumps a loop takes in the interpreter before the tier model weighs its
-    /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
-    /// its body have linked their targets (which the region inlines) and its entry facts are
-    /// observed. The model asks more where the compile does not yet pay.
-    pub warmup_taken: u32,
-    /// IR instructions a bytecode of a loop's span compiles to, which prices the compile before
-    /// it runs (its own census replaces the guess in the learned cost per IR instruction).
-    pub ir_per_bytecode: u64,
-    /// The weight of the prior that a site's native entries repay themselves, in entries: the
-    /// site's measured runs outweigh it as they mount (`loop_model::repaid_entries`), and it stops
-    /// entering where its entries cost more than the iterations they ran save.
-    pub prior_runs: u64,
-    /// Runs that leave at one operation before the site compiles again with that operation's
-    /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
-    /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
-    pub widen_after_leaves: u16,
-    /// Compilations a site may make: each after the first widens a value the last one held as
-    /// an `i32`, and a region has few such values.
-    pub max_compilations: u32,
-}
-
 /// The frameless lane-body tier (`LaneView::tier_lane`).
 pub struct LaneBody {
-    /// The executions a site's record is credited with before its statistics are read: a bound a static fact supplies,
-    /// no count of the run.
-    pub site_executions: u16,
-    /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
-    /// leaves on, before it specializes again.
-    pub reoptimize_share: u8,
-    /// The most compiles of one function's body from its entry: a request of another plan past
-    /// them is declined, so what each came to is the last that holds.
-    pub(crate) max_compiles: u8,
-    /// The same for each loop entry (OSR) of a function: its own budget, which the entry
-    /// compiles of the function do not draw on and which they do not exhaust.
-    pub(crate) max_osr_compiles: u8,
-    pub late_call_calls: u32,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub compile_poll_interval: u16,
-}
-
-/// The per-function JavaScript tier: the numeric optimizing tier.
-pub(crate) struct JsFunction {
-    /// Prespecified looks for the Number-entry profile. Critical counts are the exact
-    /// one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look. A union bound caps
-    /// false promotion at 5% across looks for one function under a stationary Bernoulli model;
-    /// it is not a VM-wide multiple-test bound.
-    pub(crate) promotion_looks: [(u8, u8); 4],
-}
-
-/// The Wasm function and module tiers.
-pub struct Wasm {
-    /// Promote a Wasm function only after repeated interpreter entries, or the loop work of as
-    /// many (`backedges_per_entry`). Wasm signatures and bytecode are fixed, so this is a
-    /// hotness gate.
-    pub(crate) promotion_entries: u8,
-    /// The backward jumps a lane run of a Wasm function counts as one interpreter entry toward
-    /// `promotion_entries`: a loop of this many iterations does at least the work of an entry
-    /// through a short call, so a function entered rarely but looping hot promotes after
-    /// `promotion_entries` such stretches.
-    pub backedges_per_entry: u32,
-    /// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry
-    /// rather than starting in the interpreter: compiling it costs about what the work budget
-    /// (`WASM_MODULE_WORK_BUDGET`) would have spent interpreting it, so waiting buys nothing.
-    /// Whole compiles take 3-7 us a bytecode (Linux x86_64): quicksort-wasm, 2,412, compiles in
-    /// 16 ms and lost 13% of its JetStream Score waiting; source-map's module, 12,971, takes
-    /// 67 ms, which its one short parse never repays.
-    pub(crate) eager_module_bytecodes: usize,
 }
 
 /// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
@@ -230,23 +162,12 @@ impl crate::vm::Vm {
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
-    loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
-    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
-    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    lane_body: LaneBody { compile_poll_interval: 0, ..MEASURED.lane_body },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
     stress: true,
     admits_all: true,
 };
-
-impl LaneBody {
-    /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
-    pub fn compile_bound(&self, osr: bool) -> u8 {
-        if osr { self.max_osr_compiles } else { self.max_compiles }
-    }
-
-}
 
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
@@ -294,17 +215,7 @@ pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16 },
-    lane_body: LaneBody {
-        site_executions: 400,
-        reoptimize_share: 1,
-        max_compiles: 3,
-        max_osr_compiles: 3,
-        late_call_calls: 4096,
-        compile_poll_interval: 64,
-    },
-    js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
-    wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    lane_body: LaneBody { compile_poll_interval: 64 },
     stitch: Stitch {
         max_total_instructions: 96,
         window_registers: 32,
@@ -380,9 +291,9 @@ pub fn tiers_run(mode: crate::ExecutionMode, policy: crate::MemoryPolicy, tiers:
 /// Operators up to which a Wasm module lowered for compiled code inlines its leaves as the
 /// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
 /// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
-/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
-/// runs or not; past this size the copies' compile time outweighs them on a module's first
-/// runs, and larger modules keep every call.
+/// leaf with its caller's values. A copy compiles with its caller's root, so it is compiled
+/// whether or not it runs; past this size the copies' compile time outweighs them on a module's
+/// first runs, and larger modules keep every call.
 pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
 
 /// Whether a Wasm module lowered for `mode` inlines its leaf calls (`wasm::inline::leaf_budget`).
@@ -688,11 +599,6 @@ pub const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 
 pub const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-pub const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-
 pub const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
@@ -746,37 +652,12 @@ pub(crate) const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 
 pub(crate) const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 
-/// The work (entries and loop backedges, `TIERS.wasm.backedges_per_entry`) a selective Wasm
-/// module observes before its whole-module compile is due: a module that runs this long gets
-/// the code eager compilation would have made at its first entry.
-pub(crate) const WASM_MODULE_WORK_BUDGET: u32 = 4096;
-
 pub(crate) const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-pub(crate) const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
 pub(crate) const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 
 pub(crate) const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
-
-/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
-/// kept. Below it most calls cross between native code and the interpreter, and each crossing
-/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
-/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
-/// slower than with no JIT.
-pub(crate) const WASM_MODULE_MIN_COVERAGE: usize = 500;
-
-/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
-/// module compiles in microseconds and makes few crossings, whatever it holds.
-pub(crate) const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 // Native graph, regexp and JS region compile budgets (native_graph, regexp_native, js_compiled)
 // Bounds the working CFG, not the source function. Large unpartitioned native
@@ -815,11 +696,6 @@ mod tests {
 
     #[test]
     fn the_tier_table_is_consistent() {
-        let lane = &TierRows::PROCESS.table().lane_body;
-        assert!(lane.site_executions > 0);
-        let looks = TierRows::PROCESS.table().js_function.promotion_looks;
-        assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
-        assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.
