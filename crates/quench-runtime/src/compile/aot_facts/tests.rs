@@ -1012,7 +1012,6 @@ fn a_global_stored_twice_is_not_frozen() {
     assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "two stores write the key");
 }
 
-#[test]
 /// The atom of the name `text` in `program`.
 fn atom_of(program: &ResidualProgram, text: &str) -> u32 {
     program.atoms.iter().position(|atom| {
@@ -1204,7 +1203,6 @@ fn a_closure_made_in_a_loop_register_is_many() {
     assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Closure(inner)), "the loop creates a closure per iteration");
 }
 
-#[test]
 /// The pc of function `name`'s last instruction (its return) and its register count.
 fn last_pc_and_registers(program: &ResidualProgram, name: &str) -> (u32, usize) {
     let id = function_named(program, name);
