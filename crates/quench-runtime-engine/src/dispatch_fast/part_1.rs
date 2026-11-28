@@ -362,7 +362,7 @@ pub(super) fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 pub(super) fn set_field_hint(ip: Ip, entry: quench_runtime::vm::FieldCache) {
-    set_record_hint(ip, entry.receiver, entry.slot);
+    set_record_hint(ip, entry.receiver, entry.record_slot());
 }
 
 /// Makes inherited entry `index` the hint of the `GetField` record at `ip`
@@ -786,7 +786,7 @@ pub(super) unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip
     // The formed row reads its second hop and base from the record (`nested_mode`), not from the site
     // and the cache: the hops' guards are the check, so a stale word only misses.
     // SAFETY: as `requicken`; an unfused field record's `mode` is zero and no fusion names it.
-    unsafe { (*ip.cast_mut()).mode = nested_mode(second_layout, entry.slot, site.base) };
+    unsafe { (*ip.cast_mut()).mode = nested_mode(second_layout, entry.record_slot(), site.base) };
     requicken(ip, nested_formed_handler(first_class, second_class));
 }
 
@@ -1149,7 +1149,7 @@ pub(super) fn hint_private_field(vm: &Vm, ip: Ip, atom: quench_runtime::bytecode
         && let Ok(slot) = u16::try_from(slot)
         && slot != NO_CALL_LINK
     {
-        set_field_hint(ip, quench_runtime::vm::FieldCache::own(shape, slot));
+        set_field_hint(ip, quench_runtime::vm::FieldCache::own(shape, u32::from(slot)));
     }
 }
 

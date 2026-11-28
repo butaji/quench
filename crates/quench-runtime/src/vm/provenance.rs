@@ -181,7 +181,7 @@ impl Vm {
         let Some(after) = self.heap.object(function).map(|object| object.shape()) else {
             return;
         };
-        let Ok(slot) = u16::try_from(slot) else {
+        let Ok(slot) = u32::try_from(slot) else {
             return;
         };
         let plain = |vm: &Self, shape: u32| !vm.shape_is_dictionary(shape);

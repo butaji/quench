@@ -7,6 +7,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
+use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::staged::ic::IcOp;
 use quench_runtime::staged::property::{Arm, ClassArm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use quench_runtime::staged::Form;
@@ -85,6 +86,18 @@ impl Fast {
             Self::Single(load) => load.function_shape,
             Self::Family(_) => true,
         }
+    }
+}
+
+/// Whether a load's field is one the lane addresses: a class-keyed load of an own field whose slot is past its class's
+/// spill slot (`AotFacts::spill_from`) names a word of the cell's spill run, which the lane does not address, so the load
+/// builds no arm and its site's access takes the VM path. The spill slot itself holds the run's offset, so it is no field
+/// either. Shape loads address their record and held loads their holder, so both are always addressable here; a spilled
+/// slot is no `NativeFieldLoad` at all (its `u16` slot refuses it, `native_field_entry`).
+pub(crate) fn addressable_load(facts: Option<&AotFacts>, load: &NativeFieldLoad) -> bool {
+    match (load.class, load.holder) {
+        (Some(class), None) => facts.and_then(|facts| facts.spill_from(class)).is_none_or(|from| u32::from(load.slot) < from),
+        _ => true,
     }
 }
 

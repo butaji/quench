@@ -92,7 +92,7 @@ impl AccessorCall {
         (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
             && entry.holder == NO_FIELD_HOLDER
             && entry.receiver == receiver.exact_shape())
-        .then_some(entry.slot)
+        .then(|| entry.record_slot())
     }
 
     /// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`

@@ -54,7 +54,7 @@ view_handler! {
                 // the type its slot holds (`tracked_store_row`).
                 if unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
                     let hint = i.field_hint();
-                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
+                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.record_slot()));
                 }
             }
             // A held-type store missed (its slot's type widened, or another receiver): the tracked row stores it
@@ -201,13 +201,13 @@ view_handler! {
                 RecordPlan::general_store(records)
             } else if const { FLAG == crate::dispatch_fast::POLY_SITE } {
                 let hint = i.field_hint();
-                RecordPlan::own_polymorphic(hint.receiver, hint.slot, records)
+                RecordPlan::own_polymorphic(hint.receiver, hint.record_slot(), records)
             } else if const { crate::dispatch_fast::store_held_site(FLAG) } {
                 let hint = i.field_hint();
-                RecordPlan::own_held(hint.receiver, hint.slot, records, const { crate::dispatch_fast::held_of(FLAG) })
+                RecordPlan::own_held(hint.receiver, hint.record_slot(), records, const { crate::dispatch_fast::held_of(FLAG) })
             } else if const { FLAG == crate::dispatch_fast::TRACKED_SITE || FLAG == crate::dispatch_fast::NARROW_SITE } {
                 let hint = i.field_hint();
-                RecordPlan::own_hinted(hint.receiver, hint.slot, records, const { FLAG == crate::dispatch_fast::NARROW_SITE })
+                RecordPlan::own_hinted(hint.receiver, hint.record_slot(), records, const { FLAG == crate::dispatch_fast::NARROW_SITE })
             } else {
                 let hint = i.field_hint();
                 // A store instance's form is its hint layout's own: the requicken that chose the row proved it
@@ -215,7 +215,7 @@ view_handler! {
                 if const { crate::dispatch_fast::store_formed_site(FLAG) } {
                     unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == const { crate::dispatch_fast::own_site_form(FLAG) }) }
                 }
-                RecordPlan::own_store(hint.receiver, hint.slot, records)
+                RecordPlan::own_store(hint.receiver, hint.record_slot(), records)
             });
         } else if property {
             // The record's plan: its own-field hint over the object records the lane bound; an
@@ -236,7 +236,7 @@ view_handler! {
                 if records == 0 || hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER {
                     sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
                 }
-                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
+                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
             } else if const { crate::dispatch_fast::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
@@ -258,7 +258,7 @@ view_handler! {
                     let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
                     if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                     let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
-                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.slot, forms[0]), (layout, slot, forms[1]), base,
+                    frame.plan = Some(RecordPlan::nested_formed((hint.receiver, hint.record_slot(), forms[0]), (layout, slot, forms[1]), base,
                         machine.heap_reads().live_object_records() as u64));
                 } else {
                 let code = unsafe { &*(*script).code };
@@ -282,7 +282,7 @@ view_handler! {
                 }
                 if site.base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }
                 let forms = const { crate::dispatch_fast::nested_hop_forms(FLAG) };
-                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot, forms[0]), (entry.receiver, entry.slot, forms[1]), site.base,
+                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.record_slot(), forms[0]), (entry.receiver, entry.record_slot(), forms[1]), site.base,
                     machine.heap_reads().live_object_records() as u64));
                 }
             } else if const { crate::dispatch_fast::private_field_site(FLAG) } {
@@ -300,7 +300,7 @@ view_handler! {
                 if records == 0 { property_miss!() }
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
-                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
+                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
             } else if const { crate::dispatch_fast::cell_own_site(FLAG) } {
                 // A receiver outside the object records (a function) by its layout id; a direct
                 // object, should the site meet one, through the bound records.
@@ -312,9 +312,9 @@ view_handler! {
                 // A fixed form is the hint layout's own (the decision chose the row by it).
                 let form = const { crate::dispatch_fast::own_site_form(FLAG) };
                 frame.plan = Some(if form == HINTED_FORM {
-                    RecordPlan::own_other(hint.receiver, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
+                    RecordPlan::own_other(hint.receiver, hint.record_slot(), records, std::ptr::from_ref::<Vm>(machine))
                 } else {
-                    RecordPlan::own_other_formed(hint.receiver, form, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
+                    RecordPlan::own_other_formed(hint.receiver, form, hint.record_slot(), records, std::ptr::from_ref::<Vm>(machine))
                 });
             } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
                 // One object's own constant: its record's address, then the watch on its values.
@@ -365,7 +365,7 @@ view_handler! {
                 frame.entries = Some(EntryReads::of(script, ip));
                 frame.plan = Some(if const { FLAG == crate::dispatch_fast::POLYMORPHIC_SITE } {
                     let hint = i.field_hint();
-                    RecordPlan::polymorphic(hint.receiver, hint.slot, records)
+                    RecordPlan::polymorphic(hint.receiver, hint.record_slot(), records)
                 } else {
                     RecordPlan::entry(const { crate::dispatch_fast::entry_kind(FLAG) }, records)
                 });
@@ -400,7 +400,7 @@ view_handler! {
             // A fixed form is the hint's layout's own (`own_formed_handler` chose the row by it),
             // stated so the read takes it as a constant, not from the layout table.
             if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(quench_runtime::staged::ic::layout_form(hint.receiver) == form) } }
-            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.slot, records));
+            frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
             }
         }
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
@@ -413,7 +413,7 @@ view_handler! {
                     // plain row (its layout store observes no representation): the record takes the tracked
                     // site's hinted store, as a refused one does (`store_miss!`), and stops asking the site.
                     if const { FLAG == FLAG_UNREAD } && unsafe { vm(script) }.heap_reads().tracks_slot_representations() {
-                        requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
+                        requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.record_slot()));
                     }
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
@@ -439,7 +439,7 @@ view_handler! {
                 // (`tracked_store_row`), which stores the next value of it in place.
                 if const { FLAG == crate::dispatch_fast::TRACKED_SITE } {
                     let hint = frame.stored.unwrap_or_else(|| i.field_hint());
-                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.slot));
+                    requicken(ip, crate::dispatch_fast::tracked_store_row::<OP>(script, hint.receiver, hint.record_slot()));
                 }
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }

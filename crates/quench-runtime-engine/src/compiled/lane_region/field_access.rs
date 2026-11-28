@@ -1,4 +1,5 @@
 use super::*;
+use super::field_plans::addressable_load;
 
 impl Lowering<'_, '_> {
     /// Nested sites retain callee coordinates; atom operands are already renamed by lane_unit.
@@ -145,7 +146,9 @@ impl Lowering<'_, '_> {
 
     /// A chain link's site, with the loads its cache proved and whether its misses probe.
     fn link_input(&self, (atom, site): (Atom, u16)) -> LinkInput {
-        let loads = site_loads(self.fields, site).cloned().unwrap_or_default();
+        let facts = self.vm.facts;
+        let loads: Vec<NativeFieldLoad> = site_loads(self.fields, site).map(|loads| loads.iter().filter(|load| addressable_load(facts, load))
+            .copied().collect()).unwrap_or_default();
         let probed = self.probes_field_misses(&loads);
         LinkInput { atom, site, loads, probed }
     }

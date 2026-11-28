@@ -1,4 +1,5 @@
 use super::*;
+use super::field_plans::addressable_load;
 
 impl Lowering<'_, '_> {
     /// The alias region of the named field access at unit PC `pc`, where its key is declared.
@@ -228,7 +229,8 @@ impl Lowering<'_, '_> {
         // (`StoreArm::of_class`, whose cell's gate admits the write, so the slot's type is no test here), and the other
         // receivers the shape arms; with no shape arm, a cell of another class leaves for the VM's store.
         let arms: Vec<StoreArm> = {
-            let classes = own.iter().filter(|load| load.valid())
+            let facts = self.vm.facts;
+            let classes = own.iter().filter(|load| load.valid() && addressable_load(facts, load))
                 .filter_map(|load| load.class.map(|class| StoreArm::of_class(quench_runtime::staged::field_cache_layout::CLASS_KEY | class, load.slot)));
             // An ahead image's construction is a class cell whose class the loader resolves at run time: its arm is
             // `StoreArm::of_image` where it is the site's only shape arm, else its stores take the VM's (the join).

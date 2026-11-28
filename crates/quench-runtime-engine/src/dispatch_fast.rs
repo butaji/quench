@@ -266,7 +266,7 @@ impl LaneInstruction {
     fn field_hint(&self) -> quench_runtime::vm::FieldCache {
         // SAFETY: the view writes `field` for every `GetField` and `SetField` record, the only
         // records whose handlers read the hint.
-        quench_runtime::vm::FieldCache::own(unsafe { self.operand.field.shape }, self.call_link.get())
+        quench_runtime::vm::FieldCache::own(unsafe { self.operand.field.shape }, u32::from(self.call_link.get()))
     }
 
     #[inline(always)]
@@ -3791,7 +3791,7 @@ script_handler! {
                     let shape = data.shape();
                     let hint = i.field_hint();
                     if shape == hint.receiver {
-                        return vm.heap_reads().property_get_ref(data, usize::from(hint.slot)).map(PrivateRead::Value);
+                        return vm.heap_reads().property_get_ref(data, usize::from(hint.record_slot())).map(PrivateRead::Value);
                     }
                     if let Some(element) = vm.private_site_homes.unique_element(ip.addr(), shape) {
                         return Some(element_read(element, object));
@@ -5854,7 +5854,7 @@ script_handler! {
                 {
                     // A declared name's read names its binding by index (`FLAG_NAME_LEXICAL`'s row),
                     // which the global lexical bindings never move.
-                    set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, index));
+                    set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, u32::from(index)));
                     let load = match KIND {
                         LOAD_NAME_CALL => quench_runtime::staged::NameLoad::Call,
                         LOAD_NAME_TYPEOF => quench_runtime::staged::NameLoad::Typeof,

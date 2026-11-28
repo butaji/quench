@@ -5392,7 +5392,7 @@ impl Vm {
         {
             return;
         }
-        let Ok(slot) = u16::try_from(slot) else {
+        let Ok(slot) = u32::try_from(slot) else {
             return;
         };
         let guarded = self.guarded_field_add(&guard);

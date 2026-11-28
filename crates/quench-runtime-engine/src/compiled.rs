@@ -3992,7 +3992,7 @@ impl JsStepDispatch {
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
-                array_mark_blocks: 0, array_mark_block_count: 0, class_mark_lists: [0; 12],
+                array_mark_blocks: 0, array_mark_block_count: 0, class_mark_lists: [0; 12], spill_base: 0,
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
@@ -4091,6 +4091,7 @@ impl JsStepDispatch {
             let slot = 2 * region as usize;
             (self.class_mark_lists[slot], self.class_mark_lists[slot + 1]) = (blocks as usize, count);
         }
+        self.spill_base = vm.heap_reads().native_spill_base();
         self.empty_string = vm.empty_string_word().to_bits();
         self.store_watch = vm.heap_reads().store_watch_word();
         let atoms = vm.method_cache_atoms.words();
