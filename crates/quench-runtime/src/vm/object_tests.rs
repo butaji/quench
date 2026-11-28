@@ -275,7 +275,7 @@ fn two_classes_adding_the_same_first_field_keep_distinct_shapes_and_slot_domains
     ).unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.heap.track_slot_representations(&vm.shape_layouts());
+    vm.track_slots();
     vm.execute(&program).unwrap();
     let (a_atom, b_atom) = (vm.intern_atom("a"), vm.intern_atom("b"));
     let a = vm.own_property(vm.realm.globals, a_atom).unwrap();

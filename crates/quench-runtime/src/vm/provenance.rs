@@ -367,6 +367,7 @@ impl Vm {
             return cached.constructed;
         }
         let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
+        self.seed_union_domains(constructor, constructed);
         self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
         constructed
     }
