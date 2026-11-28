@@ -92,6 +92,20 @@ impl<'a> FunctionFacts<'a> {
         self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
     }
 
+    /// Whether the string register `register` holds just before `pc` is flat (`typed_ir::StringFact::flat`): one run of units,
+    /// never the halves of a rope. False where the solve names no string or no flat one.
+    pub fn string_flat(&self, pc: u32, register: u16) -> bool {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).is_some_and(|fact| fact.flat())
+    }
+
+    /// Whether the array register `register` holds just before `pc` is a plain int32 backing: no hole, every element an int32,
+    /// a plain array (`Elements::int32_backing`). Such a backing's count of other values (`Header::others`) is zero, so a loop
+    /// that reads and stores its elements as int32s need not check the backing's count at entry. False where the solve does
+    /// not settle the register or names no plain array.
+    pub fn backing_plain(&self, pc: u32, register: u16) -> bool {
+        self.cell_at(pc, register).is_some_and(|cell| cell.elements.int32_backing())
+    }
+
     /// Whether `===` between the registers `left` and `right` just before `pc` is a pointer compare: both hold interned
     /// atoms (`staged::typing::both_interned`).
     pub fn interned_compare(&self, pc: u32, left: u16, right: u16) -> bool {

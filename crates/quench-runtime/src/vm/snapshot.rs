@@ -473,8 +473,7 @@ impl Vm {
             .map_err(SnapshotError)?;
         reader.finish()?;
         // The restored heap is fresh: it keeps slot representations again, joined from what the restored objects hold.
-        let layouts = self.shape_layouts();
-        self.heap.track_slot_representations(&layouts);
+        self.track_slots();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_host");
         Ok(())
