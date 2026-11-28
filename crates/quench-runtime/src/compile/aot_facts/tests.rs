@@ -1,6 +1,6 @@
 //! Closed-world facts of small scripts: call targets, numbers, and the gate.
 
-use super::{analyze, world, AotFacts, FieldDefault};
+use super::{analyze, world, AotFacts, BuiltinPath, FieldDefault};
 use super::gate::World;
 use crate::Engine;
 use crate::bytecode::ResidualProgram;
@@ -901,4 +901,251 @@ fn a_store_whose_index_steps_by_two_covers_the_whole_array() {
     assert_eq!(stores.len(), 1, "the loop stores into one array");
     let store = facts.function_facts(f as u32).element_store(stores[0]).expect("the store is recorded");
     assert_eq!(store.indices, Indices::Whole, "a step of two leaves no span of the count");
+}
+
+#[test]
+fn constructors_sharing_one_class_factory_body_are_distinct_classes() {
+    // The raytrace shape: `Class.create` returns one body for every class it makes, so the two constructors share it.
+    let program = program(
+        "var Class = { create: function() { return function(x) { this.x = x; }; } }; \
+         var A = Class.create(); var B = Class.create(); \
+         function make() { return [new A(1), new B(2)]; } make();",
+    );
+    let facts = analyze(&program);
+    let make = function_named(&program, "make") as u32;
+    let mut classes: Vec<u32> = facts.construct_classes.iter()
+        .filter(|&(&(function, _), _)| function == make)
+        .map(|(_, &class)| class)
+        .collect();
+    classes.sort();
+    classes.dedup();
+    assert_eq!(classes.len(), 2, "each constructor is its own class");
+    let body = facts.classes.body(classes[0]);
+    assert_eq!(body, facts.classes.body(classes[1]), "both classes run the factory's one body");
+    assert!(classes.iter().all(|&class| class != body), "the classes are synthetic ids, not the body's id");
+    for class in classes {
+        assert!(facts.class_layout(class).is_some_and(|fields| fields.len() == 1), "each class keeps its own instance layout");
+    }
+}
+
+/// The atom `name` interns to, in `program`.
+fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
+    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("an atom of that name") as u32
+}
+
+#[test]
+fn a_store_of_a_name_a_define_property_may_make_non_writable_stays_observed() {
+    let program = program("function Proto() {} var p = new Proto(); p.x = 1; Object.defineProperty(Proto.prototype, 'x', {writable: false});");
+    let facts = analyze(&program);
+    assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, "x"))), "a defineProperty may make x non-writable, so a store of x fails rather than writes");
+}
+
+#[test]
+fn every_store_stays_observed_once_a_builtin_may_freeze_an_object() {
+    let program = program("var p = {}; p.x = 1; p.y = 2; Object.freeze(p);");
+    let facts = analyze(&program);
+    for name in ["x", "y"] {
+        assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, name))), "a frozen object rejects a store of {name}, so the store is observed");
+    }
+}
+
+/// The pcs of the element reads (`ElementRead`) of function `id`.
+fn element_reads(program: &crate::bytecode::ResidualProgram, id: usize) -> Vec<u32> {
+    program.with_record(id, |function| {
+        (0..function.code.len()).filter(|&pc| matches!(Operation::<u64, ()>::of(function.instruction_at(pc)), Some(Operation::ElementRead { .. })))
+            .map(|pc| pc as u32).collect()
+    })
+}
+
+#[test]
+fn an_advect_clamped_index_read_has_a_range_invariant_in_its_loop() {
+    let program = program(
+        "function advect(d0, width, u, j0, rowSize, Wdt0, n) { \
+           var Wp5 = width + 0.5; var row1 = j0 * rowSize; var s = 0; \
+           for (var i = 0; i < n; i++) { \
+             var x = i - Wdt0 * u[i]; \
+             if (x < 0.5) x = 0.5; else if (x > Wp5) x = Wp5; \
+             var i0 = x | 0; \
+             s += d0[i0 + row1]; \
+           } \
+           return s; \
+         } advect([0, 0, 0, 0, 0, 0, 0, 0], 4, [0, 0, 0, 0], 1, 4, 1, 4);",
+    );
+    let facts = analyze(&program);
+    let advect = function_named(&program, "advect");
+    let reads = element_reads(&program, advect);
+    let function = facts.function_facts(advect as u32);
+    assert!(
+        reads.iter().any(|&pc| function.index_ceiling(pc).is_some_and(|range| range.integral)),
+        "a read of the clamped, truncated index has an integral range invariant in its loop",
+    );
+}
+
+#[test]
+fn a_store_into_a_builtin_prototype_makes_its_index_properties_non_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; Array.prototype[0] = 1; a[1];");
+    assert!(!analyze(&program).prototype_indices_empty(), "Array.prototype gains an index property the frame array's holes would read");
+}
+
+#[test]
+fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_empty() {
+    let program = program("var a = new Array(3); a[0] = 1; a[1];");
+    assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
+}
+
+#[test]
+fn a_global_stored_once_at_the_root_before_its_reader_is_frozen() {
+    let program = program("var K = 3; function f() { return K; } f();");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_some(), "the one store dominates f's read");
+}
+
+#[test]
+fn a_global_read_before_its_store_is_not_frozen() {
+    let program = program("function f() { return K; } f(); var K = 3;");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "f runs before the store");
+}
+
+#[test]
+fn a_global_stored_twice_is_not_frozen() {
+    let program = program("var K = 3; K = 4; function f() { return K; } f();");
+    let facts = analyze(&program);
+    assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "two stores write the key");
+}
+
+#[test]
+/// The atom of the name `text` in `program`.
+fn atom_of(program: &ResidualProgram, text: &str) -> u32 {
+    program.atoms.iter().position(|atom| {
+        let atom: &str = atom.as_ref();
+        atom == text
+    }).expect("an atom with that name") as u32
+}
+
+#[test]
+fn an_unwritten_builtin_member_is_its_realm_builtin() {
+    let program = program("Math.sqrt(4);");
+    let binding = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(analyze(&program).builtin_identity(binding), "no store of the program writes Math.sqrt");
+}
+
+#[test]
+fn a_stored_builtin_member_is_not_its_realm_builtin() {
+    let program = program("function f(x) { return x; } Math.sqrt = f; Math.sqrt(4);");
+    let binding = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(!analyze(&program).builtin_identity(binding), "a store of the program writes Math.sqrt");
+}
+
+#[test]
+fn a_top_level_function_is_one_closure() {
+    let program = program("function f(x) { return x; } f(1);");
+    let f = function_named(&program, "f") as u32;
+    assert!(analyze(&program).closure_identity(f), "the root creates f once");
+}
+
+#[test]
+fn a_closure_created_in_a_loop_is_not_one_closure() {
+    let program = program("var fs = []; for (var i = 0; i < 3; i++) { fs.push(function () { return i; }); } fs.length;");
+    let inner = (0..program.function_count()).find(|&id| program.with_record(id, |function| function.parent.is_some())).expect("a nested function") as u32;
+    assert!(!analyze(&program).closure_identity(inner), "the loop creates a closure per iteration");
+}
+
+#[test]
+fn a_method_only_called_on_its_class_instances_takes_that_class_as_this() {
+    let program = program("function Scheduler() { this.count = 0; } \
+        Scheduler.prototype.run = function run() { return this.count; }; \
+        new Scheduler().run();");
+    let facts = analyze(&program);
+    let (scheduler, run) = (function_named(&program, "Scheduler") as u32, function_named(&program, "run") as u32);
+    assert_eq!(facts.function_facts(run).this_classes().single().map(|(class, _)| class), Some(scheduler));
+}
+
+#[test]
+fn an_instance_of_a_class_only_stored_by_name_never_departs_its_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
+    let facts = analyze(&program);
+    assert!(facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn a_delete_on_an_instance_departs_its_class_shape() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); delete s.count;");
+    let facts = analyze(&program);
+    assert!(!facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn an_atom_no_method_call_names_is_uncached_in_a_closed_program() {
+    let program = program("var q = 1; var o = { m: function () { return 2; } }; o.m();");
+    let facts = analyze(&program);
+    assert!(facts.uncached_atoms().contains(&atom_named(&program, "q")), "no method call site names q");
+    assert!(!facts.uncached_atoms().contains(&atom_named(&program, "m")), "a method call site names m, which a method cache may hold");
+}
+
+#[test]
+fn a_program_that_can_eval_names_no_uncached_atom_and_no_global_shape() {
+    let program = program("var q = 1; eval('1');");
+    let facts = analyze(&program);
+    assert!(facts.uncached_atoms().is_empty(), "new code may add a method call site");
+    assert!(facts.global_shape().is_none(), "new code may declare or delete a global");
+}
+
+#[test]
+fn the_global_shape_lists_the_declared_globals_and_the_builtins_the_program_reads() {
+    let program = program("var x = 1; function f() { return Math.max(x, 2); } f();");
+    let facts = analyze(&program);
+    let shape = facts.global_shape().expect("a closed program fixes its global object's shape");
+    assert!(shape.declared().contains(&atom_named(&program, "x")), "x is declared by the program");
+    assert!(shape.builtins().contains(&atom_named(&program, "Math")), "Math is a builtin the program reads and never changes");
+    assert!(!shape.builtins().contains(&atom_named(&program, "x")), "a declared global is no builtin");
+}
+
+#[test]
+fn a_computed_store_while_the_global_object_is_a_value_takes_the_global_shape() {
+    let program = program("var k = 'x'; globalThis[k] = 1;");
+    assert!(analyze(&program).global_shape().is_none(), "the store may write any global name the global object holds");
+}
+
+#[test]
+/// The pc of function `name`'s last instruction (its return) and its register count.
+fn last_pc_and_registers(program: &ResidualProgram, name: &str) -> (u32, usize) {
+    let id = function_named(program, name);
+    program.with_record(id, |function| (function.code.len() as u32 - 1, usize::from(function.registers)))
+}
+
+#[test]
+fn a_string_literal_concat_under_the_threshold_is_flat() {
+    let program = program("function f() { return 'ab' + 'cd'; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!((0..registers).any(|register| function.string_flat(last, register as u16)));
+}
+
+#[test]
+fn a_string_from_an_unknown_value_is_not_flat() {
+    let program = program("function f(s) { return s + 'cd'; } f(globalThis.hostInput);");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!(!(0..registers).any(|register| function.string_flat(last, register as u16)));
+}
+
+#[test]
+fn an_int_array_filled_in_a_loop_is_a_plain_int32_backing() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a[i] = i; } return a; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!((0..registers).any(|register| function.backing_plain(last, register as u16)));
+}
+
+#[test]
+fn an_int_array_with_a_delete_is_not_a_plain_int32_backing() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a[i] = i; } delete a[0]; return a; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!(!(0..registers).any(|register| function.backing_plain(last, register as u16)));
 }

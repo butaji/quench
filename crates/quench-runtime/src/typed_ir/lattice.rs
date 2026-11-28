@@ -21,8 +21,8 @@ pub enum TypeKind {
     DirectObjectShape { shape: u32, nullish: u16 },
     FunctionIdentity(Value),
     FunctionBody(u32),
-    /// A string refined by its interned atoms and its length (`StringFact`). Never the full range with no atom: that is
-    /// `Language(String)`, so equal types keep equal representations.
+    /// A string refined by its interned atoms, its length and whether it is flat (`StringFact`). Never the full range with
+    /// no atom and not flat: that is `Language(String)`, so equal types keep equal representations.
     String(StringFact),
 }
 
@@ -46,33 +46,44 @@ impl StringLength {
     }
 }
 
-/// A string value's fact: the program atoms it may be, and the range of its length. An atom is an interned string, so
-/// two values that are both one atom are the same string object, and `===` between such values is a pointer compare.
-/// `count == 0` names no atom: the value is any string of `length`. Atoms are sorted and distinct.
+/// A string value's fact: the program atoms it may be, the range of its length, and whether it is flat. An atom is an
+/// interned string, so two values that are both one atom are the same string object, and `===` between such values is a
+/// pointer compare. `count == 0` names no atom: the value is any string of `length`. Atoms are sorted and distinct.
+///
+/// `flat` is a lattice component of its own: a value that is flat is held as its units, not as a rope of parts, at every
+/// point it is read. It joins by AND, so its bottom is `true` (the identity of AND; no string has a bottom of its own) and
+/// its top is `false`. A string proven flat where it is made (a literal, a character or a slice) stays flat in every join
+/// that keeps it; a string of unknown form is not flat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StringFact {
     atoms: [u32; MAX_STRING_ATOMS],
     count: u8,
     length: StringLength,
+    flat: bool,
 }
 
 impl StringFact {
-    /// Any string: `Type::language(String)`.
-    pub const ANY: Self = Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length: StringLength::FULL };
+    /// Any string: `Type::language(String)`. Not flat: the top of the flat component.
+    pub const ANY: Self = Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length: StringLength::FULL, flat: false };
 
-    /// The fact of a string that is one of `atoms` (sorted and deduplicated here), of length `length`. More atoms than
-    /// `MAX_STRING_ATOMS` name none: the fact is any string of that length.
-    fn new(atoms: &[u32], length: StringLength) -> Self {
+    /// The fact of a string that is one of `atoms` (sorted and deduplicated here), of length `length`, flat or not. More
+    /// atoms than `MAX_STRING_ATOMS` name none: the fact is any string of that length, with the same flatness.
+    fn new(atoms: &[u32], length: StringLength, flat: bool) -> Self {
         let mut ids = [0u32; MAX_STRING_ATOMS];
         let mut count = 0usize;
         for &atom in atoms {
             if ids[..count].contains(&atom) { continue; }
-            if count == MAX_STRING_ATOMS { return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length }; }
+            if count == MAX_STRING_ATOMS { return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length, flat }; }
             ids[count] = atom;
             count += 1;
         }
         ids[..count].sort_unstable();
-        Self { atoms: ids, count: count as u8, length }
+        Self { atoms: ids, count: count as u8, length, flat }
+    }
+
+    /// Whether the string is flat at every point it is read: its units are held in one run, never as the halves of a rope.
+    pub fn flat(&self) -> bool {
+        self.flat
     }
 
     /// The atoms the string may be, sorted; empty where it names none.
@@ -91,14 +102,15 @@ impl StringFact {
     }
 
     /// The hull of two facts: the union of their atoms where both name atoms and the union fits `MAX_STRING_ATOMS`, else
-    /// no atom; the hull of their lengths.
+    /// no atom; the hull of their lengths; flat only where both are (AND).
     pub fn join(self, other: Self) -> Self {
         let length = self.length.join(other.length);
+        let flat = self.flat && other.flat;
         if self.count == 0 || other.count == 0 {
-            return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length };
+            return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length, flat };
         }
         let atoms: Vec<u32> = self.atoms().iter().chain(other.atoms()).copied().collect();
-        Self::new(&atoms, length)
+        Self::new(&atoms, length, flat)
     }
 
     /// `join`, where a bound that `self` did not reach jumps to the length's own bound (0 or `u32::MAX`), so a loop that
@@ -220,18 +232,19 @@ impl Type {
         }
     }
 
-    /// A string that is one of the interned `atoms` (none: any string), whose UTF-16 length lies in `min..=max`. The caller
-    /// gives the hull of the atoms' lengths. More than `MAX_STRING_ATOMS` atoms, or none, is any string of that length.
-    pub fn string_atoms(atoms: &[u32], min: u32, max: u32) -> Self {
-        Self::from_string(StringFact::new(atoms, StringLength { min, max }))
+    /// A string that is one of the interned `atoms` (none: any string), whose UTF-16 length lies in `min..=max`, `flat` where
+    /// it is held as one run of units. The caller gives the hull of the atoms' lengths. More than `MAX_STRING_ATOMS` atoms,
+    /// or none, is any string of that length.
+    pub fn string_atoms(atoms: &[u32], min: u32, max: u32, flat: bool) -> Self {
+        Self::from_string(StringFact::new(atoms, StringLength { min, max }, flat))
     }
 
-    /// A string of any content whose UTF-16 length lies in `min..=max`.
-    pub fn string_length(min: u32, max: u32) -> Self {
-        Self::string_atoms(&[], min, max)
+    /// A string of any content whose UTF-16 length lies in `min..=max`, `flat` where it is held as one run of units.
+    pub fn string_length(min: u32, max: u32, flat: bool) -> Self {
+        Self::string_atoms(&[], min, max, flat)
     }
 
-    /// A string as its fact, normalized: the full range with no atom is `language(String)`, never `String`.
+    /// A string as its fact, normalized: the full range with no atom and not flat is `language(String)`, never `String`.
     pub(super) fn from_string(fact: StringFact) -> Self {
         if fact == StringFact::ANY { Self::language(ValueType::String) } else { Self(TypeKind::String(fact)) }
     }

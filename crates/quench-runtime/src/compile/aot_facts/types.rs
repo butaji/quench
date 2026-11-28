@@ -399,7 +399,7 @@ fn call_results(
 
 /// The cell of an element class's elements: their type and classes, and the length they leave (`Elements`).
 fn elements_cell(elements: Elements) -> Cell {
-    Cell { ty: elements.ty, classes: elements.classes, elements, sites: Sites::of_type(elements.ty), global: false }
+    Cell { ty: elements.ty, classes: elements.classes, elements, sites: Sites::of_type(elements.ty), global: false, prototype: true }
 }
 
 /// Whether `function` is sloppy code: a plain call may bind its `this` to the global object (`Function::strict` is unset). A

@@ -387,19 +387,6 @@ pub(crate) mod tests;
 
 #[unsafe(no_mangle)]
 fn quench_engine_drop_code_memory(memory: &mut CodeMemory) {
-        if quench_runtime::trace::Dev::PoisonFreedCode.on() {
-            // The block stays allocated and traps from now on: a run that enters or returns into
-            // freed code stops at once, at the address it reached (TOD-2060).
-            let views = heap().regions[memory.block.region as usize].views;
-            let offset = memory.block.offset as usize;
-            // SAFETY: the block's `length` bytes of the writable view, still owned by this memory.
-            let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), memory.length) };
-            let _ = Views::writing(|| { code.fill(0xcc); Ok::<(), String>(()) });
-            retire::retire(views, offset, memory.length);
-            views::flush_icache(memory.pointer, memory.length);
-            eprintln!("QUENCH_CODE_POISONED address={:p} bytes={}", memory.pointer, memory.length);
-            return;
-        }
-        heap().free(memory.block, memory.length);
-    }
+    heap().free(memory.block, memory.length);
+}
 const _: fn(&mut CodeMemory) = quench_engine_drop_code_memory;

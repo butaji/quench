@@ -15,8 +15,6 @@ unsafe extern "Rust" {
     fn quench_staged_class_space_base(heap: *const ()) -> u64;
     fn quench_staged_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
     fn quench_staged_held_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
-    fn quench_staged_immediate_store_unlogged(heap: *const ()) -> bool;
-    safe fn quench_staged_rc_counts_seen() -> bool;
     fn quench_staged_owner_table_bases(heap: *const ()) -> [u64; 3];
     fn quench_staged_published(watch: u64) -> bool;
     fn quench_staged_fill_registers(top: *mut u64, count: usize, undefined: u64);
@@ -156,8 +154,11 @@ impl Stage for Concrete {
     // place, as the row's other arms make their words.
     fn box_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::number_inline(f64::from_bits(number.word())).to_bits() }
     #[inline(always)]
-    // `Value::from_f64_raw`: the double's own bits, NaN canonical (decision 4.1).
-    fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::from_f64_raw(f64::from_bits(number.word())).to_bits() }
+    // A stored double's own bits (decision 4.1): no read-side canonicalization.
+    fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { number.word() }
+    #[inline(always)]
+    // A float bit entry: `Value::from_float_bits64`, every NaN made canonical (decision 4.1).
+    fn canonical_float(&mut self, bits: u64) -> u64 { crate::Value::from_float_bits64(bits).to_bits() }
     #[inline(always)]
     fn raw_number(&mut self, bits: u64) -> u64 { crate::Value::from_bits(bits).as_number().map_or(bits, f64::to_bits) }
     #[inline(always)]
@@ -219,12 +220,8 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {
-        if self.heap.is_null() {
-            // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
-            return !quench_staged_rc_counts_seen();
-        }
-        // SAFETY: a stage that stores holds its live heap.
-        unsafe { quench_staged_immediate_store_unlogged(self.heap) }
+        // Old records keep no reference counts, so an immediate store needs no barrier log.
+        true
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {

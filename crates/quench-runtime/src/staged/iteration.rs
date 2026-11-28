@@ -6,6 +6,7 @@
 //! helper step that is its slow arm.
 
 use super::region::Region;
+use super::field_cache_layout::CLASS_KEY;
 use super::{Concrete, Frame, Stage, Step, elements, entry, value};
 use crate::bytecode::Register;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -67,6 +68,15 @@ fn state_word<S: Stage>(stage: &mut S, values: S::Word, index: usize) -> S::Word
     stage.load_u64(Region::Elements.mutable(), values, (index * std::mem::size_of::<crate::Value>()) as i32)
 }
 
+/// Whether the memo word `listed` (`FOR_IN_SHAPE`) is a live class cell's key (`Vm::own_receiver_key`): its
+/// `CLASS_KEY` bit is set, which no record's shape carries; the empty memo word `FOR_IN_NO_MEMO` takes the
+/// cell branch too and matches no class, so it leaves at its guard.
+#[inline(always)]
+fn listed_keys_class<S: Stage>(stage: &mut S, listed: S::Word) -> S::Cond {
+    let bit = stage.and_imm(listed, u64::from(CLASS_KEY));
+    stage.ne_imm(bit, 0u32)
+}
+
 /// Guards that the raw word `held` is `expected`.
 #[inline(always)]
 fn same_word<S: Stage>(stage: &mut S, held: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
@@ -107,13 +117,30 @@ fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): 
     let present = stage.ne_imm(objects, 0u32);
     stage.guard(present, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
-    let (_, record) = entry::direct_record(stage, objects, object, miss)?;
-    let exact = super::object::exact_shape(stage, record);
     let listed = state_word(stage, backing.values, FOR_IN_SHAPE);
-    same_word(stage, exact, listed, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let plain = super::object::plain_payload(stage, payload);
-    stage.guard(plain, miss)?;
+    let keyed = listed_keys_class(stage, listed);
+    stage.choose_leaving(keyed, #[inline(always)] |stage| {
+        // A live class cell: its class key is the listed key, which fixes its shape and link, so the one
+        // compare validates the memo (no record hop, and no payload test: a class cell's fields are one run).
+        let direct = value::is_direct_object(stage, object);
+        stage.guard(direct, miss)?;
+        let granule = value::direct_object_id(stage, object);
+        let cell = super::object::cell_at_granule(stage, granule);
+        let class = super::object::cell_class(stage, cell);
+        let key = stage.add_imm(class, u64::from(CLASS_KEY));
+        same_word(stage, key, listed, miss)?;
+        Some(stage.constant(0))
+    }, #[inline(always)] |stage| {
+        let present = stage.ne_imm(objects, 0u32);
+        stage.guard(present, miss)?;
+        let (_, record) = entry::direct_record(stage, objects, object, miss)?;
+        let exact = super::object::exact_shape(stage, record);
+        same_word(stage, exact, listed, miss)?;
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        let plain = super::object::plain_payload(stage, payload);
+        stage.guard(plain, miss)?;
+        Some(stage.constant(0))
+    })?;
     Some(backing)
 }
 
@@ -157,6 +184,8 @@ pub fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S:
     let backing = current_state::<S, false>(stage, (arrays, objects), state, epoch, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
     same_word(stage, object, base, miss)?;
+    let shape_word = state_word(stage, backing.values, FOR_IN_SHAPE);
+    let keyed = listed_keys_class(stage, shape_word);
     // The cursor already names the key after the one the last step yielded.
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
     let past = stage.constant(crate::value::ValueLayout::INT_TAG + 1);
@@ -176,11 +205,18 @@ pub fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S:
     let wide = stage.ugt_imm(slot, u64::from(u16::MAX));
     let narrow = stage.not(wide);
     stage.guard(narrow, miss)?;
-    let (_, record) = entry::direct_record(stage, objects, base, miss)?;
-    let inline = super::object::inline_storage(stage, record);
-    let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
-        super::object::PackedAccess::Reload, miss)?;
-    Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
+    stage.choose_leaving(keyed, #[inline(always)] |stage| {
+        // The live class cell `base` (proved the memo's class by `current_state`): its field at the listed slot.
+        let granule = value::direct_object_id(stage, base);
+        let cell = super::object::cell_at_granule(stage, granule);
+        Some(entry::cell_field(stage, cell, slot))
+    }, #[inline(always)] |stage| {
+        let (_, record) = entry::direct_record(stage, objects, base, miss)?;
+        let inline = super::object::inline_storage(stage, record);
+        let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
+            super::object::PackedAccess::Reload, miss)?;
+        Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
+    })
 }
 
 

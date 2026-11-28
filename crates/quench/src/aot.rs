@@ -171,7 +171,7 @@ pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'stat
 
 /// The environment a Node image's start refuses to adopt its dump under: a configuration the dump
 /// was not made in (the dump run removes these, `image::dump_saved_waits`).
-const ADOPTION_VARIABLES: [&str; 3] = ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"];
+const ADOPTION_VARIABLES: [&str; 2] = ["QUENCH_TRACE", "NODE_OPTIONS"];
 
 /// Whether this Node start may map its dump: it names none of `ADOPTION_VARIABLES`, and it is not
 /// itself a dump run.

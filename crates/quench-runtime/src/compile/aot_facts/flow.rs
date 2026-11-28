@@ -19,7 +19,7 @@ use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
-use crate::typed_ir::{Cell, Classes, ElementClass, Representation, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Representation, WIDENING_ROUNDS};
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
@@ -72,8 +72,15 @@ pub(super) struct FunctionFlow {
     pub(super) plain_calls: Vec<Option<u32>>,
     /// Whether the function reads its `this` (a load, a store or a field read of it, or a method of it).
     pub(super) reads_this: bool,
-    /// Whether a store through a key the analysis cannot name may write a named property.
-    pub(super) member_wild: bool,
+    /// The objects a store under a name the analysis cannot list may write into: a computed-key store's base, a copy's
+    /// destination from a source whose names are unknown (`copies::expand`). `Holders::NONE` where there is none.
+    pub(super) wild: Holders,
+    /// Per named property a store of this function writes, the holders of the object it stores on (`Holders::of` of the
+    /// base). A read of the name is wild only where such a holder may be a wild holder (`Census::wild`).
+    pub(super) member_bases: Vec<(u32, Holders)>,
+    /// Whether a store a builtin makes may write an index of an object that may be a builtin's prototype (`Cell::prototype`):
+    /// an array mutator on one, or a property adder handed one. An element store records its own (`ElementStore::prototype`).
+    pub(super) prototype_writes: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
@@ -88,6 +95,9 @@ pub(super) struct FunctionFlow {
     /// or the name's), element reads of an array's class. Its parameters, receiver and callees' returns are
     /// added by `AotFacts` (`dependencies`).
     pub(super) reads: std::collections::BTreeSet<Key>,
+    /// The keys each instruction reads, by PC, in PC order (`Record::observe`): what `frozen` checks a dominating store
+    /// against. A by-name load reads its global; a capture reads its environment slot; a value read from a key is that key's read.
+    pub(super) key_reads: Vec<(u32, Key)>,
     /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
     pub(super) links: Vec<(crate::typed_ir::ElementClass, crate::typed_ir::ElementClass)>,
     /// Whether the function writes elements of arrays it cannot name (`effects::Events::wild_elements`).
@@ -166,8 +176,8 @@ struct Arrival {
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, accessors: &std::collections::BTreeSet<u32>, types: Option<&super::types::Types>,
-    feedback: &super::length_settle::Feedback) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, classes: &super::class_ids::ClassIds, accessors: &std::collections::BTreeSet<u32>,
+    types: Option<&super::types::Types>, feedback: &super::length_settle::Feedback) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
     let whole = whole_literals(function);
@@ -177,6 +187,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         is_root: function.parent.is_none(),
         scope,
         resolved,
+        classes,
         registers: usize::from(function.registers),
         whole_literals: &whole[..],
         types,

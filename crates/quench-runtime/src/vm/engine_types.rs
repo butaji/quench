@@ -1039,25 +1039,12 @@ pub struct LoopSite {
     /// Whether the header record names this site in its `call_link` (its distance to the jump):
     /// one that is no call record, and the header of no other site.
     pub hookable: bool,
-    /// Backward jumps taken in the interpreter, counted up to `needed`, and one past it once the
-    /// tier model has admitted the compile (`LoopSite::interprets`).
-    pub taken: std::cell::Cell<u32>,
-    /// The backward jumps the interpreter takes before the model weighs the compile: the warm-up
-    /// first, then what the model finds the compile needs (`loop_model::admission_taken`).
-    pub needed: std::cell::Cell<u32>,
-    /// Whether the site still enters native code: until its runs and declined entries cost more
-    /// than their iterations save (`LoopSite::note_run`).
+    /// Whether the site still enters native code: its predicted tier is not the interpreter
+    /// (`ahead_runner::view_in_lane`), and a compile that failed or was declined clears it.
     pub entering: std::cell::Cell<bool>,
     /// The sites of the function whose loops enclose this one (`install_loop_sites`), set once the
     /// sites are boxed: the same storage the records name the sites by, which lives as long as the lane view.
     pub enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
-    /// Entries declined in a row since the last native run, and the entries still to pass to the
-    /// interpreter before the next attempt (`LoopSite::note_decline`): a decline whose cause
-    /// persists costs attempts logarithmic in the iterations, not one per iteration.
-    pub declines_in_row: std::cell::Cell<u8>,
-    /// The attempts that entered nothing, by reason (`count_decline`, `RegionDecline`).
-    pub declines: [std::cell::Cell<u64>; RegionDecline::COUNT],
-    pub skipped_entries: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     pub diagnostics: bool,
     /// The thresholds its VM's tier controllers read.
@@ -1705,48 +1692,6 @@ pub struct LoopTier {
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
     pub compilations: u32,
-    /// Native runs of the region and the iterations they took: the loop's mean trip count.
-    pub runs: u32,
-    pub iterations: u64,
-    /// Entries the guards declined: each paid for the entry's guards and ran no iteration.
-    pub declined: u32,
-    /// Each operation the code left at, with its leaves so far; and those whose int32
-    /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
-    pub leaves: Vec<(usize, u16)>,
-    pub widened: Vec<usize>,
-    /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
-    pub abandoned: Vec<usize>,
-    /// The field stores the code left at often enough once, which the next compilation planned
-    /// again from their sites' caches (`left_store`), sorted.
-    pub refed: Vec<usize>,
-    /// Runs in a row that left inside the loop before its first backward edge (`LoopTier::weigh_run`): code that
-    /// pays its entry for no iteration, whose site gives up its native code past `widen_after_leaves` of them.
-    pub fruitless: u16,
-    /// Whether the current code (or the compile under way) is a b-jit region the default mode
-    /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
-    /// compile (`promote`).
-    pub base: bool,
-    /// The iterations at which a b-jit region is due to move to u-jit (`loop_model::promotion_taken`),
-    /// where the default mode picked b-jit for the region; none where u-jit never gets ahead.
-    pub promote_at: Option<u64>,
-    /// Whether the site moves from its b-jit region to u-jit (`promote`): the stencil code runs
-    /// until the u-jit region publishes in its place.
-    pub promoting: bool,
-    /// The entries up to which the site is known to repay its native code (`LoopSite::settle`):
-    /// the iterations only add, so until the entries pass this count the check is not due.
-    pub settle_at: u64,
-    /// The current code's native runs and those that left inside the loop: what the u-jit region a
-    /// promotion publishes is measured against (`LoopTier::weigh_run`).
-    pub tier_runs: u32,
-    pub tier_left: u32,
-    /// The b-jit region's share of runs that left, per mille, measured when the u-jit region took its
-    /// place; none before a promotion publishes.
-    pub base_left_permille: Option<u32>,
-    /// Whether the u-jit region left more often than the b-jit region it replaced: the site keeps the
-    /// b-jit region from then on (`loop_model::base_region` is not asked again).
-    pub demoted: bool,
-    /// Whether BaseJIT declined the site's b-jit region in the default mode: the site compiles u-jit regions only.
-    pub stencil_declined: bool,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
@@ -1800,49 +1745,6 @@ pub struct ReferenceCallSiteDiagnostics {
     pub targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
 }
 
-/// Why a loop site's compiled region was not entered at its header on one attempt. Each decline is
-/// counted on its site (`LoopSite::declines`) and reported under `QUENCH_TRACE=js-jit`, the first of
-/// each reason as a trace line. An entry-contract decline also feeds back as a leave at the header
-/// (`lane_loop_run`), so the next compile widens the contract that failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RegionDecline {
-    /// The region's code is still awaited: its compile is under way and its poll waits (`LoopTier::awaits_code`).
-    Awaiting,
-    /// This attempt started the region's compile, so the interpreter runs the header meanwhile.
-    Compiling,
-    /// An inlined callee's capture has no environment or no value (`loop_entry_checked_in_lane`).
-    CalleeCapture,
-    /// A capture the region reads has no initialized value at entry.
-    Capture,
-    /// A field the region reads has no cached value for its receiver, or is a private name.
-    Field,
-    /// A dynamic field's entry value is not a Number its representation holds.
-    FieldNumber,
-    /// The entry record has no room left for a field value.
-    EntryFull,
-    /// The arrays do not match the region: a non-dense or prototype-indexed written array, a
-    /// typed array through a field, mixed views, or no record (`loop_tier::lane_loop_arrays`).
-    Array,
-    /// A field store's slot address is not admitted (`lane_loop_field_stores`).
-    FieldStore,
-    /// An inlined call's callee is not activated in place now (`lane_inlined_target`).
-    Inlined,
-    /// The entry's element views differ from the compiled code's, and no compilation remains (`LoopTier::select`).
-    Views,
-    /// The site may not compile here: its compilations ran out, or the memory policy compiles no loop regions (`LoopTier::may_run`).
-    NoCompile,
-    /// The region needs a VM frame the frameless lane lacks (`CompiledOsrRegion::needs_frame`).
-    Frame,
-    /// The lane has no room for the activations the region's calls would make; it grows for the next entry.
-    Room,
-    /// The activation keeps its locals in the window past its registers (`lane_context_locals_in_window`).
-    Locals,
-    /// The code left at its header before any iteration: an entry contract, the entry bounds, the
-    /// call budget or the fault guard failed. Fed back as a leave at the header.
-    EntryContract,
-    /// The region's entry cell held its stub, so its code did not run.
-    Stub,
-}
 
 /// A forwarding constructor whose activation a construction skipped
 /// (`forwarded_construction_in_lane`): what its frame holds when activations become frames,
@@ -2448,44 +2350,6 @@ pub enum Origin {
 
 
 
-impl RegionDecline {
-
-    /// Every decline, in the order the report lists them.
-    pub const ALL: [Self; 17] = [
-        Self::Awaiting, Self::Compiling, Self::CalleeCapture, Self::Capture, Self::Field, Self::FieldNumber,
-        Self::EntryFull, Self::Array, Self::FieldStore, Self::Inlined, Self::Views, Self::NoCompile,
-        Self::Frame, Self::Room, Self::Locals, Self::EntryContract, Self::Stub,
-    ];
-    /// The number of declines.
-    pub const COUNT: usize = Self::ALL.len();
-
-    pub fn index(self) -> usize {
-        self as usize
-    }
-
-    /// The name the report and the trace give this decline.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Awaiting => "awaiting",
-            Self::Compiling => "compiling",
-            Self::CalleeCapture => "callee-capture",
-            Self::Capture => "capture",
-            Self::Field => "field",
-            Self::FieldNumber => "field-number",
-            Self::EntryFull => "entry-full",
-            Self::Array => "array",
-            Self::FieldStore => "field-store",
-            Self::Inlined => "inlined",
-            Self::Views => "views",
-            Self::NoCompile => "no-compile",
-            Self::Frame => "frame",
-            Self::Room => "room",
-            Self::Locals => "locals",
-            Self::EntryContract => "entry-contract",
-            Self::Stub => "stub",
-        }
-    }
-}
 
 
 
@@ -3017,8 +2881,6 @@ pub struct OsrDiagnostics {
     pub entry_guard_misses: u64,
     pub exits: u64,
     pub widenings: u64,
-    /// The attempts that entered no region code, by why, over all sites.
-    pub declines: [u64; RegionDecline::COUNT],
     pub analysis_rejections: Vec<(RegionRejection, usize)>,
     pub sites: Vec<OsrSiteDiagnostics>,
 }
@@ -3042,8 +2904,6 @@ pub struct OsrSiteDiagnostics {
     pub entry_guard_misses: u64,
     pub exits: u64,
     pub widenings: u64,
-    /// The attempts that entered no region code, by why.
-    pub declines: [u64; RegionDecline::COUNT],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3198,9 +3058,9 @@ pub const CODE_GRANULE: usize = 64;
 pub enum NativeJsCode {
     /// Code the system linker placed in this executable (`NativeJsProgram::from_linked_image`).
     Placed(LinkedTable),
-    /// An image compiled into this process (`NativeJsProgram::compile_eager`): its file, linked
+    /// An image compiled into this process (`NativeJsProgram::publish`): its file, linked
     /// into each VM that attaches it (`aot_image::live::install`).
-    Eager(Vec<u8>),
+    Image(Vec<u8>),
 }
 
 pub type NativeProgramResolver = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram>, crate::NativeSourceError>;
@@ -3245,10 +3105,6 @@ pub struct NativeJsPublicationCounts {
     pub static_transfers: usize,
     /// Instruction sites that call their opcode's semantic entry.
     pub semantic_entry_sites: usize,
-    /// Whole-program globals the image folds, each checked at its read site.
-    pub frozen_globals: usize,
-    /// Whole-program prototype values the image folds, each guarded at its read site.
-    pub frozen_fields: usize,
     /// Functions whose windowed root map would exceed `MAX_MASK_BYTES`: their frames carry
     /// one conservative all-live map.
     pub wide_frame_functions: usize,
@@ -4628,7 +4484,6 @@ impl LaneView {
                 entry_guard_misses: site.entry_guard_misses.get(),
                 exits: site.native_exits.get(),
                 widenings: site.widenings.get(),
-                declines: std::array::from_fn(|index| site.declines[index].get()),
             }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
@@ -4646,7 +4501,6 @@ impl LaneView {
             body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
-            declines: std::array::from_fn(|index| self.loops.iter().map(|site| site.declines[index].get()).sum()),
             analysis_rejections: self
                 .osr_rejections
                 .as_deref()
@@ -5466,10 +5320,10 @@ impl LaneView {
 
 impl LoopSite {
 
-    /// Whether the model has admitted the compile.
+    /// Whether the site enters native code (its predicted tier is not the interpreter, and no compile failed).
     #[inline]
     pub fn is_hot(&self) -> bool {
-        self.taken.get() > self.needed.get()
+        self.entering.get()
     }
 }
 

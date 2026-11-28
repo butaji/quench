@@ -350,13 +350,10 @@ fn global_lexical(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destinati
     Some(())
 }
 
-/// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
-fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
-    (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
-    let actual = global_word(frame, stage, atom, site);
-    guard_word(frame, stage, actual, Relation::Equal, value, miss);
-    global_held(frame, stage, destination, value, ty)
+/// A whole-program value the closed world fixes before any read (`AotFacts::dominated_root_store`): defined as the
+/// immediate it is, with no read.
+fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> {
+    define_immediate(frame, stage, destination, value, RegisterFact::definition(ty, Representation::Tagged))
 }
 
 impl quench_runtime::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -368,8 +365,8 @@ impl quench_runtime::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
     }
     fn global_constant(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> { global_constant(self, stage, destination, value) }
     fn global_held(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> { global_held(self, stage, destination, value, ty) }
-    fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {
-        global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
+    fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> {
+        global_frozen(self, stage, destination, value, ty)
     }
     fn global_lexical(&mut self, stage: &mut Emit<'_, '_>, destination: Register, address: u64, proof: EmitProof) -> Option<()> { global_lexical(self, stage, destination, address, proof) }
     fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, ty, proof) }

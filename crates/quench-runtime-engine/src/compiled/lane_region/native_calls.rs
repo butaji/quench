@@ -174,6 +174,11 @@ pub(crate) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.reads_string())
 }
 
+/// The last instruction before `pc` that writes `register`: the definition its value came from.
+pub(crate) fn definition_before(unit: &super::super::lane_unit::Unit, pc: usize, register: Register) -> Option<usize> {
+    (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register))
+}
+
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
 /// read that was a native function when the body was compiled (`GlobalRead::NativeMember`: a
 /// member of a Stable global, or a method of the string or array prototype; `GlobalRead::NativeSlot`: a
@@ -185,8 +190,7 @@ pub(crate) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {
-            let callee = instruction.register_b();
-            let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
+            let defined = definition_before(unit, pc, instruction.register_b())?;
             let (value, native, holder) = match global_reads.get(&defined)? {
                 GlobalRead::NativeMember { value, native, holder, .. } | GlobalRead::NativeSlot { value, native, holder, .. } => (*value, *native, *holder),
                 _ => return None,
@@ -204,6 +208,8 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(crate) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // The power leaf's address is no image's to embed where its helpers are not named by symbol (`remainder`).
+        if matches!(inline, Inline::Math(MathCall::Power)) && self.helpers.links() && !self.helpers.names_symbols() { return false; }
         // A scalar native whose callee identity and arguments the loop's entry proved (`hoist_scalar_calls`): the call's
         // value is the one the entry computed, its callee being the same function on each iteration.
         if let Some(hoisted) = self.scalar_values.get(&pc).copied() && hoisted.fixed {
@@ -230,8 +236,12 @@ impl Lowering<'_, '_> {
         // An in-place native's or lookup's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
-            let same = self.is_identity(held, callee);
-            emit_js_guard(&mut self.builder, same, exit);
+            // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity here.
+            let builtin = definition_before(self.unit, pc, instruction.register_b()).is_some_and(|defined| self.callee_is_builtin(defined, pc, instruction.register_b()));
+            if !builtin {
+                let same = self.is_identity(held, callee);
+                emit_js_guard(&mut self.builder, same, exit);
+            }
         }
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
@@ -366,8 +376,11 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
-        let same = self.is_identity(entry, identity);
-        emit_js_guard(&mut self.builder, same, exit);
+        // A fixed callee the closed world proves is a builtin at the call (`callee_is_builtin`) is no compare of its identity.
+        if !(fixed && self.callee_is_builtin(defined, pc, callee)) {
+            let same = self.is_identity(entry, identity);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         let mut values = Vec::with_capacity(usize::from(argc));
         for argument in arguments {
             values.push(match argument {

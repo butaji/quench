@@ -21,7 +21,6 @@
 //! declaration shadows the name (`note_global_shadowed`), either of which retires it.
 
 use crate::code_dependencies::{CodeReaders, DependentCode};
-use crate::fact_stats::{self, FactKind};
 use std::rc::Rc;
 
 /// How often a global cell was written since it was created: written at most once, its value
@@ -159,15 +158,8 @@ pub fn subscribe_global_value(fact: GlobalFact, code: &Rc<dyn DependentCode>) ->
 pub fn note_global_write(table: u32, cell: GlobalCell) {
     with_table(table, |held| {
         let (cells, index) = held.cells(cell);
-        if cells.note_write(index) {
-            fact_stats::retired(FactKind::Global, global_fact_id(table, index));
-        }
+        cells.note_write(index);
     });
-}
-
-/// The fact-stats id of a global cell of `table`, or (`u32::MAX`) of its global object's layout.
-fn global_fact_id(table: u32, slot: u32) -> u64 {
-    u64::from(table) << u32::BITS | u64::from(slot)
 }
 
 /// A global lexical declaration may shadow a property of the global object of `table`: every
@@ -197,9 +189,7 @@ pub fn subscribe_global_layout(fact: GlobalLayoutFact, code: &Rc<dyn DependentCo
 fn note_global_layout(table: u32) {
     with_table(table, |held| {
         held.layout_epoch = held.layout_epoch.wrapping_add(1);
-        if held.layout.retire(LAYOUT_OWNER) {
-            fact_stats::retired(FactKind::Global, global_fact_id(table, u32::MAX));
-        }
+        held.layout.retire(LAYOUT_OWNER);
     });
 }
 

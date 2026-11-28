@@ -221,6 +221,44 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
     if decoded.completes { Vec::new() } else { layout.spills(pc + 1) }
 }
 
+/// The operands and holes of a `Math.pow` for the leaf call (`call_plan::plan_leaf`): each register operand is read from
+/// its frame slot (a pinned register its spill writes to the slot, so `Mem`), each constant operand from its own place
+/// and hole (`plan::operand`: `Const` or `Imm`). The destination is a register whose home the spills cover. `None` where
+/// the leaf has no address (no helper table names it), or the exponent is a constant `SmallPower` names (the numeric row's
+/// product), so the numeric row keeps the operation.
+pub(crate) fn leaf_operands(layout: &Layout, decoded: &Decoded, helpers: LaneHelpers) -> Option<([Place; 2], [u64; 3])> {
+    if call_plan::helper_address(helpers, LaneHelper::NumberPower)? == call_plan::HelperPlace::Address(0) {
+        return None;
+    }
+    let covered = |register: Register| matches!(layout.homes.place(register), Place::Mem | Place::MemInt | Place::Pin(_) | Place::PinF(_));
+    let operand = |source: Option<Source>| -> Option<(Place, u64)> {
+        match source? {
+            Source::Register(register) => covered(register).then(|| (Place::Mem, super::plan::operand(&layout.homes, Some(Source::Register(register))).1)),
+            constant => Some(super::plan::operand(&layout.homes, Some(constant))),
+        }
+    };
+    let dst = decoded.dst.filter(|dst| covered(*dst))?;
+    let ((left, left_hole), (right, right_hole)) = (operand(decoded.a)?, operand(decoded.b)?);
+    // A constant exponent `SmallPower` names is the row's own product (`power_row`), not the leaf's call.
+    let small = match super::plan::operand(&layout.homes, decoded.b) {
+        (Place::Imm, hole) => quench_runtime::staged::power::SmallPower::of(f64::from(hole as u32 as i32)),
+        (Place::Const, word) => quench_runtime::staged::power::SmallPower::of(f64::from_bits(word)),
+        _ => None,
+    };
+    if small.is_some() {
+        return None;
+    }
+    Some(([left, right], [left_hole, right_hole, super::plan::operand(&layout.homes, Some(Source::Register(dst))).1]))
+}
+
+/// The chain of `Math.pow` at `pc` over `operands` and `holes` (`leaf_operands`): the leaf call (`call_plan::plan_leaf`,
+/// the `NumberPower` leaf) between the spills of the live pinned registers and the reloads after it.
+pub(crate) fn leaf_plan(decoded: &Decoded, layout: &Layout, pc: u32, (operands, holes): ([Place; 2], [u64; 3]), helpers: LaneHelpers) -> Result<Planned, String> {
+    let leaf = call_plan::helper_address(helpers, LaneHelper::NumberPower).ok_or("pow: no leaf address")?;
+    let (spills, after) = (layout.spills(pc), reloads(layout, decoded, pc));
+    chained(call_plan::plan_leaf(pc, leaf, operands, holes, &spills, &after)?, spills.len(), Vec::new())
+}
+
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
 pub(crate) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
@@ -360,10 +398,6 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
         name_records(&mut parts, &record, crate::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc, callee: callee.function });
     }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
-    if choice != Choice::Direct && quench_runtime::fallback::on() {
-        quench_runtime::fallback::note_at_focus(quench_runtime::fallback::Fallback::HelperCall,
-            format_args!("call through the helper row"), layout.id, shape.call_pc);
-    }
     #[cfg(test)]
     if choice == Choice::Direct { super::note_fast(shape.op); }
     chained(parts, spills.len(), record)

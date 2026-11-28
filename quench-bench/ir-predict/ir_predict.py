@@ -25,7 +25,7 @@ usage:
 
 PLAN: QUENCH_TRACE=bytecode=lanes quench --no-jit load_only.cjs ops.js 2> PLAN
 SETTLED: the same trace of a run (settle.cjs).
-BLOG/BDIR (ULOG/UDIR): QUENCH_DEV=sync-compile QUENCH_TRACE=jit-dump=BDIR quench --b-jit (--u-jit)
+BLOG/BDIR (ULOG/UDIR): QUENCH_TRACE=jit-dump=BDIR quench --b-jit (--u-jit)
   jit_dump.cjs ops.js 2> BLOG. The JIT tiers generate code at run time, so their prediction reads the
   code they compiled (one warm-up per op, no valgrind): each loop's shortest path from its head to its
   back edge, the cheapest loop of the code compiled for the op's measured loop. Handler costs are cached beside the binary

@@ -266,6 +266,28 @@ fn warmed_field_stores_follow_descriptor_transitions() {
 }
 
 #[test]
+fn two_classes_adding_the_same_first_field_keep_distinct_shapes_and_slot_domains() {
+    // Each class's receivers are made from its own constructed root (`ShapeTransition::Constructed`), so the shapes and
+    // slot owners their first field takes are the class's own: a seed of one class's domain never reaches the other's.
+    let program = Engine::specialize(
+        "class A { x = 1; } class B { x = 'text'; } var a = new A(); var b = new B();",
+        "class-shape-roots.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.track_slots();
+    vm.execute(&program).unwrap();
+    let (a_atom, b_atom) = (vm.intern_atom("a"), vm.intern_atom("b"));
+    let a = vm.own_property(vm.realm.globals, a_atom).unwrap();
+    let b = vm.own_property(vm.realm.globals, b_atom).unwrap();
+    let shape_a = vm.heap.object(a).unwrap().shape();
+    let shape_b = vm.heap.object(b).unwrap().shape();
+    assert_ne!(shape_a, shape_b, "each class's receivers reach their own constructed root");
+    assert!(vm.heap.slot_type(shape_a, 0).is_subtype(crate::typed_ir::Type::NUMBER));
+    assert!(vm.heap.slot_type(shape_b, 0).is_subtype(crate::typed_ir::Type::language(crate::ValueType::String)));
+}
+
+#[test]
 fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let program = Engine::specialize(
         "var receiver = { value: 0, a: 1, b: 2 }; function write(value) { receiver.value = value; } write(1);",

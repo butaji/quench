@@ -381,6 +381,11 @@ fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
         let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
         return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
     }
+    // `Math.pow` is the leaf call, whatever its operands' places: a constant operand is read from its own place
+    // (`steps::leaf_operands`), so no `Math.pow` keeps the row for a constant exponent that is no `SmallPower`.
+    if decoded.kind == Kind::Pow && let Some(operands) = steps::leaf_operands(layout, decoded, helpers) {
+        return steps::leaf_plan(decoded, layout, pc, operands, helpers);
+    }
     // A frame slot the int32 proof holds reads as the int32 its low bits hold, with no tag test (`proven_int_operands`).
     // A kind whose library holds no MemInt row for that operand keeps the tested read.
     let proven_a = if a == Place::Mem && decoded.int_a { Place::MemInt } else { a };

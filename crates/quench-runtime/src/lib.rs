@@ -70,8 +70,6 @@ pub mod dataflow;
 #[doc(hidden)]
 pub mod webs;
 #[doc(hidden)]
-pub mod dense_map;
-#[doc(hidden)]
 pub mod bytecode;
 /// The operators an instruction's operator immediate names, in the parser's numbering.
 #[doc(hidden)]
@@ -122,8 +120,6 @@ pub mod number_inputs;
 #[doc(hidden)]
 pub mod profile;
 pub mod trace;
-mod fact_stats;
-pub mod fallback;
 pub mod clock;
 #[doc(hidden)]
 pub mod snapshot;
@@ -165,7 +161,7 @@ pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 /// Lets this binary compile source after load (`compile::source_routes`).
 pub use compile::source_routes::enable as enable_dynamic_source;
 pub use compile::{CheckedParameters, ParameterSite};
-pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_word, memory_mix_has};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_word};
 pub use heap::layouts::fixed_table_range as fixed_layout_table_range;
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{

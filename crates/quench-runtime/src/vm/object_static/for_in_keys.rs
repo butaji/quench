@@ -6,6 +6,7 @@ use super::*;
 use crate::heap::ArrayElements;
 use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_EPOCH, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, FOR_IN_SHAPE, FOR_IN_SLOTS, FOR_IN_STATE_LEN, concrete_for_in_next};
 use crate::vm::enumerable_key_memo::EnumerableSlots;
+use crate::staged::field_cache_layout::is_class_key;
 
 /// What for-in keeps between loops: the last key snapshot (`ForInOwnKeys`), and the state of
 /// the last loop that ran out of keys with the collection epoch then (`Vm::for_in_state`).
@@ -72,7 +73,9 @@ impl ForInMemo {
 /// over such a receiver needs no lookup (`Vm::for_in_snapshot_current`). No script reaches
 /// the array, so loops share it.
 struct ForInOwnKeys {
-    shape: u32,
+    /// The receiver's memo key (`Vm::own_receiver_key`): its exact shape, or a live class cell's class key,
+    /// which fixes the shape and the prototype link, so one compare validates the walk's start.
+    key: u32,
     epoch: u64,
     keys: Value,
     /// The array of each snapshot key's slot in `shape` (`staged::iteration::FOR_IN_SLOTS`): an int,
@@ -93,9 +96,9 @@ struct ForInOwnKeys {
 }
 
 impl ForInOwnKeys {
-    /// The snapshot array, while it holds the keys of `shape` in `epoch`.
-    fn keys(&self, shape: u32, epoch: u64) -> Option<Value> {
-        (self.shape == shape && self.epoch == epoch).then_some(self.keys)
+    /// The snapshot array, while it holds the keys of memo key `key` in `epoch`.
+    fn keys(&self, key: u32, epoch: u64) -> Option<Value> {
+        (self.key == key && self.epoch == epoch).then_some(self.keys)
     }
 }
 
@@ -140,13 +143,13 @@ impl Vm {
     /// the snapshot's validity where `keys` is the one last listed (`staged::iteration`: its
     /// shape and epoch as raw words, else `FOR_IN_NO_MEMO`).
     fn for_in_state_record(&mut self, object: Value, keys: Value) -> Value {
-        let (shape, listed_epoch, slot_words) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
+        let (key, listed_epoch, slot_words) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
             .map_or((FOR_IN_NO_MEMO, FOR_IN_NO_MEMO, Value::UNDEFINED),
-                |listed| (u64::from(listed.shape), listed.epoch, listed.slot_words));
+                |listed| (u64::from(listed.key), listed.epoch, listed.slot_words));
         let mut elements = [Value::integer(0); FOR_IN_STATE_LEN];
         elements[FOR_IN_OBJECT] = object;
         elements[FOR_IN_KEYS] = keys;
-        elements[FOR_IN_SHAPE] = Value::from_bits(shape);
+        elements[FOR_IN_SHAPE] = Value::from_bits(key);
         elements[FOR_IN_EPOCH] = Value::from_bits(listed_epoch);
         elements[FOR_IN_SLOTS] = slot_words;
         let epoch = self.heap.collection_epoch();
@@ -275,7 +278,7 @@ impl Vm {
         // Side descriptors are record data.
         self.heap.object(object)
             .filter(|data| data.record_only().is_none_or(|record| !record.has_side_descriptors()))
-            .and_then(|data| listed.keys(data.shape(), self.heap.collection_epoch()))
+            .and_then(|data| listed.keys(self.own_receiver_key(object, data.shape()), self.heap.collection_epoch()))
             == Some(keys)
     }
 
@@ -297,7 +300,7 @@ impl Vm {
     pub fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
         let listed = self.for_in.own_keys.as_ref()?;
         let data = self.shape_keyed_object(receiver)?;
-        let keys = listed.keys(data.shape(), self.heap.collection_epoch())?;
+        let keys = listed.keys(self.own_receiver_key(receiver, data.shape()), self.heap.collection_epoch())?;
         (data.proto() == listed.prototype && listed.chain.holds()).then_some(keys)
     }
 
@@ -412,8 +415,9 @@ impl Vm {
         let slot_words = self.array_of(&words);
         // The memo holds while the chain past the receiver keeps its cell (`chain_cell_to_end`).
         let prototype = chain.get(1).map_or(Value::NULL, |&(object, _)| object);
+        let key = self.own_receiver_key(chain[0].0, shape);
         self.for_in.own_keys = self.chain_cell_to_end(prototype)
-            .map(|cell| ForInOwnKeys { shape, epoch, keys, slot_words, slots, prototype, chain: cell, stepped: None });
+            .map(|cell| ForInOwnKeys { key, epoch, keys, slot_words, slots, prototype, chain: cell, stepped: None });
         if provable {
             self.for_in.walked.record(keys, epoch, &chain[..1]);
         } else {
@@ -466,10 +470,15 @@ impl Vm {
         let (_, index) = listed.stepped.filter(|&(stepped, _)| stepped == key)?;
         let data = self.shape_keyed_object(base)?;
         let shape = data.shape();
-        listed.keys(shape, self.heap.collection_epoch())?;
+        let memo_key = self.own_receiver_key(base, shape);
+        listed.keys(memo_key, self.heap.collection_epoch())?;
         let (atom, slot) = *listed.slots.get(index)?;
         if self.shape_may_have_accessors(shape) || !self.plain_named_key(atom) {
             return None;
+        }
+        if is_class_key(memo_key) {
+            // A live class cell's field, which its class key proves (`Heap::live_class_field`).
+            return self.heap.live_class_field(base, slot as usize);
         }
         // SAFETY: the snapshot recorded this slot of `shape`, the receiver's shape.
         Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })

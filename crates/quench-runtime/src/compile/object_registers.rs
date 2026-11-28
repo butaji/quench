@@ -197,7 +197,7 @@ mod tests {
             {
                 let dynamic = (0..program.functions.len())
                     .any(|id| program.function(id).has_dynamic_scope_access());
-                let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+                let native = crate::NativeJsProgram::publish(program).unwrap();
                 let mut runtime = crate::Runtime::new(crate::SystemHost);
                 runtime.set_execution_mode(if dynamic { crate::ExecutionMode::Compiled }
                     else { crate::ExecutionMode::NativeOnly });

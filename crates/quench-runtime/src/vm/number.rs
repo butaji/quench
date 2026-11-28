@@ -544,7 +544,7 @@ pub const MATH_INLINE_ARGUMENTS: usize = 4;
 /// names. `None` for any other native.
 pub const fn math_call(native: Native) -> Option<MathCall> {
     use crate::staged::math::{atan, atanh, cbrt, f16_round};
-    use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Unary};
+    use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Power, Unary};
     Some(match native {
         Native::MathFloor => Unary(FloatUnary::Floor),
         Native::MathAbs => Unary(FloatUnary::Abs),
@@ -558,7 +558,7 @@ pub const fn math_call(native: Native) -> Option<MathCall> {
         Native::MathMax => Extreme(true),
         Native::MathMin => Extreme(false),
         Native::MathImul => Imul,
-        Native::MathPow => Binary(crate::staged::power::power),
+        Native::MathPow => Power,
         Native::MathAtan2 => Binary(crate::staged::math::atan2),
         Native::MathF16Round => Libm(f16_round),
         Native::MathAtanh => Libm(atanh),
@@ -602,7 +602,7 @@ pub fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
         MathCall::Extreme(maximum) => Some(values.iter().fold(MathCall::extreme_start(maximum), |result, &number| {
             float_extreme(maximum, result, number)
         })),
-        call @ (MathCall::Binary(_) | MathCall::Imul) => {
+        call @ (MathCall::Binary(_) | MathCall::Imul | MathCall::Power) => {
             let args: SmallVec<[Value; 2]> = values.iter().take(2).map(|&number| Value::number(number)).collect();
             concrete_math_call(call, &args)?.as_number()
         }

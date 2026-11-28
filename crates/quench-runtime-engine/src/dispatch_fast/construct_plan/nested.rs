@@ -68,10 +68,11 @@ pub(crate) fn finish_forwarded_in_lane(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
+    read: impl Fn(u32) -> bool,
 ) -> Option<Option<ConstructPlan>> {
     let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
     let nested = std::cell::Cell::new(None);
-    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument,
+    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read,
         |vm, construct| {
             let (built, field) = nested_construct_in_lane(vm, env, construct)?;
             nested.set(Some(field));

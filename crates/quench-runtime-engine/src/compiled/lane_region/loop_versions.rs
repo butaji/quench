@@ -29,7 +29,9 @@ use quench_runtime::staged::Stage;
 #[path = "loop_versions/plan.rs"] pub(crate) mod plan;
 #[path = "loop_versions/hoists.rs"] pub(crate) mod hoists;
 #[path = "loop_versions/inductions.rs"] pub(crate) mod inductions;
+#[path = "loop_versions/affine_reach.rs"] pub(crate) mod affine_reach;
 pub(crate) use plan::{Nest, Resolved, Shape};
+use affine_reach::Linears;
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's
 /// entering edge.
@@ -59,6 +61,9 @@ pub(crate) enum Reach {
     Counted { bound: Register, low: i64, base: Option<Term>, scale: Option<Term> },
     /// Every index in `0..=ceiling`, whatever the loop does (a mask or a range of the index).
     Ranged { ceiling: i64 },
+    /// Every index between the floor and the ceiling of an index range the analysis proves (`Lowering::index_ends`): each
+    /// floor form is at least 0 and each ceiling form is below the array's length on the loop's entering edge.
+    Affine { floor: Linears, ceiling: Linears },
     /// `start + by * j` for the step's count `j` over the loop's trips left: `bound - counter` of them, where `counter`
     /// steps once per trip at the latch. `j` is `1..=trips` where the access reads the register after its step, and
     /// `0..trips` where it reads a copy made before it (`plan::Step`).
@@ -160,6 +165,7 @@ impl Lowering<'_, '_> {
                 let ceiling = self.raw_const(Lane::I64, ceiling);
                 self.raw_compare(Relation::UnsignedLess, ceiling, length)
             }
+            Reach::Affine { floor, ceiling } => self.affine_within(state, length, (floor, ceiling), exit),
             Reach::Stepped { counter, bound, start, by, copied } => self.stepped_within(state, length, [counter, bound, start], (by, copied), exit),
             Reach::Counted { bound, low, base, scale } => {
                 let bound = self.entry_register(state, bound, exit);

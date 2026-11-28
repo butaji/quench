@@ -46,6 +46,9 @@ impl Lowering<'_, '_> {
             Number(N::Arithmetic { left, right, .. } | N::Remainder { left, right, .. } | N::RelationValue { left, right, .. }
                 | N::Bitwise { left, right, .. } | N::Extreme { left, right, .. } | N::Imul { left, right, .. }) =>
                 self.number_operand_held(*left) && self.number_operand_held(*right),
+            // The power leaf's address is no image's to embed where its helpers are not named by symbol (`remainder`).
+            Number(N::Power { base, exponent, .. }) => self.number_operand_held(*base) && self.number_operand_held(*exponent)
+                && !(self.helpers.links() && !self.helpers.names_symbols()),
             Number(N::IncDec { .. } | N::ToNumeric { .. }) => true,
             // A relation decides a branch and an int case a table's index: rows over edges, not a value.
             _ => false,
@@ -62,7 +65,6 @@ impl Lowering<'_, '_> {
     /// The census of an instruction left unlowered: the lane's stats, the fallback site, an image's report.
     fn note_unlowered(&self, pc: usize, instruction: WideInstruction) {
         super::super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
-        if quench_runtime::fallback::on() { self.unlowered_fallback(pc); }
         if self.helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
             let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();
             UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}{}", instruction.op(), name.unwrap_or_default())));

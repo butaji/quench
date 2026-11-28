@@ -153,7 +153,7 @@ impl Heap {
     /// field is stored and scanned alike.
     pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
         if value.heap_index().is_some() {
-            self.class_space.barrier(granule, &self.properties);
+            self.class_space.barrier(granule);
         }
         self.note_cell_write(granule);
         self.class_space.set_field(granule, slot, value);

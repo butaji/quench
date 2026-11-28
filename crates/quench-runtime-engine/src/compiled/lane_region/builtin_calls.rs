@@ -85,8 +85,11 @@ impl Lowering<'_, '_> {
                     Some(string) => self.held_char_code_at(state, string, argument, within, exit),
                     None => self.char_code_at(state, receiver, argument, within, exit),
                 };
-                let integer = is_int_tagged(&mut self.builder, code);
-                emit_js_guard(&mut self.builder, integer, exit);
+                // The within row (`char_code_at_within`) answers an int32 by construction, so only the row that may answer NaN is tested.
+                if !within {
+                    let integer = is_int_tagged(&mut self.builder, code);
+                    emit_js_guard(&mut self.builder, integer, exit);
+                }
                 let int = self.raw_unary(Unary::Narrow(Lane::I32), code);
                 self.set_int(state, result, int);
             }

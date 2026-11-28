@@ -14,7 +14,7 @@ impl Lowering<'_, '_> {
     /// (`hold_lexical`); else the lane's own read, which leaves where it misses.
     pub(crate) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (binding, held) = self.global_binding(pc);
-        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit_for(state, pc as u32, ExitFact::Global));
+        let exit = (!matches!(binding, GlobalBinding::Constant(_) | GlobalBinding::Frozen { .. })).then(|| self.guard_exit_for(state, pc as u32, ExitFact::Global));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }

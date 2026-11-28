@@ -52,19 +52,6 @@ pub unsafe fn quench_staged_held_store_unlogged(heap: *const (), space: StagedRe
 }
 
 /// # Safety
-/// `heap` is the live `Heap` of a stage that stores.
-#[unsafe(no_mangle)]
-pub unsafe fn quench_staged_immediate_store_unlogged(heap: *const ()) -> bool {
-    // SAFETY: the caller's contract.
-    unsafe { (*heap.cast::<Heap>()).immediate_store_unlogged() }
-}
-
-#[unsafe(no_mangle)]
-pub fn quench_staged_rc_counts_seen() -> bool {
-    crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// # Safety
 /// `heap` is the live `Heap` of a stage that reads the owner tables.
 #[unsafe(no_mangle)]
 pub unsafe fn quench_staged_owner_table_bases(heap: *const ()) -> [u64; 3] {

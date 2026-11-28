@@ -94,7 +94,7 @@ fn compile_native_unit(
         std::fs::write(path, object).map_err(|error| format!("quench AOT object write: {error}"))?;
     }
     let functions = program.function_count();
-    let native = quench_runtime::NativeJsProgram::compile_eager(program).map_err(|error| format!("quench AOT publication: {error}"))?;
+    let native = quench_runtime::NativeJsProgram::publish(program).map_err(|error| format!("quench AOT publication: {error}"))?;
     compilation.units.push(crate::NativeCompiledUnit { functions, object_bytes, object: path });
     Ok(native)
 }
@@ -716,7 +716,7 @@ mod tests {
                 let prepared = host.prepare_native_programs(&[], source, "linked-dynamic.js", SourceKind::Script).unwrap();
                 let graph = super::LinkedCasePrograms {
                     harness: vec![], modules: vec![],
-                    entry: NativeJsProgram::compile_eager(prepared.entry).unwrap(),
+                    entry: NativeJsProgram::publish(prepared.entry).unwrap(),
                     module_sources: vec![],
                 };
                 let result = host.execute_linked_programs(graph, |_, _| Ok::<_, NativeSourceError>(None));
@@ -1013,7 +1013,7 @@ mod tests {
         "#, "region-continuations.js").unwrap();
         let module = quench_layers::engine::lower_native_js_module(&program, "regions").unwrap();
         quench_layers::engine::emit_native_module("regions", module.functions, module.data).unwrap();
-        let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
+        let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
         let mut runtime = super::Runtime::new(Test262RuntimeHost::new(super::ExecutionMode::NativeOnly));
         runtime.set_execution_mode(super::ExecutionMode::NativeOnly);
         runtime.execute_native(&native).unwrap();
