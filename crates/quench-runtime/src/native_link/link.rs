@@ -265,6 +265,13 @@ impl NativeSupport {
         let parent = |path: &Path, what: &str| path.parent().ok_or_else(|| format!("{what} has no parent")).map(Path::to_path_buf);
         command.arg("--extern").arg(format!("quench_runtime={}", self.runtime.display()))
             .arg("-L").arg(format!("dependency={}", parent(&self.runtime, "runtime library")?.display()));
+        // A minimal static support built its own standard library (`-Zbuild-std`, `aot/cli.rs`), with the
+        // `immediate-abort` panic strategy: the driver links that `std`, not the sysroot's, under the same strategy.
+        if let Some(std) = built_std(&parent(&self.runtime, "runtime library")?) {
+            command.env("RUSTC_BOOTSTRAP", "1")
+                .args(["-Z", "unstable-options", "-C", "panic=immediate-abort"])
+                .arg("--extern").arg(format!("noprelude:std={}", std.display()));
+        }
         if node_host {
             command.arg("--extern").arg(format!("{}={}", self.host_crate, self.host.display()))
                 .arg("-L").arg(format!("dependency={}", parent(&self.host, "support library")?.display()));
@@ -644,4 +651,13 @@ mod tests {
         assert!(exact_dependency(&alias, "example", &files).is_err());
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+/// The standard library a `-Zbuild-std` support build left beside its rlibs, the newest where several builds did;
+/// `None` where the support links the sysroot's.
+fn built_std(deps: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(deps).ok()?.filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_str().is_some_and(|name| name.starts_with("libstd-") && name.ends_with(".rlib")))
+        .max_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok())
+        .map(|entry| entry.path())
 }

@@ -27,6 +27,7 @@ impl Heap {
             }
         }
         // The class cells (regions 1..) follow, each with its header and fields, so a Value naming one restores unchanged.
+        writer.u64s(&super::layouts::snapshot_words());
         write_class_cells(writer, &self.class_space)?;
         write_extras_space(writer, &self.extras)?;
         write_records(writer, &self.array_records, |writer, record| record.write_snapshot(writer))?;
@@ -104,6 +105,9 @@ impl Heap {
                 super::buffer_bytes::bump_view_epoch();
                 heap.free_slots += 1;
             }
+        }
+        if !super::layouts::restore_words(&reader.u64_iter()?.collect::<Vec<u64>>()) {
+            return Err(SnapshotError("snapshot class ids taken by this process".into()));
         }
         read_class_cells(reader, &mut heap)?;
         read_extras_space(reader, &mut heap)?;
