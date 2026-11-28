@@ -109,7 +109,7 @@ pub(in super::super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, 
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    if crate::compiled::admission::lane_bodies_enrolled(vm) && let Some(own) = own {
+    if quench_runtime::vm::tier_policy::lane_bodies_claim(&vm.programs) && let Some(own) = own {
         if !specialize_in_lane(cx, own, function, parameters) { own.release_from_tier(); }
         return None;
     }

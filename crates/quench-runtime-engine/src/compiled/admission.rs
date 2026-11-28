@@ -182,7 +182,7 @@ pub(crate) use quench_runtime::vm::tier_policy::Tier;
 
 /// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
 #[inline]
-pub(crate) fn lane_bodies_enrolled(vm: &Vm) -> bool { vm.programs.js_jit_lane_methods_enabled() }
+pub(crate) fn lane_bodies_enrolled(vm: &Vm) -> bool { quench_runtime::vm::tier_policy::lane_bodies_claim(&vm.programs) }
 
 /// Whether the JIT diagnostics (`QUENCH_TRACE=js-jit`) record their counters. Diagnostics only: no tier
 /// decision reads it.
