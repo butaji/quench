@@ -144,9 +144,6 @@ pub fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
     if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), object, &at, *word, (*slot, *rep, *storage_len), miss);
     }
-    if let [IcOp::GuardImageLayout(key), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
-        return slots::image_layout_slot(stage, frame, (owner, true), object, &at, *key, (*slot, *rep, *storage_len), miss);
-    }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner).map(|(proven, _)| proven) != Some(*shape)

@@ -38,8 +38,8 @@ pub(crate) enum RelocKind {
     HolderLink,
     /// The value that holder's slot holds when the code links (`staged::ImageWord::HolderValue`).
     HolderValue,
-    /// The layout id of the objects a construction makes, by a field guard key
-    /// (`staged::ImageWord::Layout`): an id no record has where the guard does not resolve.
+    /// The class id of the cell a construction makes, by a field guard key
+    /// (`staged::ImageWord::Layout`): an id no class has where the guard does not resolve.
     GuardLayout,
     /// The layout id of the instances the shape recipe `key` builds (`staged::ImageWord::ClassLayout`): an id no
     /// record has where the recipe's prototype does not resolve.
