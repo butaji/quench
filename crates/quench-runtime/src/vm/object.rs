@@ -2321,14 +2321,13 @@ impl Vm {
     /// allocates (`Heap::record_property_add_moving`).
     #[inline(always)]
     fn add_by_transition(&mut self, object: Value, transition: Transition, value: Value) {
-        // A class-keyed transition (`Transition::is_class_keyed`) adds to the live class cell in place where
-        // the field fits its capacity (R4-C4: the class edge from the before-class to the after-shape). A cell
-        // it does not fit, or one a shape-keyed transition names (a dictionary or constant cell, which has no
-        // class key), departs first, and the record takes the add below.
+        // A class-keyed transition (`Transition::is_class_keyed`) adds to the live class cell in place (R4-C4: the
+        // class edge from the before-class to the after-shape); a field past the cell's region spills into its run.
+        // A shape-keyed transition names a dictionary or constant cell, which has no class key: it departs first,
+        // and the record takes the add below.
         if let Some(granule) = self.heap.live_class_cell(object) {
-            if transition.is_class_keyed()
-                && self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value)
-            {
+            if transition.is_class_keyed() {
+                self.heap.class_cell_add(granule, transition.record_form().before, transition.after, usize::from(transition.slot), value);
                 return;
             }
             self.heap.depart_class_object(object);
@@ -5076,6 +5075,9 @@ impl Vm {
     }
 
     pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+        if self.spills_class_add(cache) {
+            return;
+        }
         if !self.field_cache_records(site) {
             return;
         }
@@ -5595,7 +5597,31 @@ impl Vm {
                 .and_then(|object| self.heap.property_get_ref(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
+    /// Whether recording `cache` would give a class-keyed entry a field the cell holds in its run: a spilled slot
+    /// (`heap::spill`). Staged code addresses a class cell's field inline (`staged::entry::class`), so a spilled
+    /// slot is no entry; its access takes the heap's path (`Heap::class_slot_value`, `Heap::class_cell_store`), which
+    /// reads the run. The receiver's class and a held entry's holder cell both count.
+    fn spills_class_entry(&self, cache: FieldCache) -> bool {
+        let slot = usize::from(cache.slot);
+        let spills_at = |from: Option<u32>| from.is_some_and(|from| slot >= from as usize);
+        if !is_class_key(cache.receiver) {
+            return false;
+        }
+        spills_at(self.heap.class_spill_from(cache.receiver & !CLASS_KEY))
+            || (cache.holder != NO_FIELD_HOLDER && spills_at(self.heap.live_spill_from(cache.holder_cell)))
+    }
+
+    /// Whether recording `cache` would give a class-keyed add a transition past its cell's region: the add writes
+    /// the cell inline, so a class that spills after the add is no entry (`spills_class_entry`).
+    fn spills_class_add(&self, cache: FieldAddCache) -> bool {
+        is_class_key(cache.source_shape)
+            && self.heap.shape_spill_from(crate::heap::layouts::class_region(cache.source_shape & !CLASS_KEY), cache.target_shape).is_some()
+    }
+
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
+        if self.spills_class_entry(cache) {
+            return;
+        }
         if !self.field_cache_records(site) {
             return;
         }

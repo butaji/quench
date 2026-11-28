@@ -15,18 +15,21 @@ use super::class_space::{header_class, live_header};
 use super::Heap;
 use crate::value::Value;
 
-/// A class cell's view: its header word (the class id in the low half, zero above) and its fields, in
-/// constructor order, the slack fields holding `Value::DELETED`.
+/// A class cell's view: its header word (the class id in the low half, zero above), its inline fields in
+/// constructor order, the slack fields holding `Value::DELETED`, and the words of its spill run, which follow the
+/// inline fields (empty where the cell does not spill, `heap::spill`).
 #[derive(Clone, Copy)]
 pub struct CellView<'a> {
     header: &'a u64,
     fields: &'a [Value],
+    run: &'a [Value],
 }
 
 /// A class cell's mutable view. Its class changes in place through its header word.
 pub struct CellViewMut<'a> {
     header: &'a mut u64,
     fields: &'a mut [Value],
+    run: &'a mut [Value],
 }
 
 /// A shared view of an ordinary object: a class cell, or a record.
@@ -47,6 +50,15 @@ impl CellView<'_> {
     #[inline(always)]
     fn object(&self) -> Object {
         Object::of_class(header_class(*self.header))
+    }
+
+    /// The word of slot `slot`: an inline field, else the run's word past the inline fields.
+    #[inline(always)]
+    fn word(&self, slot: usize) -> Option<Value> {
+        match self.fields.get(slot) {
+            Some(&value) => Some(value),
+            None => self.run.get(slot - self.fields.len()).copied(),
+        }
     }
 }
 
@@ -143,7 +155,7 @@ impl<'a> ObjectMut<'a> {
     pub fn as_shared(&self) -> ObjectRef<'_> {
         match self {
             ObjectMut::Record(object) => ObjectRef::Record(&**object),
-            ObjectMut::Cell(cell) => ObjectRef::Cell(CellView { header: &*cell.header, fields: &*cell.fields }),
+            ObjectMut::Cell(cell) => ObjectRef::Cell(CellView { header: &*cell.header, fields: &*cell.fields, run: &*cell.run }),
         }
     }
 
@@ -274,14 +286,16 @@ impl Heap {
     /// The shared view of live class cell `granule`.
     #[inline(always)]
     pub(crate) fn live_cell(&self, granule: u32) -> ObjectRef<'_> {
-        ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields: self.class_space.cell_fields(granule) })
+        let (fields, run) = self.class_space.cell_words(granule, self.live_spill_from(granule));
+        ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields, run })
     }
 
     /// The exclusive view of live class cell `granule`, whose header and fields it edits in place.
     #[inline(always)]
     pub(crate) fn live_cell_mut(&mut self, granule: u32) -> ObjectMut<'_> {
-        let (header, fields) = self.class_space.cell_parts_mut(granule);
-        ObjectMut::Cell(CellViewMut { header, fields })
+        let spill = self.live_spill_from(granule);
+        let (header, fields, run) = self.class_space.cell_parts_mut(granule, spill);
+        ObjectMut::Cell(CellViewMut { header, fields, run })
     }
 
     /// The value of `slot` on `object`, as `property_get` reads it: a class cell's field, or a record's
@@ -294,7 +308,7 @@ impl Heap {
                 if slot >= self.properties.shape_length(cell.shape()) {
                     return None;
                 }
-                cell.fields.get(slot).copied().filter(|value| !value.is_deleted())
+                cell.word(slot).filter(|value| !value.is_deleted())
             }
         }
     }
