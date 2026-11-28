@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::census::Census;
+use super::census::{self, Census};
 use super::scope::Scope;
 use super::escapes::Escapes;
 use super::flow::{Call, FunctionFlow, Target};
@@ -24,7 +24,7 @@ use super::quiet::Proofs;
 use super::types;
 use super::AotFacts;
 use crate::bytecode::{Op, ResidualProgram, may_repeat};
-use crate::typed_ir::{Cell, Identity};
+use crate::typed_ir::{Cell, FactKey, Identity};
 
 /// The identity a cell holds once the closed world settles it: a builtin, the global object or a closure the proofs keep stays
 /// (it is the proof the lane reads, `Cell::identity`); any other proposed builtin, global object or closure is `Many`. Applied
@@ -53,18 +53,61 @@ fn names(program: &ResidualProgram, text: &str) -> bool {
 
 /// The proofs of the builtins the closed world leaves as the host installed them (`AotFacts::builtin_identity`): `Proofs`
 /// over the settled flows. None where the solve is not closed, or the program names a writer the shapes do not record. A call
-/// that may define properties on what it is handed (`may_define`) is a change to each handed value (`Proofs::handed`).
-pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[FunctionFlow], scope: &Scope) -> Option<Proofs> {
+/// that may define properties on what it is handed (`may_define`) is a change to each handed value (`Proofs::handed`), where
+/// `cells` are the settled fact cells before the proofs are applied, and `leaked` names the builtins a value may be.
+pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[FunctionFlow], scope: &Scope, cells: &BTreeMap<FactKey, Cell>)
+    -> Option<Proofs> {
     if world != World::Closed || REFLECTIVE_NAMES.iter().any(|name| names(program, name)) {
         return None;
     }
+    let leaked = leaked(flows, cells, scope);
     let mut proofs = Proofs::of(flows);
     for call in flows.iter().flat_map(|flow| &flow.calls).filter(|call| may_define(scope, call)) {
         for handed in call.arguments.iter().chain(std::iter::once(&call.receiver)) {
-            proofs.handed(&handed.cell);
+            proofs.handed(&handed.cell, &leaked);
         }
     }
     Some(proofs)
+}
+
+/// The global names of the builtins some value of the program may be, where the closed world's proofs do not follow it. A
+/// builtin leaks where its value reaches a cell that is no longer exactly that builtin: a register join (`FunctionFlow::leaked`),
+/// or a store whose key's settled cell (before the proofs) holds another identity or no fact cell at all. An argument or receiver
+/// of a call that runs script code or may define properties (`keeps_arguments`) leaks too, since the solve does not carry the
+/// value through that call's own writes.
+fn leaked(flows: &[FunctionFlow], cells: &BTreeMap<FactKey, Cell>, scope: &Scope) -> BTreeSet<u32> {
+    let mut leaked: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.leaked.iter().copied()).collect();
+    for flow in flows {
+        for &(_, key, word) in &flow.writes {
+            if let Identity::Builtin(path) = word.cell.identity {
+                let stored = cells.get(&census::fact_key(key)).map(|cell| cell.identity);
+                if stored != Some(Identity::Builtin(path)) {
+                    leaked.insert(path.global);
+                }
+            }
+        }
+        for call in flow.calls.iter().filter(|call| !keeps_arguments(scope, call)) {
+            for handed in call.arguments.iter().chain(std::iter::once(&call.receiver)) {
+                if let Identity::Builtin(path) = handed.cell.identity {
+                    leaked.insert(path.global);
+                }
+            }
+        }
+    }
+    leaked
+}
+
+/// Whether a call runs script code: the solve resolves it to a script function, or its callee is a function or a closure. Such a
+/// call's flow records the shapes of the code it runs.
+fn runs_script(call: &Call) -> bool {
+    let callee = call.callee.cell;
+    matches!(call.target, Target::Known(_)) || callee.ty.body_index().is_some() || matches!(callee.identity, Identity::Closure(_))
+}
+
+/// Whether a call neither runs script code nor may define properties on what it is given: its callee is a builtin that defines
+/// none (`may_define`). Its arguments and receiver stay where they are.
+fn keeps_arguments(scope: &Scope, call: &Call) -> bool {
+    !runs_script(call) && !may_define(scope, call)
 }
 
 /// Whether a call may define properties on the objects it is handed, by its callee's identity. A call the solve resolves to a
@@ -72,12 +115,10 @@ pub(super) fn builtin_proofs(program: &ResidualProgram, world: World, flows: &[F
 /// be a builtin that defines no property (`Scope::is_property_builtin`) defines none. Any other callee may define on what it is
 /// handed (an alias of `defineProperty`, `call`, `apply`, an unknown method).
 fn may_define(scope: &Scope, call: &Call) -> bool {
-    let callee = call.callee.cell;
-    let script = matches!(call.target, Target::Known(_)) || callee.ty.body_index().is_some() || matches!(callee.identity, Identity::Closure(_));
-    if script {
+    if runs_script(call) {
         return false;
     }
-    match callee.identity {
+    match call.callee.cell.identity {
         Identity::Builtin(path) => scope.is_property_builtin(path.member.unwrap_or(path.global)),
         _ => true,
     }

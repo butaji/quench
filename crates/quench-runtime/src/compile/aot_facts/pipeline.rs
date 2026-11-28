@@ -326,7 +326,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
         facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
-        facts.builtins = identity::builtin_proofs(program, world, &settled_flows, &scope);
+        facts.builtins = identity::builtin_proofs(program, world, &settled_flows, &scope, &facts.cells);
         facts.closures_once = identity::closures_once(program, world);
         facts.closures_once.retain(|body| !undominated_bodies.contains(body));
         // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.

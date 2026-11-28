@@ -450,6 +450,7 @@ impl Record {
             returns_out,
             strict,
             handed: self.handed,
+            leaked: Default::default(),
             closures: self.closures,
             bounds: self.bounds,
             entries: Vec::new(),

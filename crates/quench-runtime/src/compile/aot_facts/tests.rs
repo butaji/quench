@@ -1163,6 +1163,20 @@ fn a_builtin_member_defined_through_an_alias_is_no_builtin_identity() {
 }
 
 #[test]
+fn a_builtin_member_stays_builtin_past_a_script_call_handed_an_object() {
+    let program = program("function g(o) { return o.x; } g({ x: 1 }); var y = Math.floor(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "no value of Math leaks, so no define changes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_is_no_builtin_identity_once_its_object_leaks_into_a_many_cell() {
+    let program = program("var M = Math; if (Math.random() > 0.5) { M = {}; } Object.defineProperty(M, 'x', { value: 1 }); var y = Math.floor(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math leaks into M, which a define may hand Math.floor's object");
+}
+
+#[test]
 fn a_constructor_read_by_a_computed_key_leaves_the_world_open() {
     let program = program("var k = 'constructor'; var F = Object.getPrototypeOf(function () {})[k]; var src = 'Math.floor = 1'; var s = 0; if (s === 1) F(src)();");
     assert!(world(&program) != World::Closed, "the Function constructor is reached by a computed read of constructor");
