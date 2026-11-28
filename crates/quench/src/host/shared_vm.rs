@@ -75,9 +75,9 @@ macro_rules! node_bindings {
 }
 
 /// An operation marked as one the code that names it makes (`operation!`): a static named
-/// `QUENCH_OPERATION_MARK` holding its index, which only that code refers to. Each static has a
-/// section of its own, so a linked image holds the mark exactly when it links the code
-/// (`aot::cli::link_with_reached_operations` reads the marks from the symbol table).
+/// `QUENCH_OPERATION_MARK` holding its index, which only that code refers to. The marks share
+/// one section of nothing else, and LTO drops a mark whose code it drops, so a linked image
+/// holds the mark exactly when it links the code (`aot::host_operations` reads the section).
 #[derive(Clone, Copy)]
 pub(crate) struct MarkedOperation(pub(crate) &'static u32);
 
@@ -113,6 +113,10 @@ pub(crate) fn call_linked(
 /// The operation registered as `name`, as a mark (`MarkedOperation`), for a table.
 macro_rules! marked_operation {
     ($name:expr $(,)?) => {{
+        // A section of marks alone: in `.rodata` the linker merges a mark with any equal 4-byte
+        // constant and drops its symbol, and the image then loses the operation.
+        #[cfg_attr(target_os = "linux", unsafe(link_section = ".quench_operation_marks"))]
+        #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__quench_marks"))]
         static QUENCH_OPERATION_MARK: u32 = $crate::host::shared_vm::static_operation($name).0;
         $crate::host::shared_vm::MarkedOperation(&QUENCH_OPERATION_MARK)
     }};
