@@ -1082,7 +1082,7 @@ const _: () = assert!(
 const _: () = assert!(OBJECT_INLINE_STORAGE == crate::value_vec::INLINE_FORM);
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
-struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
+pub struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
 
 impl Default for DisplacedInline {
     fn default() -> Self {
