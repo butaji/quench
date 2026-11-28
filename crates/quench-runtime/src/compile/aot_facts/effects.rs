@@ -348,19 +348,19 @@ fn value_of(
     if ctx.types.is_some() && instruction.op() == crate::bytecode::Op::Binary {
         return Word::of_cell(typing::binary(&before, instruction.operand_b(), instruction.operand_c(), instruction.binary_operator()));
     }
-    if instruction.op() == crate::bytecode::Op::GetIndex {
+    if let Some(Operation::ElementRead { base, key, .. }) = operation.as_ref() {
         // A key that is one atom reads the named field it spells, as `o.name` does; an array index is an element instead.
-        let key = state[usize::from(instruction.register_c())].cell.ty.string_fact().and_then(|fact| fact.atom());
-        if let Some(atom) = key.filter(|&atom| !ctx.scope.names_index(atom)) {
-            let owner = state[usize::from(instruction.register_b())];
+        // The key is an operand: a register or a constant (`typing::operand_cell`).
+        let key_cell = crate::staged::typing::operand_cell(&before, *key);
+        let owner = state[usize::from(*base)];
+        if let Some(atom) = key_cell.ty.string_fact().and_then(|fact| fact.atom()).filter(|&atom| !ctx.scope.names_index(atom)) {
             if let Some(length) = string_length(ctx, Some(owner), atom) {
                 return Word::of(length);
             }
             let cell = member_identity(Some(owner), member_type(ctx, Some(owner), atom), atom);
             return named_word(ctx, Some(owner), cell, atom);
         }
-        let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
-        return Word::of_cell(element_read(ctx, pc, &before, base, index));
+        return Word::of_cell(element_read(ctx, pc, &before, settled(ctx, owner), key_cell));
     }
     match operation {
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
@@ -482,9 +482,6 @@ fn writes(
 /// closed world when a reached instruction does one of these.
 fn keyed_global(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Word]) -> bool {
     let flagged = |register: Register| state[usize::from(register)].cell.global;
-    if instruction.op() == crate::bytecode::Op::GetIndex {
-        return flagged(instruction.register_b());
-    }
     if matches!(instruction.op().class(), crate::bytecode::Class::GetField) {
         return match instruction.field_lookup() {
             Some(FieldLookup::Atom { base, .. }) => named_base_global(ctx, base, state),
@@ -525,9 +522,6 @@ fn reflective_read(ctx: &Ctx<'_>, instruction: WideInstruction, operation: &Opti
             }),
             None => false,
         };
-    }
-    if instruction.op() == crate::bytecode::Op::GetIndex {
-        return may_reflect(FieldBase::register(instruction.register_b())) && key_may_name(state[usize::from(instruction.register_c())]);
     }
     matches!(operation, Some(Operation::ElementRead { base, key, .. })
         if may_reflect(FieldBase::register(*base)) && key.register_index().is_none_or(|register| key_may_name(state[usize::from(register)])))

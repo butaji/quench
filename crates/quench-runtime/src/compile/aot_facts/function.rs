@@ -306,6 +306,7 @@ impl<'a> FunctionFacts<'a> {
     }
 
     /// The array element store at `pc` writes and the indices it touches (`AotFacts::element_stores`), where the solve kept it.
+    #[quench_macros::test_visible]
     pub(crate) fn element_store(&self, pc: u32) -> Option<ElementStore> {
         self.facts.element_stores.get(&(self.function, pc)).copied()
     }

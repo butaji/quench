@@ -106,7 +106,7 @@ fn execution_table(spec: &ExecutionTableSpec) -> (ExecutionTable, String) {
     let all = ExecutionTable::ALL;
     let mut unlinked = String::new();
     let table = ExecutionTable {
-        interpret: linked(spec.interpret, all.interpret, "interpret", &mut unlinked),
+        interpret: linked(spec.run_lane, all.interpret, "interpret", &mut unlinked),
         native_execution_rejections: linked(spec.interpret, all.native_execution_rejections, "native_execution_rejections", &mut unlinked),
         record_native_execution_rejection: linked(spec.interpret, all.record_native_execution_rejection, "record_native_execution_rejection", &mut unlinked),
         js_tier_frame_entry: linked(spec.tier_up, all.js_tier_frame_entry, "js_tier_frame_entry", &mut unlinked),

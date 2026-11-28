@@ -132,6 +132,12 @@ quench-layers = { path = "../quench-layers" }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The AOT facts solver's closed-world tests: they reach the solver's items through `test-support`.
+[[test]]
+name = "aot_facts"
+path = "tests/aot_facts.rs"
+required-features = ["test-support"]
+
 [[example]]
 name = "native_publication"
 required-features = ["jit"]

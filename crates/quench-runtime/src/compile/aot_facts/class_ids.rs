@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The class ids of a program: a function id for each body no split touches, and a synthetic id above `functions` for each
 /// (body, key) pair a construction names where the body is stored under two or more binding keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[quench_macros::test_visible]
 pub(crate) struct ClassIds {
     /// The number of functions of the program: the first synthetic id.
     functions: u32,
@@ -62,6 +63,7 @@ impl ClassIds {
     }
 
     /// The function body class `class` runs: `class` itself for an ordinary class, the body of its pair for a synthetic one.
+    #[quench_macros::test_visible]
     pub(super) fn body(&self, class: u32) -> u32 {
         match class.checked_sub(self.functions).and_then(|index| self.synthetic.get(index as usize)) {
             Some(&(body, _)) => body,

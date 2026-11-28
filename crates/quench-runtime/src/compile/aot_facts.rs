@@ -42,8 +42,6 @@ mod shape;
 mod shapes;
 mod types;
 mod value;
-#[cfg(test)]
-mod tests;
 
 use std::collections::BTreeMap;
 
@@ -76,6 +74,7 @@ pub use scope::constant_type;
 const LENGTH_ROUNDS: usize = 2;
 
 /// The facts of one program, solved in `world`.
+#[quench_macros::test_visible]
 pub struct AotFacts {
     /// The world the facts were solved in: which keys new code can move (`live`).
     world: World,

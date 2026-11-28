@@ -192,6 +192,26 @@ pub fn wasm_runs_native(mode: crate::ExecutionMode) -> bool {
     mode == crate::ExecutionMode::Compiled
 }
 
+/// Whether an entry of a JS function may compile it and enter its compiled body (`js_tier_frame_entry`): compiled
+/// execution. The interpreter and native-only execution compile nothing at an entry.
+#[inline(always)]
+pub fn compiles_at_entry(mode: crate::ExecutionMode) -> bool {
+    mode == crate::ExecutionMode::Compiled
+}
+
+/// Whether a regexp's search may run native code (`regexp_native::enable`): any mode but the interpreter.
+#[inline(always)]
+pub fn regexp_runs_native(mode: crate::ExecutionMode) -> bool {
+    mode != crate::ExecutionMode::Interpreted
+}
+
+/// Whether the interpreter's narrow runs (`Vm::set_narrow_runs`) serve the VM: the interpreter alone, since a compiled
+/// body reads the wide layout.
+#[inline(always)]
+pub fn runs_narrow(mode: crate::ExecutionMode) -> bool {
+    mode == crate::ExecutionMode::Interpreted
+}
+
 /// What `policy` lets the tiers compile.
 pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]

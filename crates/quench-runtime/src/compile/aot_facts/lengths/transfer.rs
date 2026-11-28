@@ -238,17 +238,21 @@ pub(super) fn is_number_binary(instruction: WideInstruction, operation: NumberAr
 /// The step a constant addition or subtraction makes of a register, as `(destination, source, delta)` where
 /// `destination = source + delta`: `source + k`, `k + source` or `source - k`. A `k - source` steps no register by a constant.
 pub(super) fn step_of_constant(ctx: &Ctx<'_>, instruction: WideInstruction) -> Option<(Register, Register, i64)> {
+    let add = is_number_binary(instruction, NumberArithmetic::Add);
+    if !add && !is_number_binary(instruction, NumberArithmetic::Subtract) {
+        return None;
+    }
+    // The operands are read only once the instruction is known to be a binary Number operation: other
+    // instructions lay their B and C fields out as no operands.
     let (left, right) = (instruction.operand_b(), instruction.operand_c());
-    let (source, delta) = if is_number_binary(instruction, NumberArithmetic::Add) {
+    let (source, delta) = if add {
         match (left.register_index(), right.register_index()) {
             (Some(source), None) => (source, constant_of(ctx, right)?),
             (None, Some(source)) => (source, constant_of(ctx, left)?),
             _ => return None,
         }
-    } else if is_number_binary(instruction, NumberArithmetic::Subtract) {
-        (left.register_index()?, constant_of(ctx, right)?.checked_neg()?)
     } else {
-        return None;
+        (left.register_index()?, constant_of(ctx, right)?.checked_neg()?)
     };
     Some((instruction.result_register(), source, delta))
 }
