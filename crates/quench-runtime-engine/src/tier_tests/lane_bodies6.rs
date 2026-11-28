@@ -193,3 +193,19 @@ pub(super) const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   }
   globalThis.answer = sum + cell.sum + other.sum;
 })();"#;
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn a_stencil_body_entered_under_the_body_convention_returns_its_status_and_word() {
+    // A b-jit body is entered through the body shim under the body convention (Cranelift `tail`, second
+    // return in rcx), and also by SysV callers (rdx): the entry thunk returns the word in both. Before,
+    // the word was read from a stale rcx, so a body that left decoded as an inlined leave and a body that
+    // returned delivered the wrong value. `addRun` inlines `addTask` and leaves at its first run.
+    assert_cell_crossings_match(r#"
+      function S() { this.cur = 0; }
+      S.prototype.addTask = function (id) { this.cur = id; };
+      S.prototype.addRun = function (id) { this.addTask(id); };
+      function go() { var n = 0; for (var i = 0; i < 2000; i++) { var s = new S(); s.addTask(0); s.addRun(i); n = (n + s.cur) | 0; } return n; }
+      var answer = go();
+    "#);
+}

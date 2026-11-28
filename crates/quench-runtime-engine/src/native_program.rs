@@ -302,3 +302,10 @@ unsafe fn quench_engine_native_from_linked_image(program: ResidualProgram, image
     unsafe { <NativeJsProgram as NativeJsProgramOps1>::from_linked_image(program, image) }
 }
 const _: unsafe fn(ResidualProgram, *const u8) -> Result<NativeJsProgram, String> = quench_engine_native_from_linked_image;
+
+/// The core's `NativeJsProgram::install_linked_lane_stubs` (a link-time hook): `lane_body_abi::install_linked`.
+#[unsafe(no_mangle)]
+fn quench_engine_install_linked_lane_stubs(body_shim: usize, entry_stub: usize) -> Result<(), String> {
+    crate::compiled::lane_body_abi::install_linked(body_shim, entry_stub)
+}
+const _: fn(usize, usize) -> Result<(), String> = quench_engine_install_linked_lane_stubs;

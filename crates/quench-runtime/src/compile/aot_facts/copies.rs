@@ -89,7 +89,7 @@ fn sealed(flows: &[FunctionFlow]) -> Sealed {
 
 /// The keys and values of the literal sites `sites` may be, if it is a set and every site has its table (`FunctionFlow::literals`):
 /// a copy writes all of them, so a site without one (or an object of any other origin) is no copy's source.
-fn literal_fields(flows: &[FunctionFlow], sites: Sites) -> Option<Vec<(u32, Word)>> {
+pub(super) fn literal_fields(flows: &[FunctionFlow], sites: Sites) -> Option<Vec<(u32, Word)>> {
     let mut fields = Vec::new();
     for site in sites.set()? {
         fields.extend(flows.get(site.function as usize)?.literals.get(&site.pc)?.iter().copied());

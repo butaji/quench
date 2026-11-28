@@ -21,12 +21,16 @@ fn emit(
 ) -> Result<(String, String, String), String> {
     program.freeze_native_diagnostics();
     let label = format!("test262_linked_{index}");
-    let module = quench_layers::engine::lower_native_js_module(program, &label)?;
+    let mut module = quench_layers::engine::lower_native_js_module(program, &label)?;
     let symbol = module.entry_table_symbol().to_owned();
     for f in &module.functions {
         if let quench_layers::engine::NativeFunction::Import { name, .. } = f {
             exports.insert(name.clone());
         }
+    }
+    // The entry's object carries the lane stubs its binder installs; their one import the runtime exports by name.
+    if index == 0 {
+        quench_layers::engine::link_lane_stubs(&mut module.functions, &quench_runtime::NativeTarget::default())?;
     }
     let object = root.join(format!("unit_{index}.o"));
     fs::write(&object, quench_layers::engine::emit_native_module(&label, module.functions, module.data)?)
