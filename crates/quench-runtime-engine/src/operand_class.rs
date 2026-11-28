@@ -64,6 +64,12 @@ pub(crate) fn int32_cell(ty: Type) -> bool {
     ty != Type::NEVER && ty.is_subtype(Type::INT32)
 }
 
+/// Whether an int32 operation's result cell cannot leave int32: an int32, or a Boolean, which a relation always gives
+/// (`NEVER` excluded, as `int32_cell`).
+pub(crate) fn int32_result_cell(ty: Type) -> bool {
+    int32_cell(ty) || (ty != Type::NEVER && ty.is_subtype(Type::language(ValueType::Boolean)))
+}
+
 /// Whether a cell type holds Numbers only, int32s or doubles (`NEVER` excluded, as `int32_cell`).
 pub(crate) fn number_cell(ty: Type) -> bool {
     ty != Type::NEVER && ty.is_subtype(Type::NUMBER)
