@@ -811,7 +811,7 @@ impl RecordPlan {
 
     /// `nested` whose second hop is the intermediate object's layout id `layout` in the fixed `form`
     /// (`IcOp::GuardFormed`): one compare of the record's own word proves its shape and form, so the hop
-    /// reads its slot untested (`requicken_nested` stamped the id).
+    /// reads its slot untested.
     #[inline(always)]
     pub(crate) fn nested_formed(first: (u32, u16, Form), (layout, slot, form): (u32, u16, Form),
         base: quench_runtime::bytecode::FieldBase, records: u64) -> Self {

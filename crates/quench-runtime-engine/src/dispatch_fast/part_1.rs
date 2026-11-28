@@ -122,23 +122,6 @@ pub(crate) const fn nested_hop_forms(site: u8) -> [Form; 2] {
     else { [Form::Either, Form::Either] }
 }
 
-/// The storage-form class of a nested hop whose layout id is `layout`: `0` a flat run, `1` packed
-/// inline values; `None` for another form, whose hop keeps `NESTED_SITE`'s `Form::Either`. Reads the
-/// hint's form through `own_form_index`.
-pub(super) fn nested_hop_class(layout: u32) -> Option<usize> {
-    match own_form_index(Some(layout)) {
-        3 => Some(0),
-        1 => Some(1),
-        _ => None,
-    }
-}
-
-/// The formed nested row of the classes `first` and `second` (`nested_hop_class`).
-pub(super) fn nested_formed_handler(first: usize, second: usize) -> Handler {
-    macro_rules! row { ($site:expr) => { generated_row!(FIELD_LEAF_READ, ACC_NONE, $site) as Handler } }
-    [row!(NESTED_FLAT_FLAT), row!(NESTED_FLAT_INLINE), row!(NESTED_INLINE_FLAT), row!(NESTED_INLINE_INLINE)][first * 2 + second]
-}
-
 pub(crate) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
 
 /// The generated general read of a `GetField` by its base: `GENERAL_THIS` for `this`,
@@ -170,13 +153,6 @@ pub(crate) fn general_field_read(context: *mut (), record: usize, register: bool
         None
     };
     quick.or_else(|| field_step_in_lane(cx, record, code, object, atom, site))
-}
-
-/// Whether the nested site `i` reads two ordinary own entries, which `NESTED_SITE`'s row runs; a
-/// `length` step (an array's or a string's own `length`) or a single step stays with
-/// `get_field_nested_miss`.
-pub(super) fn nested_row_site(vm: &Vm, code: &ResidualProgram, i: &LaneInstruction) -> bool {
-    code.field_sites.get(i.imm() as usize).is_some_and(|site| site.second.is_some_and(|(atom, _)| atom != vm.length_atom))
 }
 
 /// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
@@ -521,28 +497,6 @@ pub(super) fn length_read(vm: &mut Vm, receiver: Value) -> Option<Value> {
         .or_else(|| vm.typed_array_geometry_read_inline(receiver, atom))
 }
 
-pub(super) fn field_site_tier_in_lane(
-    vm: &Vm,
-    code: &ResidualProgram,
-    i: &LaneInstruction,
-) -> FieldSiteTier {
-    if i.b == quench_runtime::bytecode::FieldBase::NESTED {
-        // A step that reads `name` or `length` may prepare prototype lookup
-        // (`Vm::reads_function_info`); only an array's own `length` needs no preparing.
-        let nested_own = code.field_sites.get(i.imm() as usize).is_some_and(|site| {
-            !vm.reads_function_info(site.first.0)
-                && site.second.is_none_or(|(atom, _)| {
-                    atom == vm.length_atom || !vm.reads_function_info(atom)
-                })
-        });
-        if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
-    } else {
-        // The entry tiers come from one cache index (`Vm::field_site_tier`), not one lookup per
-        // predicate, since a held or inherited local read classifies its site on every read.
-        vm.field_site_tier(i.c)
-    }
-}
-
 /// A nested `GetField`'s value (`this.a.b`, `r.a.b`), each step one shape compare and one
 /// load where it is monomorphic: the first step through the record's own-field hint
 /// (`lane_nested_hinted_first`) and the second through its site's primary own entry or an
@@ -710,50 +664,8 @@ pub(super) fn own_length(vm: &Vm, object: Value) -> Option<Value> {
     })
 }
 
-/// Requickens the nested read at `ip` to the formed instance its two hops' layouts name: the record's hint
-/// is the first hop's layout, and the second hop's is the layout of the intermediate object the first step
-/// reads (`form_hint`'s, which the site's entry names by shape). A hop of another form, or a hop the
-/// record does not hold, leaves the generic row.
-///
-/// # Safety
-/// `cx` is the running lane's context and `i` a nested record of it naming its site, which `lane_nested_value`
-/// has just read.
-pub(super) unsafe fn requicken_nested(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) {
-    // SAFETY: the context's program outlives the lane run; a nested record names its site.
-    let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
-    let Some((_, cache)) = site.second else { return };
-    let Some(first) = (unsafe { lane_nested_hinted_first(cx, r, i, site) }) else { return };
-    let machine = unsafe { vm(cx) };
-    let entry = machine.field_cache_entry(cache);
-    let hint = i.field_hint();
-    let Some(record) = machine.heap_reads().record_object_value(first) else { return };
-    if hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER || entry.holder != quench_runtime::vm::NO_FIELD_HOLDER
-        || entry.receiver != record.exact_shape() {
-        return;
-    }
-    // Each hop's class is its object's layout's (a flat run of tagged words or packed inline values,
-    // `nested_hop_class`), whose words the row then reads with no decode (`decode_staged_word`).
-    let Some(base) = (unsafe { field_base_in_lane(cx, r, site.base) }) else { return };
-    let Some(base_record) = machine.heap_reads().record_object_value(base) else { return };
-    let second_layout = record.layout_id();
-    let (Some(first_class), Some(second_class)) = (nested_hop_class(base_record.layout_id()), nested_hop_class(second_layout)) else { return };
-    // A loop header keeps its site in the record, and a header's `mode` is the loop's: it keeps the generic row.
-    if holds_loop_site(ip) { return; }
-    // The formed row reads its second hop and base from the record (`nested_mode`), not from the site
-    // and the cache: the hops' guards are the check, so a stale word only misses.
-    // SAFETY: as `requicken`; an unfused field record's `mode` is zero and no fusion names it.
-    unsafe { (*ip.cast_mut()).mode = nested_mode(second_layout, entry.record_slot(), site.base) };
-    requicken(ip, nested_formed_handler(first_class, second_class));
-}
-
-/// The `mode` word of a formed nested record: the intermediate object's layout id (bits 0..32) and its slot
-/// (32..48), and the site's base (48..64), which the formed row reads with no site or cache lookup.
-pub(super) const fn nested_mode(layout: u32, slot: u16, base: quench_runtime::bytecode::FieldBase) -> u64 {
-    layout as u64 | (slot as u64) << 32 | (base.0 as u64) << 48
-}
-
-/// The second hop and base `nested_mode` packed.
+/// The second hop and base of a formed nested record's `mode` word: the intermediate object's layout id (bits 0..32),
+/// its slot (32..48), and the site's base (48..64).
 #[inline(always)]
 pub(crate) const fn nested_mode_parts(mode: u64) -> (u32, u16, quench_runtime::bytecode::FieldBase) {
     (mode as u32, (mode >> 32) as u16, quench_runtime::bytecode::FieldBase((mode >> 48) as u16))

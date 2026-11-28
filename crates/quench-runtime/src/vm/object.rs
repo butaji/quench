@@ -2701,26 +2701,6 @@ impl Vm {
         self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
     }
 
-    /// The entry tier of a single-read site, in the order the four `field_site_*` predicates
-    /// test it: an accessor, the megamorphic entries, a prototype holder, then an inherited
-    /// entry, else the primary own entry. The site's cache index is derived once, so each
-    /// table is read at the same index without re-deriving the active cache layout.
-    pub fn field_site_tier(&self, site: u16) -> crate::vm::engine_types::FieldSiteTier {
-        use crate::vm::engine_types::FieldSiteTier;
-        let index = self.field_cache_index(site);
-        if self.accessor_field_indices.get(index) != NO_ACCESSOR_FIELD {
-            FieldSiteTier::Getter
-        } else if self.megamorphic_field_indices.get(index) != NO_MEGAMORPHIC_FIELD {
-            FieldSiteTier::Polymorphic
-        } else if self.field_caches.get(index).holder != NO_FIELD_HOLDER {
-            FieldSiteTier::Holder
-        } else if self.inherited_field_indices.get(index) != NO_INHERITED_FIELD {
-            FieldSiteTier::Inherited
-        } else {
-            FieldSiteTier::Own
-        }
-    }
-
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
     pub(super) fn field_site_getter(&self, site: u16) -> bool {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
@@ -3003,14 +2983,6 @@ impl Vm {
         self.megamorphic_field_indices.get(self.field_cache_index(site)) != NO_MEGAMORPHIC_FIELD
     }
 
-    /// Whether the site's megamorphic entries moved to the hash (`FieldCacheSet::overflow`),
-    /// which only `polymorphic_field_hit` probes.
-    pub fn field_site_hashed(&self, site: u16) -> bool {
-        let table_index = self.megamorphic_field_indices.get(self.field_cache_index(site));
-        table_index != NO_MEGAMORPHIC_FIELD
-            && self.megamorphic_fields.get(table_index as usize).is_some_and(|set| set.overflow.is_some())
-    }
-
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
     /// left to `cached_field_value`.
     #[inline(always)]
@@ -3285,13 +3257,6 @@ impl Vm {
     #[inline(always)]
     pub fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         self.prototype_field_hit(self.string_proto, site)
-    }
-
-    /// Whether a number primitive's read of `atom` in `p` can take the `Number.prototype`
-    /// data property its site caches (`number_prototype_field_hit`): a number has no own
-    /// properties, so any name the field cache admits.
-    pub fn number_field_site_cacheable(&self, p: &ResidualProgram, atom: Atom) -> bool {
-        self.specialized && p.specialized && self.number_proto.is_heap() && self.field_cache_atom_eligible(atom)
     }
 
     /// The `Number.prototype` data property site `site` caches.
