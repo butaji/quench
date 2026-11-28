@@ -1858,9 +1858,6 @@ pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
     pub direct: Box<[DirectArm]>,
     pub records: Vec<OwnedCallRecord>,
-    /// The callee identities its entry checks once (`Held::Captured`): code that names one by a constant, so its
-    /// death retires the code. Any other callee a record names is guarded at each call (`names_dead`).
-    pub held: Box<[u64]>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     pub caller_registers: u16,
     pub recovery: LaneRecoverySpace,

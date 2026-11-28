@@ -9,7 +9,7 @@
 //!
 //! Every closure bound stays alive and every descriptor and callee record written stays allocated for the image's
 //! life: a record's identity is never a collected object's reused id, and a frame that names an
-//! earlier descriptor (a callee running when its site rebinds) keeps reading a live one.
+//! earlier descriptor (a callee running when its site binds another closure) keeps reading a live one.
 //!
 //! Owner: one pipeline.
 
@@ -87,7 +87,7 @@ impl BoundCalls {
 
     /// Binds record `key` to `direct`, the callee its site resolved. A new callee record holds the callee's words, as a
     /// JIT plan's callee record does (`DirectFacts::of`): the identity, the cell, the captures and
-    /// global, the function, the descriptor (the callee's `DirectArm` address, the native
+    /// global, the function, the descriptor (the arm's `DirectBody` address, the native
     /// header's descriptor word), the context words, the window and the sloppiness. The site keeps its own words (the
     /// caller's call record and base), and names the new record last, which admits the rows and the AOT lane body's
     /// native call (`call_frames::push_native`). `None` where the site has bound its `POLYMORPHISM` closures already.

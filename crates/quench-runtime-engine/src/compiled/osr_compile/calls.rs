@@ -60,7 +60,7 @@ impl CallCode {
         // The windows start past the function's environment window (`base_region::function::inline_base`):
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
-        Self { inlined, direct, records, held: Box::default(), caller_registers, recovery, invalidation }
+        Self { inlined, direct, records, caller_registers, recovery, invalidation }
     }
 
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a

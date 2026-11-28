@@ -26,13 +26,14 @@ impl DirectArm {
 }
 
 /// The closure the native header at `window` entered, the callee word its call wrote from the callee register
-/// (`CONTEXT_CALLEE`; a spilled header's words stay below its window), with the environment and captures pointer read
-/// from that closure (`Vm::resolve_script_call_target`).
+/// (`CONTEXT_CALLEE`; a spilled header's words stay below its window), with the environment read from that closure and
+/// the captures pointer of that environment (`Vm::target_capture`, as the call's own resolution reads it). A direct callee
+/// runs in its caller's program, `code`.
 pub(crate) fn entered_closure(vm: &mut Vm, code: &ResidualProgram, window: *mut Value) -> (Value, Value, *const usize) {
     // SAFETY: the header's words lie below its window.
     let entered = unsafe { *window.sub(quench_runtime::staged::frame::CONTEXT_CALLEE) };
-    let target = vm.resolve_script_call_target(code, entered).expect("a closure a direct call entered resolves to its body's target");
-    (entered, target.closure.env, target.closure.capture)
+    let (program, _, env) = vm.same_realm_user_target(entered).expect("a direct call enters a closure of the running realm");
+    (entered, env, vm.target_capture(code, program, env))
 }
 
 /// The environment a running native frame's captures resolve in: its window's, which its link wrote from the closure

@@ -69,7 +69,7 @@ fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> 
 #[derive(Default)]
 pub(crate) struct Callees {
     pub(crate) owned: Box<[DirectArm]>,
-    /// By PC, the owned callees its call site recorded, latest first (`DirectCandidates`): the first is
+    /// By PC, the owned arms of its call site, in its plan's arm order (`DirectCandidates`): the first is
     /// the one a stitch may inline, every one a direct row of the call's chain calls.
     at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
@@ -133,7 +133,7 @@ pub(crate) fn is_method_call(instruction: WideInstruction) -> bool {
     quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::MethodCall) && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
-/// The callees a call site of `instruction` calls, in its plan's arm order: the recorded callee each arm names
+/// The callees a call site of `instruction` calls, in its plan's arm order: the arm of each body the plan names
 /// (`DirectCandidates`). None where the instruction is no chained call, or the site has no plan.
 fn arm_callees(instruction: WideInstruction, plan: Option<&SitePlan>, site: &DirectCandidates) -> Vec<DirectArm> {
     let Some(plan) = plan.filter(|_| chains(instruction)) else { return Vec::new() };
@@ -141,7 +141,7 @@ fn arm_callees(instruction: WideInstruction, plan: Option<&SitePlan>, site: &Dir
 }
 
 impl Callees {
-    /// The function each call site of `code` was recorded calling (`candidates`, by PC): its plan's first arm.
+    /// The closure each call site of `code` calls first (`candidates`, by PC): its plan's first arm's.
     pub(crate) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates], plans: &SitePlans) -> Vec<Option<quench_runtime::value::Value>> {
         code.iter().zip(candidates).zip(plans).map(|((instruction, site), plan)| {
             arm_callees(*instruction, plan.as_ref(), site).first().map(|callee| callee.closure.callee)
@@ -180,7 +180,7 @@ impl Callees {
         code.iter().zip(&self.at).all(|(instruction, callee)| !crate::compiled::meaning_compiled::is_call(*instruction) || (callee.is_some() && !is_method_call(*instruction)))
     }
 
-    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
+    /// What each call site's arms say of their callees, by PC, in arm order: the targets of its
     /// chain's direct rows. The first of each is the callee a stitch may inline.
     ///
     /// # Safety
