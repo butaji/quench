@@ -59,7 +59,6 @@ impl LaneView {
             }
             self.drop_body(body);
         }
-        self.tier().retired.borrow_mut().clear();
         self.clear_hints(&self.field_records);
         self.clear_name_hints();
         for site in &self.loops {

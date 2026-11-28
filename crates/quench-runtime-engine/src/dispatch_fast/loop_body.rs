@@ -13,10 +13,10 @@ pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
-use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
+use crate::compiled::tier_policy::LOOP_BODY_POLL;
 #[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
-    pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
+    pub(crate) const IDLE: Self = Self::Idle;
 
     /// A new loop site's body. A loop's body runs once per iteration, a loop weight above its function's frequency,
     /// so its predicted tier is a compiled one (`tier_policy::predicted_tier`, which never picks the interpreter
@@ -25,35 +25,12 @@ impl LoopBody {
         if quench_runtime::vm::tier_policy::cranelift_runs() { Self::IDLE } else { Self::Declined }
     }
 
-    /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
-    /// next body's feedback (a failed entry contract drops the contract), until the bodies
-    /// run out.
-    #[cold]
-    fn note_leave(&mut self, exit: LaneExit) {
-        let Self::Ready { runs, exits, leaves, stuck, attempts, .. } = self else { return };
-        *leaves = leaves.with(exit);
-        *exits += 1;
-        if *exits < LOOP_BODY_REOPTIMIZE { return; }
-        let next = stuck.union(*leaves);
-        // Leaves only where the bodies before it left, those places already generic, would
-        // plan the same body again: it stays while most of its runs complete, and its loop
-        // has no body otherwise.
-        if next == *stuck && next != LaneLeaves::Scattered {
-            if u64::from(*exits) * PERCENT > u64::from(*runs) * LOOP_BODY_KEEP_SHARE { *self = Self::Declined; }
-            else { (*exits, *leaves) = (0, LaneLeaves::NONE); }
-            return;
-        }
-        *self = if *attempts + 1 >= LOOP_BODY_ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
-            else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
-    }
-
     /// The body to run, if it is ready.
     fn ready(&mut self) -> Option<std::rc::Rc<crate::compiled::LaneMethod>> {
         match self {
-            Self::Ready { method, runs, stuck, attempts, .. } => {
+            Self::Ready { method } => {
                 let ready = method.lease();
-                *runs = runs.saturating_add(1);
-                if ready.is_none() { *self = Self::Idle { stuck: *stuck, attempts: *attempts }; }
+                if ready.is_none() { *self = Self::Idle; }
                 ready
             }
             Self::Compiling { wait, .. } if *wait > 0 => { *wait -= 1; None }
@@ -61,22 +38,15 @@ impl LoopBody {
         }
     }
 
-    /// The state after the work for the body (`outcome`), which `stuck` and `attempts` planned.
-    fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
+    /// The state after the work for the body (`outcome`).
+    fn after(outcome: LaneBodyOutcome) -> Self {
         match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
-            LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
-            LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,
+            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL },
+            LaneBodyOutcome::Published(method) => Self::Ready { method },
+            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle,
+            // The predicted tier is the interpreter's pick, fixed by the program: the loop runs interpreted for good.
+            LaneBodyOutcome::Declined | LaneBodyOutcome::Short | LaneBodyOutcome::Unpaid => Self::Declined,
         }
-    }
-}
-
-#[quench_macros::ext(LoopSiteOps3)]
-impl LoopSite {
-    /// The header dispatches the idle body has seen: the iterations the loop takes as the lane sees them.
-    pub(crate) fn body_iterations(&self) -> u64 {
-        self.body_seen.get()
     }
 }
 
@@ -85,9 +55,6 @@ impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
     pub(crate) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
 }
-
-/// The warm-ups of iterations per entry past which a loop no region runs runs long (`offer_body`).
-const LONG_TRIP_WARMUPS: u64 = 4;
 
 /// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
 /// script callee): a loop whose calls no region inlines takes a body, and without one the loop
@@ -119,12 +86,9 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
             instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget
                 && (instruction.imm() as usize) <= pc && instruction.imm() as usize > site.header as usize
         }));
-        // Without one, a body pays where the loop runs long per entry of its function and its
-        // calls run inline: its entry from the header is paid once per run, and the body runs
-        // natively the rows the region cannot (a dense `switch`, `instanceof`). A loop of a few
-        // trips per entry is its function's body's to run, and one whose calls leave interprets as well.
-        let long = site.body_iterations() >= u64::from(site.tiers.loops.warmup_taken) * LONG_TRIP_WARMUPS;
-        if !nests && (!long || !calls.into_iter().all(inline)) { return false; }
+        // Without one, the loop's calls must run inline, as at any other loop: a body is the
+        // function's predicted tier's to give (`lane_facts::body_pick`), not the trips' count.
+        if !nests && !calls.into_iter().all(inline) { return false; }
     } else if !calls.into_iter().all(inline) { return false; }
     let mut body = site.body.borrow_mut();
     if !matches!(*body, LoopBody::Declined) { return false; }
@@ -132,7 +96,7 @@ pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) ->
     true
 }
 
-/// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
+/// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling`).
 /// An execution-only build (no `jit`) plans no run-time body: a loop runs the image's body
 /// where one published, and the interpreter otherwise.
 fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
@@ -147,10 +111,9 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let mut body = site.body.borrow_mut();
-    let (pending, stuck, attempts) = match std::mem::replace(&mut *body, LoopBody::Declined) {
-        LoopBody::Compiling { pending, stuck, attempts, .. } => (Some(pending), stuck, attempts),
-        // The idle body's waiting is counted at its header dispatch (`lane_loop_enter_body`): here its wait is over.
-        LoopBody::Idle { stuck, attempts } => (None, stuck, attempts),
+    let pending = match std::mem::replace(&mut *body, LoopBody::Declined) {
+        LoopBody::Compiling { pending, .. } => Some(pending),
+        LoopBody::Idle => None,
         settled => { *body = settled; return; }
     };
     let function = site.function;
@@ -161,34 +124,14 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
         return;
     }
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
-    // A first plan waits for the iterations that pay for a body of the loop's span, as an unpaid one
-    // waits below: planned before them, the plan would decline the loop's body for good.
-    if pending.is_none() && vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header))).is_none() {
-        let due = body_due(vm, site);
-        if site.body_iterations() < due {
-            site.body_wait.set(due - site.body_iterations());
-            *body = LoopBody::Idle { stuck, attempts };
-            return;
-        }
-    }
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), looped: Some((site.span(), site.body_iterations())), called: false, caller: own },
+        None => LaneBodyWork::Start { called: false, caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
-    // A body its iterations have not paid for waits until they would at its planned size.
-    if matches!(outcome, LaneBodyOutcome::Unpaid) { site.body_wait.set(body_due(vm, site).saturating_sub(site.body_iterations())); }
-    *body = LoopBody::after(outcome, stuck, attempts);
+    *body = LoopBody::after(outcome);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
     }
-}
-
-/// The iterations that pay for a body of `site`'s loop at its planned size, or at its span's before a plan.
-#[cfg(feature = "jit")]
-fn body_due(vm: &Vm, site: &LoopSite) -> u64 {
-    let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), site.function, Some(site.header)))
-        .unwrap_or_else(|| crate::compiled::lane_facts::unplanned_ir(&vm.programs.tiers().loops, site.span()));
-    crate::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true)
 }
 
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
@@ -204,8 +147,6 @@ pub(crate) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: 
         || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
-    // An idle body counts its dispatches down to its plan: until then, no view or plan is touched.
-    if matches!(*site.body.borrow(), LoopBody::Idle { .. }) && site.body_waits() { return None; }
     run_loop_body(cx, r, ip, site)
 }
 
@@ -231,8 +172,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
-    let (resumed, _) = body_left_in_lane(cx, r, own, &method, resume);
-    if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
+    let resumed = body_left_in_lane(cx, r, own, &method, resume);
     drop(method);
     if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(loop_attempt(cx, ip, resumed))

@@ -799,7 +799,6 @@ pub struct ProgramStore {
     lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
     /// The IR size of the last lane plan from each entry of each function (`Vm::start_lane_method`):
     /// what deciding the next compile's worth from costs, before planning it again.
-    lane_plan_ir: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), usize>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::engine_types::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
     ahead: std::cell::RefCell<Vec<Rc<crate::vm::engine_types::AheadImages>>>,
@@ -871,7 +870,6 @@ impl Default for ProgramStore {
             lane_installed: Default::default(),
             ahead: Default::default(),
             lane_compiles: Default::default(),
-            lane_plan_ir: Default::default(),
             programs: Vec::new(),
             shared_ids: FxHashMap::default(),
             // Each store's epochs start apart from every other's, so a context derived from

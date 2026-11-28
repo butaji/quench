@@ -467,7 +467,7 @@ pub(super) fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value
 /// `activate_environment_in_lane`; a form that routes the call to the general path is the helper's
 /// miss.
 fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: CallActivation<bool>) -> u64 {
-    if record_late_call(cx, call.ip, target, call.argc()) { return miss(unsafe { vm(cx) }, Miss::Callee) }
+    crate::compiled::direct_callee::rebind_closure(cx, call.ip, target, call.argc());
     let refused = || miss(unsafe { vm(cx) }, Miss::NoActivationRoom);
     let registers = if how.plain {
         call.push_plain(cx, target, this, constructs)
@@ -512,8 +512,7 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.function); }
         return leave(start, Value::UNDEFINED)
     };
-    let respecializes = own.respecializes();
-    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[], None); }
+    if own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[]); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         // Each call of it from native code leaves that code until it has a body (`note_native_caller`).
@@ -541,17 +540,12 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     {
         record_end_in_lane(cx, own, &method, exit);
         drop(method);
-        super::note_body_end_in_lane(cx, own, exit, |_| {});
         return body_returned_in_lane(cx, call, Some(value), constructs);
     }
     if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.function); }
-    let (resumed, feedback) = body_left_in_lane(cx, registers, own, &method, exit);
+    let resumed = body_left_in_lane(cx, registers, own, &method, exit);
     drop(method);
-    if leave_counts_in_lane(cx, exit) {
-        super::note_body_end_in_lane(cx, own, feedback, |left| note_leave_in_lane(cx, target.function, left));
-    } else {
-        super::note_warming_leave_in_lane(cx, own);
-    }
+    if !leave_counts_in_lane(cx, exit) { super::note_warming_leave_in_lane(cx, own); }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
@@ -592,7 +586,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     // One the image holds no lane body for gives its prologue back, once: its entries run its records,
     // not this path and the image lookup again (as `tier_enter_in_lane` releases a declined body).
     if own.cell_body().is_none() && own.body_view_in_lane().is_none() && !own.declined_in_lane() && vm.programs.ahead_images(program, code).is_some()
-        && !specialize_in_lane(cx, own, function, &[], None)
+        && !specialize_in_lane(cx, own, function, &[])
     {
         own.release_from_tier();
         return Resumed::At(r, base, Carried::script_in(cx, view));
@@ -616,7 +610,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     } else {
         vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast())
     };
-    body_concluded_in_lane(cx, r, ip, own, &method, left, function)
+    body_concluded_in_lane(cx, r, ip, own, &method, left)
 }
 
 /// A root frame's start at its first instruction where the program has an AOT image: the record or exit

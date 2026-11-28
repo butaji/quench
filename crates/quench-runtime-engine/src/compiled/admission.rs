@@ -90,13 +90,13 @@ pub(crate) enum UnitKind {
     /// A Wasm program's module compile (`Vm::wasm_module_unit`): the program is Wasm.
     WasmModule,
     /// A lane body's plan from an entry, before planning (phase A): the compile bound, the tier predicted
-    /// makes, the looped iterations' payment. Its unit is the proof every later lane gate needs.
+    /// makes, the compile bound. Its unit is the proof every later lane gate needs.
     LanePlan,
     /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
     /// of its entry, and the callers that want it anyway.
     LaneEntry(CompiledUnit),
     /// A lane body's install gate after planning (phase B, before the plan binds its callees): the plan's
-    /// unit, the callers of regions, the looped iterations, and the amortization of its entry.
+    /// unit, the callers of regions, and the amortization of its entry.
     LaneInstall(CompiledUnit),
     /// A JavaScript function claimed by a tier at an entry: the Cranelift tiers, or lane bodies on the
     /// stencil tier, for a function that is not Wasm.
@@ -125,14 +125,10 @@ pub(crate) struct UnitFacts {
     pub(crate) compiles_left: bool,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
     pub(crate) called_by_regions: bool,
-    /// Lane phase A: the looped iterations pay for the body at its planned size (`loop_model::body_taken`).
-    pub(crate) looped_taken: bool,
     /// The compile is from the function's own entry, not a loop's (`entry.is_none()`).
     pub(crate) entry_none: bool,
     /// The function calls itself back through other functions (`recursive`).
     pub(crate) recursive: bool,
-    /// Lane phase B: no looped iterations were observed (`looped.is_none()`).
-    pub(crate) looped_none: bool,
     /// The body's entry amortizes its work (`lane_facts::amortizes_entry`), or the gate does not ask.
     pub(crate) amortizes_entry: bool,
     /// A lane body may run on the stencil tier here: lane methods are enabled and b-jit runs (`UnitKind::Claim`).
@@ -228,11 +224,8 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,
-        // Phase A: the compile bound, then the looped iterations (the pick decided the tier before this gate).
-        UnitKind::LanePlan => {
-            if !facts.compiles_left { return Decision::Declined; }
-            facts.looped_taken
-        }
+        // Phase A: the compile bound (the pick decided the tier before this gate).
+        UnitKind::LanePlan => facts.compiles_left,
         // Phase B, during planning: the entry gate.
         UnitKind::LaneEntry(_) => {
             if facts.entry_none && !facts.called_by_bodies && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
@@ -240,7 +233,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         }
         // Phase B, after planning: the install gate.
         UnitKind::LaneInstall(_) => {
-            if facts.entry_none && !facts.called_by_regions && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
+            if facts.entry_none && !facts.called_by_regions && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),

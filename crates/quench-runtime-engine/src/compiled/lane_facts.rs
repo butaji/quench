@@ -8,13 +8,6 @@ use quench_runtime::vm::tier_policy::Tier;
 use quench_runtime::vm::tier_policy::PredictedTier;
 use std::collections::BTreeMap;
 
-/// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
-/// places are read here, so no leave's stored values are asked for.
-pub(crate) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
-    let exits = ExitTable::of_unit(unit, |_, _| Vec::new(), |_| None);
-    generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
-}
-
 /// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
 /// owns one contiguous stable slice, which the code names by address. A site with several
 /// callees binds every candidate the unit does not inline, in the order the candidates list them
@@ -83,7 +76,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
 /// planned from, its field proofs and its direct callees. Equal keys make equal code.
 pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
-    direct: usize, generic: &[LaneExit], entry: Option<u32>) -> u64 {
+    direct: usize, entry: Option<u32>) -> u64 {
     use std::fmt::Write;
     // The instructions, most of the key, fold as their words; the rest as its debug text,
     // written into the hash without a string between.
@@ -93,7 +86,7 @@ pub(crate) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
         key.word(word);
         key.word(u64::from(imm));
     }
-    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{direct}", unit.frames);
+    let _ = write!(key, "{:?}{fields:?}{entry:?}{direct}", unit.frames);
     key.0
 }
 
@@ -146,21 +139,16 @@ pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fas
     }
 }
 
-/// The IR a lane body of `bytecodes` unit instructions lowers to before its plan: `Loops::ir_per_bytecode` each.
-pub(crate) fn unplanned_ir(loops: &tier_policy::Loops, bytecodes: u64) -> usize {
-    usize::try_from(bytecodes.saturating_mul(loops.ir_per_bytecode)).unwrap_or(usize::MAX)
-}
-
 /// What a lane compile reports under `QUENCH_TRACE=js-jit` (`QUENCH_LANE_COMPILE`).
 pub(crate) struct Census {
     pub(crate) function: u32, pub(crate) osr: bool, pub(crate) unit: usize, pub(crate) ir: usize, pub(crate) key: u64,
-    pub(crate) generic: usize, pub(crate) direct: usize, pub(crate) closed: bool,
+    pub(crate) direct: usize, pub(crate) closed: bool,
 }
 
 impl Census {
     pub(crate) fn report(&self, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, closed } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"key\":\"{key:016x}\",\"closed\":{closed},\"bytes\":{bytes}}}")
+        let Self { function, osr, unit, ir, key, direct, closed } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"direct\":{direct},\"key\":\"{key:016x}\",\"closed\":{closed},\"bytes\":{bytes}}}")
     }
 }
 

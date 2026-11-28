@@ -25,7 +25,6 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, uses_this) as i32 == ENTRY_CELL.uses_this_offset);
 };
 
-pub(crate) use quench_runtime::vm::engine_types::EVIDENCE;
 
 
 
@@ -34,7 +33,7 @@ pub(crate) use quench_runtime::vm::engine_types::EVIDENCE;
 
 
 
-/// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
+/// One raised run in `EntryCell::counters` (its high word): a run of the body that ended by
 /// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
 pub(crate) use quench_runtime::staged::layout_offsets::RAISED_RUN;
 
@@ -55,25 +54,6 @@ impl EntryCell {
     /// Records the function's facts, which its native callers admit a call by.
     pub(crate) fn set_facts(&self, facts: quench_runtime::staged::call::CellFacts) { self.facts.set(facts.word()) }
 
-    /// Starts the statistics of a newly specialized body.
-    pub(crate) fn reset_evidence(&self) { self.counters.set(0) }
-
-    /// Adds `runs` to one half (`shift` 0: leaves, `half_bits`: completions), saturating.
-    #[inline]
-    fn add_half(&self, shift: u32, runs: u64) -> u64 {
-        let word = self.counters.get();
-        let half = ((word >> shift) & EVIDENCE.half_mask()).saturating_add(runs).min(EVIDENCE.half_mask());
-        self.counters.set(word & !(EVIDENCE.half_mask() << shift) | half << shift);
-        half
-    }
-
-    /// Counts a leave; returns the leaves so far.
-    pub(crate) fn note_leave(&self) -> u64 { self.add_half(0, 1) }
-
-    /// Counts `runs` completions (a handler's run end counts one, a native caller's credit many);
-    /// returns the completions so far.
-    #[inline]
-    pub(crate) fn note_completions(&self, runs: u64) -> u64 { self.add_half(EVIDENCE.half_bits, runs) }
 }
 
 pub(crate) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;

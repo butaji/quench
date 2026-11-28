@@ -82,7 +82,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     use std::rc::Rc;
     let (mut vm, program, leaf, target, root_target) = direct_slot_fixture();
     let leaf_method = vm.compile_lane_method(&program, target.function,
-        &|_| (0, 0), Vec::new(), &[]).unwrap();
+        &|_| (0, 0), Vec::new()).unwrap();
     assert!(!leaf_method.dependencies.slots.is_empty());
     let leaf_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(leaf_method, &mut facts) }.unwrap();
     let leaf_body = leaf_publication.lease().unwrap();

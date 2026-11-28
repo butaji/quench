@@ -49,26 +49,23 @@ pub(crate) fn frame_env(frame: quench_runtime::vm::engine_types::ActivationView)
 /// function they call (`DirectCallee::bound`): the guard of a closure made per call of the caller misses once, not on
 /// every call. Only a closure the lane would call the same way rebinds: the same cell, receiver binding, window and
 /// capture slots, and only where the code reads the bound words (a b-jit record rebinds itself, `rebind_region_call`).
-/// True where the site calls `target` by its entry now: the call is no late callee (`record_late_call`).
-pub(crate) fn rebind_closure(cx: *mut quench_runtime::vm::engine_types::LaneContext, ip: quench_runtime::vm::engine_types::Ip, target: &crate::dispatch_fast::ScriptCallTarget, argc: u16) -> bool {
+pub(crate) fn rebind_closure(cx: *mut quench_runtime::vm::engine_types::LaneContext, ip: quench_runtime::vm::engine_types::Ip, target: &crate::dispatch_fast::ScriptCallTarget, argc: u16) {
     // SAFETY: the running region's code (and its `CallCode`) outlives its run, which named it.
-    let Some(calls) = (unsafe { ((*cx).region_calls as *const quench_runtime::vm::engine_types::CallCode).as_ref() }).filter(|_| unsafe { (*cx).region_payload } != 0) else { return false };
+    let Some(calls) = (unsafe { ((*cx).region_calls as *const quench_runtime::vm::engine_types::CallCode).as_ref() }).filter(|_| unsafe { (*cx).region_payload } != 0) else { return };
     let (call, word) = (ip.addr(), target.callee.to_bits());
     let mut sites = calls.direct.iter().filter(|direct| direct.call == call && direct.bound.read.get() && direct.target.function == target.function).peekable();
-    if sites.peek().is_none() { return false; }
+    if sites.peek().is_none() { return; }
     // SAFETY: the running lane's context; its decoded site is the call being made.
-    let (vm, Some((_, function, pc, _))) = (unsafe { &*(*cx).vm }, unsafe { (*cx).body_site }) else { return false };
-    let Some(caller) = (unsafe { &*(*cx).views }).get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return false };
-    let (mut fresh, mut planned) = (None, false);
+    let (vm, Some((_, function, pc, _))) = (unsafe { &*(*cx).vm }, unsafe { (*cx).body_site }) else { return };
+    let Some(caller) = (unsafe { &*(*cx).views }).get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return };
+    let mut fresh = None;
     for direct in sites {
-        if direct.bound.callee.get() == word { planned = true; continue; }
-        let Some(fresh) = fresh.get_or_insert_with(|| crate::dispatch_fast::direct_callee_in_lane(vm, caller, function, pc as usize, argc, *target)).as_ref() else { return planned };
+        if direct.bound.callee.get() == word { continue; }
+        let Some(fresh) = fresh.get_or_insert_with(|| crate::dispatch_fast::direct_callee_in_lane(vm, caller, function, pc as usize, argc, *target)).as_ref() else { return };
         if fresh.call != call || (fresh.cell, fresh.sloppy, fresh.registers, fresh.capture_len, fresh.capture_stores) != (direct.cell, direct.sloppy, direct.registers, direct.capture_len, direct.capture_stores) { continue; }
         direct.bound.callee.set(word);
         direct.bound.captures.set(fresh.capture_word());
-        planned = true;
     }
-    planned
 }
 
 /// The callees a call site reached that a body may call by their entries, the latest first.
