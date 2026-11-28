@@ -228,6 +228,7 @@ mod records;
 pub use records::RecordBlockRecordsExt;
 mod class_space;
 mod departure;
+mod spill;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
 pub use object_view::{ObjectMut, ObjectRef};
@@ -254,14 +255,20 @@ pub use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view
 pub use view_holders::{subscribe_typed_views, typed_views_stable};
 pub(crate) use view_holders::live_view_changed;
 
-/// The most fields a class cell holds: the capacity of the largest region (`class_space`).
+/// The inline fields of the largest class cell region (`class_space`). A class with more fields spills past it
+/// (`layouts::spill_from`), so this bounds inline words only, never the field count.
 pub(crate) const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
 
 /// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
-/// holds them (an empty object's is region 1). `None` past the largest region, where the object keeps its record.
+/// holds them (an empty object's is region 1). Past the largest region the cell takes the largest region and
+/// spills the rest (`heap::spill`), so every field count has a cell.
 pub(crate) fn cell_region_for(fields: usize) -> Option<u32> {
-    (1..crate::staged::object_encoding::CAPACITY_CLASSES as u32)
-        .find(|&region| fields <= crate::staged::object_encoding::region_field_capacity(region))
+    let largest = crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1;
+    Some(
+        (1..=largest)
+            .find(|&region| fields <= crate::staged::object_encoding::region_field_capacity(region))
+            .unwrap_or(largest),
+    )
 }
 
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
@@ -1729,9 +1736,9 @@ impl Heap {
 
     /// `object` as a class cell (R4-C2): its class is its shape, prototype link and flags (class bits: a frozen,
     /// sealed or constant object is a cell too, its flags in its class word, no departure), its fields its values,
-    /// its slack `Value::DELETED`, in the smallest region holding the larger of its fields and `capacity`. Its
-    /// arena storage moves into the cell, so that storage is released. `Err(object)`, unchanged, where the object
-    /// has a record's form (extras, an array, more fields than a cell holds) or its region is full.
+    /// in the smallest region holding the larger of its fields and `capacity` (a shape past the largest region
+    /// spills). Its arena storage moves into the cell, so that storage is released. `Err(object)`, unchanged, where
+    /// the object has a record's form (extras, an array) or its region is full.
     fn insert_object_as_cell(&mut self, object: Object, capacity: usize) -> Result<Value, Object> {
         if cfg!(feature = "profile-aggregate") || object.is_array() || object.has_extras() {
             return Err(object);
@@ -1741,13 +1748,12 @@ impl Heap {
         let Some(region) = cell_region_for(length.max(capacity)) else {
             return Err(object);
         };
-        let mut fields = [Value::DELETED; MAX_CELL_FIELDS];
-        for (slot, field) in fields.iter_mut().enumerate().take(length) {
-            *field = self.property_get(&object, slot).unwrap_or(Value::UNDEFINED);
-        }
+        let fields: Vec<Value> = (0..length)
+            .map(|slot| self.property_get(&object, slot).unwrap_or(Value::UNDEFINED))
+            .collect();
         let flags = layouts::word(object.layout_id()) & layouts::CLASS_FLAG_MASK;
         let class = layouts::intern_class(shape, object.proto_link(), flags, region);
-        let Some(granule) = self.class_space.claim_cell(region, class, &fields[..length], &mut self.allocated) else {
+        let Some(granule) = self.class_space.claim_cell(region, class, &fields, &mut self.allocated) else {
             return Err(object);
         };
         object.release_storage(&mut self.properties);
@@ -2126,7 +2132,7 @@ impl Heap {
     /// literal and empty-object allocations): its class is `ProtoLink::of(proto)`'s class of `shape`, which
     /// the object would take with no flags. The prototype is marked as `alloc_object` marks it, and the
     /// shape's values are noted as `initialize_object_properties` notes them. `None`, with nothing charged,
-    /// where the values exceed a cell or the region is full: the caller takes the record.
+    /// where the region is full: the caller takes the record.
     fn claim_values_cell(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> Option<u32> {
         if cfg!(feature = "profile-aggregate") {
             return None;
@@ -2148,7 +2154,7 @@ impl Heap {
     pub(crate) fn claim_fixed_cell(&mut self, shape: u32, link: u32, values: &[Value]) -> Value {
         debug_assert_eq!(self.properties.shape_length(shape), values.len(), "a fixed cell's fields are its shape's");
         let link = ProtoLink::from_bits(link);
-        let region = cell_region_for(values.len()).expect("a fixed class's union fits a class cell");
+        let region = cell_region_for(values.len()).expect("a class cell region holds any field count (spill)");
         self.mark_prototype(link.prototype());
         self.properties.note_shape_values(shape, values);
         self.rewrite_widened_numbers();
@@ -2194,9 +2200,8 @@ impl Heap {
         if let Some(granule) = self.live_class_cell(owner) {
             self.properties.note_shape_values(shape, values);
             self.rewrite_widened_numbers();
-            if self.class_cell_initialize(granule, shape, values) {
-                return;
-            }
+            self.class_cell_initialize(granule, shape, values);
+            return;
         }
         // Otherwise replacing storage is a record edit: the cell departs first, so the owner is a record.
         self.depart_for_mutation(owner);
@@ -3150,7 +3155,9 @@ impl Heap {
                 });
                 // After the records: a departed cell dies with its record (its stub released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
-                class_space.sweep_cells(full, age);
+                class_space.sweep_cells(full, age, |class| {
+                    layouts::spill_from(layouts::class_region(class), properties.shape_length(layouts::class_shape(class)))
+                });
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
                 // after one did, its sweep shows its survivors and lists those it keeps.
                 let young_function_runs = std::mem::take(&mut self.young_function_runs);
@@ -4110,8 +4117,9 @@ impl Heap {
             self.gc_profile.marked += 1;
             self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
         }
-        let fields = self.class_space.cell_fields(granule);
-        Self::cell_children_marking(value, class, fields, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
+        let spill = self.class_spill_from(class);
+        let (fields, run) = self.class_space.cell_words(granule, spill);
+        Self::cell_children_marking(value, class, fields, run, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
         self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
 
@@ -5229,6 +5237,7 @@ impl Heap {
         owner: Value,
         class: u32,
         fields: &[Value],
+        run: &[Value],
         mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -5243,7 +5252,7 @@ impl Heap {
             }
         }
         object_roots(trace_kind, owner, class_shape(class), false, work);
-        for &value in fields {
+        for &value in fields.iter().chain(run) {
             if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                 work.push(value);
             }

@@ -12,9 +12,10 @@
 
 #![allow(dead_code)]
 
-use super::layouts::{class_link, class_region, class_shape};
+use super::layouts::class_region;
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
+use super::spill::{SpillSpace, dispose_dead_runs};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
     CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
@@ -153,6 +154,8 @@ pub(super) struct ClassSpace {
     holder_cells: Vec<u64>,
     /// Whether a holder cell departed since the VM last cleared its field caches (`take_holder_departure`).
     holder_departed: bool,
+    /// The spill arena: the runs of the cells whose class spills (`heap::spill`).
+    pub(super) spill: SpillSpace,
     /// The range the regions are cut from. It is the last field, so it unmaps after them.
     range: Option<AddressRange>,
 }
@@ -246,7 +249,7 @@ impl ClassSpace {
     /// in slot order and the slack `Value::DELETED`. The cell comes from the region's cursor (`RecordSpace::bump_id`),
     /// charged as an allocation. `None` where the region is full. `fields` must fit the region.
     pub(super) fn claim_cell(&mut self, region: u32, class: u32, fields: &[Value], allocated: &mut usize) -> Option<u32> {
-        debug_assert!((1..CAPACITY_CLASSES as u32).contains(&region) && fields.len() <= region_field_capacity(region));
+        debug_assert!((1..CAPACITY_CLASSES as u32).contains(&region));
         // A class names its region (`layouts::intern_class`), so a cell of the class is a cell of that region.
         debug_assert_eq!(class_region(class), region, "a cell's class names the region it is claimed from");
         if !self.ensure_reserved() {
@@ -254,16 +257,10 @@ impl ClassSpace {
         }
         let local = with_region_mut!(self.regions, region, |space| space.bump_id(allocated))?;
         let granule = granule(region, local);
-        let cell = self.cell_ptr(granule);
-        // SAFETY: `granule` is a claimed, uninitialized cell of the reserved space, written whole here: its
-        // header word, then each of its `region_field_capacity` fields.
-        unsafe {
-            cell.write(live_header(class));
-            let slots = cell.cast::<Value>().add(1);
-            for slot in 0..region_field_capacity(region) {
-                slots.add(slot).write(fields.get(slot).copied().unwrap_or(Value::DELETED));
-            }
-        }
+        // SAFETY: `granule` is a claimed, uninitialized cell of the reserved space; its header is written here, and
+        // its fields by `lay_out`, which writes every inline word.
+        unsafe { self.cell_ptr(granule).write(live_header(class)) };
+        self.lay_out(granule, None, fields);
         Some(granule)
     }
 
@@ -331,23 +328,6 @@ impl ClassSpace {
         unsafe { *self.cell_ptr(g) = header };
     }
 
-    /// Field `slot` of the cell at granule `g`: the word at `8 + 8 * slot` past its header.
-    #[inline(always)]
-    pub(super) fn field(&self, g: u32, slot: usize) -> Value {
-        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
-        // SAFETY: field `slot` is the `Value` word `slot + 1` of the cell, inside its span (the assert).
-        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).read() }
-    }
-
-    /// Makes fields `from..region_capacity(g)` of the cell at `g` slack: `Value::DELETED`, which the
-    /// collector traces as any field and no object reads.
-    pub(super) fn delete_slack(&mut self, g: u32, from: usize) {
-        for slot in from..region_capacity(g) as usize {
-            // SAFETY: field `slot` lies inside the cell at `g` (`region_capacity`), and `&mut self` is exclusive.
-            unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(Value::DELETED) };
-        }
-    }
-
     /// Frees the unallocated rest of every region's cursor run and empties the cursors, returning how many
     /// granules that was (`RecordSpace::retire_cursor`). An inline empty object allocation and every other cell
     /// allocation bump their region's run, so every collection retires all of them with the record
@@ -386,24 +366,6 @@ impl ClassSpace {
         // SAFETY: `g` names a cell of the reserved space; its header is a readable word that nothing writes
         // while `self` is borrowed.
         unsafe { &*self.cell_ptr(g) }
-    }
-
-    /// The header and the fields of granule `g`'s cell, exclusively (`CellViewMut`). The space must be reserved.
-    #[inline(always)]
-    pub(super) fn cell_parts_mut(&mut self, g: u32) -> (&mut u64, &mut [Value]) {
-        debug_assert!(self.range.is_some());
-        let cell = self.cell_ptr(g);
-        // SAFETY: the header and the `region_capacity(g)` fields after it lie inside the cell at `g`; they
-        // are disjoint, and `&mut self` is exclusive, so no other reference to them exists.
-        unsafe { (&mut *cell, std::slice::from_raw_parts_mut(cell.cast::<Value>().add(1), region_capacity(g) as usize)) }
-    }
-
-    /// Writes field `slot` of granule `g`'s cell as a `Value`. The caller passed the store's barrier.
-    #[inline(always)]
-    pub(super) fn set_field(&mut self, g: u32, slot: usize, value: Value) {
-        debug_assert!(slot < region_capacity(g) as usize, "a field lies inside its cell");
-        // SAFETY: field `slot` lies inside the cell (the assert), and `&mut self` is exclusive.
-        unsafe { self.cell_ptr(g).cast::<Value>().add(1 + slot).write(value) };
     }
 
     /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
@@ -448,16 +410,18 @@ impl ClassSpace {
         }
     }
 
-    /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed. Cells own no memory, so
-    /// nothing is disposed. Region 0's stubs die with their records and are not swept here.
-    pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge) -> (usize, usize) {
-        let regions = &mut self.regions;
+    /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed, and a dead cell that spilled frees its
+    /// run (`dispose_dead_runs`). `spill_of` gives the spill slot of a class (`layouts::spill_from` over its shape).
+    /// Region 0's stubs die with their records and are not swept here.
+    pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge, spill_of: impl Fn(u32) -> Option<u32>) -> (usize, usize) {
+        let ClassSpace { regions, spill, base, .. } = self;
+        let base = *base;
         let sweeps = [
-            regions.1.sweep(full, age, false, |_| {}),
-            regions.2.sweep(full, age, false, |_| {}),
-            regions.3.sweep(full, age, false, |_| {}),
-            regions.4.sweep(full, age, false, |_| {}),
-            regions.5.sweep(full, age, false, |_| {}),
+            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, base, 1, &spill_of), |_| {}),
+            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, base, 2, &spill_of), |_| {}),
+            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, base, 3, &spill_of), |_| {}),
+            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, base, 4, &spill_of), |_| {}),
+            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, base, 5, &spill_of), |_| {}),
         ];
         sweeps.into_iter().fold((0, 0), |(live, freed), (swept_live, swept_freed)| (live + swept_live, freed + swept_freed))
     }
@@ -485,9 +449,9 @@ impl ClassSpace {
     }
 
     /// The parallel mark's views of the cell regions, taken with the record families' (`ParallelMarkView::new`).
-    pub(super) fn parallel_marks(&mut self) -> ClassCellMarks<'_> {
+    pub(super) fn parallel_marks(&mut self) -> (ClassCellMarks<'_>, &SpillSpace) {
         let regions = &mut self.regions;
-        ClassCellMarks {
+        let marks = ClassCellMarks {
             regions: (
                 regions.1.parallel_marks(),
                 regions.2.parallel_marks(),
@@ -495,7 +459,8 @@ impl ClassSpace {
                 regions.4.parallel_marks(),
                 regions.5.parallel_marks(),
             ),
-        }
+        };
+        (marks, &self.spill)
     }
 
     /// The mark blocks of region `region` and their count (`RecordSpace::native_mark_blocks`), which a native

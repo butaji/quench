@@ -231,11 +231,11 @@ impl Vm {
     /// the instances' prototype.
     pub fn allocate_fixed_cell(&mut self, shape: u32, prototype: Value, slots: &[u8], values: &[Value]) -> Value {
         let length = self.shapes[shape as usize].storage_len();
-        let mut fields = [Value::DELETED; crate::heap::MAX_CELL_FIELDS];
+        let mut fields = vec![Value::DELETED; length];
         for (&slot, &value) in slots.iter().zip(values) {
             fields[usize::from(slot)] = value;
         }
-        self.heap.claim_fixed_cell(shape, crate::heap::ProtoLink::of(prototype).bits(), &fields[..length])
+        self.heap.claim_fixed_cell(shape, crate::heap::ProtoLink::of(prototype).bits(), &fields)
     }
 
     /// The store of `value` to union slot `slot` (named `atom`) of a fixed class's cell `this` (R4-F), in place. The
@@ -249,8 +249,8 @@ impl Vm {
 
     /// The union shape of a fixed class (R4-F): the shape `start` reaches by the names of `constructor`'s class's union
     /// layout (`AotFacts::class_union_layout`) in slot order, and how many leading constant-layout names of `entry`
-    /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, the union holds more than a
-    /// class cell, a name is private, or `start` is not an empty ordinary shape.
+    /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, a name is private, or `start` is not an empty
+    /// ordinary shape.
     fn derive_fixed_union(&mut self, constructor: Value, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
         let Some(union) = self.fixed_union(constructor, start) else { return (NOT_FIXED, 0) };
         let prefix = union
@@ -264,17 +264,16 @@ impl Vm {
 
     /// The union of a fixed class (R4-F), the decision every fixed construction shares (`derive_fixed_union`,
     /// `ConstructPlan::fixed`): the shape `start` reaches by the names of `constructor`'s class's union layout
-    /// (`AotFacts::class_union_layout`) in slot order. `None` where the class has no union, the union holds more
-    /// than a class cell, a name is private, or `start` is not an empty ordinary shape.
+    /// (`AotFacts::class_union_layout`) in slot order. `None` where the class has no union, a name is private, or `start` is not an empty
+    /// ordinary shape.
     pub fn fixed_union(&mut self, constructor: Value, start: u32) -> Option<FixedUnion> {
         let (program, class, _) = self.same_realm_user_target(constructor)?;
         let facts = self.programs.aot_facts(program)?;
         // `AotFacts::class_writable_cell` decides it: slots are stable and no flag transition reaches an instance,
-        // so nothing departs it. A union past one cell region has no spill slot yet (departure-free S2), so it
-        // stays a learned object: that bound is the final form for over-capacity unions until S2 lands.
+        // so nothing departs it. A union past one cell region spills into its run (`heap::spill`), so its fields
+        // have a cell of their own, whatever their count.
         if !facts.class_writable_cell(class) { return None; }
         let layout = facts.class_union_layout(class)?;
-        if layout.fields.len() > crate::heap::MAX_CELL_FIELDS { return None; }
         // `class_writable_cell` means every instance of the class is a union cell from birth (W35): every `new C()` with
         // new_target C starts from the empty `Constructed{C, true}` root, and `slot_domain` is Some for every union
         // atom by construction. So the start is that root, and these are invariants, not decisions.
@@ -460,20 +459,21 @@ impl Vm {
     }
 
     /// Writes the layout of entry `index` into `this`, a class cell still holding its template shape, field
-    /// by field along the entry's shapes, as its defines would add them (`Heap::class_cell_add`). `false`
-    /// where a field does not fit the cell, or `this` is no cell: the caller initializes the storage instead.
+    /// by field along the entry's shapes, as its defines would add them (`Heap::class_cell_add`); a field past the
+    /// cell's region spills. `false`, with nothing changed, where `this` is no live cell: the caller initializes
+    /// the storage instead.
     fn append_preshaped_fields(&mut self, this: Value, index: usize) -> bool {
         let Some(granule) = self.heap.live_class_cell(this) else {
             return false;
         };
         let entry = self.preshaped_receivers[index];
         let mut before = entry.start;
-        (0..usize::from(entry.len)).all(|slot| {
+        for slot in 0..usize::from(entry.len) {
             let after = entry.shapes[slot];
-            let added = self.heap.class_cell_add(granule, before, after, slot, entry.values[slot]);
+            self.heap.class_cell_add(granule, before, after, slot, entry.values[slot]);
             before = after;
-            added
-        })
+        }
+        true
     }
 
     /// The entry of `new_target`, made where another held its index, after one more sample: the
