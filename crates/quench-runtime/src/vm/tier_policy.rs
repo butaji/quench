@@ -129,7 +129,7 @@ pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
 pub fn wasm_module_inlines_leaves(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> bool {
     match mode {
         crate::ExecutionMode::Interpreted => true,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         crate::ExecutionMode::Compiled if crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => false,
         crate::ExecutionMode::Compiled => module_operators() <= WASM_COMPILED_INLINING_MAX_OPERATORS,
         #[cfg(feature = "native-execution")]

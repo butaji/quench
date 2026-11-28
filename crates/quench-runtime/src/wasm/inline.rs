@@ -35,10 +35,10 @@ const INTERPRETED_LEAF_OPERATORS: usize = 512;
 /// Keep call structure for a native backend to resolve.
 const RETAIN_CALLS: usize = 0;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// Set by tests of compiled calls themselves: compiled lowering then keeps every call.
-    pub(crate) static COMPILED_CALLS_KEPT_FOR_TEST: std::cell::Cell<bool> =
+    pub static COMPILED_CALLS_KEPT_FOR_TEST: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 

@@ -18,6 +18,7 @@ impl Vm {
     }
 
     /// The count of native calls running.
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(super) fn host_frame_count(&self) -> usize {
         self.realm.promise.active_native.len()

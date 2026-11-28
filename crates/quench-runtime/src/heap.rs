@@ -1068,7 +1068,8 @@ impl Heap {
         self.slots.iter().filter(|slot| slot.cell.is_some()).count()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(crate) fn root_count_for_test(&self) -> usize {
         self.roots.values().count()
     }
@@ -1724,6 +1725,7 @@ impl Heap {
         function.object.set_function_realm_override(realm);
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn alloc_function(&mut self, function: FunctionRecord) -> Value {
         self.mark_prototype(function.object.proto());
         self.insert_function_record(function)

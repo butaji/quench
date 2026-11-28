@@ -93,6 +93,7 @@ impl Value {
     }
 }
 
+#[quench_macros::test_visible]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
@@ -540,6 +541,7 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)] pub(crate) fn heap_reference(self) -> Option<HeapReference> {
         if self.0 & TAG_MASK != TAG_HEAP {
             return None;

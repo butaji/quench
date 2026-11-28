@@ -1283,6 +1283,7 @@ impl ProgramStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
@@ -1903,6 +1904,7 @@ impl ProgramStore {
     }
 
     #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
+    #[quench_macros::test_visible]
     pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
         self.js_jit_diagnostics
             .as_ref()?
@@ -2380,6 +2382,7 @@ impl ProgramStore {
         self.js_jit_tracking_exhaustions
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes
     }
@@ -2907,6 +2910,7 @@ impl LaneViews {
 // Profiled builds deliberately disable JS function tiers (`Vm::tier_may_run`).
 #[cfg(all(test, not(quench_profiled)))]
 mod lane_diagnostic_tests {
+    use crate::vm::EngineVm;
     #[test]
     fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
         let program = crate::Engine::compile(crate::ExecutionRequest::script(
