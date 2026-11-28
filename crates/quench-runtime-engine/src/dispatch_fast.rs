@@ -122,7 +122,6 @@ macro_rules! returning_operator_row_of {
 
 
 use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
-use quench_runtime::vm::tier_events::Event;
 use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
 use quench_runtime::vm::iterators::InPlaceStep;

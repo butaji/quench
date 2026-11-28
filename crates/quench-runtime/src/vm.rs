@@ -31,7 +31,7 @@ pub use engine_types::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]
 pub mod native_op_profile;
 pub use jit_backend::{IsaBaseline, NativeTarget};
-pub mod tier_machine; pub mod tier_events;
+pub mod tier_machine;
 pub mod shape_stability;
 pub mod switches;
 pub mod shape_transitions;

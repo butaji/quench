@@ -1222,8 +1222,6 @@ pub(crate) struct VmFacts<'a> {
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
     pub(crate) html_dda: bool,
-    /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
-    pub(crate) diagnostics: bool,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(crate) online: Option<OnlineFacts<'a>>,
@@ -1270,8 +1268,8 @@ pub(crate) struct HeldAtoms<'a> {
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
+    /// an IsHTMLDDA object possible, no known `call`, and no Stable facts.
+    pub(crate) const STATIC: Self = Self { html_dda: true, online: None, frozen: false,
         frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
@@ -1279,7 +1277,7 @@ impl VmFacts<'static> {
 impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: admission::diagnosing(self), online: None, frozen: false,
+        VmFacts { html_dda, online: None, frozen: false,
             frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }
@@ -2504,15 +2502,6 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-/// Counts a lane-ABI region's run of `region` that ended in `run`, `lent` the payload, in the VM's tier events.
-fn note_osr_run(events: &quench_runtime::vm::tier_events::TierEvents, run: &RegionRun, region: &LoopRegion, lent: bool) {
-    use quench_runtime::vm::tier_events::Event;
-    let inlined = !run.nested && matches!(run.exit, LaneExit::Inlined { .. });
-    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, run.left(region)), (Event::OsrInlined, inlined)] {
-        if happened { events.record(event); }
-    }
-}
-
 pub(crate) use quench_runtime::vm::engine_types::CompiledOsrRegion;
 
 pub(crate) use quench_runtime::vm::engine_types::EntryStamp;
@@ -2591,7 +2580,6 @@ impl CompiledOsrRegion {
     ) -> RegionRun {
         let start = self.start_at(region, from);
         // SAFETY: the caller's contract covers `vm`.
-        unsafe { (*vm).programs.tier_events().record(quench_runtime::vm::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, interrupt) }
             else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
@@ -2673,8 +2661,6 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
-        // SAFETY: as above; the activation that held `vm` has returned.
-        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
     }
 
@@ -3538,9 +3524,8 @@ impl BodyRunContext {
     /// own, and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget. The interrupt and the
     /// payload, whose address is the frame's, bind once per interrupt owner. The lane stack's storage addresses (`storage`)
     /// bind with the run: no reallocation moves them.
-    /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize, storage: impl FnOnce() -> crate::dispatch_fast::LaneStackStorage) -> bool {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize, storage: impl FnOnce() -> crate::dispatch_fast::LaneStackStorage) {
         let owner = std::ptr::from_ref(interrupt);
         // The lane context is the entry's own activation, written by every entry; the other
         // words stand for the whole run.
@@ -3559,7 +3544,6 @@ impl BodyRunContext {
             self.context.interrupt_owner = owner;
             self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
-        rebound
     }
 
     fn new() -> Self {
@@ -3576,14 +3560,6 @@ impl BodyRunContext {
 
 thread_local! {
     static LANE_FRAME: std::cell::UnsafeCell<Option<BodyRunContext>> = const { std::cell::UnsafeCell::new(None) };
-}
-
-/// This thread's lane frame, made at its first lane body run.
-/// The lowering line of the guard the lane body that just ran left at, reset; zero where it
-/// recorded none (`VmFacts::diagnostics`).
-pub(crate) fn take_lane_exit_line() -> u64 {
-    // SAFETY: as `lane_frame`.
-    unsafe { std::mem::take(&mut (*frame_in_lane()).dispatch.exit_line) }
 }
 
 #[inline]
@@ -3681,7 +3657,7 @@ impl JsStepDispatch {
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
             call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, element_get: 0,
-            body: std::ptr::null(), inlined: 0, exit_line: 0,
+            body: std::ptr::null(), inlined: 0,
             outcome: None,
         }
     }
@@ -3813,7 +3789,7 @@ impl JsStepDispatch {
     #[inline(always)]
     fn reset_region_run(&mut self) {
         self.set_captures_word(0);
-        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.inlined, self.returned_pc) = (0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = quench_runtime::tier_surface::absent_environment_storage();
         self.outcome = None;

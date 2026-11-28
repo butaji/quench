@@ -42,7 +42,7 @@ impl Lowering<'_, '_> {
     /// finds no key takes its jump. Whether control falls through.
     pub(crate) fn call_out_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         };
         let row = quench_runtime::staged::Operation::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)).expect("a call-out record decodes");

@@ -5,7 +5,7 @@
 use crate::ext_traits::*;
 use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
 use super::super::{JsStepDispatch, ResidualProgram, Vm};
-use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};
+use super::super::admission::{admit_callee, CalleeUse};
 use quench_runtime::Value;
 
 /// Admits `callee` for frameless calls from the payload's program and caches it: its
@@ -59,11 +59,11 @@ fn captures(vm: &mut Vm, program: &ResidualProgram, owner: quench_runtime::vm::P
 /// for its later closures.
 fn admit_function(vm: &mut Vm, program: &ResidualProgram, dispatch: &JsStepDispatch, callee: Value) -> Option<CallEntry> {
     let (owner, function, env) = vm.in_loop_call_target(program, callee)?;
-    if owner != dispatch.program_id { refuse(vm, Refusal::CalleeNotEligible); return None; }
+    if owner != dispatch.program_id { return None; }
     let body = program.function_get(function as usize)?;
     admit_callee(program, body, CalleeUse::Frameless).ok()?;
     let epoch = vm.cache_epochs.gc;
-    let Some(code) = native_entry(vm, owner, function) else { refuse(vm, Refusal::CalleeNotEligible); return None; };
+    let Some(code) = native_entry(vm, owner, function) else { return None };
     let this = if body.is_arrow { THIS_NONE } else if body.strict { THIS_RECEIVER } else { vm.realm.globals.to_bits() };
     let entry = captures(vm, program, owner, env, CallEntry {
         epoch,

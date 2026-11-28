@@ -154,7 +154,6 @@ pub use wasm::{
 pub use vm::AheadImages;
 pub use vm::layer_hooks::install_intl;
 pub use vm::wasm_js::enable_wasm_js;
-pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, ImageRetention, KeptBytes, ProgramRecord, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};

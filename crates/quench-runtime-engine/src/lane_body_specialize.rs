@@ -87,10 +87,7 @@ impl LaneView {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
                 LaneBody::Declined
             }
-            crate::compiled::LaneBodyOutcome::Declined => {
-                self.tier().body_stats.declined.set(crate::dispatch_fast::lane_body_stats::take_decline());
-                LaneBody::Declined
-            }
+            crate::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
         }
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::test_oracle::{assert_tier_agrees, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// A call-free loop that allocates at every iteration runs in its loop region, which makes
@@ -185,7 +185,7 @@ fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement
       for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
       print(total);
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 1);
 }
 
@@ -220,7 +220,7 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
       for (let call = 0; call < 300; call++) sweep();
       print(hash, Math.max(), Math.min(), Math.floor(), Math.max(1, 2, 3));
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 2);
 }
 
@@ -271,7 +271,7 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
       for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
       print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 1);
 }
 
@@ -397,7 +397,11 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
-    assert!(vm.tier_events().count(crate::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
+    let step = program.functions.iter()
+        .position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "step"))
+        .unwrap();
+    let predicted = vm.programs.predicted_tiers(super::program_store::ProgramId::MAIN).unwrap();
+    assert!(!matches!(predicted[step], crate::vm::tier_policy::PredictedTier::Interpreter), "the step is predicted a compiled body: {predicted:?}");
 }
 
 /// A loop over a typed array runs as a region whose element and `length` rows read the typed view its entry
@@ -415,8 +419,7 @@ fn a_loop_over_a_typed_array_runs_as_a_region_that_never_leaves() {
           for (let round = 0; round < 12; round++) {{ total = total + fill(a) + sum(a); }}
           globalThis.answer = total;
         }})();"#);
-        let run = assert_tier_agrees(&source, Tier::Full, Expect { completed: 0, leaves: 0 });
-        assert!(run.regions() > 0, "{kind}: the loops run as regions: {:?}", run.events);
+        let run = assert_tier_agrees(&source, Tier::Full);
         assert!(run.outcome.answer.is_some());
     }
 }

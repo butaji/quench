@@ -620,8 +620,6 @@ pub struct ProgramStore {
     js_jit_lane_methods_enabled: bool,
     #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
-    /// What the tiers did in this VM (`Vm::tier_events`).
-    tier_events: super::tier_events::TierEvents,
 }
 
 impl Default for ProgramStore {
@@ -659,7 +657,6 @@ impl Default for ProgramStore {
             js_jit_lane_methods_enabled: false,
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
-            tier_events: Default::default(),
         }
     }
 }
@@ -1883,11 +1880,6 @@ impl ProgramStore {
 
     pub fn js_jit_lane_methods_enabled(&self) -> bool {
         self.js_jit_lane_methods_enabled
-    }
-
-    #[inline]
-    pub fn tier_events(&self) -> &super::tier_events::TierEvents {
-        &self.tier_events
     }
 
     #[inline]

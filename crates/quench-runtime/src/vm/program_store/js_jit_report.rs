@@ -1,6 +1,5 @@
-//! The `QUENCH_TRACE=js-jit` report, printed as the store drops: the lane bodies' states, the
-//! lane's miss reports, one JSON stats line per function of the diagnostics map, and the
-//! store's totals.
+//! The `QUENCH_TRACE=js-jit` report, printed as the store drops: the lane's unlowered
+//! instructions, one JSON stats line per function of the diagnostics map, and the store's totals.
 use super::*;
 use crate::vm::engine_types::RegionRejection;
 use crate::vm::engine_types::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus};
@@ -222,24 +221,12 @@ fn write_tables(out: &mut impl Write, counters: &JsJitCounters, osr: &OsrDiagnos
     })
 }
 
-/// A lane body's report line, or its state where it has no stats.
-fn report_lane_body(program: usize, function: u32, view: &LaneView, op_at: &dyn Fn(u32, u32) -> Option<String>) {
-    if let Some(line) = view.tier().body_stats.report(program, view.body_state_in_lane(), op_at) {
-        eprintln!("{line}");
-    } else {
-        let (state, claimed, warming) = view.body_detail_in_lane();
-        eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", view.tier().body_stats.declined.get());
-    }
-}
-
 impl ProgramStore {
     /// The `QUENCH_TRACE=js-jit` report, printed as the store drops.
     pub(super) fn report_js_jit(&self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
             return;
         };
-        self.report_lane_bodies();
-        eprintln!("{}", crate::vm::engine_calls::lane_miss_report(&self.tier_events));
         eprintln!("{}", crate::vm::engine_calls::lane_unlowered_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
@@ -249,20 +236,6 @@ impl ProgramStore {
             let _ = self.write_function_stats(&mut stderr, (*program, *function), counters);
         }
         let _ = self.write_totals(&mut stderr);
-    }
-
-    fn report_lane_bodies(&self) {
-        for (program, entry) in self.programs.iter().enumerate() {
-            let Some(entry) = entry else { continue };
-            let code: &ResidualProgram = &entry.residual;
-            let op_at = |function: u32, pc: u32| code.function_get(function as usize)
-                .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
-            let views = (0..u32::MAX).map_while(|function| code.function_get(function as usize).map(|_| function))
-                .filter_map(|function| entry.views_in_lane.derived(function).map(|view| (function, view)));
-            for (function, view) in views {
-                report_lane_body(program, function, view, &op_at);
-            }
-        }
     }
 
     /// One function's `QUENCH_JS_STATS` line.

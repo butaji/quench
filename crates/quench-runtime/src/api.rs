@@ -108,8 +108,10 @@ impl<H: Host> Runtime<H> {
     /// it never installs its host, compiles source or runs the JIT, so a binary that makes
     /// only such runtimes links none of them.
     pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
-    /// What this runtime's tiers did, counted whatever diagnostics are on.
-    pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
+    /// The tier the load-time policy picks for each function of the program this runtime runs (`ProgramStore::predicted_tiers`).
+    pub fn predicted_tiers(&self) -> Vec<crate::vm::tier_policy::PredictedTier> {
+        self.vm.programs.predicted_tiers(crate::vm::ProgramId::MAIN).map(|tiers| tiers.to_vec()).unwrap_or_default()
+    }
 
     /// Takes `images` (compiled ahead from this runtime's program) as its functions' first bodies.
     pub fn load_ahead_images(&mut self, images: crate::AheadImages) { self.vm.load_ahead_images(images); }

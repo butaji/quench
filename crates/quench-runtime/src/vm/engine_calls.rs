@@ -74,7 +74,6 @@ unsafe extern "Rust" {
     safe fn quench_engine_fn_in_place_in_loop(native: Native) -> bool;
     safe fn quench_engine_fn_retire_running_lane_context() -> ();
     safe fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool;
-    safe fn quench_engine_fn_lane_miss_report(events: &crate::vm::tier_events::TierEvents) -> String;
     safe fn quench_engine_fn_lane_unlowered_report() -> String;
     safe fn quench_engine_fn_census() -> (u64, u64, u64);
     safe fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str;
@@ -307,8 +306,6 @@ pub fn retire_running_lane_context() -> () { quench_engine_fn_retire_running_lan
 #[inline(always)]
 pub fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool { quench_engine_fn_names_dead_callee(inlined, direct, live) }
 
-#[inline(always)]
-pub fn lane_miss_report(events: &crate::vm::tier_events::TierEvents) -> String { quench_engine_fn_lane_miss_report(events) }
 
 #[inline(always)]
 pub fn lane_unlowered_report() -> String { quench_engine_fn_lane_unlowered_report() }
@@ -430,7 +427,6 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_fn_in_place_in_loop = fn(Native) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_retire_running_lane_context = fn() -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_names_dead_callee = fn(&[InlinedCall], &[DirectArm], &dyn Fn(Value) -> bool) -> bool;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_miss_report = fn(&crate::vm::tier_events::TierEvents) -> String;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_unlowered_report = fn() -> String;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_census = fn() -> (u64, u64, u64);
     #[allow(non_camel_case_types)] pub type quench_engine_fn_candidate_rejection_reason = fn(&ResidualProgram, u32) -> &'static str;

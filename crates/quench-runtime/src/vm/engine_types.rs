@@ -959,8 +959,6 @@ pub struct LaneTier {
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     pub history: std::cell::Cell<LaneBodyHistory>,
-    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
-    pub body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
@@ -1455,30 +1453,6 @@ pub struct LaneBodyHistory {
     pub region_called: bool,
 }
 
-/// A view's lane-body counters, which only a diagnostics run keeps
-/// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the
-/// last inlined, and its runs by how they ended (`LaneExit`), in that order.
-#[derive(Default)]
-pub struct LaneBodyStats {
-    pub function: std::cell::Cell<u32>,
-    pub compiles: std::cell::Cell<u32>,
-    pub frames: std::cell::Cell<u32>,
-    /// The last compile's inlined frames as `index:function<-parent@call-pc`, `+` marking an alternative.
-    pub shape: std::cell::RefCell<String>,
-    /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
-    /// or irreversibly terminated.
-    pub ends: [std::cell::Cell<u32>; super::tier_events::Event::END_COUNT],
-    /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
-    pub leaves: std::cell::RefCell<Vec<(String, u32)>>,
-    /// Entries of the specialized body that ran in the lane instead (`body_admits_in_lane`).
-    pub refused: std::cell::Cell<u32>,
-    /// The leaves into a callee that only lacked a body while warming toward one, which count
-    /// toward nothing (`dispatch_fast::leave_counts_in_lane`).
-    pub warming_leaves: std::cell::Cell<u32>,
-    /// Why its body declined (`decline`).
-    pub declined: std::cell::Cell<&'static str>,
-}
-
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
 /// what the call makes its own and its return restores: the forms of its call
 /// (`script_call_leaf_prove_miss`), its entry (`CallEntry::leaf`) and its return records
@@ -1971,9 +1945,6 @@ pub struct JsStepDispatch {
     /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     pub inlined: usize,
-    /// The lowering line of the guard a lane body last left at, where its code was compiled
-    /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
-    pub exit_line: u64,
     /// The element read past a present dense element (`general_elements`).
     pub element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -2531,40 +2502,6 @@ pub enum BoundRecords {
     Linked(&'static [UnsafeCell<CallRecord>]),
 }
 
-macro_rules! miss_reasons {
-    ($($variant:ident => $name:literal),+ $(,)?) => {
-        #[derive(Clone, Copy)]
-        pub enum Miss { $($variant),+ }
-        pub const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
-    };
-}
-miss_reasons! {
-    Form => "form",
-    NoScriptCalls => "no-script-calls",
-    CallConstructing => "call:constructing",
-    WithScope => "with-scope",
-    CallReturningNotAdmitted => "call:returning-not-admitted",
-    Receiver => "receiver",
-    Callee => "callee",
-    CalleeDeclined => "callee:declined",
-    EntryNotActivation => "entry-not-activation",
-    NoActivationRoom => "no-activation-room",
-    CallReadAnswer => "call:read-answer",
-    Busy => "target-or-collection",
-    Returning => "returning",
-    ConstructNotConstructor => "construct:not-constructor",
-    NoPlan => "no-plan",
-    HelperConstructContext => "helper-construct:context",
-    PlanNoUnit => "plan:no-unit",
-    PlanFrameNotAdmitted => "plan:frame-not-admitted",
-    PlanNoEntry => "plan:no-entry-instruction",
-    PlanNothingNative => "plan:nothing-native",
-    PlanNotAmortized => "plan:not-amortized",
-    PlanDependencies => "plan:dependencies",
-    NativeNotNative => "native:not-native",
-    NativeNotCompleted => "native:not-completed",
-}
-
 /// Compose a host's POSIX signal delivery with owned native-fault recovery.
 /// Prepare before installing the host observer, then let recovery consume its
 /// owned faults before enqueuing ordinary host signal notifications.
@@ -3118,10 +3055,6 @@ pub struct LaneContext {
     /// credits the work clock and refills it; zero while the floor is raised at entry or a
     /// collection is due (`note_allocation`), so every backward jump reaches it.
     pub fuel: u32,
-    /// Whether that callee left the lane because it has no body yet and is still warming
-    /// toward one (`body_activate_in_lane`): its caller's leave says nothing of the caller's own
-    /// specialization (`leave_counts_in_lane`).
-    pub callee_warming: bool,
     /// The leaf call whose records run (`script_call_leaf_prove_miss`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     pub leaf: LeafCall,
@@ -3512,12 +3445,6 @@ pub const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 /// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
 /// displaced more live targets than it holds.
 pub const SCRIPT_CALL_TARGETS_INITIAL: usize = 256;
-
-impl Miss {
-
-    /// How many reasons there are.
-    pub const COUNT: usize = MISS_NAMES.len();
-}
 
 impl NativeIdentities {
 
@@ -4085,25 +4012,6 @@ impl LaneView {
         self.tier.get_or_init(Box::default)
     }
 
-    /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
-    #[inline]
-    pub fn body_state_in_lane(&self) -> &'static str {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
-        }
-    }
-
-    /// Its body's state, and whether the tier claimed its prologue and is still warming, for the
-    /// diagnostics report of a view that never compiled (`QUENCH_LANE_STATE`).
-    #[inline]
-    pub fn body_detail_in_lane(&self) -> (&'static str, bool, bool) {
-        (self.body_state_in_lane(), self.start.get() == self.prologue.get().cast_const(), self.warming())
-    }
-
     /// Starts activations at the first record again, once the tier declines the function.
     #[inline]
     pub fn release_from_tier(&self) {
@@ -4379,40 +4287,6 @@ impl LaneArrayStep {
     #[inline]
     pub fn roots(&self) -> impl Iterator<Item = Value> {
         self.iteration.values(self.element).into_iter().chain([self.entry.env, self.entry.this])
-    }
-}
-
-impl LaneBodyStats {
-
-    /// Runs of the body, however they ended (`ends`): the tier census's entries.
-    #[inline]
-    pub fn runs(&self) -> u64 {
-        self.ends.iter().map(|end| u64::from(end.get())).sum()
-    }
-
-    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`, with the
-    /// state its body ended the run in.
-    pub fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
-        (self.compiles.get() != 0).then(|| {
-            let function = self.function.get();
-            let [completed, at, inlined, callee, terminated] = self.ends.each_ref().map(std::cell::Cell::get);
-            // A leave names the instruction it left at, in the function it left in. Places are
-            // generated compile, line and PC numbers and opcode names, never guest text.
-            let leaves = self.leaves.borrow().iter().map(|(at, count)| {
-                let place = match at.split_once('#') {
-                    Some((place, site)) => {
-                        let op = site.split_once('@').and_then(|(function, pc)| op_at(function.parse().ok()?, pc.parse().ok()?));
-                        format!("{place} f{site} {}", op.unwrap_or_default())
-                    }
-                    None => at.clone(),
-                };
-                format!("[\"{place}\",{count}]")
-            }).collect::<Vec<_>>().join(",");
-            format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.refused.get(),
-            )
-        })
     }
 }
 
@@ -4986,7 +4860,6 @@ impl Default for LaneTier {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
-            body_stats: LaneBodyStats::default(),
             callers: std::cell::RefCell::default(),
         }
     }

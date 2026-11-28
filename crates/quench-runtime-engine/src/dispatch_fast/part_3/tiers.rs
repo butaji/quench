@@ -58,15 +58,11 @@ pub(in super::super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this:
 pub(in super::super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit) -> Resumed {
     let base = unsafe { (*cx).base };
     if let crate::compiled::LaneExit::Returned { pc, value } = left {
-        record_end_in_lane(cx, own, method, left);
-        // SAFETY: as `leave_counts_in_lane`; a completed run carries no warming callee.
-        unsafe { (*cx).callee_warming = false };
+        record_end_in_lane(cx, left);
         // SAFETY: the record that completes the activation is one of its function's.
         return returned_in_lane(cx, unsafe { base.add(pc) }, value);
     }
-    let counts = leave_counts_in_lane(cx, left);
     let resumed = body_left_in_lane(cx, r, own, method, left);
-    if !counts { note_warming_leave_in_lane(cx, own) }
     body_resumed_in_lane(cx, ip, resumed)
 }
 

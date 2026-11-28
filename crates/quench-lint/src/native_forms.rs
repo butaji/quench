@@ -8,10 +8,6 @@
 //!   that dispatches on a row's denotation (`JsDenotation::X`, the `js` column) names every
 //!   family that row gives it, and a row of a lane decoder (`staged Flow|Value|Local`) or one
 //!   `staged/allocation.rs` decodes is lowered through its staged operation.
-//! - `native_refusals`: the refusal sites the lane's call and construction helpers declare in
-//!   `vm/lane_body_stats.rs` (`miss_reasons!`); each is a case the handler resolves and the
-//!   helper declines.
-//!
 //! - `native_ir <file>`: instructions a JIT file (`vm/compiled.rs`, `vm/compiled/`, outside
 //!   tests) builds by hand (`.ins()`), the volume of operation meaning written beside the
 //!   handler it mirrors rather than derived from the staged operation (`staged/`). Each is a
@@ -20,7 +16,7 @@
 //!   it is the Machine primitive backend the derived layers emit through, so its `.ins()` are
 //!   not counted; the measure is hand IR outside it.
 //!
-//! All join the shrink-only measures in `oversized.txt`; a lowering or a refusal that goes
+//! All join the shrink-only measures in `oversized.txt`; a lowering that goes
 //! away shrinks them, one that appears fails.
 
 use std::{collections::{BTreeMap, BTreeSet}, fs, path::PathBuf};
@@ -45,7 +41,6 @@ const JIT_ROOT: &str = "vm/compiled.rs";
 const MACHINE_HOME: &str = "vm/compiled/emit_machine/";
 /// The decoder of the allocation rows the lane lowers (`lane_region/allocations.rs`).
 const ALLOCATION: &str = "staged/allocation.rs";
-const REFUSALS: &str = "vm/lane_body_stats.rs";
 /// The method of the instruction builder.
 const INSTRUCTION_BUILDER: &str = "ins";
 /// Families that need no native form: the catalog's catch-all and the Wasm lane's own.
@@ -55,11 +50,10 @@ const EXEMPT_PREFIX: &str = "Wasm";
 /// Whether the measures read `file`: the catalog's families, the lane lowerings and the refusal
 /// declarations. The opcode table is read as data (`quench_opcodes::ROWS`).
 fn relevant(file: &str) -> bool {
-    [CATALOG, REFUSALS, ALLOCATION].iter().any(|name| file.ends_with(*name)) || file.contains(LANE_LOWERING)
+    [CATALOG, ALLOCATION].iter().any(|name| file.ends_with(*name)) || file.contains(LANE_LOWERING)
 }
 
-/// Records the native-form measures of the files: `native_form <Class>`, `native_refusals`
-/// and `native_ir <file>`.
+/// Records the native-form measures of the files: `native_form <Class>` and `native_ir <file>`.
 pub fn scan(files: &[PathBuf], measures: &mut Measures) {
     let mut facts = Facts::default();
     facts.read_table(ROWS);
@@ -67,9 +61,7 @@ pub fn scan(files: &[PathBuf], measures: &mut Measures) {
         let file = path.display().to_string();
         hand_built(&file, path, measures);
         let Some(source) = relevant(&file).then(|| fs::read_to_string(path).ok()).flatten() else { continue };
-        if file.ends_with(REFUSALS) {
-            measures.insert("native_refusals".to_string(), refusals(&source));
-        } else if let Ok(syntax) = syn::parse_file(&source) {
+        if let Ok(syntax) = syn::parse_file(&source) {
             facts.read(&file, &syntax);
         }
     }
@@ -179,12 +171,6 @@ fn builder_calls(tokens: TokenStream) -> usize {
         TokenTree::Ident(name) => usize::from(name == INSTRUCTION_BUILDER && dotted(at) && empty(at)),
         _ => 0,
     }).sum()
-}
-
-/// The refusal sites `miss_reasons!` declares.
-fn refusals(source: &str) -> usize {
-    source.split("miss_reasons! {").nth(1).and_then(|rest| rest.split("\n}").next())
-        .map_or(0, |body| body.lines().filter(|line| line.contains("=>")).count())
 }
 
 /// The families the catalog gives the generic native form of a value step (`step LaneResult`,

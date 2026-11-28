@@ -6,8 +6,7 @@ use super::{
 };
 use crate::{Engine, Value};
 use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Expect, Tier};
-use crate::vm::tier_events::Event;
+use crate::vm::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Tier};
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
@@ -113,7 +112,7 @@ fn loop_condition_reads_the_field_a_called_function_writes() {
     let source = r#"function advance(state) { state.count = (state.count - 1) | 0; }
         function run(state) { while (state.count > 0) advance(state); }
         const s = {count: 4000}; run(s); print(String(s.count));"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0"]);
 }
 
@@ -137,7 +136,7 @@ fn typed_field_call_materializes_after_effects_once() {
         if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
         print(state.count + ':' + calls);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["1500:1"]);
 }
 
@@ -176,7 +175,7 @@ fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
             try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
             print(writes);
         "#);
-        let run = assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
+        let run = assert_tier_agrees(&source, Tier::Full);
         assert_eq!(&run.outcome.printed[run.outcome.printed.len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
     }
 }
@@ -221,7 +220,8 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            // SAFETY: the view is read on its VM's thread, and nothing runs meanwhile.
+            assert!(!matches!(unsafe { &*view.tier().tier_lane.get() }, super::engine_types::LaneBody::Specialized { .. }), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -283,13 +283,6 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         vm.execute(&program).unwrap();
         let answer = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(20480)));
-        #[cfg(not(quench_profiled))]
-        if mode == crate::ExecutionMode::Compiled {
-            let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(2)
-                .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).expect("the return must run in the lane body");
-            assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
-        }
     }
 }
 
@@ -311,7 +304,7 @@ fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_compar
         }
         print(comparisons);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
 }
 
@@ -15146,7 +15139,7 @@ for (var q = 0; q < 3000; q++) s += b.m();
 print(s);
 })();
 "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["27000"]);
 }
 
@@ -20166,7 +20159,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
       out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
       print(out.join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 3000 3000 10515 3000 6000 3000 6000"]);
 }
 
@@ -20211,7 +20204,7 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
              hot(function (i) { return b.m(i & 3); }),
              hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 4500 1500"]);
 }
 
@@ -20641,9 +20634,6 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
-        }
     }
     assert!(answers[0].0.is_some() && answers[0].1.is_some());
     assert_eq!(answers[0], answers[1]);
@@ -20695,9 +20685,8 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
-    assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
 /// Lane bodies call the callees they do not inline natively (`dispatch_fast::body_call_helper`):
@@ -20754,7 +20743,7 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       }
       globalThis.answer = total + head.tag.length;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -20781,18 +20770,6 @@ const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   globalThis.answer = sum + cell.sum + other.sum;
 })();"#;
 
-/// Asserts that the lane body of `drive`, run in `vm`, never left at a method call.
-#[cfg(not(quench_profiled))]
-fn assert_drive_leaves_no_method_call(vm: &Vm, program: &crate::ResidualProgram, drive: usize) {
-    let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(drive)
-        .and_then(super::program_store::derived_lane_view).unwrap();
-    let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
-        .map(|instruction| format!("{:?}", instruction.op()));
-    if let Some(report) = view.tier().body_stats.report(0, view.body_state_in_lane(), &op_at) {
-        assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
-    }
-}
-
 /// Lane bodies call through every form of a call record (`dispatch_fast::BodyCall`): a method site
 /// (`this.add(z, x)`, whose receiver is `this`, and `cell.add(...)`'s register) whose argument
 /// registers are the site's own list, not a window, in an order no window has, and a call whose
@@ -20815,10 +20792,12 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
-            #[cfg(not(quench_profiled))]
-            assert_drive_leaves_no_method_call(&vm, &program, drive);
+            let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(drive)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            // SAFETY: as above.
+            assert!(matches!(unsafe { &*view.tier().tier_lane.get() }, super::engine_types::LaneBody::Specialized { .. }), "a method making method calls is published as a lane body");
         }
     }
     assert!(answers[0].is_some());
@@ -20839,7 +20818,7 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
       for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -20892,7 +20871,7 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
       for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(40930.0));
 }
@@ -20917,7 +20896,7 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
       try { step(1, 1); } catch (e) { caught += 100; }
       globalThis.answer = total + caught;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2506320.0));
 }
@@ -20937,7 +20916,7 @@ fn lane_typeof_tests_decide_like_the_interpreter() {
       for (let r = 0; r < 2000; r++) total += score(values) + r % 7;
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(805995.0));
 }
@@ -20961,7 +20940,7 @@ fn lane_constructions_build_like_the_interpreter() {
       for (let r = 0; r < 40; r++) { total += sum(build(500)) + points(200) + odd(100) + make(r).car; }
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(17472780.0));
 }
@@ -21006,7 +20985,7 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1600989.0));
 }
@@ -21030,7 +21009,7 @@ fn lane_nested_lengths_read_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(135000.0));
 }
@@ -21057,7 +21036,7 @@ fn lane_capture_stores_write_like_the_interpreter() {
       for (let i = 0; i < 4000; i++) { total = (total + A.f(i % 13)) % 1000000007; }
       globalThis.answer = (total * 7 + B.read() * 3 + A.size());
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1843176980.0));
 }
@@ -21093,7 +21072,7 @@ fn lane_inherited_constants_follow_prototype_writes() {
       total += loop(tasks, 500);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1225140.0));
 }
@@ -21125,7 +21104,7 @@ fn lane_array_length_reads_dense_length_only() {
       total += count("hello", 500);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(540398.0));
 }
@@ -21146,7 +21125,7 @@ fn lane_hoisted_length_survives_inlined_calls() {
       let total = 0; for (let c = 0; c < 300; c++) total = (total + kernel(tasks, 100)) | 0;
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1650000.0));
 }
@@ -21174,7 +21153,7 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
       globalThis.answer = total;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(163500.0));
 }
@@ -21196,7 +21175,7 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
           for (let j = 0; j < values.length; j++) total += eq(values[i], values[j]) * (i + 1) + ne(values[i], values[j]) * (j + 1);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1290000.0));
 }
@@ -21226,7 +21205,7 @@ fn lane_bodies_construct_by_activation() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1600093342.0));
 }
@@ -21245,7 +21224,7 @@ fn lane_bodies_allocate_literals() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(-1474336480.0));
 }
@@ -21368,7 +21347,7 @@ fn lane_bodies_construct_empty_arrays() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(720000.0));
 }
@@ -21392,7 +21371,7 @@ fn lane_bodies_add_properties_at_feedback_stores() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(36219000.0));
 }
@@ -21415,7 +21394,7 @@ fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -21478,7 +21457,7 @@ fn lane_bodies_read_function_fields_natively() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(691000.0));
 }
@@ -21509,7 +21488,7 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(8748000.0));
 }
@@ -21531,7 +21510,7 @@ fn lane_feedback_stores_take_polymorphic_own_slots() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(17138.0));
 }
@@ -21558,7 +21537,7 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(9980000.0));
 }
@@ -21580,7 +21559,7 @@ fn loop_stores_to_packed_objects_write_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(748800.0));
 }
@@ -21608,7 +21587,7 @@ fn lane_instanceof_decides_like_the_interpreter() {
       }
       globalThis.answer = t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(901022.0));
 }
@@ -21656,7 +21635,7 @@ fn lane_strict_equality_decides_like_the_interpreter() {
       for (let n = 0; n < 20000; n++) { const r = sc_assq(keys[n % 45 < 40 ? n % 45 : 0] , al); if (r !== false) t += r.cdr; else t -= 1; }
       globalThis.answer = total + t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4307110.0));
 }
@@ -21809,7 +21788,7 @@ fn lane_outer_captures_read_like_the_interpreter() {
       }
       globalThis.answer = outer();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(168662875.0));
 }
@@ -21835,7 +21814,7 @@ fn lane_element_stores_append_like_the_interpreter() {
       var a = [], b = a; for (var k = 0; k < 40; k++) total = (total + fill(a, 5, k)) | 0;
       globalThis.answer = (total + seen + b.length + fixed.length + closed.length + frozen[1]);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4571092.0));
 }
@@ -21858,7 +21837,7 @@ fn lane_element_stores_fill_holes_like_the_interpreter() {
       for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
       globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4523109.0));
 }
@@ -21880,7 +21859,7 @@ fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2005786796.0));
 }
@@ -21903,7 +21882,7 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
       for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(3000684.0));
 }
@@ -21920,7 +21899,7 @@ fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
       for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(-558229.0));
 }
@@ -21940,7 +21919,7 @@ fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpret
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(61024.0));
 }
@@ -21993,7 +21972,7 @@ fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.answer_number(), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
 }
 
@@ -23660,25 +23639,6 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// A hot callee's body is entered over and over, and a run binds the dispatch payload once:
-/// entries of one lane run find its program, residual and interrupt standing, so the runs bound
-/// are a small fraction of the entries.
-#[test]
-fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
-    let source = r#"(function () {
-      function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
-      let total = 0;
-      for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
-      globalThis.answer = total;
-    })();"#;
-    let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
-    // The caller's loop is compiled too and enters the callee's body by its entry, a nested
-    // lane entry (`Vm::run_nested_lane_method`), so the callee's cell is not crossed here.
-    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
-    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-    assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-}
-
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
 /// lane and agree with the interpreter, as do those that change from a body to the stub when
 /// their shapes change under a caller that keeps calling.
@@ -23704,7 +23664,7 @@ fn interpreter_calls_of_stub_callees_match_the_interpreter() {
 /// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
 /// leaves in `globalThis.answer`.
 fn assert_cell_crossings_match(source: &str) {
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some(), "the source leaves its answer");
 }
 

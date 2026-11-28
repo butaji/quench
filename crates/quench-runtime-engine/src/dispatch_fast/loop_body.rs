@@ -118,7 +118,6 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, this_in_lane(cx, r).unwrap_or(Value::DELETED)) };
     let captures = unsafe { (*cx).registers }.capture();
     let exit = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
-    unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
     let resumed = body_left_in_lane(cx, r, own, &method, resume);

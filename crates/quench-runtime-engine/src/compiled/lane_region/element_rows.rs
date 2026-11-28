@@ -498,7 +498,7 @@ impl Lowering<'_, '_> {
         (value, base, key): (Register, Register, Register)) -> bool {
         let key_type = state.values[usize::from(key)].value.ty;
         if key_type != Type::NEVER && key_type.is_subtype(Type::language(quench_runtime::ValueType::String)) {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         }
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
