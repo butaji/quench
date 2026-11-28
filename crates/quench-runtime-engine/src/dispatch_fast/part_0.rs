@@ -1268,7 +1268,7 @@ pub(super) fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) 
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
-        .or_else(|| row_typed_element(ip, vm, base, key))
+        .or_else(|| row_typed_element(vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))
@@ -1276,25 +1276,12 @@ pub(super) fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) 
 }
 
 /// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
-/// read before it serves: the site then reads it through its typed element row
-/// (`TYPED_KIND_SITES`), whose site fixes the kind (`requicken_typed`).
-pub(super) fn row_typed_element(ip: Ip, vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
+/// read before it serves. The publish makes the view the typed row of the element's kind proves
+/// (`LaneFrame::kept_view`) available to the next read of the record.
+pub(super) fn row_typed_element(vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_typed_element(base, key)?;
     vm.publish_typed_view(base);
-    requicken_typed(ip, true, vm.typed_array_kind_of(base));
     Some(value)
-}
-
-/// Switches the element record at `ip` to its typed row, read or store, for the element kind
-/// `kind` names: the record's immediate holds the native kind's index, which the row's view
-/// proof reads (`LaneFrame::kept_view`). A kind with no native element keeps the record.
-pub(super) fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
-    let Some(index) = kind.and_then(quench_runtime::staged::typed_elements::native_kind_index) else { return };
-    // SAFETY: `ip` is a live element record of the view; an element record's operand holds no
-    // loop site or call target, so its immediate is free for the kind.
-    unsafe { (*ip.cast_mut()).operand.imm = index };
-    let handler = element_typed_row(read, index);
-    requicken(ip, handler);
 }
 
 /// A lane `GetIndex` of a symbol key whose proof records an inherited getter
@@ -1359,7 +1346,7 @@ pub(super) fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Valu
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_host_private_symbol_set(object, key, value)
-        && !row_typed_store(ip, vm, object, key, value)
+        && !row_typed_store(vm, object, key, value)
         && !vm.array_index_key(key).is_some_and(|index| vm.typed_array_set_bigint(object, index as usize, value))
         && !vm.try_plain_string_key_set(object, key, value)
         && !key
@@ -1375,16 +1362,15 @@ pub(super) fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Valu
 }
 
 /// A store of a number at an index of a typed array, which none of the array and symbol
-/// paths before it serve: the site then stores through its typed element row (`TYPED_KIND_SITES`).
-pub(super) fn row_typed_store(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
+/// paths before it serve.
+pub(super) fn row_typed_store(vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
     let stored = vm
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
-        // The typed row proves the view the VM publishes (`LaneFrame::kept_view`): unpublished, every
-        // store would miss back here.
+        // The typed row of the element's kind proves the view the VM publishes (`LaneFrame::kept_view`):
+        // unpublished, every store would miss back here.
         vm.publish_typed_view(object);
-        requicken_typed(ip, false, vm.typed_array_kind_of(object));
     }
     stored
 }

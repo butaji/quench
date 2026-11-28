@@ -16,11 +16,6 @@ view_handler! {
         if const { ACC != ACC_NONE && !accumulator_readable(LaneFields::<OP, FLAG>::OPCODE, ACC) } {
             sibling!(generated_row!(OP, ACC_NONE, FLAG), r, ip, view)
         }
-        if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
-            let flagged: Handler = if i.imm() != 0 { generated_row!(OP, ACC, FLAG_SET) } else { generated_row!(OP, ACC, FLAG_CLEAR) };
-            requicken(ip, flagged);
-            sibling!(flagged, r, ip, view)
-        }
         // Where a planned named read misses: the own read past its record's hint, which reads
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
         macro_rules! property_miss { () => {
@@ -169,7 +164,7 @@ view_handler! {
             Some((register, slot, r.get(register)))
         } else { None };
         if let Some(index) = const { crate::dispatch_fast::typed_site_kind(FLAG) } {
-            // The element kind the row's site fixes (`requicken_typed`), so no access dispatches on
+            // The element kind the row's site fixes (`element_typed_row`, chosen at load), so no access dispatches on
             // it, and the typed array records the view proof reads.
             let script: *mut LaneContext = view.memory.bytes.cast();
             frame.typed = Some((quench_runtime::staged::typed_elements::native_kind_at(index),
