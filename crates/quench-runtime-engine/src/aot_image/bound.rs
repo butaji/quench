@@ -9,7 +9,7 @@
 //!
 //! Every closure bound stays alive and every descriptor and callee record written stays allocated for the image's
 //! life: a record's identity is never a collected object's reused id, and a frame that names an
-//! earlier descriptor (a callee running when its site rebinds) keeps reading a live one.
+//! earlier descriptor (a callee running when its site binds another closure) keeps reading a live one.
 //!
 //! Owner: one pipeline.
 
@@ -17,7 +17,7 @@
 use crate::ext_traits::*;
 use super::{AotImage, CallSite, unbound_callee_record};
 use quench_runtime::folded_roots::RootedCode;
-use crate::compiled::{tier_policy::POLYMORPHISM, DirectCallee};
+use crate::compiled::{tier_policy::POLYMORPHISM, DirectArm};
 use quench_bjit::call_record::{CalleeRecord, CallRecord};
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::rc::Rc;
@@ -87,11 +87,11 @@ impl BoundCalls {
 
     /// Binds record `key` to `direct`, the callee its site resolved. A new callee record holds the callee's words, as a
     /// JIT plan's callee record does (`DirectFacts::of`): the identity, the cell, the captures and
-    /// global, the function, the descriptor (the callee's `DirectCallee` address, the native
+    /// global, the function, the descriptor (the arm's `DirectBody` address, the native
     /// header's descriptor word), the context words, the window and the sloppiness. The site keeps its own words (the
     /// caller's call record and base), and names the new record last, which admits the rows and the AOT lane body's
     /// native call (`call_frames::push_native`). `None` where the site has bound its `POLYMORPHISM` closures already.
-    pub(crate) fn bind(&self, key: usize, direct: DirectCallee, vm: &mut quench_runtime::vm::Vm) -> Option<()> {
+    pub(crate) fn bind(&self, key: usize, direct: DirectArm, vm: &mut quench_runtime::vm::Vm) -> Option<()> {
         let (record, mut held) = (self.records().get(key)?.get(), self.held.descriptors.get(key)?.borrow_mut());
         if held.len() >= POLYMORPHISM { return None; }
         if !self.rooted.replace(true) {
@@ -101,20 +101,20 @@ impl BoundCalls {
         let identity = self.held.callees.borrow_mut().embed_heap_identity(direct.closure.callee);
         held.push(Box::new(direct));
         // The box's contents do not move when the vector grows, so the descriptor address stays valid.
-        let direct: &DirectCallee = &**held.last()?;
-        let descriptor = std::ptr::from_ref(direct) as u64;
+        let direct: &DirectArm = &**held.last()?;
+        let descriptor = std::ptr::from_ref(&direct.body) as u64;
         let callee = Box::new(UnsafeCell::new(CalleeRecord {
-            callee: identity, cell: direct.cell as u64, captures: direct.capture_word(),
-            global_this: direct.sloppy.map_or(0, quench_runtime::Value::to_bits), function: u64::from(direct.target.function),
+            callee: identity, cell: direct.body.cell as u64, captures: direct.captures,
+            global_this: direct.sloppy().map_or(0, quench_runtime::Value::to_bits), function: u64::from(direct.body.target.function),
             descriptor, env: direct.closure.context_words().0, capture: direct.closure.context_words().1,
-            registers: u64::from(direct.registers), sloppy: u64::from(direct.sloppy.is_some()) }));
+            registers: u64::from(direct.body.target.registers), sloppy: u64::from(direct.sloppy().is_some()) }));
         let address = callee.get() as u64;
         self.held.records.borrow_mut().push(callee);
         // SAFETY: the record is the image's, read in place by code on this thread, none of which runs while the VM
         // binds; the callee record is the one just made, which no code reads until the site names it.
         unsafe {
-            (*record).call = direct.call as u64;
-            (*record).caller_base = direct.caller_base as u64;
+            (*record).call = direct.body.call as u64;
+            (*record).caller_base = direct.body.caller_base as u64;
             (*record).callee_record = address;
         }
         Some(())

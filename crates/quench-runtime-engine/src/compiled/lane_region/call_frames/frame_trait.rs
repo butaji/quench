@@ -9,7 +9,6 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         self.proven_arguments.set(false);
-        self.rebinds.set(false);
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         // An indirect callee's window is read at run time (`call_registers_dynamic`), so the plan's is unused for it.
         let registers = callee.registers().unwrap_or(0);
@@ -17,17 +16,14 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
         let (identity, sloppy) = match callee {
             DirectSite::Owned(owned) => {
-                // A callee register the state already holds as this very function (a Stable binding's
-                // read, or an identity an earlier guard proved) needs no check: the identity is folded.
+                // The arm calls its body's one closure (`DirectArm::closure`), so one compare of the callee register with it
+                // is the body's test. A register the state already holds as this very closure (a Stable binding's read, or
+                // an identity an earlier guard proved) needs none: the identity is folded.
                 let word = owned.closure.callee.to_bits();
                 let proven = matches!(site.callee, quench_runtime::staged::forms::Callee::Register(register)
                     if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
                 let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
-                // A guarded call of a JIT plan reads the closure it calls and its captures from the bound words, which
-                // its helper call rebinds to another closure of the function (`DirectCallee::bound`).
-                self.rebinds.set(!proven && !self.helpers.links() && !site.constructs());
-                if self.rebinds.get() { owned.bound.read.set(true); }
-                (identity, owned.sloppy.map(Value::to_bits))
+                (identity, owned.sloppy().map(Value::to_bits))
             }
             // The identity and the global are the record's words (`call_identity`, `call_global`): the plan's
             // constants stand for them and are never emitted. The record's identity is checked against a register
@@ -91,7 +87,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_room(&mut self, stage: &mut Emit<'_, '_>, miss: ir::Block) -> Option<Room<ir::Value>> {
         let callee = self.call_site()?.callee?;
         let cell = match callee {
-            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::EntryCell, owned.target.function, owned.cell as u64),
+            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::EntryCell, owned.body.target.function, owned.body.cell as u64),
             other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, cell))?,
         };
         self.admit_stacks(stage, callee, cell, miss)
@@ -102,7 +98,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// A body's own callee has its identity as the plan's constant, so the frame reads none.
     fn call_identity(&mut self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         match self.call_site()?.callee? {
-            DirectSite::Owned(owned) => self.rebinds.get().then(|| self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
+            DirectSite::Owned(_) => None,
             other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, callee)),
         }
     }
@@ -133,8 +129,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let entry = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let entry = self.proven_entry(stage, callee, room.cell, entry);
         let captures = match callee {
-            DirectSite::Owned(owned) if self.rebinds.get() => self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, captures)),
-            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.target.function, owned.capture_word()),
+            DirectSite::Owned(owned) => address(self.helpers, stage.builder, RelocKind::CaptureWords, owned.body.target.function, owned.captures),
             other => self.callee_word(stage, other, std::mem::offset_of!(CalleeRecord, captures))?,
         };
         // A sibling tail call of an owned body takes the running frame over (`tail_branch`), unless its callee is the stub.

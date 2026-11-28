@@ -173,7 +173,7 @@ pub(crate) struct Layout<'a> {
     pub(crate) homes: Homes,
     pub(crate) webs: Webs,
     pub(crate) ending: Ending,
-    /// Per caller PC, what the call there recorded of each callee it reached, latest first: the code
+    /// Per caller PC, what the call there knows of each arm, in arm order: the code
     /// calls each by its entry.
     pub(crate) callees: &'a [Vec<DirectFacts>],
     /// Per row of a stitched program, where the interpreter resumes if the row leaves.
@@ -214,7 +214,7 @@ pub(crate) struct Layout<'a> {
 }
 
 impl Layout<'_> {
-    /// What the call at caller PC `pc` recorded of each callee it reached, latest first.
+    /// What the call at caller PC `pc` knows of each arm, in arm order.
     pub(crate) fn callees(&self, pc: u32) -> &[DirectFacts] {
         self.callees.get(pc as usize).map_or(&[], Vec::as_slice)
     }

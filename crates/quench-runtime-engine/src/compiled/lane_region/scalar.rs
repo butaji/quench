@@ -58,7 +58,7 @@ impl ScalarAbi {
         let function = program.function_get(function_id as usize)?;
         let params = u8::try_from(function.params).ok().filter(|params| usize::from(*params) <= MAX_PARAMETERS)?;
         // SAFETY: the body owns its direct callees for as long as its code runs.
-        let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.target.function == function_id);
+        let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.body.target.function == function_id);
         if !recurses || !numeric_unit(program, unit, true, direct)
             || !crate::js_compiled::function_candidate(function, program) { return None; }
         // A parameter is an int32 where the solve settles its cell at entry as one (`FunctionFacts::cell_at`), else a Number.
@@ -154,7 +154,7 @@ pub(crate) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
 
 /// The self-call that takes the callee the capture read at `pc` loads: the first direct call
 /// after it whose callee register the read defines, where the read is of the activation's own scope.
-fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectCallee> {
+fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectArm> {
     let read = unit.instructions[pc];
     let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
     if !matches!(crate::compiled::decoded(read), Some(quench_runtime::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
@@ -219,10 +219,10 @@ impl Lowering<'_, '_> {
     }
 
     /// The callee of the direct call at `pc` if it is of this function itself.
-    fn scalar_target(&self, pc: usize) -> Option<&DirectCallee> {
+    fn scalar_target(&self, pc: usize) -> Option<&DirectArm> {
         // SAFETY: the body owns its direct callees for as long as its code runs.
         let callee = self.direct.get(&pc).and_then(|sites| sites.first()).map(|callee| unsafe { &**callee })?;
-        (callee.target.function == self.function_id).then_some(callee)
+        (callee.body.target.function == self.function_id).then_some(callee)
     }
 
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register
@@ -242,7 +242,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let abi = self.scalar_abi().expect("an admitted scalar call has its entry");
         let callee = self.scalar_target(pc).expect("an admitted scalar call has its callee");
-        let (cell, captures) = (callee.cell, callee.capture_word());
+        let (cell, captures) = (callee.body.cell, callee.captures);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let mut arguments = smallvec::SmallVec::<[ir::Value; ARGUMENT_WORDS]>::new();
@@ -312,7 +312,7 @@ impl Lowering<'_, '_> {
     /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
     fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let direct = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call");
-        let (callee, body) = (direct.closure.callee, direct.target.function);
+        let (callee, body) = (direct.closure.callee, direct.body.target.function);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let loaded = match self.completion {
             Completion::Scalar(_) => {

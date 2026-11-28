@@ -136,7 +136,7 @@ impl Lowering<'_, '_> {
         self.raised_call(state, pc, record, raised);
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns its callees for as long as its code runs.
-        let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
+        let callees: Vec<&DirectArm> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
         // An image's call the closed world proves reads its callee's words from the site's record (`ProvenCall`): a
         // construction takes the VM's call, as the proven callee is not a construction's.
         let arms: &[ProvenCall] = self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc)).filter(|_| !site.constructs()).map_or(&[], Vec::as_slice);
@@ -145,7 +145,7 @@ impl Lowering<'_, '_> {
         let direct = !callees.is_empty() || proven.is_some();
         // The declared result the call's completion conforms to: the callee's, where every candidate declares the same one.
         let returns = callees.iter().filter(|_| !site.constructs())
-            .map(|callee| declared::declared_return(self.program, callee.target.function))
+            .map(|callee| declared::declared_return(self.program, callee.body.target.function))
             .reduce(|first, next| if first == next { first } else { None }).flatten();
         // The result the solve proves a direct call defines (`proven_result`): its native return continues at `returned` with
         // the word, and the helper's completion tests it (`typed_completion`). A numeric region leaves at its calls.
@@ -169,7 +169,7 @@ impl Lowering<'_, '_> {
                 // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
                 let initializing = match (site.arguments, owned) {
                     (quench_runtime::staged::Arguments::Window { first, count }, Some(callee))
-                        if site.constructs() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
+                        if site.constructs() && self.initializes_on_construction(callee.body.target.function) => Some((first, count)),
                     _ => None,
                 };
                 let returned = typed.map(|(_, returned)| returned);
@@ -253,7 +253,7 @@ impl Lowering<'_, '_> {
     /// appends the call to the block it is given, so blocks are not shared). The steps share `completed`,
     /// `missed` and `raised`, and the chain ends at `completed`.
     pub(super) fn polymorphic_call(&mut self, state: &mut State, site: quench_runtime::staged::Invocation, record: u32, register: Register,
-        callees: &[&DirectCallee], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        callees: &[&DirectArm], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
         use quench_runtime::staged::{CallOperation, Operation};
         let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
         // The callee register is read once: the steps write nothing before a test runs.

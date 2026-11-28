@@ -320,7 +320,7 @@ fn string_constants(program: &ResidualProgram, unit: &lane_unit::Unit, symbols: 
 /// By unit PC, the caller calls the closed world proves that the base body planned a record for
 /// (`calls`, its `AotImage::calls`): the lane body calls each through the same record, which the
 /// loader binds (`BoundCalls::bind`) and the lane reads by `Symbol::CallRecord`. An arrow is left
-/// to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver. An arm carries the
+/// to the VM's call, as the JIT's lane leaves it (`direct_arm_in_lane`): it binds no receiver. An arm carries the
 /// layout key of its receiver class (`class_recipe`), where the call's plan names one, and whether the plan has no miss.
 #[cfg(feature = "jit")]
 fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, calls: &[aot_image::CallSite], facts: &AotFacts,
@@ -422,17 +422,17 @@ impl AheadImages {
 /// Whether `direct`, a closure of function `callee`, is what a proven site's row was planned for: it
 /// binds `this` as the row does (`ThisForm`), and its cell holds the facts of a plain activation of
 /// its window (as `DirectFacts::describes` admits a JIT plan's).
-pub(crate) fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
+pub(crate) fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectArm) -> bool {
     let Some(body) = program.function_get(callee as usize) else { return false };
     let this = super::base_region::callees::ThisForm::of(body);
-    direct.sloppy.is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
+    direct.sloppy().is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
 }
 
 /// Whether `callee`'s entry cell holds the facts of a plain activation of `registers` registers, the
 /// facts an image's direct row is planned with (`callees::proven_facts`).
-fn plain_cell(callee: &DirectCallee, registers: u16) -> bool {
-    // SAFETY: a direct callee's cell is its function's live entry cell (`DirectCallee::cell`).
-    let facts = quench_runtime::staged::call::CellFacts::of_word(unsafe { (*(callee.cell as *const entry_cell::EntryCell)).facts.get() });
+fn plain_cell(callee: &DirectArm, registers: u16) -> bool {
+    // SAFETY: a direct callee's cell is its function's live entry cell (`DirectBody::cell`).
+    let facts = quench_runtime::staged::call::CellFacts::of_word(unsafe { (*(callee.body.cell as *const entry_cell::EntryCell)).facts.get() });
     facts.registers == registers && facts.room == registers && u64::from(facts.entry) == quench_runtime::staged::call::ENTRY_ACTIVATES
 }
 
@@ -549,7 +549,7 @@ impl Vm {
     /// record's key: the closure of the function the closed world proves each site calls, which its
     /// program's closure cell holds (`Vm::proven_callee`), where the site's row admits it (`admits_proven`).
     /// A site whose closure is not created yet stays unbound and refuses its calls to the VM's.
-    fn ahead_callees(&mut self, program: &ResidualProgram, image: &AotImage, function: u32) -> Vec<(usize, DirectCallee)> {
+    fn ahead_callees(&mut self, program: &ResidualProgram, image: &AotImage, function: u32) -> Vec<(usize, DirectArm)> {
         image.calls.iter().enumerate().filter(|(_, site)| site.function == function).filter_map(|(key, site)| {
             let direct = self.proven_callee(program, (function, site.pc), site.callee)?;
             admits_proven(program, site.callee, &direct).then_some((key, direct))
@@ -582,8 +582,8 @@ impl Vm {
         if !live.calls.names(key, closure) {
             let views = self.programs.views_in_lane(self.active_program)?;
             let view = views.get(caller as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
-            let mut direct = crate::dispatch_fast::direct_callee_in_lane(self, view, caller, pc as usize, argc, target)?;
-            (direct.method, direct.body) = (None, None);
+            let mut direct = crate::dispatch_fast::direct_arm_in_lane(self, view, caller, pc as usize, argc, target)?;
+            (direct.body.method, direct.body.body) = (None, None);
             if !admits_proven(code, target.body.function, &direct) { return None; }
             live.calls.bind(key, direct, self)?;
         }

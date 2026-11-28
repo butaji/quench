@@ -194,8 +194,6 @@ fn body_call(cx: *mut LaneContext, call: &BodyCall) -> (u64, bool) {
         return super::native_calls::body_native_call_in_lane(cx, call, callee, receiver);
     };
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-    unsafe { crate::compiled::direct_callee::rebind_region_call(cx, vm, call.ip, call.argc(), &*target) };
-    // SAFETY: as above.
     (body_script_call(cx, call, unsafe { &*target }, receiver), false)
 }
 
@@ -461,7 +459,6 @@ pub(super) fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value
 /// `activate_environment_in_lane`; a form that routes the call to the general path is the helper's
 /// miss.
 fn body_activate_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: CallActivation<bool>) -> u64 {
-    crate::compiled::direct_callee::rebind_closure(cx, call.ip, target, call.argc());
     let refused = || miss(unsafe { vm(cx) }, Miss::NoActivationRoom);
     let registers = if how.plain {
         call.push_plain(cx, target, this, constructs)

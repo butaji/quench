@@ -193,7 +193,6 @@ impl Vm {
             frame_storage: NO_FRAME_STORAGE,
             proofs: quench_runtime::tier_surface::ArrayStorageProofs::new(),
             region_payload: 0,
-            region_calls: 0,
         }
     }
 

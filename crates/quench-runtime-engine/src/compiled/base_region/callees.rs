@@ -18,7 +18,7 @@ use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::planned::{self, SitePlan, SitePlans};
 use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::call_plan::builtin::{self, BuiltinCall};
-use super::super::{DirectCallee, DirectCandidates};
+use super::super::{DirectArm, DirectCandidates};
 use quench_runtime::bytecode::Function;
 use quench_runtime::compile::call_plan::Miss;
 use quench_runtime::compile::liveness::RegisterMasks;
@@ -68,8 +68,8 @@ fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> 
 /// each runs where a site may inline it. The default has no call site: every call stays a call.
 #[derive(Default)]
 pub(crate) struct Callees {
-    pub(crate) owned: Box<[DirectCallee]>,
-    /// By PC, the owned callees its call site recorded, latest first (`DirectCandidates`): the first is
+    pub(crate) owned: Box<[DirectArm]>,
+    /// By PC, the owned arms of its call site, in its plan's arm order (`DirectCandidates`): the first is
     /// the one a stitch may inline, every one a direct row of the call's chain calls.
     at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
@@ -133,15 +133,15 @@ pub(crate) fn is_method_call(instruction: WideInstruction) -> bool {
     quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::MethodCall) && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
-/// The callees a call site of `instruction` calls, in its plan's arm order: the recorded callee each arm names
+/// The callees a call site of `instruction` calls, in its plan's arm order: the arm of each body the plan names
 /// (`DirectCandidates`). None where the instruction is no chained call, or the site has no plan.
-fn arm_callees(instruction: WideInstruction, plan: Option<&SitePlan>, site: &DirectCandidates) -> Vec<DirectCallee> {
+fn arm_callees(instruction: WideInstruction, plan: Option<&SitePlan>, site: &DirectCandidates) -> Vec<DirectArm> {
     let Some(plan) = plan.filter(|_| chains(instruction)) else { return Vec::new() };
-    plan.arms.iter().filter_map(|arm| site.iter().find(|callee| callee.target.function == arm.function).cloned()).collect()
+    plan.arms.iter().filter_map(|arm| site.iter().find(|callee| callee.body.target.function == arm.function).cloned()).collect()
 }
 
 impl Callees {
-    /// The function each call site of `code` was recorded calling (`candidates`, by PC): its plan's first arm.
+    /// The closure each call site of `code` calls first (`candidates`, by PC): its plan's first arm's.
     pub(crate) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates], plans: &SitePlans) -> Vec<Option<quench_runtime::value::Value>> {
         code.iter().zip(candidates).zip(plans).map(|((instruction, site), plan)| {
             arm_callees(*instruction, plan.as_ref(), site).first().map(|callee| callee.closure.callee)
@@ -150,7 +150,7 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC, its arms named by `plans`), `body_of` the
     /// function it runs, and `stable` the Stable fact holding it by PC.
-    pub(crate) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>,
+    pub(crate) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectArm) -> Option<InlineBody>, stable: Vec<Option<Held>>,
         natives: Vec<Option<(quench_runtime::value::Value, quench_runtime::tier_surface::Native, u32)>>, plans: SitePlans) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).zip(&plans).map(|((instruction, site), plan)| {
@@ -180,7 +180,7 @@ impl Callees {
         code.iter().zip(&self.at).all(|(instruction, callee)| !crate::compiled::meaning_compiled::is_call(*instruction) || (callee.is_some() && !is_method_call(*instruction)))
     }
 
-    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
+    /// What each call site's arms say of their callees, by PC, in arm order: the targets of its
     /// chain's direct rows. The first of each is the callee a stitch may inline.
     ///
     /// # Safety
@@ -233,7 +233,7 @@ impl Callees {
         let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
-        let inlinable = Callee { function: callee.target.function, identity: callee.closure.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (callee.capture_values.addr(), callee.capture_len) };
+        let inlinable = Callee { function: callee.body.target.function, identity: callee.closure.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (quench_bjit::shared_words::capture_values(callee.captures) as usize, quench_bjit::shared_words::capture_len(callee.captures) as usize) };
         let mut trial = context.clone();
         let site = InlineSite::plan(shape, targets[shape.call_pc as usize].first()?, &inlinable, &mut trial)
             .inspect_err(|why| super::note(|_, rejects| *rejects.entry(format!("inline refused: {why:?}")).or_default() += 1))

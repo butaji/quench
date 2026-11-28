@@ -13,15 +13,15 @@ use std::collections::BTreeMap;
 /// (a chain of identity tests takes them, `Lowering::polymorphic_call`); a construction binds only
 /// the first, and a site whose candidates are all inlined binds the first of them.
 pub(crate) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
-    -> (Box<[DirectCallee]>, BTreeMap<usize, Vec<*const DirectCallee>>) {
-    let chosen: Vec<(usize, Vec<DirectCallee>)> = unit.instructions.iter().enumerate()
+    -> (Box<[DirectArm]>, BTreeMap<usize, Vec<*const DirectArm>>) {
+    let chosen: Vec<(usize, Vec<DirectArm>)> = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Call) || quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Construct))
         .filter_map(|(pc, instruction)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
-                let inlined = |callee: &DirectCallee| unit.frames.iter()
-                    .any(|frame| frame.parent.is_none() && frame.call == origin && frame.target.function == callee.target.function);
+                let inlined = |callee: &DirectArm| unit.frames.iter()
+                    .any(|frame| frame.parent.is_none() && frame.call == origin && frame.target.function == callee.body.target.function);
                 let candidates = direct.get(origin as usize)?;
-                let mut bound: Vec<DirectCallee> = candidates.iter().filter(|callee| !inlined(callee)).cloned().collect();
+                let mut bound: Vec<DirectArm> = candidates.iter().filter(|callee| !inlined(callee)).cloned().collect();
                 if bound.is_empty() { bound.extend(candidates.first().cloned()); }
                 if quench_runtime::staged::meaning::means(*instruction, quench_runtime::staged::meaning::Meaning::Construct) { bound.truncate(1); }
                 (!bound.is_empty()).then_some((pc, bound))
@@ -29,14 +29,14 @@ pub(crate) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidat
             lane_unit::Origin::Inlined { .. } => None,
         })
         .collect();
-    let mut owned: Vec<DirectCallee> = Vec::new();
+    let mut owned: Vec<DirectArm> = Vec::new();
     let mut spans: Vec<(usize, std::ops::Range<usize>)> = Vec::with_capacity(chosen.len());
     for (pc, callees) in chosen {
         let start = owned.len();
         owned.extend(callees);
         spans.push((pc, start..owned.len()));
     }
-    let direct: Box<[DirectCallee]> = owned.into_boxed_slice();
+    let direct: Box<[DirectArm]> = owned.into_boxed_slice();
     // The pointers are taken once the slice is boxed, so they name its final elements.
     let sites = spans.into_iter().map(|(pc, span)| (pc, direct[span].iter().map(std::ptr::from_ref).collect())).collect();
     (direct, sites)
@@ -107,10 +107,10 @@ pub(crate) fn speculates(classes: quench_runtime::typed_ir::Classes) -> bool {
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
 /// declined short callee warms again while the caller publishes at once, calling it through
 /// its entry cell. A callee the plan inlines has no call of it to bind.
-pub(crate) fn bind_callees(direct: &[DirectCallee], caller: &crate::dispatch_fast::LaneView) {
+pub(crate) fn bind_callees(direct: &[DirectArm], caller: &crate::dispatch_fast::LaneView) {
     for callee in direct {
         // SAFETY: a resolved target's view outlives its program.
-        if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
+        if let Some(view) = unsafe { callee.body.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
     }
 }
 

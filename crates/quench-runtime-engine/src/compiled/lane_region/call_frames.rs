@@ -2,7 +2,7 @@
 //! words live in a lane body, and where each of its statuses continues. The order of the call
 //! (identity, `this`, room, window, entry, completion) is `staged::invoke`; this file keeps the
 //! words it reads (the register file, the lane stack's tops, the callee's entry cell) and the
-//! blocks the lowering made for its exits. A callee the body owns (`DirectCallee`) has its words
+//! blocks the lowering made for its exits. A callee the body owns (`DirectArm`) has its words
 //! as constants; an image's proven callee has them in its `CalleeRecord` (`ProvenCall`), which the
 //! loader binds, so the code names the record by `Symbol::CallRecord` and never a JIT-time address.
 
@@ -16,7 +16,6 @@ use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::EntryCell;
 use quench_bjit::call_record::{CalleeRecord, CallRecord, LaneStatus};
-use quench_runtime::vm::engine_types::BoundClosure;
 use crate::dispatch_fast::LaneRecoverySpace;
 use quench_runtime::staged::call::admit_room;
 use quench_runtime::staged::{Access, Region};
@@ -75,11 +74,11 @@ pub(crate) struct CallSite<'a> {
     pub(crate) tail: Option<(Register, u16)>,
 }
 
-/// The callee a body calls by its entry: one the body owns (a JIT plan's `DirectCallee`), or a call of an image the
+/// The callee a body calls by its entry: one the body owns (a JIT plan's `DirectArm`), or a call of an image the
 /// closed world proves, whose run-time words its record holds.
 #[derive(Clone, Copy)]
 pub(crate) enum DirectSite<'a> {
-    Owned(&'a DirectCallee),
+    Owned(&'a DirectArm),
     Proven(ProvenCall),
     /// A closed-set call through its receiver class's method vector (`closed_set_indirect`): `callee` is the callee record
     /// the vector holds at run time, whose words the call reads; `site` is the arm the call's site is, whose record holds
@@ -115,7 +114,7 @@ impl DirectSite<'_> {
     /// at run time, which the generic call protocol does not take yet (`DirectPlan::registers`), so it has none here.
     fn registers(self) -> Option<u16> {
         match self {
-            Self::Owned(callee) => Some(callee.registers),
+            Self::Owned(callee) => Some(callee.body.target.registers),
             Self::Proven(call) => Some(call.registers),
             Self::Indirect { .. } => None,
         }
@@ -125,7 +124,7 @@ impl DirectSite<'_> {
     /// function is its record's packed word's, which the same protocol gap leaves unread (`registers`).
     fn function(self) -> Option<u32> {
         match self {
-            Self::Owned(callee) => Some(callee.target.function),
+            Self::Owned(callee) => Some(callee.body.target.function),
             Self::Proven(call) => Some(call.function),
             Self::Indirect { .. } => None,
         }
@@ -219,13 +218,6 @@ impl EmitFrame<'_> {
         }
     }
 
-    /// The word at `offset` of an owned callee's bound closure (`DirectCallee::bound`), which the site's helper call
-    /// rebinds: a mutable word, read again after each call out.
-    fn bound_word(&self, stage: &mut Emit<'_, '_>, owned: &DirectCallee, offset: usize) -> ir::Value {
-        let at = stage.constant(std::ptr::from_ref(&owned.bound).addr() as u64);
-        stage.load_u64(ENTRY_CELL, at, field(offset))
-    }
-
     /// A word of the dispatch: the addresses of the lane stack's tops and its ends.
     fn stack_word(&self, stage: &mut Emit<'_, '_>, offset: usize) -> ir::Value {
         stage.load_u64(DISPATCH, self.payload, field(offset))
@@ -250,7 +242,7 @@ impl EmitFrame<'_> {
     /// An image's proven callee pins no body, so it proves none and enters its cell's entry.
     fn arguments_proven(&self, site: &Invocation, callee: DirectSite<'_>) -> bool {
         let DirectSite::Owned(callee) = callee else { return false };
-        let Some(types) = callee.body.as_deref().and_then(|body| body.entry_param_types()) else { return false };
+        let Some(types) = callee.body.body.as_deref().and_then(|body| body.entry_param_types()) else { return false };
         let Arguments::Window { first, count } = site.arguments else { return false };
         if site.forwards || usize::from(count) < types.len() { return false; }
         types.iter().enumerate().all(|(index, ty)| self.state.values.get(usize::from(first) + index)
@@ -258,11 +250,11 @@ impl EmitFrame<'_> {
     }
 
     /// The entry a direct call enters: the callee's proven entry where the call's arguments are proved to have its
-    /// parameter types (`arguments_proven`) and the cell publishes the very body the call pinned (`DirectCallee::body`,
+    /// parameter types (`arguments_proven`) and the cell publishes the very body the call pinned (`DirectBody::body`,
     /// `EntryCell::proven_body`), else the cell's entry. A cell that holds no proven entry, or another body's, enters `entry`.
     fn proven_entry(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>, cell: ir::Value, entry: quench_runtime::staged::machine::CallTarget<ir::Value>) -> quench_runtime::staged::machine::CallTarget<ir::Value> {
         let DirectSite::Owned(callee) = callee else { return entry };
-        let (true, Some(body)) = (self.proven_arguments.get(), callee.body.as_ref()) else { return entry };
+        let (true, Some(body)) = (self.proven_arguments.get(), callee.body.body.as_ref()) else { return entry };
         let proven = stage.entry_target(crate::compiled::slow_paths::EngineEntry::CompiledEntry, crate::compiled::regions::flags(ENTRY_CELL), cell, field(std::mem::offset_of!(EntryCell, proven_entry)));
         let owner = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_body)));
         let pinned = stage.constant(std::rc::Rc::as_ptr(body).addr() as u64);
@@ -320,16 +312,15 @@ impl EmitFrame<'_> {
     /// The callee's descriptor word: the owned callee's constant, or its record's (`CalleeRecord::descriptor`).
     fn callee_descriptor(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
         match callee {
-            DirectSite::Owned(owned) => Some(address(self.helpers, stage.builder, RelocKind::Descriptor, owned.target.function, std::ptr::from_ref(owned).addr() as u64)),
+            DirectSite::Owned(owned) => Some(address(self.helpers, stage.builder, RelocKind::Descriptor, owned.body.target.function, std::ptr::from_ref(&owned.body).addr() as u64)),
             DirectSite::Proven(_) | DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, descriptor)),
         }
     }
 
-    /// The callee identity word of a native header: the owned callee's constant, or its bound closure's where the call
-    /// rebinds, or its record's (`CalleeRecord::callee`).
+    /// The callee identity word of a native header: the closure the call entered, an owned arm's folded closure, which
+    /// its compare proved the callee register holds, or its record's (`CalleeRecord::callee`).
     fn callee_identity(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
         match callee {
-            DirectSite::Owned(owned) if self.rebinds.get() => Some(self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
             DirectSite::Owned(owned) => Some(stage.constant(owned.closure.callee.to_bits())),
             DirectSite::Proven(_) | DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, callee)),
         }
@@ -360,7 +351,7 @@ impl EmitFrame<'_> {
         // The words the callee's identity fixes are constants; the words the binding makes are the records' (a
         // proven callee's, an indirect callee's).
         let (call, caller_base) = match callee {
-            DirectSite::Owned(owned) => (stage.constant(owned.call as u64), stage.constant(owned.caller_base as u64)),
+            DirectSite::Owned(owned) => (stage.constant(owned.body.call as u64), stage.constant(owned.body.caller_base as u64)),
             DirectSite::Proven(_) | DirectSite::Indirect { .. } => (
                 self.site_word(stage, callee, std::mem::offset_of!(CallRecord, call))?,
                 self.site_word(stage, callee, std::mem::offset_of!(CallRecord, caller_base))?,

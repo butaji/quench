@@ -8,16 +8,16 @@ pub(crate) use quench_runtime::vm::engine_types::LaneDependencies;
 
 #[quench_macros::ext(LaneDependenciesOps1)]
 impl LaneDependencies {
-    pub(crate) fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
+    pub(crate) fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectArm]) -> Self {
         let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
-            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
         slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slots.dedup();
         let mut departure_shapes: Vec<_> = loads.filter_map(|load| load.holder)
-            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
+            .chain(direct.iter().filter_map(|callee| callee.body.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
-        let callees = direct.iter().filter_map(|callee| callee.body.clone()).collect();
+        let callees = direct.iter().filter_map(|callee| callee.body.body.clone()).collect();
         Self { slots, departure_shapes, callees }
     }
 }
