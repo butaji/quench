@@ -343,6 +343,10 @@ fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, 
     // (`field_has_reader`), so the layout is the observed fields alone.
     // An `Object.prototype` name is checked before the dead fields are dropped, so a dropped one still gives no union.
     if fields.iter().any(|&atom| text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name))) { return None; }
+    // A union is public names, each once: a private name is a brand, no shape key the union's transitions can add, so a class
+    // that stores one has no union (and no fixed cell); the lists are built distinct, which the one shape chain relies on.
+    if fields.iter().any(|&atom| text(program, atom).is_some_and(|name| crate::bytecode::private_identity_label(name).is_some())) { return None; }
+    debug_assert!(fields.iter().enumerate().all(|(index, atom)| !fields[..index].contains(atom)), "a union names each field once");
     fields.retain(|&atom| facts.field_has_reader(FactKey::Field { class, instance: true, atom }));
     let mut entries = Vec::with_capacity(fields.len());
     for atom in fields {
