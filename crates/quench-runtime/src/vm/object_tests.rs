@@ -631,7 +631,8 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
             let holder_atom = vm.intern_atom("holder");
             let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
             let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
-            assert!(vm.heap.object_record(receiver).is_some());
+            // The receiver is an ordinary object, so a class cell; the function holder is no object record.
+            assert!(vm.heap.live_class_cell(receiver).is_some());
             assert!(vm.heap.object_record(holder).is_none());
 
             let inherited = vm.intern_atom("inherited");
@@ -682,7 +683,7 @@ fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
     let third_atom = vm.intern_atom("third");
     for atom in [first_atom, second_atom, third_atom] {
         let value = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap.object_record(value).is_some());
+        assert!(vm.heap.live_class_cell(value).is_some());
     }
     let inherited = vm.intern_atom("inherited");
     let mut holder_shapes = field_cache_entries(&vm, &program, inherited)

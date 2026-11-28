@@ -448,8 +448,7 @@ impl Vm {
     /// script can reach, so its elements never change. A call site may keep the words for a
     /// bound function it calls again (`LaneStack::bound_call`).
     pub fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
-        // record-only: flat slot reads below take the record
-        let data = self.heap.object(env)?.record_only()?;
+        let data = self.heap.object(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
         // bound function (`bound_parts_layout`), found by name once per shape.
@@ -475,9 +474,9 @@ impl Vm {
             // holds the three slots; nothing deletes a bound function's internal properties.
             Some([target, this, args]) => unsafe {
                 (
-                    self.heap.property_get_flat(data, usize::from(target)),
-                    self.heap.property_get_flat(data, usize::from(this)),
-                    Some(self.heap.property_get_flat(data, usize::from(args))).filter(|list| !list.is_undefined()),
+                    self.heap.property_get_unchecked_view(data, usize::from(target)),
+                    self.heap.property_get_unchecked_view(data, usize::from(this)),
+                    Some(self.heap.property_get_unchecked_view(data, usize::from(args))).filter(|list| !list.is_undefined()),
                 )
             },
             None => (

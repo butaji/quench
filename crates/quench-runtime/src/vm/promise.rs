@@ -4896,7 +4896,7 @@ impl Vm {
         let Some(proof) = proofs.as_ref() else {
             return false;
         };
-        let Some(data) = self.heap.ordinary_object(promise) else {
+        let Some(data) = self.heap.ordinary_view(promise) else {
             return false;
         };
         data.layout_id() == proof.layout
@@ -4912,7 +4912,7 @@ impl Vm {
     /// watched prototypes, whose writes retire the proof.
     fn record_promise_species_proof(&mut self, promise: Value, constructor: Value) {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let Some(data) = self.heap.ordinary_object(promise) else {
+        let Some(data) = self.heap.ordinary_view(promise) else {
             return;
         };
         let (layout, key, prototype) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor), data.proto());

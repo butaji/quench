@@ -46,7 +46,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record_only()?)
+        self.ordered_shape(data)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -65,7 +65,7 @@ impl Vm {
             return Vec::new();
         };
         // `ordered_shape` reads the record's shape order.
-        self.ordered_shape(data.record_only()?)
+        self.ordered_shape(data)
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get_ref(data, *slot).is_some()
@@ -377,7 +377,7 @@ impl Vm {
     ) -> bool {
         // `Object.assign` onto an empty target takes the source's shape when no key could meet
         // `__proto__`, an accessor or a read-only property on the target's chain.
-        let before = self.heap.object_record(target).map(|data| (data.shape(), data.proto(), data.was_used_as_prototype()));
+        let before = self.heap.direct_object_view(target).map(|data| (data.shape(), data.proto(), data.was_used_as_prototype()));
         if matches!(kind, PropertyCopyKind::Set) && excluded.is_empty() && self.adopt_source_shape_for_set(target, source) {
             // The next copy of this source shape into such an empty target takes the memo
             // (`copy_into_fresh_empty`) rather than walking the chain for each key again: the
@@ -399,7 +399,7 @@ impl Vm {
         let Some(data) = self.heap.object(source) else {
             return false;
         };
-        let Some(target_data) = self.heap.object_record(target) else {
+        let Some(target_data) = self.heap.direct_object_view(target) else {
             return false;
         };
         if !target_data.is_extensible()
@@ -428,9 +428,7 @@ impl Vm {
         };
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
-            // Shaped values are read from the record.
-            let Some(record) = data.record_only() else { return false };
-            if !self.read_shaped_values(record, &slots, &mut values) {
+            if !self.read_shaped_values(data, &slots, &mut values) {
                 return false;
             }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
@@ -449,7 +447,7 @@ impl Vm {
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
         // The target's record is one lookup for every key of the loop.
-        let target_object = self.heap.object(target).and_then(|object| object.record_only());
+        let target_object = self.heap.object(target);
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
@@ -552,12 +550,12 @@ impl Vm {
     /// object outside dictionary storage whose listed slots all exist and none is deleted; a
     /// contiguous `slots` reads the storage's first values in order. `false` for a read the
     /// storage declines, before any value is used.
-    pub(super) fn read_shaped_values(&self, data: &Object, slots: &EnumerableSlots, values: &mut [Value]) -> bool {
+    pub(super) fn read_shaped_values(&self, data: ObjectRef<'_>, slots: &EnumerableSlots, values: &mut [Value]) -> bool {
         values.iter_mut().enumerate().all(|(index, value)| {
             let slot = if slots.contiguous() { index } else { slots[index].1 as usize };
             // SAFETY: `slots` lists slots of `data`'s non-dictionary shape, which the shape
             // guarantees exist, so the shaped read is in bounds and undeleted.
-            match unsafe { self.heap.property_get_shaped(data, slot) } {
+            match unsafe { self.heap.property_get_shaped_view(data, slot) } {
                 Some(read) => {
                     *value = read;
                     true
@@ -571,7 +569,7 @@ impl Vm {
     /// meet an accessor or a read-only property, or a prototype whose lookup is not its shape's.
     fn chain_intercepts_set(&self, mut prototype: Value, key: PropertyKey) -> bool {
         while !prototype.is_null() {
-            let Some(data) = self.heap.object_record(prototype) else {
+            let Some(data) = self.heap.direct_object_view(prototype) else {
                 return true;
             };
             if data.has_side_descriptors() {
@@ -681,7 +679,7 @@ impl Vm {
     #[inline(always)]
     pub fn site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
         use super::symbol_write_proof::SymbolWriteStep;
-        let Some(data) = self.heap.ordinary_object(object) else {
+        let Some(data) = self.heap.ordinary_view(object) else {
             return false;
         };
         if !data.is_extensible() {
@@ -702,11 +700,11 @@ impl Vm {
     /// admitted, on an extensible receiver whose shapes are not dictionaries.
     pub fn try_site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
         use super::symbol_write_proof::SymbolWriteStep;
-        let before = self.heap.ordinary_object(object).map(|object| object.shape());
+        let before = self.heap.ordinary_view(object).map(|object| object.shape());
         if !self.try_plain_symbol_set(object, key, value) {
             return false;
         }
-        let (Some(before), Some(data)) = (before, self.heap.ordinary_object(object)) else {
+        let (Some(before), Some(data)) = (before, self.heap.ordinary_view(object)) else {
             return true;
         };
         let (after, prototype) = (data.shape(), data.proto());

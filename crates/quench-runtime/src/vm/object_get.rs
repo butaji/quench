@@ -395,7 +395,7 @@ impl Vm {
     fn ordinary_index_chain(&self, object: Value) -> bool {
         let mut current = object;
         loop {
-            let Some(data) = self.heap.ordinary_object(current) else {
+            let Some(data) = self.heap.ordinary_view(current) else {
                 return false;
             };
             if data.is_arguments_object() || self.string_wrapper_primitive(current).is_some() {
@@ -440,13 +440,13 @@ impl Vm {
     /// arguments object's indices are exotic whatever its shape says.
     #[inline(always)]
     pub fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.heap.ordinary_view(object)?;
         let slot = self.symbol_load_proofs.site_own_slot(site, data.layout_id(), key)?;
         if data.is_arguments_object() {
             return None;
         }
         // SAFETY: the entry copies a proof's own data slot of this shape.
-        Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
+        Some(unsafe { self.heap.property_get_unchecked_view(data, slot as usize) })
     }
 
     /// Records at lane site `site` the own slot a proof gives `key`, a symbol or an array
@@ -461,7 +461,7 @@ impl Vm {
             None if self.heap.is_symbol(key) => PropertyKey::symbol(key),
             None => return,
         };
-        if let Some(data) = self.heap.ordinary_object(object) {
+        if let Some(data) = self.heap.ordinary_view(object) {
             self.symbol_load_proofs.record_site_own_slot(site, data.layout_id(), key, property);
         }
     }
@@ -480,8 +480,8 @@ impl Vm {
     /// typed array's, iterator's or collection's `@@iterator`). An array's reads walk unproved
     /// (`plain_keyed_get`).
     #[inline(always)]
-    pub(in crate::vm) fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
-        if let Some(data) = self.heap.ordinary_object(object) {
+    pub(in crate::vm) fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<ObjectRef<'_>> {
+        if let Some(data) = self.heap.ordinary_view(object) {
             return Some(data);
         }
         // A name no exotic object answers off its shape: a collection, date, regexp, promise or
@@ -491,10 +491,10 @@ impl Vm {
             && self.plain_named_key(atom)
         {
             if let Some(data) = self.heap.ordinary_builtin_object(object) {
-                return Some(data);
+                return Some(ObjectRef::Record(data));
             }
             if self.heap.array(object).is_some() {
-                return self.heap.object(object).and_then(|o| o.record_only());
+                return self.heap.object(object);
             }
         }
         if !matches!(key, PropertyKey::Symbol(_))
@@ -503,15 +503,15 @@ impl Vm {
         {
             return None;
         }
-        self.heap.object(object).and_then(|o| o.record_only())
+        self.heap.object(object)
     }
 
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
     /// read starts from (`proved_read_receiver`), or an array where `array_ordinary` says
     /// the key is none of its exotic ones.
-    #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
+    #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<ObjectRef<'_>> {
         self.proved_read_receiver(object, key)
-            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object).and_then(|o| o.record_only())).flatten())
+            .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
     }
 
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
@@ -519,11 +519,11 @@ impl Vm {
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
     #[inline(always)]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
-        let Some(data) = self.heap.ordinary_object(object) else { return self.plain_proved_get_past_own(object, key, None) };
+        let Some(data) = self.heap.ordinary_view(object) else { return self.plain_proved_get_past_own(object, key, None) };
         let probed = key.key32().map(|key32| (data.layout_id(), self.symbol_load_proofs.word(data.layout_id(), key32)));
         if let Some(word) = probed.and_then(|(_, word)| word).filter(|word| word.kind() == super::symbol_load_proof::KIND_OWN) {
             // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
-            return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) });
+            return Some(unsafe { self.heap.property_get_unchecked_view(data, word.slot()) });
         }
         self.plain_proved_get_past_own(object, key, probed)
     }
@@ -546,14 +546,14 @@ impl Vm {
                 let inherits = !data.has_side_descriptors();
                 match word.kind() {
                     // SAFETY: the proof recorded this slot for an own data property of this shape.
-                    KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) }),
+                    KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked_view(data, word.slot()) }),
                     KIND_INHERITED if inherits => {
                         let holder = match self.symbol_load_proofs.holder(data.layout_id(), key32) {
-                            Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                            Some(id) if id != 0 => ObjectRef::Record(self.heap.object_record_by_id(id - 1)),
                             _ => self.proof_holder(data, word.hops())?,
                         };
                         // SAFETY: the entry's subjects keep the holder and the shape its slot was recorded in.
-                        return unsafe { self.heap.property_get_shaped(holder, word.slot()) };
+                        return unsafe { self.heap.property_get_shaped_view(holder, word.slot()) };
                     }
                     KIND_ABSENT if inherits => return Some(Value::UNDEFINED),
                     KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if inherits || word.hops() == 0 => return None,
@@ -624,7 +624,7 @@ impl Vm {
                     }
                     return Some(ProvedLoad::Getter(attributes.getter));
                 }
-                let value = self.heap.property_get(link, slot)?;
+                let value = self.heap.property_get_ref(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
                 // A non-dictionary shape fixes each slot's kind, so an own data slot is
                 // provable for the shape even where the shape has accessors elsewhere.
@@ -812,7 +812,7 @@ impl Vm {
                 if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
-                return self.heap.property_get(data, slot).map(Some);
+                return self.heap.property_get_ref(data, slot).map(Some);
             }
             if data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)) {
                 return None;
@@ -963,14 +963,9 @@ impl Vm {
             if let Some(v) = self.own_property_at(object, atom, own_slot).or_else(|| self.string_wrapper_unit(object, PropertyKey::string(atom))) {
                 return Ok(v);
             }
-            if let Some(data) = self.heap.object_record(object) {
+            // An ordinary object (a class cell or a record) or an array: its view's prototype.
+            if let Some(data) = self.heap.object(object) {
                 object = data.proto();
-            } else if object.direct_array_index().is_some() {
-                object = self
-                    .heap
-                    .object(object)
-                    .expect("live direct array retains its object header")
-                    .proto();
             } else if let Some(symbol) = self.heap.symbol_data(object) {
                 let description = symbol.clone();
                 match self.atom_name(atom) {

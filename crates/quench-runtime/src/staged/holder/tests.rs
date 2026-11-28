@@ -1,17 +1,26 @@
 use super::*;
 use crate::staged::stage::Stage;
-use crate::heap::{Heap, Object, ProtoLink};
+use crate::heap::{ArrayObject, Heap, Object, ProtoLink};
 use crate::code_dependencies::PublishedCode;
 use crate::Value;
 use std::rc::Rc;
+
+/// An array of `prototype` whose named properties are `values`, in slots from 1 under their shapes. An ordinary
+/// object is a class cell with no record (`record_only` is `None`); an array keeps its record and its properties.
+fn array_of(heap: &mut Heap, prototype: Value, values: &[Value]) -> Value {
+    let array = heap.alloc_array(ArrayObject::new(Object::new(prototype), Vec::<Value>::new()));
+    for (slot, value) in values.iter().enumerate() {
+        heap.property_add(array, *value, slot as u32 + 1);
+    }
+    array
+}
 
 #[test]
 fn a_holder_read_needs_the_shape_the_link_and_the_watch() {
     let mut heap = Heap::new();
     heap.register_property_shape(1, 1, None);
     let prototype = heap.alloc_object(Object::new(Value::NULL));
-    let object = heap.alloc_object(Object::new(prototype));
-    heap.property_add(object, Value::integer(1), 1);
+    let object = array_of(&mut heap, prototype, &[Value::integer(1)]);
     let record = heap.object(object).unwrap().record_only().unwrap();
     let guard = record.guard_word();
     let header = crate::heap::layouts::word(guard as u32);
@@ -32,10 +41,8 @@ fn a_holder_read_needs_the_shape_the_link_and_the_watch() {
 fn an_own_constant_read_needs_the_record_itself_and_the_watch() {
     let mut heap = Heap::new();
     heap.register_property_shape(1, 1, None);
-    let first = heap.alloc_object(Object::new(Value::NULL));
-    let second = heap.alloc_object(Object::new(Value::NULL));
-    heap.property_add(first, Value::integer(1), 1);
-    heap.property_add(second, Value::integer(1), 1);
+    let first = array_of(&mut heap, Value::NULL, &[Value::integer(1)]);
+    let second = array_of(&mut heap, Value::NULL, &[Value::integer(1)]);
     let (one, other) = (heap.object(first).unwrap().record_only().unwrap(), heap.object(second).unwrap().record_only().unwrap());
     assert_eq!(one.guard_word(), other.guard_word(), "one layout");
     let expected = one as *const Object as u64;

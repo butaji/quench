@@ -155,7 +155,7 @@ impl Vm {
         // A lazy data property's accessor is its getter and its setter, so a holder whose
         // shape holds no such accessor, and no indexed descriptor, has none.
         if let Some(object) = self.heap.object(holder)
-            && object.record_only().is_none_or(|record| !record.has_indexed_descriptors()) // record-only: indexed descriptors
+            && !object.has_indexed_descriptors()
             && !self.shape_may_have_accessor_pairs(object.shape())
         {
             return None;
@@ -319,7 +319,7 @@ impl Vm {
             .flat_map(|object| self.shape_entries(object.shape()))
             .map(|(key, _)| key);
         let indexed = object
-            .filter(|object| object.record_only().is_some_and(|record| record.has_indexed_descriptors())) // record-only: indexed descriptors
+            .filter(|object| object.has_indexed_descriptors())
             .into_iter()
             .flat_map(move |_| {
                 self.descriptors

@@ -313,8 +313,7 @@ impl Vm {
     /// `holder`'s own shape-held property `key`, read without allocating.
     fn slot_property(&self, holder: Value, key: PropertyKey) -> Option<SlotProperty> {
         let (_, slot) = self.object_property_slot(holder, key)?;
-        // The slot's attributes and value are record data.
-        let object = self.heap.object(holder)?.record_only()?;
+        let object = self.heap.object(holder)?;
         let attributes = self.slot_attributes(object, slot)?;
         let value = self.slot_data_value(object, slot).unwrap_or(Value::UNDEFINED);
         Some(SlotProperty { value, attributes })

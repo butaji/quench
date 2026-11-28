@@ -1,5 +1,5 @@
 use super::*;
-use crate::heap::{Heap, Object};
+use crate::heap::{ArrayObject, Heap, Object};
 use crate::staged::Concrete;
 use crate::Value;
 
@@ -11,30 +11,31 @@ fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
     run(&mut stage, ops, Reached::bare(record), Some(records), ()).map(Value::from_bits)
 }
 
-/// A prototype's read guards the receiver's and the prototype's shapes; a receiver of
-/// another shape, a prototype of another, or a record with no object prototype misses.
+/// An array of `prototype` whose named properties are `values`, in slots from 1. An ordinary object is a class
+/// cell with no record (`record_only` is `None`), so the record reads take an array, which keeps its record.
+fn array_of(heap: &mut Heap, prototype: Value, values: &[Value]) -> Value {
+    let array = heap.alloc_array(ArrayObject::new(Object::new(prototype), Vec::<Value>::new()));
+    for (slot, value) in values.iter().enumerate() {
+        heap.property_add(array, *value, slot as u32 + 1);
+    }
+    array
+}
+
+/// An own-field read guards the receiver's exact shape, and misses on a receiver of another shape.
 #[test]
-fn an_op_list_reads_a_prototype_slot_and_misses_past_its_guards() {
+fn an_op_list_reads_an_own_slot_and_misses_past_its_guards() {
     let mut heap = Heap::new();
     for shape in 1..=2_u32 {
         heap.register_property_shape(shape, shape as usize, None);
     }
-    let prototype = heap.alloc_object(Object::new(Value::NULL));
-    heap.property_add(prototype, Value::number(1.5), 1);
-    heap.ensure_cell_extras(prototype);
-    heap.object_mut(prototype).unwrap().mark_as_prototype();
-    let object = heap.alloc_object(Object::new(prototype));
-    heap.property_add(object, Value::number(7.0), 1);
-    heap.property_add(object, Value::number(8.0), 2);
-    let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
-    let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
-    assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
+    let object = array_of(&mut heap, Value::NULL, &[Value::number(7.0), Value::number(8.0)]);
+    let single = array_of(&mut heap, Value::NULL, &[Value::number(7.0)]);
+    let (own, other) = (heap.object(object).unwrap().exact_shape(), heap.object(single).unwrap().exact_shape());
+    assert_ne!(own, other, "two shapes");
     let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
     assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
-    assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
-    assert_eq!(concrete(&heap, &read(holder, holder), object), None);
-    assert_eq!(concrete(&heap, &read(own, own), object), None);
-    assert_eq!(concrete(&heap, &read(holder, holder), prototype), None);
+    assert_eq!(concrete(&heap, &[IcOp::GuardShape(other), load], object), None, "another shape");
+    assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], single), None, "a receiver of another shape");
 }
 
 /// A prototype-selected constant answers for the link of the receiver's prototype and
@@ -45,39 +46,11 @@ fn a_prototype_constant_is_selected_by_the_receivers_link() {
     let prototype = heap.alloc_object(Object::new(Value::NULL));
     heap.ensure_cell_extras(prototype);
     heap.object_mut(prototype).unwrap().mark_as_prototype();
-    let object = heap.alloc_object(Object::new(prototype));
+    let object = array_of(&mut heap, prototype, &[]);
     let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
     let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
     assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
     assert_eq!(concrete(&heap, &[IcOp::GuardShape(shape), IcOp::PrototypeConstants(&[(link ^ 1, one)])], object), None);
-}
-
-/// The interpreter keeps its typed prototype read (`Heap::holder_property_get_flat`),
-/// which routing through `run` made slower (deltablue +1.6%); it reads what the staged
-/// `LoadPrototypeSlot` reads at every slot of a prototype, of narrow and wide layouts.
-#[test]
-fn the_interpreters_prototype_read_agrees_with_the_staged_one() {
-    let mut heap = Heap::new();
-    let wide = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
-    for shape in 1..=wide as u32 {
-        heap.register_property_shape(shape, shape as usize, None);
-    }
-    for len in [1, wide] {
-        let prototype = heap.alloc_object(Object::new(Value::NULL));
-        for slot in 0..len {
-            heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
-        }
-        heap.ensure_cell_extras(prototype);
-        heap.object_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc_object(Object::new(prototype));
-        let holder = heap.object(prototype).unwrap();
-        for slot in 0..len {
-            // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
-            let interpreter = unsafe { heap.holder_property_get_flat(holder.record_only().unwrap(), slot) };
-            assert_eq!(concrete(&heap, &[IcOp::Prototype, IcOp::GuardShape(holder.exact_shape()), IcOp::LoadPrototypeSlot(slot as u16)], object), Some(interpreter),
-                "slot {slot} of {len}");
-        }
-    }
 }
 
 /// A row calls `site` in an order its operand values never change: the same ops over two

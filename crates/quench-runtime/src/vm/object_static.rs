@@ -106,7 +106,7 @@ impl Vm {
     /// own properties. A non-index descriptor kept outside a shape belongs to one of those
     /// exotic objects, and recording one clears every field cache.
     pub(super) fn class_field_define_target(&self, target: Value) -> Option<u32> {
-        let object = self.heap.ordinary_object(target)?;
+        let object = self.heap.ordinary_view(target)?;
         (object.is_extensible()
             && !object.is_arguments_object()
             && object.boxed_primitive().is_none()
@@ -605,7 +605,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
+    pub(super) fn ordered_shape(&self, data: ObjectRef<'_>) -> Vec<(Atom, usize)> {
         let mut entries = self
             .shape_entries(data.shape())
             .filter_map(|(key, slot)| match key {

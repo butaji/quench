@@ -23,7 +23,7 @@
 //! (`remap_object_template_shapes`).
 use super::property_key::PropertyKey;
 use super::Vm;
-use crate::heap::RootId;
+use crate::heap::{ObjectRef, RootId};
 use crate::value::Value;
 use smallvec::SmallVec;
 
@@ -208,7 +208,7 @@ impl Vm {
             .map(|layout| {
                 self.template_layout_object(layout.object)
                     .filter(|object| object.was_used_as_prototype())
-                    .and_then(crate::heap::Object::watched_subject)
+                    .and_then(|object| object.watched_subject())
             })
             .collect::<Option<SmallVec<[u32; INLINE_COPIES]>>>()?;
         Some(self.heap.dependencies().subjects_cell(&subjects))
@@ -317,10 +317,10 @@ impl Vm {
     }
 
     /// The ordinary object part of `value`: a function's own, else the object's.
-    fn template_layout_object(&self, value: Value) -> Option<&crate::heap::Object> {
+    fn template_layout_object(&self, value: Value) -> Option<ObjectRef<'_>> {
         match self.heap.function(value) {
-            Some(function) => Some(&function.object),
-            None => self.heap.object(value).and_then(|o| o.record_only()),
+            Some(function) => Some(ObjectRef::Record(&function.object)),
+            None => self.heap.object(value),
         }
     }
 

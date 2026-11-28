@@ -173,7 +173,7 @@ impl Vm {
     /// `None`, as does any other object: [[GetOwnProperty]] answers them.
     pub(super) fn shape_own_presence(&self, object: Value, atom: crate::bytecode::Atom) -> Option<bool> {
         if self.atom_class(atom).contains(super::object::AtomClass::ARRAY_INDEX)
-            || self.heap.ordinary_object(object)?.is_arguments_object()
+            || self.heap.ordinary_view(object)?.is_arguments_object()
         {
             return None;
         }
@@ -287,10 +287,10 @@ impl Vm {
             return None;
         }
         let target = proof.1;
-        let Some(record) = value.direct_object_index().and_then(|r| self.heap.record_id(r)) else {
+        if value.direct_object_index().is_none() {
             return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
-        };
-        let mut object = self.heap.object_record_by_id(record);
+        }
+        let mut object = self.heap.direct_object_view(value)?;
         loop {
             let link = object.proto_link();
             if link == target {
@@ -299,7 +299,7 @@ impl Vm {
             if link == ProtoLink::NULL {
                 return Some(false);
             }
-            object = self.heap.object_record_by_granule(link.object_granule()?);
+            object = self.heap.object_view_by_granule(link.object_granule()?);
         }
     }
 
@@ -358,11 +358,11 @@ impl Vm {
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]
-    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<ObjectRef<'_>> {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
-        self.heap.object(value).and_then(|object| object.record_only())
+        self.heap.object(value)
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
@@ -426,7 +426,7 @@ impl Vm {
         if op != crate::operator::BinaryOperator::In as u32 || !self.heap.is_string(key) {
             return None;
         }
-        self.heap.ordinary_object(object)?;
+        self.heap.ordinary_view(object)?;
         let atom = self.string_key_atom(key)?;
         if !self.plain_named_key(atom) {
             return None;
@@ -447,7 +447,7 @@ impl Vm {
     fn plain_in_chain(&self, object: Value, property: PropertyKey) -> Option<bool> {
         let mut current = object;
         loop {
-            let data = self.heap.ordinary_object(current)?;
+            let data = self.heap.ordinary_view(current)?;
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
@@ -470,7 +470,7 @@ impl Vm {
     #[inline]
     pub(super) fn proved_has(&mut self, object: Value, key: PropertyKey) -> Option<bool> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.heap.ordinary_view(object)?;
         let (layout, side) = (data.layout_id(), data.has_side_descriptors());
         match self.symbol_load_proofs.answer(layout, key) {
             Some(SymbolLoadAnswer::Own(_)) => Some(true),

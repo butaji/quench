@@ -12,7 +12,7 @@ impl Vm {
         }
         // The fact table first: one probe for the receiver's layout, whatever entries the
         // site rotates through.
-        if let Some(receiver) = self.heap.object_record(object)
+        if let Some(receiver) = self.heap.ordinary_view(object)
             && let Some(getter) = self.fact_accessor(receiver, PropertyKey::string(atom), false)
         {
             return getter;
@@ -27,7 +27,7 @@ impl Vm {
     /// makes it.
     #[inline(always)]
     pub fn cached_getter_after_miss(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let Some(receiver) = self.heap.object_record(object) else {
+        let Some(receiver) = self.heap.ordinary_view(object) else {
             return self.cached_field_getter(object, atom, site);
         };
         if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
@@ -56,13 +56,13 @@ impl Vm {
 
     /// The accessor functions `cache` names, which proves `receiver`'s shape and chain.
     #[inline(always)]
-    fn entry_accessors(&self, cache: &AccessorFieldCache, receiver: &Object) -> Option<ShapeAccessors> {
+    fn entry_accessors(&self, cache: &AccessorFieldCache, receiver: ObjectRef<'_>) -> Option<ShapeAccessors> {
         let holder = if cache.holder == OWN_ACCESSOR {
             (!receiver.has_side_descriptors()).then_some(receiver)?
         } else {
-            self.heap.ordinary_object(cache.holder)?
+            self.heap.ordinary_view(cache.holder)?
         };
-        let held = self.heap.property_get(holder, usize::from(cache.slot));
+        let held = self.heap.property_get_ref(holder, usize::from(cache.slot));
         match cache.slot_accessor {
             SlotAccessor::Getter => held.map(|getter| (Some(getter), None)),
             SlotAccessor::Pair => match self.heap.get(held?) {
@@ -79,8 +79,8 @@ impl Vm {
     /// over still holds. An ordinary receiver matches its entry by layout, which holds its
     /// shape and prototype: a recorded layout is of a shaped receiver outside dictionary mode,
     /// so a match proves what `shape_property_lookup` would.
-    fn receiver_entry(&self, object: Value, atom: Atom, site: usize) -> Option<(&Object, &AccessorFieldCache)> {
-        if let Some(receiver) = self.heap.object_record(object) {
+    fn receiver_entry(&self, object: Value, atom: Atom, site: usize) -> Option<(ObjectRef<'_>, &AccessorFieldCache)> {
+        if let Some(receiver) = self.heap.ordinary_view(object) {
             let layout = receiver.layout_id();
             return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && cache.cell.holds())?));
         }
@@ -114,7 +114,7 @@ impl Vm {
         if index == NO_ACCESSOR_FIELD {
             return GetterEntryRead::Miss;
         }
-        let Some(receiver) = self.heap.object_record(object) else {
+        let Some(receiver) = self.heap.ordinary_view(object) else {
             return GetterEntryRead::Miss;
         };
         let layout = receiver.layout_id();
@@ -156,7 +156,7 @@ impl Vm {
     /// `Arg` kinds are) that its accessor `getter` (a store site's setter) does what `answer`
     /// says for a receiver of that layout (`getter_entry_read`, `setter_entry_forward`).
     pub fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: AccessorForward) {
-        let Some(receiver) = self.heap.object_record(object) else {
+        let Some(receiver) = self.heap.ordinary_view(object) else {
             return;
         };
         if self.shape_is_dictionary(receiver.shape()) {
@@ -183,7 +183,7 @@ impl Vm {
     #[inline(always)]
     pub fn setter_entry_forward(&self, object: Value, site: usize, setter: Value) -> SetterForward {
         let mut index = self.accessor_field_indices.get(site);
-        let Some(receiver) = self.heap.object_record(object) else {
+        let Some(receiver) = self.heap.ordinary_view(object) else {
             return SetterForward::Unknown;
         };
         let layout = receiver.layout_id();

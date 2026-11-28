@@ -294,7 +294,7 @@ impl Vm {
         // `insert_descriptor` marks every object it records an index-keyed entry for.
         if !self
             .heap.object(target)
-            .is_some_and(|object| object.record_only().is_some_and(|record| record.has_indexed_descriptors())) // record-only: indexed descriptors
+            .is_some_and(|object| object.has_indexed_descriptors())
         {
             return None;
         }

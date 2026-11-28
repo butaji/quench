@@ -385,7 +385,7 @@ pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
 }
 
 /// The class of granule `g`'s class cell in the class space at `base`; `None` for a region 0 stub, which has no
-/// class. A class cell is always live (no cell departs), so its header's class half is the answer.
+/// class. A class cell is always live (a cell is one for its whole life), so its header's class half is the answer.
 #[inline(always)]
 pub(super) fn live_class_at(base: usize, g: u32) -> Option<u32> {
     if !is_cell_granule(g) {
@@ -439,7 +439,7 @@ impl super::Heap {
     pub fn native_cell_cursor(&self, region: u32) -> usize { self.class_space.cell_cursor_address(region) }
 }
 
-/// Whether granule `g` lies in a class cell's region (1 to 5), where an object is a cell until it departs.
+/// Whether granule `g` lies in a class cell's region (1 to 5), where an ordinary object is a cell for its whole life.
 /// Region 0 holds the stubs of the record table's objects, which never hold a class.
 pub(super) const fn is_cell_granule(g: u32) -> bool {
     g >> REGION_SHIFT != 0
