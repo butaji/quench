@@ -62,9 +62,13 @@ impl EmitFrame<'_> {
             emit(builder).raw_store(Lane::F64, property, (value, false), slot.address, 0);
             return Some(());
         }
+        let Some(inline) = slot.header.inline else {
+            // A fixed class's cell holds its union slots flat, with no storage form to test. A verified integer needs no barrier.
+            emit(builder).raw_store(Lane::I64, property, (value, true), slot.address, 0);
+            return Some(());
+        };
         let (packed, arena, done) = (builder.create_block(), builder.create_block(), builder.create_block());
-        // A loop's projected slot names a record: a fixed class's cell has no storage form to test.
-        emit(builder).branch(slot.header.inline?, (packed, &[]), (arena, &[]));
+        emit(builder).branch(inline, (packed, &[]), (arena, &[]));
         builder.switch_to_block(packed);
         #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|watched| {
             if let Some((expected, count)) = watched.get() && expected == site {

@@ -143,6 +143,21 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The projected slot of a loop's store at `store` into the fixed class cell of `owner` (`LoopStore`): the union slot's
+    /// address in the cell, for the domain the store's value takes (a Number the raw doubles, else an int32). Neither needs a
+    /// barrier. None where the receiver is no fixed class's, the union names no such field, or the slot does not admit the domain.
+    pub(crate) fn fixed_loop_store(&mut self, state: &mut State, store: usize, owner: Register) -> Option<LoopStore> {
+        let instruction = self.unit.instructions[store];
+        let fixed = self.fixed_field_of(store, Some(owner), instruction.atom_index())?;
+        let domain = if super::number_domains::is_double(fixed.field.cell.ty) { Type::NUMBER } else { Type::INT32 };
+        if !domain.is_subtype(fixed.field.cell.ty) { return None; }
+        let cell = self.fixed_cell(state, Some(owner))?;
+        let header = cell.header(&mut self.builder, None);
+        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
+        let address = cell.offset_address(&mut self.builder, displacement);
+        Some(LoopStore { header, address, packed_range: None, domain })
+    }
+
     /// The store barrier (4.7) of the tagged `value` (of register `source`) into the fixed class cell of `owner`.
     /// The class space logs every heap reference stored into a cell (`class_cell_store`, which tests no mark), and the lane
     /// has no mark list for the class space, so a heap reference leaves to the VM's store at `exit`. An immediate needs no
