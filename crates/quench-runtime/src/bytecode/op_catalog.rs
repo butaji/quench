@@ -6,9 +6,6 @@
 //! `Op::generic_step` and `Op::traits`.
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
-// Catalog helpers the derived-row design no longer asks for are kept beside the columns they
-// describe until the compiler path that named them is replaced.
-#![allow(dead_code)]
 use super::Op;
 pub use super::opcode_table::{OPCODE_COUNT, opcode_name};
 /// A tier's operation family, declared once by the catalog (`Op::class`).
