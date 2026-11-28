@@ -28,21 +28,20 @@ fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
         }
     }
     let source = "if (catalogProbe.name !== 'catalogProbe' || catalogProbe.length !== 2 || typeof hidden !== 'undefined') throw new Error('descriptor'); if (catalogProbe(1, 2) !== 42) throw new Error('dispatch');";
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "split-host-catalog.js").unwrap();
+    let compile = Engine::specialize;
+    let program = compile(source, "split-host-catalog.js").unwrap();
+    let calls = Rc::new(std::cell::Cell::new(0));
+    let mut runtime = Runtime::new(SplitHost(calls.clone()));
+    runtime.execute(&program).unwrap();
+    assert_eq!(calls.get(), 1);
+    {
+        let native = crate::NativeJsProgram::publish(program).unwrap();
         let calls = Rc::new(std::cell::Cell::new(0));
         let mut runtime = Runtime::new(SplitHost(calls.clone()));
-        runtime.execute(&program).unwrap();
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        runtime.execute_native(&native).unwrap();
         assert_eq!(calls.get(), 1);
-        {
-            let native = crate::NativeJsProgram::publish(program).unwrap();
-            let calls = Rc::new(std::cell::Cell::new(0));
-            let mut runtime = Runtime::new(SplitHost(calls.clone()));
-            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-            runtime.execute_native(&native).unwrap();
-            assert_eq!(calls.get(), 1);
-            assert_eq!(runtime.native_execution_rejections(), 0);
-        }
+        assert_eq!(runtime.native_execution_rejections(), 0);
     }
 }
 
@@ -1315,12 +1314,8 @@ const revoked=snapshotProxy(pair.proxy);
 if(revoked[0]!==null||revoked[1]!==null)throw Error('revoked snapshot');
 if(snapshotProxy({})!==undefined)throw Error('ordinary object snapshot');
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "proxy-snapshot.js").unwrap(),
-        Engine::specialize(source, "proxy-snapshot.js").unwrap(),
-    ] {
-        Runtime::new(proxy_snapshot_host()).execute(&program).unwrap();
-    }
+    let program = Engine::specialize(source, "proxy-snapshot.js").unwrap();
+    Runtime::new(proxy_snapshot_host()).execute(&program).unwrap();
 }
 
 fn collection_preview_host() -> TestHost {
@@ -1350,12 +1345,8 @@ map.set('a',1);map.set('b',2);const keys=map.keys();keys.next();
 const view=previewCollection(keys);if(view[1]||view[0].join()!=='b'||keys.next().value!=='b')throw Error('preview consumed iterator');
 if(previewCollection({})!==undefined)throw Error('ordinary object preview');
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "collection-preview.js").unwrap(),
-        Engine::specialize(source, "collection-preview.js").unwrap(),
-    ] {
-        Runtime::new(collection_preview_host()).execute(&program).unwrap();
-    }
+    let program = Engine::specialize(source, "collection-preview.js").unwrap();
+    Runtime::new(collection_preview_host()).execute(&program).unwrap();
 }
 
 /// The weak root a test host's `remember*` native keeps.
@@ -1398,39 +1389,35 @@ function checkReflected(){if(constructedName(instance)!==undefined)throw Error('
 function createPrototype(){function PrototypeOwner(){};rememberConstructor(PrototypeOwner);const prototype=new PrototypeOwner;Object.setPrototypeOf(prototype,null);child=Object.create(prototype)}
 function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==undefined)throw Error('prototype provenance visible')}
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "constructor-provenance.js").unwrap(),
-        Engine::specialize(source, "constructor-provenance.js").unwrap(),
+    let program = Engine::specialize(source, "constructor-provenance.js").unwrap();
+    let mut runtime = Runtime::new(constructor_provenance_host());
+    runtime.execute(&program).unwrap();
+    // Check release after each activation returns, avoiding conservative
+    // roots held by an active guest frame's locals or registers.
+    for (operation, alive) in [
+        ("createInstance", true),
+        ("checkInstance", true),
+        ("dropInstance", false),
+        ("createReflected", true),
+        ("checkReflected", true),
+        ("dropInstance", false),
+        ("createPrototype", false),
+        ("checkPrototype", false),
     ] {
-        let mut runtime = Runtime::new(constructor_provenance_host());
-        runtime.execute(&program).unwrap();
-        // Check release after each activation returns, avoiding conservative
-        // roots held by an active guest frame's locals or registers.
-        for (operation, alive) in [
-            ("createInstance", true),
-            ("checkInstance", true),
-            ("dropInstance", false),
-            ("createReflected", true),
-            ("checkReflected", true),
-            ("dropInstance", false),
-            ("createPrototype", false),
-            ("checkPrototype", false),
-        ] {
-            let global = runtime.global_root().unwrap();
-            let key = runtime.string_rooted(operation);
-            let function = runtime.get_property_rooted(global, key).unwrap();
-            let result = runtime.call_rooted(function, global, &[]).unwrap();
-            for root in [result, function, key, global] {
-                assert!(runtime.release_root(root));
-            }
-            runtime.collect(&program).unwrap();
-            let weak = runtime
-                .host_mut()
-                .state::<Remembered>()
-                .get()
-                .expect("remembered constructor");
-            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted(operation);
+        let function = runtime.get_property_rooted(global, key).unwrap();
+        let result = runtime.call_rooted(function, global, &[]).unwrap();
+        for root in [result, function, key, global] {
+            assert!(runtime.release_root(root));
         }
+        runtime.collect(&program).unwrap();
+        let weak = runtime
+            .host_mut()
+            .state::<Remembered>()
+            .get()
+            .expect("remembered constructor");
+        assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
     }
 }
 
@@ -1444,25 +1431,21 @@ function exposeSites(){sites=error.stack;if(sites[0].getFunctionName()!=='Frame'
 function dropError(){error=null}
 function dropSites(){sites=null}
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source,"stack-name-roots.js").unwrap(),
-        Engine::specialize(source,"stack-name-roots.js").unwrap(),
+    let program = Engine::specialize(source,"stack-name-roots.js").unwrap();
+    let mut runtime = Runtime::new(constructor_provenance_host());
+    runtime.execute(&program).unwrap();
+    for (operation, alive) in [
+        ("createStack", true), ("exposeSites", true),
+        ("dropError", true), ("dropSites", false),
     ] {
-        let mut runtime = Runtime::new(constructor_provenance_host());
-        runtime.execute(&program).unwrap();
-        for (operation, alive) in [
-            ("createStack", true), ("exposeSites", true),
-            ("dropError", true), ("dropSites", false),
-        ] {
-            let global=runtime.global_root().unwrap();
-            let key=runtime.string_rooted(operation);
-            let function=runtime.get_property_rooted(global,key).unwrap();
-            let result=runtime.call_rooted(function,global,&[]).unwrap();
-            for root in [result,function,key,global]{assert!(runtime.release_root(root));}
-            runtime.collect(&program).unwrap();
-            let weak=runtime.host_mut().state::<Remembered>().get().expect("remembered frame");
-            assert_eq!(runtime.host_weak_root_is_live(weak),alive,"{operation}");
-        }
+        let global=runtime.global_root().unwrap();
+        let key=runtime.string_rooted(operation);
+        let function=runtime.get_property_rooted(global,key).unwrap();
+        let result=runtime.call_rooted(function,global,&[]).unwrap();
+        for root in [result,function,key,global]{assert!(runtime.release_root(root));}
+        runtime.collect(&program).unwrap();
+        let weak=runtime.host_mut().state::<Remembered>().get().expect("remembered frame");
+        assert_eq!(runtime.host_weak_root_is_live(weak),alive,"{operation}");
     }
 }
 
@@ -1544,14 +1527,10 @@ const asyncPrototype=Object.getPrototypeOf(async function(){}),generatorPrototyp
 globalThis.AsyncFunction={prototype:{fake:true}};globalThis.GeneratorFunction={prototype:{fake:true}};globalThis.AsyncGeneratorFunction={prototype:{fake:true}};
 if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototypeOf(function*(){})!==generatorPrototype||Object.getPrototypeOf(async function*(){})!==asyncGeneratorPrototype)throw Error('factory follows mutable globals');
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
-        Engine::specialize(source, "function-factory-origins.js").unwrap(),
-    ] {
-        Runtime::new(constructor_provenance_host())
-            .execute(&program)
-            .unwrap();
-    }
+    let program = Engine::specialize(source, "function-factory-origins.js").unwrap();
+    Runtime::new(constructor_provenance_host())
+        .execute(&program)
+        .unwrap();
 }
 
 #[test]
@@ -1562,28 +1541,24 @@ function createIterator(){function* Creator(){};rememberConstructor(Creator);con
 function closeIterator(){state.next.call(state.value);if(constructedName(state.value)!=='Changed')throw Error('lost completed generator origin')}
 function dropIterator(){state=null}
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
-        Engine::specialize(source, "generator-origin-roots.js").unwrap(),
+    let program = Engine::specialize(source, "generator-origin-roots.js").unwrap();
+    let mut runtime = Runtime::new(constructor_provenance_host());
+    runtime.execute(&program).unwrap();
+    for (operation, alive) in [
+        ("createIterator", true),
+        ("closeIterator", true),
+        ("dropIterator", false),
     ] {
-        let mut runtime = Runtime::new(constructor_provenance_host());
-        runtime.execute(&program).unwrap();
-        for (operation, alive) in [
-            ("createIterator", true),
-            ("closeIterator", true),
-            ("dropIterator", false),
-        ] {
-            let global = runtime.global_root().unwrap();
-            let key = runtime.string_rooted(operation);
-            let function = runtime.get_property_rooted(global, key).unwrap();
-            let result = runtime.call_rooted(function, global, &[]).unwrap();
-            for root in [result, function, key, global] {
-                assert!(runtime.release_root(root));
-            }
-            runtime.collect(&program).unwrap();
-            let weak = runtime.host_mut().state::<Remembered>().get().unwrap();
-            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted(operation);
+        let function = runtime.get_property_rooted(global, key).unwrap();
+        let result = runtime.call_rooted(function, global, &[]).unwrap();
+        for root in [result, function, key, global] {
+            assert!(runtime.release_root(root));
         }
+        runtime.collect(&program).unwrap();
+        let weak = runtime.host_mut().state::<Remembered>().get().unwrap();
+        assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
     }
 }
 
@@ -1609,22 +1584,18 @@ function createWrapper(){const value=Symbol('payload');rememberPayload(value);wr
 function readWrapper(){const value=Symbol.prototype.valueOf.call(wrapper);if(typeof value!=='symbol'||value.description!=='payload')throw Error('lost wrapper payload')}
 function dropWrapper(){wrapper=null}
 "#;
-    for program in [
-        Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
-        Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
-    ] {
-        let mut runtime = Runtime::new(boxed_primitive_host());
-        runtime.execute(&program).unwrap();
-        for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
-            let global = runtime.global_root().unwrap();
-            let key = runtime.string_rooted(operation);
-            let function = runtime.get_property_rooted(global, key).unwrap();
-            let result = runtime.call_rooted(function, global, &[]).unwrap();
-            for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
-            runtime.collect(&program).unwrap();
-            let payload = runtime.host_mut().state::<Remembered>().get().unwrap();
-            assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
-        }
+    let program = Engine::specialize(source, "boxed-primitive-roots.js").unwrap();
+    let mut runtime = Runtime::new(boxed_primitive_host());
+    runtime.execute(&program).unwrap();
+    for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted(operation);
+        let function = runtime.get_property_rooted(global, key).unwrap();
+        let result = runtime.call_rooted(function, global, &[]).unwrap();
+        for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
+        runtime.collect(&program).unwrap();
+        let payload = runtime.host_mut().state::<Remembered>().get().unwrap();
+        assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
     }
 }
 
@@ -1691,18 +1662,14 @@ fn prepared_script_host(state: Rc<RefCell<PreparedScriptState>>) -> TestHost {
 }
 #[test]
 fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset_handles() {
-    for program in [
-        Engine::specialize_unspecialized("void 0", "prepared-entry.js").unwrap(),
-        Engine::specialize("void 0", "prepared-entry.js").unwrap(),
-    ] {
-        let state = Rc::new(RefCell::new(PreparedScriptState::default()));
-        let mut runtime = Runtime::new(prepared_script_host(state.clone()));
-        runtime.execute(&program).unwrap();
-        runtime.execute(&program).unwrap();
-        let mut other = Runtime::new(prepared_script_host(state.clone()));
-        other.execute(&program).unwrap();
-        assert_eq!(state.borrow().invalidations, 2);
-    }
+    let program = Engine::specialize("void 0", "prepared-entry.js").unwrap();
+    let state = Rc::new(RefCell::new(PreparedScriptState::default()));
+    let mut runtime = Runtime::new(prepared_script_host(state.clone()));
+    runtime.execute(&program).unwrap();
+    runtime.execute(&program).unwrap();
+    let mut other = Runtime::new(prepared_script_host(state.clone()));
+    other.execute(&program).unwrap();
+    assert_eq!(state.borrow().invalidations, 2);
 }
 
 fn error_source_host() -> TestHost {
@@ -1736,13 +1703,9 @@ fn error_source_host() -> TestHost {
 
 #[test]
 fn error_source_metadata_owns_original_text_across_same_named_scripts_and_collection() {
-    for program in [
-        Engine::specialize_unspecialized("void 0", "error-source-entry.js").unwrap(),
-        Engine::specialize("void 0", "error-source-entry.js").unwrap(),
-    ] {
-        let mut runtime = Runtime::new(error_source_host());
-        runtime.execute(&program).unwrap();
-    }
+    let program = Engine::specialize("void 0", "error-source-entry.js").unwrap();
+    let mut runtime = Runtime::new(error_source_host());
+    runtime.execute(&program).unwrap();
 }
 
 #[derive(Default)]
@@ -1827,18 +1790,14 @@ fn compiled_script_identity(
 }
 #[test]
 fn compiled_host_scripts_keep_source_identity_and_own_separate_realm_execution_state() {
-    for program in [
-        Engine::specialize_unspecialized("void 0", "owned-entry.js").unwrap(),
-        Engine::specialize("void 0", "owned-entry.js").unwrap(),
-    ] {
-        let state = Rc::new(RefCell::new(CompiledScriptStateForTest::default()));
-        let mut runtime = Runtime::new(compiled_script_host(state.clone()));
-        runtime.execute(&program).unwrap();
-        runtime.execute(&program).unwrap();
-        let mut foreign = Runtime::new(compiled_script_host(state.clone()));
-        foreign.execute(&program).unwrap();
-        assert_eq!(state.borrow().invalidations, 2);
-    }
+    let program = Engine::specialize("void 0", "owned-entry.js").unwrap();
+    let state = Rc::new(RefCell::new(CompiledScriptStateForTest::default()));
+    let mut runtime = Runtime::new(compiled_script_host(state.clone()));
+    runtime.execute(&program).unwrap();
+    runtime.execute(&program).unwrap();
+    let mut foreign = Runtime::new(compiled_script_host(state.clone()));
+    foreign.execute(&program).unwrap();
+    assert_eq!(state.borrow().invalidations, 2);
 }
 
 fn host_private_symbol_host() -> TestHost {
@@ -1932,11 +1891,9 @@ fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protoc
       check(invariantThrew);
       globalThis.privateSurvivor = child;
     "#;
-    for program in [Engine::specialize_unspecialized(source, "native-private-symbol.js").unwrap(),
-                    Engine::specialize(source, "native-private-symbol.js").unwrap()] {
-        let mut runtime = Runtime::new(host_private_symbol_host());
-        runtime.execute(&program).unwrap();
-    }
+    let program = Engine::specialize(source, "native-private-symbol.js").unwrap();
+    let mut runtime = Runtime::new(host_private_symbol_host());
+    runtime.execute(&program).unwrap();
 }
 
 
@@ -2214,7 +2171,7 @@ fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
 
 #[test]
 fn native_execution_audit_retains_guest_caught_source_rejections() {
-    let program = Engine::specialize_unspecialized(
+    let program = Engine::specialize(
         "try { eval('1'); } catch (error) { if (!(error instanceof TypeError)) throw error; }", "caught-eval.js",
     ).unwrap();
     let native = crate::NativeJsProgram::publish(program).unwrap();
@@ -2242,7 +2199,7 @@ try { absentReference ||= (effects.push("logical"), 1); throw Error("missing log
 catch (error) { if (!(error instanceof ReferenceError)) throw error; }
 if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
 "#;
-    let program = Engine::specialize_unspecialized(source, "strict-reference-order.js").unwrap();
+    let program = Engine::specialize(source, "strict-reference-order.js").unwrap();
     let modes = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled].into_iter();
     let modes = modes.chain([crate::ExecutionMode::NativeOnly]);
     for mode in modes {
@@ -2257,7 +2214,7 @@ if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
 
 #[test]
 fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owners() {
-    let program = Engine::specialize_unspecialized(r#"
+    let program = Engine::specialize(r#"
         globalThis.answer = 0;
         function grow(n) {
             let sum = 0;

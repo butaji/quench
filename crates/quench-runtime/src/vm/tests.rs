@@ -634,20 +634,10 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
       catch(error) {out.push(error.name,closed);}
       if (JSON.stringify(out)!=='[true,true,true,true,"TypeError",1]') throw new Error(JSON.stringify(out));
     "#;
-    for specialized in [false, true] {
-        let mut vm = Vm::new(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(source, "collection-constructor-gc.js")
-        } else {
-            Engine::compile(crate::ExecutionRequest {
-                source,
-                name: "collection-constructor-gc.js",
-                kind: crate::SourceKind::Script,
-            })
-        }
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = Engine::specialize(source, "collection-constructor-gc.js")
         .unwrap();
-        vm.execute(&program).unwrap();
-    }
+    vm.execute(&program).unwrap();
 }
 
 /// A closure made in a `for (let ...)` initializer keeps the initializer's binding: the first
@@ -665,16 +655,10 @@ fn a_for_let_initializer_closure_keeps_the_initializer_binding() {
       if (got !== 'outside,inside,inside,inside') throw new Error(got);
     "#;
     for source in [body.to_owned(), format!("(function () {{ {body} }})();")] {
-        for specialized in [false, true] {
-            let mut vm = Vm::new(TestHost::default());
-            let program = if specialized {
-                Engine::specialize(&source, "for-let-initializer.js")
-            } else {
-                Engine::compile(crate::ExecutionRequest { source: &source, name: "for-let-initializer.js", kind: crate::SourceKind::Script })
-            }
+        let mut vm = Vm::new(TestHost::default());
+        let program = Engine::specialize(&source, "for-let-initializer.js")
             .unwrap();
-            vm.execute(&program).unwrap();
-        }
+        vm.execute(&program).unwrap();
     }
 }
 
@@ -695,20 +679,10 @@ fn whole_read_per_iteration_copies_keep_their_owners_slots() {
       if (got!=='[65,65,67,67,69,69,71,71]') throw new Error(got);
     "#
     );
-    for specialized in [false, true] {
-        let mut vm = Vm::new(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(&source, "sparse-whole-read.js")
-        } else {
-            Engine::compile(crate::ExecutionRequest {
-                source: &source,
-                name: "sparse-whole-read.js",
-                kind: crate::SourceKind::Script,
-            })
-        }
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = Engine::specialize(&source, "sparse-whole-read.js")
         .unwrap();
-        vm.execute(&program).unwrap();
-    }
+    vm.execute(&program).unwrap();
 }
 
 #[test]
@@ -3777,30 +3751,29 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
         } else {
             source.to_owned()
         };
-        for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-            let program = compile(&source, "accessor.js").unwrap();
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-            vm.execute(&program).unwrap();
-            assert_eq!(
-                output.borrow().as_slice(),
-                [
-                    "3",
-                    "9",
-                    "function",
-                    "function",
-                    "7",
-                    "true",
-                    if strict { "blocked" } else { "not-blocked" },
-                    "1",
-                    "false",
-                    "4",
-                    "6",
-                    "class"
-                ],
-                "strict={strict}"
-            );
-        }
+        let compile = Engine::specialize;
+        let program = compile(&source, "accessor.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "3",
+                "9",
+                "function",
+                "function",
+                "7",
+                "true",
+                if strict { "blocked" } else { "not-blocked" },
+                "1",
+                "false",
+                "4",
+                "6",
+                "class"
+            ],
+            "strict={strict}"
+        );
     }
 }
 
@@ -3877,92 +3850,88 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
       deleted.answer = 7;
       print(deleted.answer);
     "#;
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        let program = compile(source, "dictionary-shapes.js").unwrap();
-        vm.execute(&program).unwrap();
+    let compile = Engine::specialize;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = compile(source, "dictionary-shapes.js").unwrap();
+    vm.execute(&program).unwrap();
 
-        let global = vm.realm.globals;
-        for name in ["inherited", "deleted"] {
-            let atom = vm.intern_atom(name);
-            let object = vm
-                .own_property(global, atom)
-                .expect("global binding exists");
-            let shape = vm.heap.object(object).expect("object value").shape();
-            assert!(
-                vm.field_caches.iter().all(|cache| cache.receiver != shape),
-                "{mode}: dictionary shape entered a monomorphic field cache for {name}"
-            );
-            assert!(
-                vm.megamorphic_fields
-                    .iter()
-                    .all(|cache| cache.get(shape, NO_FIELD_HOLDER).is_none()),
-                "{mode}: dictionary shape entered a megamorphic field cache for {name}"
-            );
-            assert!(
-                vm.method_caches
-                    .iter()
-                    .flatten()
-                    .all(|cache| cache.shape != shape),
-                "{mode}: dictionary shape entered a monomorphic method cache for {name}"
-            );
-            assert!(
-                vm.megamorphic_methods.iter().all(|cache| {
-                    cache.entries[..usize::from(cache.len)]
-                        .iter()
-                        .all(|entry| entry.shape != shape)
-                }),
-                "{mode}: dictionary shape entered a megamorphic method cache for {name}"
-            );
-        }
-
-        for (name, trigger) in [
-            ("inherited", super::DictionaryTrigger::PrototypeUse),
-            ("deleted", super::DictionaryTrigger::DeletionPattern),
-        ] {
-            let atom = vm.intern_atom(name);
-            let object = vm
-                .own_property(global, atom)
-                .expect("global binding exists");
-            let shape = vm.heap.object(object).expect("object value").shape();
-            assert!(vm.shape_is_dictionary(shape), "{mode}: {name}");
-            assert_eq!(
-                vm.shapes[shape as usize].dictionary_trigger(),
-                Some(trigger),
-                "{mode}: {name} trigger"
-            );
-        }
-
-        vm.collect_now(&program);
-        let atom = vm.intern_atom("inherited");
-        let inherited = vm.own_property(global, atom).unwrap();
-        let shape = vm.heap.object(inherited).unwrap().shape();
-        assert!(
-            vm.shape_is_dictionary(shape),
-            "{mode}: dictionary mode survives GC"
-        );
-        let atom = vm.intern_atom("deleted");
-        let deleted = vm
+    let global = vm.realm.globals;
+    for name in ["inherited", "deleted"] {
+        let atom = vm.intern_atom(name);
+        let object = vm
             .own_property(global, atom)
             .expect("global binding exists");
-        let atom = vm.intern_atom("answer");
-        assert_eq!(
-            vm.own_property(deleted, atom).and_then(Value::as_number),
-            Some(7.0),
-            "{mode}: dictionary-backed property survives GC"
+        let shape = vm.heap.object(object).expect("object value").shape();
+        assert!(
+            vm.field_caches.iter().all(|cache| cache.receiver != shape),
+            "dictionary shape entered a monomorphic field cache for {name}"
         );
-        assert_eq!(output.borrow().as_slice(), ["42", "42", "7"], "{mode}");
-        #[cfg(feature = "profile-aggregate")]
-        for trigger in [
-            super::DictionaryTrigger::DeletionPattern,
-            super::DictionaryTrigger::PrototypeUse,
-        ] {
-            assert!(vm.profile.dictionary_transitions[trigger.index()] > 0);
-        }
+        assert!(
+            vm.megamorphic_fields
+                .iter()
+                .all(|cache| cache.get(shape, NO_FIELD_HOLDER).is_none()),
+            "dictionary shape entered a megamorphic field cache for {name}"
+        );
+        assert!(
+            vm.method_caches
+                .iter()
+                .flatten()
+                .all(|cache| cache.shape != shape),
+            "dictionary shape entered a monomorphic method cache for {name}"
+        );
+        assert!(
+            vm.megamorphic_methods.iter().all(|cache| {
+                cache.entries[..usize::from(cache.len)]
+                    .iter()
+                    .all(|entry| entry.shape != shape)
+            }),
+            "dictionary shape entered a megamorphic method cache for {name}"
+        );
+    }
+
+    for (name, trigger) in [
+        ("inherited", super::DictionaryTrigger::PrototypeUse),
+        ("deleted", super::DictionaryTrigger::DeletionPattern),
+    ] {
+        let atom = vm.intern_atom(name);
+        let object = vm
+            .own_property(global, atom)
+            .expect("global binding exists");
+        let shape = vm.heap.object(object).expect("object value").shape();
+        assert!(vm.shape_is_dictionary(shape), "{name}");
+        assert_eq!(
+            vm.shapes[shape as usize].dictionary_trigger(),
+            Some(trigger),
+            "{name} trigger"
+        );
+    }
+
+    vm.collect_now(&program);
+    let atom = vm.intern_atom("inherited");
+    let inherited = vm.own_property(global, atom).unwrap();
+    let shape = vm.heap.object(inherited).unwrap().shape();
+    assert!(
+        vm.shape_is_dictionary(shape),
+        "dictionary mode survives GC"
+    );
+    let atom = vm.intern_atom("deleted");
+    let deleted = vm
+        .own_property(global, atom)
+        .expect("global binding exists");
+    let atom = vm.intern_atom("answer");
+    assert_eq!(
+        vm.own_property(deleted, atom).and_then(Value::as_number),
+        Some(7.0),
+        "dictionary-backed property survives GC"
+    );
+    assert_eq!(output.borrow().as_slice(), ["42", "42", "7"]);
+    #[cfg(feature = "profile-aggregate")]
+    for trigger in [
+        super::DictionaryTrigger::DeletionPattern,
+        super::DictionaryTrigger::PrototypeUse,
+    ] {
+        assert!(vm.profile.dictionary_transitions[trigger.index()] > 0);
     }
 }
 
@@ -3997,20 +3966,16 @@ fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
         .chain(["0".to_owned()])
         .collect::<Vec<_>>()
         .join(",");
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        let program = compile(source, "prototype-change.js").unwrap();
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
-        let atom = vm.intern_atom("x");
-        let x = vm.own_property(vm.realm.globals, atom).unwrap();
-        let shape = vm.heap.object(x).unwrap().shape();
-        assert!(!vm.shape_is_dictionary(shape), "{mode}: receiver keeps a cacheable shape");
-    }
+    let compile = Engine::specialize;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = compile(source, "prototype-change.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), [expected.as_str()]);
+    let atom = vm.intern_atom("x");
+    let x = vm.own_property(vm.realm.globals, atom).unwrap();
+    let shape = vm.heap.object(x).unwrap().shape();
+    assert!(!vm.shape_is_dictionary(shape), "receiver keeps a cacheable shape");
 }
 
 #[test]
@@ -4117,18 +4082,14 @@ fn object_method_home_survives_collection_with_precise_register_roots() {
       while (i < 5000) { var temporary = {}; i = i + 1; }
       print(receiver.answer());
     "#;
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        let program = compile(source, "object-home-gc.js").unwrap();
-        if let Err(error) = vm.execute(&program) {
-            panic!("{mode}: {}", vm.format_error(&program, &error));
-        }
-        assert_eq!(output.borrow().as_slice(), ["42"], "{mode}");
+    let compile = Engine::specialize;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = compile(source, "object-home-gc.js").unwrap();
+    if let Err(error) = vm.execute(&program) {
+        panic!("{}", vm.format_error(&program, &error));
     }
+    assert_eq!(output.borrow().as_slice(), ["42"]);
 }
 
 #[test]
@@ -4206,14 +4167,13 @@ fn untaken_closure_branch_does_not_allocate_environments() {
         vm.heap.environment_count_for_test() - baseline
     }
 
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let no_closure = environments("", false, compile);
-        let closure_branch = "if (make) return function() { return value; };";
-        let untaken = environments(closure_branch, false, compile);
-        let taken = environments(closure_branch, true, compile);
-        assert_eq!(untaken, no_closure, "untaken closure adds environments");
-        assert_eq!(taken - untaken, CALLS, "one environment per taken closure");
-    }
+    let compile = Engine::specialize;
+    let no_closure = environments("", false, compile);
+    let closure_branch = "if (make) return function() { return value; };";
+    let untaken = environments(closure_branch, false, compile);
+    let taken = environments(closure_branch, true, compile);
+    assert_eq!(untaken, no_closure, "untaken closure adds environments");
+    assert_eq!(taken - untaken, CALLS, "one environment per taken closure");
 }
 
 #[test]
@@ -4393,193 +4353,358 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 #[test]
 fn array_like_list_roots_release_after_callback_completion() {
     use super::operations::ArrayLikeElementKind;
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for property_keys in [false, true] {
-            for phase in [
-                "accept",
-                "length-throw",
-                "coercion-throw",
-                "element-throw",
-                "invalid",
-                "reserve",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    var marker = {{kind:'{phase}'}}, reads = 0;
-                    function makeList() {{return {{get length() {{
-                        $262.gc(); if ('{phase}' === 'length-throw') throw marker;
-                        return {{valueOf() {{
-                            $262.gc(); if ('{phase}' === 'coercion-throw') throw marker;
-                            return '{phase}' === 'reserve' ? Infinity : 2;
-                        }}}};
-                    }}, get 0() {{
-                        $262.gc(); reads++;
-                        if ('{phase}' === 'invalid') return undefined;
-                        return {property_keys} ? Symbol('first') : {{rank:42}};
-                    }}, get 1() {{
-                        $262.gc(); reads++;
-                        if ('{phase}' === 'element-throw') throw marker;
-                        return {property_keys} ? 'later' : {{rank:43}};
-                    }}}};}}
-                "#
-                );
-                let program = compile(&source, "array-like-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let make = vm.intern_atom("makeList");
-                let make = vm.own_property(vm.realm.globals, make).unwrap();
-                let list = vm
-                    .call_value(&program, make, Value::UNDEFINED, &[])
-                    .unwrap();
-                let weak = vm.heap.weak_handle(list).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let kind = if property_keys {
-                    ArrayLikeElementKind::PropertyKey
+    let compile = Engine::specialize;
+    for property_keys in [false, true] {
+        for phase in [
+            "accept",
+            "length-throw",
+            "coercion-throw",
+            "element-throw",
+            "invalid",
+            "reserve",
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                var marker = {{kind:'{phase}'}}, reads = 0;
+                function makeList() {{return {{get length() {{
+                    $262.gc(); if ('{phase}' === 'length-throw') throw marker;
+                    return {{valueOf() {{
+                        $262.gc(); if ('{phase}' === 'coercion-throw') throw marker;
+                        return '{phase}' === 'reserve' ? Infinity : 2;
+                    }}}};
+                }}, get 0() {{
+                    $262.gc(); reads++;
+                    if ('{phase}' === 'invalid') return undefined;
+                    return {property_keys} ? Symbol('first') : {{rank:42}};
+                }}, get 1() {{
+                    $262.gc(); reads++;
+                    if ('{phase}' === 'element-throw') throw marker;
+                    return {property_keys} ? 'later' : {{rank:43}};
+                }}}};}}
+            "#
+            );
+            let program = compile(&source, "array-like-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let make = vm.intern_atom("makeList");
+            let make = vm.own_property(vm.realm.globals, make).unwrap();
+            let list = vm
+                .call_value(&program, make, Value::UNDEFINED, &[])
+                .unwrap();
+            let weak = vm.heap.weak_handle(list).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let kind = if property_keys {
+                ArrayLikeElementKind::PropertyKey
+            } else {
+                ArrayLikeElementKind::Any
+            };
+            let result = vm.create_list_from_array_like(&program, list, kind);
+            if phase == "accept" || (phase == "invalid" && !property_keys) {
+                let values = result.unwrap();
+                assert_eq!(values.len(), 2);
+                if phase == "invalid" {
+                    assert!(values[0].is_undefined());
+                } else if property_keys {
+                    assert!(vm.heap.is_symbol(values[0]));
                 } else {
-                    ArrayLikeElementKind::Any
-                };
-                let result = vm.create_list_from_array_like(&program, list, kind);
-                if phase == "accept" || (phase == "invalid" && !property_keys) {
-                    let values = result.unwrap();
-                    assert_eq!(values.len(), 2);
-                    if phase == "invalid" {
-                        assert!(values[0].is_undefined());
-                    } else if property_keys {
-                        assert!(vm.heap.is_symbol(values[0]));
-                    } else {
-                        let rank = vm.intern_atom("rank");
-                        assert_eq!(vm.own_property(values[0], rank), Some(Value::number(42.0)));
-                    }
-                    if property_keys {
-                        assert_eq!(vm.to_string(&program, values[1]).unwrap(), "later");
-                    } else {
-                        let rank = vm.intern_atom("rank");
-                        assert_eq!(vm.own_property(values[1], rank), Some(Value::number(43.0)));
-                    }
-                } else if phase == "reserve" || phase == "invalid" {
-                    assert!(
-                        vm.format_error(&program, &result.unwrap_err())
-                            .contains("TypeError")
-                    );
-                } else {
-                    let marker = vm.intern_atom("marker");
-                    assert_eq!(
-                        result.unwrap_err().thrown_value(),
-                        vm.own_property(vm.realm.globals, marker)
-                    );
+                    let rank = vm.intern_atom("rank");
+                    assert_eq!(vm.own_property(values[0], rank), Some(Value::number(42.0)));
                 }
-                let reads = vm.intern_atom("reads");
-                let expected = if phase == "invalid" && property_keys {
-                    1.0
-                } else if matches!(phase, "accept" | "invalid" | "element-throw") {
-                    2.0
+                if property_keys {
+                    assert_eq!(vm.to_string(&program, values[1]).unwrap(), "later");
                 } else {
-                    0.0
-                };
-                assert_eq!(
-                    vm.own_property(vm.realm.globals, reads),
-                    Some(Value::number(expected))
-                );
-                assert_eq!(
-                    vm.heap.root_count_for_test(),
-                    roots,
-                    "{phase}/{property_keys}"
-                );
-                assert_eq!(vm.active_call_roots.len(), calls, "{phase}/{property_keys}");
-                vm.collect_now(&program);
+                    let rank = vm.intern_atom("rank");
+                    assert_eq!(vm.own_property(values[1], rank), Some(Value::number(43.0)));
+                }
+            } else if phase == "reserve" || phase == "invalid" {
                 assert!(
-                    vm.heap.weak_value(weak).is_none(),
-                    "{phase}/{property_keys}"
+                    vm.format_error(&program, &result.unwrap_err())
+                        .contains("TypeError")
+                );
+            } else {
+                let marker = vm.intern_atom("marker");
+                assert_eq!(
+                    result.unwrap_err().thrown_value(),
+                    vm.own_property(vm.realm.globals, marker)
                 );
             }
+            let reads = vm.intern_atom("reads");
+            let expected = if phase == "invalid" && property_keys {
+                1.0
+            } else if matches!(phase, "accept" | "invalid" | "element-throw") {
+                2.0
+            } else {
+                0.0
+            };
+            assert_eq!(
+                vm.own_property(vm.realm.globals, reads),
+                Some(Value::number(expected))
+            );
+            assert_eq!(
+                vm.heap.root_count_for_test(),
+                roots,
+                "{phase}/{property_keys}"
+            );
+            assert_eq!(vm.active_call_roots.len(), calls, "{phase}/{property_keys}");
+            vm.collect_now(&program);
+            assert!(
+                vm.heap.weak_value(weak).is_none(),
+                "{phase}/{property_keys}"
+            );
         }
     }
 }
 
 #[test]
 fn proxy_own_key_roots_release_after_invariant_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "accept",
+        "lookup-throw",
+        "trap-throw",
+        "result-throw",
+        "extensible-throw",
+        "target-keys-throw",
+        "descriptor-throw",
+        "omit",
+        "duplicate",
+        "invalid-type",
+        "extra",
+        "revoked",
+        "fallback",
     ] {
-        for phase in [
-            "accept",
-            "lookup-throw",
-            "trap-throw",
-            "result-throw",
-            "extensible-throw",
-            "target-keys-throw",
-            "descriptor-throw",
-            "omit",
-            "duplicate",
-            "invalid-type",
-            "extra",
-            "revoked",
-            "fallback",
-        ] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var marker = {{kind:'{phase}'}};
+            function makeProxy() {{
+                var target = {{first:42, later:43}};
+                Object.defineProperty(target,'first',{{configurable:false}});
+                Object.preventExtensions(target);
+                target = new Proxy(target, {{isExtensible(object) {{
+                    $262.gc(); if ('{phase}' === 'extensible-throw') throw marker;
+                    return Reflect.isExtensible(object);
+                }}, ownKeys(object) {{
+                    $262.gc(); if ('{phase}' === 'target-keys-throw') throw marker;
+                    return Reflect.ownKeys(object);
+                }}, getOwnPropertyDescriptor(object,key) {{
+                    $262.gc(); if ('{phase}' === 'descriptor-throw' && key === 'later') throw marker;
+                    return Reflect.getOwnPropertyDescriptor(object,key);
+                }}}});
+                var handler = {{get ownKeys() {{
+                    $262.gc(); if ('{phase}' === 'lookup-throw') throw marker;
+                    if ('{phase}' === 'fallback') return null;
+                    return function() {{
+                        $262.gc(); if ('{phase}' === 'trap-throw') throw marker;
+                        if ('{phase}' === 'omit') return ['later'];
+                        if ('{phase}' === 'duplicate') return ['first','first'];
+                        if ('{phase}' === 'extra') return ['first','later','extra'];
+                        if ('{phase}' === 'invalid-type') return [undefined];
+                        return {{length:2, get 0() {{return 'first';}}, get 1() {{
+                            $262.gc(); if ('{phase}' === 'result-throw') throw marker; return 'later';
+                        }}}};
+                    }};
+                }}}};
+                if ('{phase}' === 'revoked') {{var revoked=Proxy.revocable(target,handler);revoked.revoke();return revoked.proxy;}}
+                return new Proxy(target,handler);
+            }}
+        "#
+        );
+        let program = compile(&source, "proxy-own-key-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let make = vm.intern_atom("makeProxy");
+        let make = vm.own_property(vm.realm.globals, make).unwrap();
+        let proxy = vm
+            .call_value(&program, make, Value::UNDEFINED, &[])
+            .unwrap();
+        let weak = vm.heap.weak_handle(proxy).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.proxy_own_keys(&program, proxy);
+        match phase {
+            "accept" | "fallback" => {
+                let keys = result.unwrap();
+                assert_eq!(
+                    keys.iter()
+                        .map(|key| vm.to_string(&program, *key).unwrap())
+                        .collect::<Vec<_>>(),
+                    ["first", "later"]
+                );
+            }
+            "omit" | "duplicate" | "extra" | "invalid-type" | "revoked" => assert!(
+                vm.format_error(&program, &result.unwrap_err())
+                    .contains("TypeError")
+            ),
+            _ => {
+                let marker = vm.intern_atom("marker");
+                assert_eq!(
+                    result.unwrap_err().thrown_value(),
+                    vm.own_property(vm.realm.globals, marker)
+                );
+            }
+        }
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+        assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
+    }
+}
+
+#[test]
+fn own_enumeration_roots_release_after_callback_completion() {
+    use super::object_keys::EnumerableOwnPropertyKind;
+    let compile = Engine::specialize;
+    for kind in ["keys", "values", "entries"] {
+        for phase in ["accept", "own-keys-throw", "descriptor-throw", "get-throw"] {
             let mut vm = Vm::new(TestHost::default().with_test262());
             let source = format!(
                 r#"
                 var marker = {{kind:'{phase}'}};
-                function makeProxy() {{
-                    var target = {{first:42, later:43}};
-                    Object.defineProperty(target,'first',{{configurable:false}});
-                    Object.preventExtensions(target);
-                    target = new Proxy(target, {{isExtensible(object) {{
-                        $262.gc(); if ('{phase}' === 'extensible-throw') throw marker;
-                        return Reflect.isExtensible(object);
-                    }}, ownKeys(object) {{
-                        $262.gc(); if ('{phase}' === 'target-keys-throw') throw marker;
-                        return Reflect.ownKeys(object);
-                    }}, getOwnPropertyDescriptor(object,key) {{
-                        $262.gc(); if ('{phase}' === 'descriptor-throw' && key === 'later') throw marker;
-                        return Reflect.getOwnPropertyDescriptor(object,key);
+                function makeSource() {{return new Proxy({{}}, {{get ownKeys() {{
+                    $262.gc(); return function() {{
+                        $262.gc(); if ('{phase}' === 'own-keys-throw') throw marker;
+                        return ['first','later',Symbol('ignored')];
+                    }};
+                }}, getOwnPropertyDescriptor(object,key) {{
+                    $262.gc(); if (key === 'later' && '{phase}' === 'descriptor-throw') throw marker;
+                    return {{enumerable:true, configurable:true, writable:true, value:undefined}};
+                }}, get(object,key) {{
+                    $262.gc(); if (key === 'later' && '{phase}' === 'get-throw') throw marker;
+                    return {{rank:key === 'first' ? 42 : 43}};
+                }}}});}}
+            "#
+            );
+            let program = compile(&source, "enumeration-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let make = vm.intern_atom("makeSource");
+            let make = vm.own_property(vm.realm.globals, make).unwrap();
+            let source = vm
+                .call_value(&program, make, Value::UNDEFINED, &[])
+                .unwrap();
+            let source_weak = vm.heap.weak_handle(source).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let projection = match kind {
+                "keys" => EnumerableOwnPropertyKind::Key,
+                "values" => EnumerableOwnPropertyKind::Value,
+                _ => EnumerableOwnPropertyKind::KeyValue,
+            };
+            let result = vm.enumerable_own_properties(&program, source, projection);
+            let succeeds = phase == "accept" || (phase == "get-throw" && kind == "keys");
+            let result_weak = if succeeds {
+                let result = result.unwrap();
+                let values = vm.array_values(result).unwrap();
+                assert_eq!(values.len(), 2, "{kind}/{phase}");
+                for (index, value) in values.into_iter().enumerate() {
+                    if kind == "keys" {
+                        assert_eq!(
+                            vm.to_string(&program, value).unwrap(),
+                            ["first", "later"][index]
+                        );
+                    } else {
+                        let value = if kind == "entries" {
+                            let pair = vm.array_values(value).unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, pair[0]).unwrap(),
+                                ["first", "later"][index]
+                            );
+                            pair[1]
+                        } else {
+                            value
+                        };
+                        let rank = vm.intern_atom("rank");
+                        assert_eq!(
+                            vm.own_property(value, rank),
+                            Some(Value::number(42.0 + index as f64))
+                        );
+                    }
+                }
+                Some(vm.heap.weak_handle(result).unwrap())
+            } else {
+                let marker = vm.intern_atom("marker");
+                assert_eq!(
+                    result.unwrap_err().thrown_value(),
+                    vm.own_property(vm.realm.globals, marker)
+                );
+                None
+            };
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{kind}/{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls, "{kind}/{phase}");
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(source_weak).is_none(), "{kind}/{phase}");
+            if let Some(result_weak) = result_weak {
+                assert!(vm.heap.weak_value(result_weak).is_none(), "{kind}/{phase}");
+            }
+        }
+    }
+}
+
+#[test]
+fn proxy_set_roots_release_after_collecting_completion() {
+    use super::property_key::PropertyKey;
+    let compile = Engine::specialize;
+    for symbol in [false, true] {
+        for phase in [
+            "accept",
+            "reject",
+            "lookup-throw",
+            "trap-throw",
+            "descriptor-throw",
+            "frozen",
+            "forward",
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                var events = [], marker = {{kind:'{phase}'}};
+                function makeOperands() {{
+                    var key = {symbol} ? Symbol('entry') : 'entry';
+                    var target = {{tag:41}};
+                    if ('{phase}' === 'frozen') Object.defineProperty(target, key, {{value:99}});
+                    target = new Proxy(target, {{getOwnPropertyDescriptor(object, key) {{
+                        $262.gc(); events.push('descriptor');
+                        if ('{phase}' === 'descriptor-throw') throw marker;
+                        return Reflect.getOwnPropertyDescriptor(object, key);
                     }}}});
-                    var handler = {{get ownKeys() {{
-                        $262.gc(); if ('{phase}' === 'lookup-throw') throw marker;
-                        if ('{phase}' === 'fallback') return null;
-                        return function() {{
-                            $262.gc(); if ('{phase}' === 'trap-throw') throw marker;
-                            if ('{phase}' === 'omit') return ['later'];
-                            if ('{phase}' === 'duplicate') return ['first','first'];
-                            if ('{phase}' === 'extra') return ['first','later','extra'];
-                            if ('{phase}' === 'invalid-type') return [undefined];
-                            return {{length:2, get 0() {{return 'first';}}, get 1() {{
-                                $262.gc(); if ('{phase}' === 'result-throw') throw marker; return 'later';
-                            }}}};
+                    var handler = {{get set() {{
+                        $262.gc(); events.push('lookup');
+                        if ('{phase}' === 'lookup-throw') throw marker;
+                        if ('{phase}' === 'forward') return undefined;
+                        return function(target, key, value, receiver) {{
+                            $262.gc(); events.push('trap');
+                            if (target.tag !== 41 || value.rank !== 42 || receiver.rank !== 43
+                                || typeof key !== ({symbol} ? 'symbol' : 'string')) throw 'lost operand';
+                            if ('{phase}' === 'trap-throw') throw marker;
+                            return '{phase}' !== 'reject';
                         }};
                     }}}};
-                    if ('{phase}' === 'revoked') {{var revoked=Proxy.revocable(target,handler);revoked.revoke();return revoked.proxy;}}
-                    return new Proxy(target,handler);
+                    return [target, handler, {{rank:43}}, key, {{rank:42}}];
                 }}
             "#
             );
-            let program = compile(&source, "proxy-own-key-roots.js").unwrap();
+            let program = compile(&source, "proxy-set-roots.js").unwrap();
             vm.execute(&program).unwrap();
-            let make = vm.intern_atom("makeProxy");
+            let make = vm.intern_atom("makeOperands");
             let make = vm.own_property(vm.realm.globals, make).unwrap();
-            let proxy = vm
+            let operands = vm
                 .call_value(&program, make, Value::UNDEFINED, &[])
                 .unwrap();
-            let weak = vm.heap.weak_handle(proxy).unwrap();
+            let [target, handler, receiver, key, value]: [Value; 5] =
+                vm.array_values(operands).unwrap().try_into().unwrap();
+            let weak = vm.heap.weak_handle(value).unwrap();
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
-            let result = vm.proxy_own_keys(&program, proxy);
+            let property = if symbol {
+                PropertyKey::symbol(key)
+            } else {
+                PropertyKey::string(vm.intern_atom("entry"))
+            };
+            let result = vm.proxy_set(&program, target, handler, receiver, property, value);
             match phase {
-                "accept" | "fallback" => {
-                    let keys = result.unwrap();
-                    assert_eq!(
-                        keys.iter()
-                            .map(|key| vm.to_string(&program, *key).unwrap())
-                            .collect::<Vec<_>>(),
-                        ["first", "later"]
-                    );
-                }
-                "omit" | "duplicate" | "extra" | "invalid-type" | "revoked" => assert!(
+                "accept" | "forward" => assert!(result.unwrap()),
+                "reject" => assert!(!result.unwrap()),
+                "frozen" => assert!(
                     vm.format_error(&program, &result.unwrap_err())
                         .contains("TypeError")
                 ),
@@ -4591,178 +4716,96 @@ fn proxy_own_key_roots_release_after_invariant_completion() {
                     );
                 }
             }
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
-            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+            assert_eq!(
+                vm.heap.root_count_for_test(),
+                roots,
+                "{phase}, symbol={symbol}"
+            );
+            assert_eq!(
+                vm.active_call_roots.len(),
+                calls,
+                "{phase}, symbol={symbol}"
+            );
+            let rank = vm.intern_atom("rank");
+            assert_eq!(
+                vm.own_property(value, rank),
+                Some(Value::number(42.0)),
+                "{phase}"
+            );
+            let events = vm.intern_atom("events");
+            let events = vm.own_property(vm.realm.globals, events).unwrap();
+            let observed = vm
+                .array_values(events)
+                .unwrap()
+                .iter()
+                .map(|value| vm.to_string(&program, *value).unwrap())
+                .collect::<Vec<_>>();
+            let expected: &[&str] = match phase {
+                "lookup-throw" | "forward" => &["lookup"],
+                "reject" | "trap-throw" => &["lookup", "trap"],
+                _ => &["lookup", "trap", "descriptor"],
+            };
+            assert_eq!(observed, expected, "{phase}, symbol={symbol}");
             vm.collect_now(&program);
-            assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
+            assert!(
+                vm.heap.weak_value(weak).is_none(),
+                "{phase}, symbol={symbol}"
+            );
         }
     }
 }
 
 #[test]
-fn own_enumeration_roots_release_after_callback_completion() {
-    use super::object_keys::EnumerableOwnPropertyKind;
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for kind in ["keys", "values", "entries"] {
-            for phase in ["accept", "own-keys-throw", "descriptor-throw", "get-throw"] {
+fn receiver_proxy_writes_root_operands_across_traps() {
+    let compile = Engine::specialize;
+    for symbol in [false, true] {
+        for existing in [false, true] {
+            for phase in ["accept", "reject", "descriptor-throw", "define-throw"] {
                 let mut vm = Vm::new(TestHost::default().with_test262());
                 let source = format!(
                     r#"
-                    var marker = {{kind:'{phase}'}};
-                    function makeSource() {{return new Proxy({{}}, {{get ownKeys() {{
-                        $262.gc(); return function() {{
-                            $262.gc(); if ('{phase}' === 'own-keys-throw') throw marker;
-                            return ['first','later',Symbol('ignored')];
-                        }};
-                    }}, getOwnPropertyDescriptor(object,key) {{
-                        $262.gc(); if (key === 'later' && '{phase}' === 'descriptor-throw') throw marker;
-                        return {{enumerable:true, configurable:true, writable:true, value:undefined}};
-                    }}, get(object,key) {{
-                        $262.gc(); if (key === 'later' && '{phase}' === 'get-throw') throw marker;
-                        return {{rank:key === 'first' ? 42 : 43}};
-                    }}}});}}
-                "#
+                var marker = {{kind:'{phase}'}};
+                function makeOperands() {{
+                    var key = {symbol} ? Symbol('entry') : 'entry', receiver = {{tag:41}};
+                    if ({existing}) receiver[key] = 99;
+                    receiver = new Proxy(receiver, {{getOwnPropertyDescriptor(object, key) {{
+                        $262.gc();
+                        if (({symbol} ? key.description : key) !== 'entry' || object.tag !== 41) throw 'lost operand';
+                        if ('{phase}' === 'descriptor-throw') throw marker;
+                        return Reflect.getOwnPropertyDescriptor(object, key);
+                    }}, defineProperty(object, key, descriptor) {{
+                        $262.gc();
+                        if (({symbol} ? key.description : key) !== 'entry' || descriptor.value.rank !== 42
+                            || Object.hasOwn(descriptor, 'writable') !== !{existing}) throw 'lost operand';
+                        if ('{phase}' === 'define-throw') throw marker;
+                        if ('{phase}' === 'reject') return false;
+                        return Reflect.defineProperty(object, key, descriptor);
+                    }}}});
+                    return [{{}}, key, {{rank:42}}, receiver];
+                }}
+            "#
                 );
-                let program = compile(&source, "enumeration-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let make = vm.intern_atom("makeSource");
-                let make = vm.own_property(vm.realm.globals, make).unwrap();
-                let source = vm
-                    .call_value(&program, make, Value::UNDEFINED, &[])
-                    .unwrap();
-                let source_weak = vm.heap.weak_handle(source).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let projection = match kind {
-                    "keys" => EnumerableOwnPropertyKind::Key,
-                    "values" => EnumerableOwnPropertyKind::Value,
-                    _ => EnumerableOwnPropertyKind::KeyValue,
-                };
-                let result = vm.enumerable_own_properties(&program, source, projection);
-                let succeeds = phase == "accept" || (phase == "get-throw" && kind == "keys");
-                let result_weak = if succeeds {
-                    let result = result.unwrap();
-                    let values = vm.array_values(result).unwrap();
-                    assert_eq!(values.len(), 2, "{kind}/{phase}");
-                    for (index, value) in values.into_iter().enumerate() {
-                        if kind == "keys" {
-                            assert_eq!(
-                                vm.to_string(&program, value).unwrap(),
-                                ["first", "later"][index]
-                            );
-                        } else {
-                            let value = if kind == "entries" {
-                                let pair = vm.array_values(value).unwrap();
-                                assert_eq!(
-                                    vm.to_string(&program, pair[0]).unwrap(),
-                                    ["first", "later"][index]
-                                );
-                                pair[1]
-                            } else {
-                                value
-                            };
-                            let rank = vm.intern_atom("rank");
-                            assert_eq!(
-                                vm.own_property(value, rank),
-                                Some(Value::number(42.0 + index as f64))
-                            );
-                        }
-                    }
-                    Some(vm.heap.weak_handle(result).unwrap())
-                } else {
-                    let marker = vm.intern_atom("marker");
-                    assert_eq!(
-                        result.unwrap_err().thrown_value(),
-                        vm.own_property(vm.realm.globals, marker)
-                    );
-                    None
-                };
-                assert_eq!(vm.heap.root_count_for_test(), roots, "{kind}/{phase}");
-                assert_eq!(vm.active_call_roots.len(), calls, "{kind}/{phase}");
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(source_weak).is_none(), "{kind}/{phase}");
-                if let Some(result_weak) = result_weak {
-                    assert!(vm.heap.weak_value(result_weak).is_none(), "{kind}/{phase}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn proxy_set_roots_release_after_collecting_completion() {
-    use super::property_key::PropertyKey;
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for symbol in [false, true] {
-            for phase in [
-                "accept",
-                "reject",
-                "lookup-throw",
-                "trap-throw",
-                "descriptor-throw",
-                "frozen",
-                "forward",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    var events = [], marker = {{kind:'{phase}'}};
-                    function makeOperands() {{
-                        var key = {symbol} ? Symbol('entry') : 'entry';
-                        var target = {{tag:41}};
-                        if ('{phase}' === 'frozen') Object.defineProperty(target, key, {{value:99}});
-                        target = new Proxy(target, {{getOwnPropertyDescriptor(object, key) {{
-                            $262.gc(); events.push('descriptor');
-                            if ('{phase}' === 'descriptor-throw') throw marker;
-                            return Reflect.getOwnPropertyDescriptor(object, key);
-                        }}}});
-                        var handler = {{get set() {{
-                            $262.gc(); events.push('lookup');
-                            if ('{phase}' === 'lookup-throw') throw marker;
-                            if ('{phase}' === 'forward') return undefined;
-                            return function(target, key, value, receiver) {{
-                                $262.gc(); events.push('trap');
-                                if (target.tag !== 41 || value.rank !== 42 || receiver.rank !== 43
-                                    || typeof key !== ({symbol} ? 'symbol' : 'string')) throw 'lost operand';
-                                if ('{phase}' === 'trap-throw') throw marker;
-                                return '{phase}' !== 'reject';
-                            }};
-                        }}}};
-                        return [target, handler, {{rank:43}}, key, {{rank:42}}];
-                    }}
-                "#
-                );
-                let program = compile(&source, "proxy-set-roots.js").unwrap();
+                let program = compile(&source, "symbol-receiver-roots.js").unwrap();
                 vm.execute(&program).unwrap();
                 let make = vm.intern_atom("makeOperands");
                 let make = vm.own_property(vm.realm.globals, make).unwrap();
                 let operands = vm
                     .call_value(&program, make, Value::UNDEFINED, &[])
                     .unwrap();
-                let [target, handler, receiver, key, value]: [Value; 5] =
+                let [target, key, value, receiver]: [Value; 4] =
                     vm.array_values(operands).unwrap().try_into().unwrap();
                 let weak = vm.heap.weak_handle(value).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
-                let property = if symbol {
-                    PropertyKey::symbol(key)
+                let result = if symbol {
+                    vm.set_symbol_property_with_receiver(&program, target, key, value, receiver)
                 } else {
-                    PropertyKey::string(vm.intern_atom("entry"))
+                    let atom = vm.intern_atom("entry");
+                    vm.set_property_with_receiver(&program, target, atom, value, receiver)
                 };
-                let result = vm.proxy_set(&program, target, handler, receiver, property, value);
                 match phase {
-                    "accept" | "forward" => assert!(result.unwrap()),
+                    "accept" => assert!(result.unwrap()),
                     "reject" => assert!(!result.unwrap()),
-                    "frozen" => assert!(
-                        vm.format_error(&program, &result.unwrap_err())
-                            .contains("TypeError")
-                    ),
                     _ => {
                         let marker = vm.intern_atom("marker");
                         assert_eq!(
@@ -4774,12 +4817,12 @@ fn proxy_set_roots_release_after_collecting_completion() {
                 assert_eq!(
                     vm.heap.root_count_for_test(),
                     roots,
-                    "{phase}, symbol={symbol}"
+                    "{phase}, existing={existing}"
                 );
                 assert_eq!(
                     vm.active_call_roots.len(),
                     calls,
-                    "{phase}, symbol={symbol}"
+                    "{phase}, existing={existing}"
                 );
                 let rank = vm.intern_atom("rank");
                 assert_eq!(
@@ -4787,114 +4830,11 @@ fn proxy_set_roots_release_after_collecting_completion() {
                     Some(Value::number(42.0)),
                     "{phase}"
                 );
-                let events = vm.intern_atom("events");
-                let events = vm.own_property(vm.realm.globals, events).unwrap();
-                let observed = vm
-                    .array_values(events)
-                    .unwrap()
-                    .iter()
-                    .map(|value| vm.to_string(&program, *value).unwrap())
-                    .collect::<Vec<_>>();
-                let expected: &[&str] = match phase {
-                    "lookup-throw" | "forward" => &["lookup"],
-                    "reject" | "trap-throw" => &["lookup", "trap"],
-                    _ => &["lookup", "trap", "descriptor"],
-                };
-                assert_eq!(observed, expected, "{phase}, symbol={symbol}");
                 vm.collect_now(&program);
                 assert!(
                     vm.heap.weak_value(weak).is_none(),
-                    "{phase}, symbol={symbol}"
+                    "{phase}, existing={existing}"
                 );
-            }
-        }
-    }
-}
-
-#[test]
-fn receiver_proxy_writes_root_operands_across_traps() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for symbol in [false, true] {
-            for existing in [false, true] {
-                for phase in ["accept", "reject", "descriptor-throw", "define-throw"] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    var marker = {{kind:'{phase}'}};
-                    function makeOperands() {{
-                        var key = {symbol} ? Symbol('entry') : 'entry', receiver = {{tag:41}};
-                        if ({existing}) receiver[key] = 99;
-                        receiver = new Proxy(receiver, {{getOwnPropertyDescriptor(object, key) {{
-                            $262.gc();
-                            if (({symbol} ? key.description : key) !== 'entry' || object.tag !== 41) throw 'lost operand';
-                            if ('{phase}' === 'descriptor-throw') throw marker;
-                            return Reflect.getOwnPropertyDescriptor(object, key);
-                        }}, defineProperty(object, key, descriptor) {{
-                            $262.gc();
-                            if (({symbol} ? key.description : key) !== 'entry' || descriptor.value.rank !== 42
-                                || Object.hasOwn(descriptor, 'writable') !== !{existing}) throw 'lost operand';
-                            if ('{phase}' === 'define-throw') throw marker;
-                            if ('{phase}' === 'reject') return false;
-                            return Reflect.defineProperty(object, key, descriptor);
-                        }}}});
-                        return [{{}}, key, {{rank:42}}, receiver];
-                    }}
-                "#
-                    );
-                    let program = compile(&source, "symbol-receiver-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let make = vm.intern_atom("makeOperands");
-                    let make = vm.own_property(vm.realm.globals, make).unwrap();
-                    let operands = vm
-                        .call_value(&program, make, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let [target, key, value, receiver]: [Value; 4] =
-                        vm.array_values(operands).unwrap().try_into().unwrap();
-                    let weak = vm.heap.weak_handle(value).unwrap();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = if symbol {
-                        vm.set_symbol_property_with_receiver(&program, target, key, value, receiver)
-                    } else {
-                        let atom = vm.intern_atom("entry");
-                        vm.set_property_with_receiver(&program, target, atom, value, receiver)
-                    };
-                    match phase {
-                        "accept" => assert!(result.unwrap()),
-                        "reject" => assert!(!result.unwrap()),
-                        _ => {
-                            let marker = vm.intern_atom("marker");
-                            assert_eq!(
-                                result.unwrap_err().thrown_value(),
-                                vm.own_property(vm.realm.globals, marker)
-                            );
-                        }
-                    }
-                    assert_eq!(
-                        vm.heap.root_count_for_test(),
-                        roots,
-                        "{phase}, existing={existing}"
-                    );
-                    assert_eq!(
-                        vm.active_call_roots.len(),
-                        calls,
-                        "{phase}, existing={existing}"
-                    );
-                    let rank = vm.intern_atom("rank");
-                    assert_eq!(
-                        vm.own_property(value, rank),
-                        Some(Value::number(42.0)),
-                        "{phase}"
-                    );
-                    vm.collect_now(&program);
-                    assert!(
-                        vm.heap.weak_value(weak).is_none(),
-                        "{phase}, existing={existing}"
-                    );
-                }
             }
         }
     }
@@ -4902,295 +4842,57 @@ fn receiver_proxy_writes_root_operands_across_traps() {
 
 #[test]
 fn legacy_accessor_record_roots_release_after_each_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for native in [
-            Native::ObjectPrototypeDefineGetter,
-            Native::ObjectPrototypeDefineSetter,
-        ] {
-            for phase in [
-                "success",
-                "boxed",
-                "key-throw",
-                "invalid",
-                "proxy-reject",
-                "proxy-throw",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    var marker = {{kind:'{phase}'}};
-                    var target = '{phase}' === 'boxed' ? 1 : {{}};
-                    if ('{phase}'.startsWith('proxy-')) target = new Proxy(target, {{defineProperty() {{
-                        $262.gc(); if ('{phase}' === 'proxy-throw') throw marker; return false;
-                    }}}});
-                    var key = {{toString() {{$262.gc(); if ('{phase}' === 'key-throw') throw marker; return 'entry';}}}};
-                    var makeAccessor = function() {{return function() {{return 42;}};}};
-                "#
-                );
-                let program = compile(&source, "legacy-accessor-record-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let values = ["target", "key", "marker", "makeAccessor"].map(|name| {
-                    let atom = vm.intern_atom(name);
-                    vm.own_property(vm.realm.globals, atom).unwrap()
-                });
-                let accessor = vm
-                    .call_value(&program, values[3], Value::UNDEFINED, &[])
-                    .unwrap();
-                let weak = vm.heap.weak_handle(accessor).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let argument = if phase == "invalid" {
-                    Value::UNDEFINED
-                } else {
-                    accessor
-                };
-                let result = vm.object_prototype_define_accessor(
-                    &program,
-                    native,
-                    values[0],
-                    &[values[1], argument],
-                );
-                match phase {
-                    "success" | "boxed" => assert_eq!(result.unwrap(), Value::UNDEFINED),
-                    "invalid" | "proxy-reject" => {
-                        let error = result.unwrap_err();
-                        assert!(vm.format_error(&program, &error).contains("TypeError"));
-                    }
-                    _ => assert_eq!(result.unwrap_err().thrown_value(), Some(values[2])),
-                }
-                assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
-                assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
-                vm.collect_now(&program);
-                assert_eq!(
-                    vm.heap.weak_value(weak).is_some(),
-                    phase == "success",
-                    "{phase}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn class_field_record_roots_release_after_each_completion() {
-    use super::property_key::PropertyKey;
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for native in [
+        Native::ObjectPrototypeDefineGetter,
+        Native::ObjectPrototypeDefineSetter,
     ] {
         for phase in [
-            "ordinary",
-            "symbol",
-            "private",
-            "reject",
+            "success",
+            "boxed",
+            "key-throw",
+            "invalid",
             "proxy-reject",
             "proxy-throw",
         ] {
             let mut vm = Vm::new(TestHost::default().with_test262());
             let source = format!(
                 r#"
-                var target = {{}}, marker = {{kind:'{phase}'}}, symbol = Symbol('entry');
-                if ('{phase}' === 'reject') Object.preventExtensions(target);
+                var marker = {{kind:'{phase}'}};
+                var target = '{phase}' === 'boxed' ? 1 : {{}};
                 if ('{phase}'.startsWith('proxy-')) target = new Proxy(target, {{defineProperty() {{
                     $262.gc(); if ('{phase}' === 'proxy-throw') throw marker; return false;
                 }}}});
-                var makeValue = function() {{return {{rank:42}};}};
+                var key = {{toString() {{$262.gc(); if ('{phase}' === 'key-throw') throw marker; return 'entry';}}}};
+                var makeAccessor = function() {{return function() {{return 42;}};}};
             "#
             );
-            let program = compile(&source, "class-field-record-roots.js").unwrap();
+            let program = compile(&source, "legacy-accessor-record-roots.js").unwrap();
             vm.execute(&program).unwrap();
-            let values = ["target", "marker", "symbol", "makeValue"].map(|name| {
+            let values = ["target", "key", "marker", "makeAccessor"].map(|name| {
                 let atom = vm.intern_atom(name);
                 vm.own_property(vm.realm.globals, atom).unwrap()
             });
-            let atom = vm.intern_atom("entry");
-            let key = match phase {
-                "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(values[1], atom),
-                _ => PropertyKey::string(atom),
-            };
-            let value = vm
+            let accessor = vm
                 .call_value(&program, values[3], Value::UNDEFINED, &[])
                 .unwrap();
-            let weak = vm.heap.weak_handle(value).unwrap();
+            let weak = vm.heap.weak_handle(accessor).unwrap();
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
-            let result = vm.define_class_field(&program, values[0], key, value);
-            match phase {
-                "ordinary" | "symbol" => result.unwrap(),
-                "proxy-throw" => assert_eq!(result.unwrap_err().thrown_value(), Some(values[1])),
-                "private" => assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("private names are not public class-field keys")
-                ),
-                _ => {
-                    let error = result.unwrap_err();
-                    assert!(vm.format_error(&program, &error).contains("TypeError"));
-                }
-            }
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
-            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
-            vm.collect_now(&program);
-            assert_eq!(
-                vm.heap.weak_value(weak).is_some(),
-                matches!(phase, "ordinary" | "symbol"),
-                "{phase}"
-            );
-        }
-    }
-}
-
-#[test]
-fn json_revival_roots_release_after_each_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in [
-            "reviver-throw",
-            "get-throw",
-            "keys-throw",
-            "descriptor-throw",
-            "is-array-throw",
-            "length-throw",
-            "define-throw",
-            "delete-throw",
-            "success",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var marker = {{kind:'{phase}'}};
-                var revive = function(key,value) {{
-                    $262.gc();
-                    if (key === 'first') {{
-                        if ('{phase}' === 'get-throw') this.target = {{get entry() {{$262.gc(); throw marker;}}}};
-                        if ('{phase}' === 'keys-throw') this.target = new Proxy({{}}, {{ownKeys() {{$262.gc(); throw marker;}}}});
-                        if ('{phase}' === 'descriptor-throw') this.target = new Proxy({{entry:1}}, {{getOwnPropertyDescriptor() {{$262.gc(); throw marker;}}}});
-                        if ('{phase}' === 'is-array-throw') {{var revoked = Proxy.revocable({{}},{{}}); revoked.revoke(); this.target = revoked.proxy;}}
-                        if ('{phase}' === 'length-throw') this.target = new Proxy([], {{get(object,key) {{$262.gc(); if (key === 'length') throw marker; return Reflect.get(object,key);}}}});
-                        if ('{phase}' === 'define-throw') this.target = new Proxy({{entry:1}}, {{defineProperty() {{$262.gc(); throw marker;}}}});
-                        if ('{phase}' === 'delete-throw') this.target = new Proxy({{entry:1}}, {{deleteProperty() {{$262.gc(); throw marker;}}}});
-                    }}
-                    if (key === 'entry') {{
-                        if ('{phase}' === 'reviver-throw') throw marker;
-                        if ('{phase}' === 'delete-throw') return undefined;
-                        return {{rank:42}};
-                    }}
-                    return value;
-                }};
-            "#
-            );
-            let program = compile(&source, "json-revival-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let values = ["revive", "marker"].map(|name| {
-                let atom = vm.intern_atom(name);
-                vm.own_property(vm.realm.globals, atom).unwrap()
-            });
-            let text = vm.heap.alloc_string(
-                r#"{"first":0,"target":{"entry":1}}"#.into(),
-            );
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.json_parse(&program, &[text, values[0]]);
-            let weak = match phase {
-                "success" => {
-                    let result = result.unwrap();
-                    let target = vm.intern_atom("target");
-                    let target = vm.own_property(result, target).unwrap();
-                    let entry = vm.intern_atom("entry");
-                    let entry = vm.own_property(target, entry).unwrap();
-                    let rank = vm.intern_atom("rank");
-                    assert_eq!(vm.own_property(entry, rank), Some(Value::number(42.0)));
-                    Some(vm.heap.weak_handle(result).unwrap())
-                }
-                "is-array-throw" => {
-                    let error = result.unwrap_err();
-                    assert!(vm.format_error(&program, &error).contains("TypeError"));
-                    None
-                }
-                _ => {
-                    assert_eq!(
-                        result.unwrap_err().thrown_value(),
-                        Some(values[1]),
-                        "{phase}"
-                    );
-                    None
-                }
+            let argument = if phase == "invalid" {
+                Value::UNDEFINED
+            } else {
+                accessor
             };
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
-            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
-            vm.collect_now(&program);
-            if let Some(weak) = weak {
-                assert!(vm.heap.weak_value(weak).is_none());
-            }
-        }
-    }
-}
-
-#[test]
-fn definition_batch_roots_release_after_each_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in [
-            "own-keys-throw",
-            "own-descriptor-throw",
-            "get-descriptor-throw",
-            "parse-throw",
-            "invalid-late",
-            "define-reject",
-            "define-throw",
-            "success",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var weak, marker = {{kind:'{phase}'}};
-                var backing = {{}};
-                var target = new Proxy(backing, {{defineProperty(object,key,descriptor) {{
-                    $262.gc();
-                    if (key === 'second' && '{phase}' === 'define-reject') return false;
-                    if (key === 'second' && '{phase}' === 'define-throw') throw marker;
-                    return Reflect.defineProperty(object,key,descriptor);
-                }}}});
-                var descriptors = new Proxy({{
-                    first: {{get value() {{var value = {{rank:42}}; weak = new WeakRef(value); $262.gc(); return value;}}}},
-                    second: {{get value() {{$262.gc(); if ('{phase}' === 'parse-throw') throw marker; return 43;}}}}
-                }}, {{
-                    ownKeys() {{$262.gc(); if ('{phase}' === 'own-keys-throw') throw marker; return ['first','second'];}},
-                    getOwnPropertyDescriptor(object,key) {{$262.gc();
-                        if (key === 'second' && '{phase}' === 'own-descriptor-throw') throw marker;
-                        return {{enumerable:true, configurable:true}};
-                    }},
-                    get(object,key) {{$262.gc();
-                        if (key === 'second' && '{phase}' === 'get-descriptor-throw') throw marker;
-                        if (key === 'second' && '{phase}' === 'invalid-late') return {{get:1}};
-                        return Reflect.get(object,key);
-                    }}
-                }});
-            "#
+            let result = vm.object_prototype_define_accessor(
+                &program,
+                native,
+                values[0],
+                &[values[1], argument],
             );
-            let program = compile(&source, "definition-batch-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let values = ["target", "descriptors", "marker"].map(|name| {
-                let atom = vm.intern_atom(name);
-                vm.own_property(vm.realm.globals, atom).unwrap()
-            });
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.object_define_properties(&program, &values[..2]);
-            // End this direct host job before checking temporary-root cleanup.
-            vm.clear_kept_objects();
             match phase {
-                "success" => assert_eq!(result.unwrap(), values[0]),
-                "invalid-late" | "define-reject" => {
+                "success" | "boxed" => assert_eq!(result.unwrap(), Value::UNDEFINED),
+                "invalid" | "proxy-reject" => {
                     let error = result.unwrap_err();
                     assert!(vm.format_error(&program, &error).contains("TypeError"));
                 }
@@ -5198,21 +4900,243 @@ fn definition_batch_roots_release_after_each_completion() {
             }
             assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
             assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
-            let weak = vm.intern_atom("weak");
-            let weak = vm.own_property(vm.realm.globals, weak).unwrap();
-            let weak = match vm.heap.get(weak) {
-                Some(super::Cell::WeakRef { target, .. }) => *target,
-                _ => None,
-            };
             vm.collect_now(&program);
-            if phase != "own-keys-throw" {
-                let weak = weak.expect("first descriptor created a weak value tracker");
+            assert_eq!(
+                vm.heap.weak_value(weak).is_some(),
+                phase == "success",
+                "{phase}"
+            );
+        }
+    }
+}
+
+#[test]
+fn class_field_record_roots_release_after_each_completion() {
+    use super::property_key::PropertyKey;
+    let compile = Engine::specialize;
+    for phase in [
+        "ordinary",
+        "symbol",
+        "private",
+        "reject",
+        "proxy-reject",
+        "proxy-throw",
+    ] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var target = {{}}, marker = {{kind:'{phase}'}}, symbol = Symbol('entry');
+            if ('{phase}' === 'reject') Object.preventExtensions(target);
+            if ('{phase}'.startsWith('proxy-')) target = new Proxy(target, {{defineProperty() {{
+                $262.gc(); if ('{phase}' === 'proxy-throw') throw marker; return false;
+            }}}});
+            var makeValue = function() {{return {{rank:42}};}};
+        "#
+        );
+        let program = compile(&source, "class-field-record-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let values = ["target", "marker", "symbol", "makeValue"].map(|name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        });
+        let atom = vm.intern_atom("entry");
+        let key = match phase {
+            "symbol" => PropertyKey::symbol(values[2]),
+            "private" => PropertyKey::private(values[1], atom),
+            _ => PropertyKey::string(atom),
+        };
+        let value = vm
+            .call_value(&program, values[3], Value::UNDEFINED, &[])
+            .unwrap();
+        let weak = vm.heap.weak_handle(value).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.define_class_field(&program, values[0], key, value);
+        match phase {
+            "ordinary" | "symbol" => result.unwrap(),
+            "proxy-throw" => assert_eq!(result.unwrap_err().thrown_value(), Some(values[1])),
+            "private" => assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("private names are not public class-field keys")
+            ),
+            _ => {
+                let error = result.unwrap_err();
+                assert!(vm.format_error(&program, &error).contains("TypeError"));
+            }
+        }
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+        assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+        vm.collect_now(&program);
+        assert_eq!(
+            vm.heap.weak_value(weak).is_some(),
+            matches!(phase, "ordinary" | "symbol"),
+            "{phase}"
+        );
+    }
+}
+
+#[test]
+fn json_revival_roots_release_after_each_completion() {
+    let compile = Engine::specialize;
+    for phase in [
+        "reviver-throw",
+        "get-throw",
+        "keys-throw",
+        "descriptor-throw",
+        "is-array-throw",
+        "length-throw",
+        "define-throw",
+        "delete-throw",
+        "success",
+    ] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var marker = {{kind:'{phase}'}};
+            var revive = function(key,value) {{
+                $262.gc();
+                if (key === 'first') {{
+                    if ('{phase}' === 'get-throw') this.target = {{get entry() {{$262.gc(); throw marker;}}}};
+                    if ('{phase}' === 'keys-throw') this.target = new Proxy({{}}, {{ownKeys() {{$262.gc(); throw marker;}}}});
+                    if ('{phase}' === 'descriptor-throw') this.target = new Proxy({{entry:1}}, {{getOwnPropertyDescriptor() {{$262.gc(); throw marker;}}}});
+                    if ('{phase}' === 'is-array-throw') {{var revoked = Proxy.revocable({{}},{{}}); revoked.revoke(); this.target = revoked.proxy;}}
+                    if ('{phase}' === 'length-throw') this.target = new Proxy([], {{get(object,key) {{$262.gc(); if (key === 'length') throw marker; return Reflect.get(object,key);}}}});
+                    if ('{phase}' === 'define-throw') this.target = new Proxy({{entry:1}}, {{defineProperty() {{$262.gc(); throw marker;}}}});
+                    if ('{phase}' === 'delete-throw') this.target = new Proxy({{entry:1}}, {{deleteProperty() {{$262.gc(); throw marker;}}}});
+                }}
+                if (key === 'entry') {{
+                    if ('{phase}' === 'reviver-throw') throw marker;
+                    if ('{phase}' === 'delete-throw') return undefined;
+                    return {{rank:42}};
+                }}
+                return value;
+            }};
+        "#
+        );
+        let program = compile(&source, "json-revival-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let values = ["revive", "marker"].map(|name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        });
+        let text = vm.heap.alloc_string(
+            r#"{"first":0,"target":{"entry":1}}"#.into(),
+        );
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.json_parse(&program, &[text, values[0]]);
+        let weak = match phase {
+            "success" => {
+                let result = result.unwrap();
+                let target = vm.intern_atom("target");
+                let target = vm.own_property(result, target).unwrap();
+                let entry = vm.intern_atom("entry");
+                let entry = vm.own_property(target, entry).unwrap();
+                let rank = vm.intern_atom("rank");
+                assert_eq!(vm.own_property(entry, rank), Some(Value::number(42.0)));
+                Some(vm.heap.weak_handle(result).unwrap())
+            }
+            "is-array-throw" => {
+                let error = result.unwrap_err();
+                assert!(vm.format_error(&program, &error).contains("TypeError"));
+                None
+            }
+            _ => {
                 assert_eq!(
-                    vm.heap.weak_value(weak).is_some(),
-                    matches!(phase, "success" | "define-reject" | "define-throw"),
+                    result.unwrap_err().thrown_value(),
+                    Some(values[1]),
                     "{phase}"
                 );
+                None
             }
+        };
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+        assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+        vm.collect_now(&program);
+        if let Some(weak) = weak {
+            assert!(vm.heap.weak_value(weak).is_none());
+        }
+    }
+}
+
+#[test]
+fn definition_batch_roots_release_after_each_completion() {
+    let compile = Engine::specialize;
+    for phase in [
+        "own-keys-throw",
+        "own-descriptor-throw",
+        "get-descriptor-throw",
+        "parse-throw",
+        "invalid-late",
+        "define-reject",
+        "define-throw",
+        "success",
+    ] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var weak, marker = {{kind:'{phase}'}};
+            var backing = {{}};
+            var target = new Proxy(backing, {{defineProperty(object,key,descriptor) {{
+                $262.gc();
+                if (key === 'second' && '{phase}' === 'define-reject') return false;
+                if (key === 'second' && '{phase}' === 'define-throw') throw marker;
+                return Reflect.defineProperty(object,key,descriptor);
+            }}}});
+            var descriptors = new Proxy({{
+                first: {{get value() {{var value = {{rank:42}}; weak = new WeakRef(value); $262.gc(); return value;}}}},
+                second: {{get value() {{$262.gc(); if ('{phase}' === 'parse-throw') throw marker; return 43;}}}}
+            }}, {{
+                ownKeys() {{$262.gc(); if ('{phase}' === 'own-keys-throw') throw marker; return ['first','second'];}},
+                getOwnPropertyDescriptor(object,key) {{$262.gc();
+                    if (key === 'second' && '{phase}' === 'own-descriptor-throw') throw marker;
+                    return {{enumerable:true, configurable:true}};
+                }},
+                get(object,key) {{$262.gc();
+                    if (key === 'second' && '{phase}' === 'get-descriptor-throw') throw marker;
+                    if (key === 'second' && '{phase}' === 'invalid-late') return {{get:1}};
+                    return Reflect.get(object,key);
+                }}
+            }});
+        "#
+        );
+        let program = compile(&source, "definition-batch-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let values = ["target", "descriptors", "marker"].map(|name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        });
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.object_define_properties(&program, &values[..2]);
+        // End this direct host job before checking temporary-root cleanup.
+        vm.clear_kept_objects();
+        match phase {
+            "success" => assert_eq!(result.unwrap(), values[0]),
+            "invalid-late" | "define-reject" => {
+                let error = result.unwrap_err();
+                assert!(vm.format_error(&program, &error).contains("TypeError"));
+            }
+            _ => assert_eq!(result.unwrap_err().thrown_value(), Some(values[2])),
+        }
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+        assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+        let weak = vm.intern_atom("weak");
+        let weak = vm.own_property(vm.realm.globals, weak).unwrap();
+        let weak = match vm.heap.get(weak) {
+            Some(super::Cell::WeakRef { target, .. }) => *target,
+            _ => None,
+        };
+        vm.collect_now(&program);
+        if phase != "own-keys-throw" {
+            let weak = weak.expect("first descriptor created a weak value tracker");
+            assert_eq!(
+                vm.heap.weak_value(weak).is_some(),
+                matches!(phase, "success" | "define-reject" | "define-throw"),
+                "{phase}"
+            );
         }
     }
 }
@@ -5250,502 +5174,482 @@ fn definition_record_stack_exhaustion_preserves_root_scopes() {
 
 #[test]
 fn definition_record_roots_release_across_target_kinds() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "ordinary-ok",
+        "ordinary-reject",
+        "array-ok",
+        "array-reject",
+        "length-ok",
+        "length-reject",
+        "length-throw",
+        "typed-ok",
+        "typed-reject",
+        "typed-throw",
+        "proxy-ok",
+        "proxy-reject",
+        "proxy-throw",
+        "proxy-invariant",
     ] {
-        for phase in [
-            "ordinary-ok",
-            "ordinary-reject",
-            "array-ok",
-            "array-reject",
-            "length-ok",
-            "length-reject",
-            "length-throw",
-            "typed-ok",
-            "typed-reject",
-            "typed-throw",
-            "proxy-ok",
-            "proxy-reject",
-            "proxy-throw",
-            "proxy-invariant",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var target={{}};
-                if ('{phase}'.startsWith('array-') || '{phase}'.startsWith('length-')) target=[];
-                if ('{phase}'.startsWith('typed-')) target=new Uint8Array('{phase}' === 'typed-reject' ? 0 : 1);
-                if ('{phase}' === 'ordinary-reject' || '{phase}' === 'array-reject' || '{phase}' === 'length-reject') Object.freeze(target);
-                if ('{phase}'.startsWith('proxy-')) target=new Proxy(target, {{get defineProperty() {{$262.gc();
-                    return function(target,key,descriptor) {{$262.gc(); if ('{phase}' === 'proxy-throw') throw {{kind:'{phase}'}}; return '{phase}' !== 'proxy-reject';}};
-                }}}});
-                var key='{phase}'.startsWith('length-') ? 'length' : '{phase}'.startsWith('array-') || '{phase}'.startsWith('typed-') ? '0' : 'entry';
-                var descriptor={{get value() {{$262.gc(); return {{rank:42, valueOf() {{$262.gc();
-                    if ('{phase}' === 'length-throw' || '{phase}' === 'typed-throw') throw {{kind:'{phase}'}}; return 2;
-                }}}};}}, writable:true, enumerable:!'{phase}'.startsWith('length-'), configurable:!'{phase}'.startsWith('length-') && '{phase}' !== 'proxy-invariant'}};
-            "#
-            );
-            let program = compile(&source, "definition-record-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let values = ["target", "key", "descriptor"].map(|name| {
-                let atom = vm.intern_atom(name);
-                vm.own_property(vm.realm.globals, atom).unwrap()
-            });
-            let record = vm.to_property_descriptor(&program, values[2]).unwrap();
-            let weak = vm.heap.weak_handle(record.value.unwrap()).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.define_own_property_record(&program, values[0], values[1], record);
-            if phase.ends_with("-throw") || phase == "proxy-invariant" {
-                let error = result.unwrap_err();
-                if phase == "proxy-invariant" {
-                    assert!(vm.format_error(&program, &error).contains("TypeError"));
-                } else {
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm
-                        .own_property(error.thrown_value().unwrap(), atom)
-                        .unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                }
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var target={{}};
+            if ('{phase}'.startsWith('array-') || '{phase}'.startsWith('length-')) target=[];
+            if ('{phase}'.startsWith('typed-')) target=new Uint8Array('{phase}' === 'typed-reject' ? 0 : 1);
+            if ('{phase}' === 'ordinary-reject' || '{phase}' === 'array-reject' || '{phase}' === 'length-reject') Object.freeze(target);
+            if ('{phase}'.startsWith('proxy-')) target=new Proxy(target, {{get defineProperty() {{$262.gc();
+                return function(target,key,descriptor) {{$262.gc(); if ('{phase}' === 'proxy-throw') throw {{kind:'{phase}'}}; return '{phase}' !== 'proxy-reject';}};
+            }}}});
+            var key='{phase}'.startsWith('length-') ? 'length' : '{phase}'.startsWith('array-') || '{phase}'.startsWith('typed-') ? '0' : 'entry';
+            var descriptor={{get value() {{$262.gc(); return {{rank:42, valueOf() {{$262.gc();
+                if ('{phase}' === 'length-throw' || '{phase}' === 'typed-throw') throw {{kind:'{phase}'}}; return 2;
+            }}}};}}, writable:true, enumerable:!'{phase}'.startsWith('length-'), configurable:!'{phase}'.startsWith('length-') && '{phase}' !== 'proxy-invariant'}};
+        "#
+        );
+        let program = compile(&source, "definition-record-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let values = ["target", "key", "descriptor"].map(|name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        });
+        let record = vm.to_property_descriptor(&program, values[2]).unwrap();
+        let weak = vm.heap.weak_handle(record.value.unwrap()).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.define_own_property_record(&program, values[0], values[1], record);
+        if phase.ends_with("-throw") || phase == "proxy-invariant" {
+            let error = result.unwrap_err();
+            if phase == "proxy-invariant" {
+                assert!(vm.format_error(&program, &error).contains("TypeError"));
             } else {
-                assert_eq!(result.unwrap(), phase.ends_with("-ok"), "{phase}");
+                let atom = vm.intern_atom("kind");
+                let kind = vm
+                    .own_property(error.thrown_value().unwrap(), atom)
+                    .unwrap();
+                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
             }
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            vm.collect_now(&program);
-            assert_eq!(
-                vm.heap.weak_value(weak).is_some(),
-                matches!(phase, "ordinary-ok" | "array-ok"),
-                "{phase}"
-            );
+        } else {
+            assert_eq!(result.unwrap(), phase.ends_with("-ok"), "{phase}");
         }
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        vm.collect_now(&program);
+        assert_eq!(
+            vm.heap.weak_value(weak).is_some(),
+            matches!(phase, "ordinary-ok" | "array-ok"),
+            "{phase}"
+        );
     }
 }
 
 #[test]
 fn descriptor_record_roots_release_after_field_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "data-success",
+        "accessor-success",
+        "writable-throw",
+        "get-throw",
+        "set-throw",
+        "invalid-get",
+        "invalid-set",
+        "mixed",
     ] {
-        for phase in [
-            "data-success",
-            "accessor-success",
-            "writable-throw",
-            "get-throw",
-            "set-throw",
-            "invalid-get",
-            "invalid-set",
-            "mixed",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var descriptor = '{phase}' === 'data-success' || '{phase}' === 'writable-throw' || '{phase}' === 'mixed'
-                    ? {{get value() {{$262.gc(); return {{rank:42}};}},
-                        get writable() {{$262.gc(); if ('{phase}' === 'writable-throw') throw {{kind:'{phase}'}}; return true;}}}}
-                    : {{}};
-                if ('{phase}' !== 'data-success' && '{phase}' !== 'writable-throw') {{
-                    Object.defineProperty(descriptor, 'get', {{get() {{$262.gc();
-                        if ('{phase}' === 'get-throw') throw {{kind:'{phase}'}};
-                        if ('{phase}' === 'invalid-get') return 1;
-                        return function() {{return 42;}};
-                    }}}});
-                    Object.defineProperty(descriptor, 'set', {{get() {{$262.gc();
-                        if ('{phase}' === 'set-throw') throw {{kind:'{phase}'}};
-                        if ('{phase}' === 'invalid-set') return 1;
-                        return function(value) {{this.saved = value;}};
-                    }}}});
-                }}
-            "#
-            );
-            let program = compile(&source, "descriptor-record-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("descriptor");
-            let descriptor = vm.own_property(vm.realm.globals, atom).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.to_property_descriptor(&program, descriptor);
-            assert_eq!(result.is_ok(), phase.ends_with("success"), "{phase}");
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var descriptor = '{phase}' === 'data-success' || '{phase}' === 'writable-throw' || '{phase}' === 'mixed'
+                ? {{get value() {{$262.gc(); return {{rank:42}};}},
+                    get writable() {{$262.gc(); if ('{phase}' === 'writable-throw') throw {{kind:'{phase}'}}; return true;}}}}
+                : {{}};
+            if ('{phase}' !== 'data-success' && '{phase}' !== 'writable-throw') {{
+                Object.defineProperty(descriptor, 'get', {{get() {{$262.gc();
+                    if ('{phase}' === 'get-throw') throw {{kind:'{phase}'}};
+                    if ('{phase}' === 'invalid-get') return 1;
+                    return function() {{return 42;}};
+                }}}});
+                Object.defineProperty(descriptor, 'set', {{get() {{$262.gc();
+                    if ('{phase}' === 'set-throw') throw {{kind:'{phase}'}};
+                    if ('{phase}' === 'invalid-set') return 1;
+                    return function(value) {{this.saved = value;}};
+                }}}});
+            }}
+        "#
+        );
+        let program = compile(&source, "descriptor-record-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("descriptor");
+        let descriptor = vm.own_property(vm.realm.globals, atom).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.to_property_descriptor(&program, descriptor);
+        assert_eq!(result.is_ok(), phase.ends_with("success"), "{phase}");
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        if let Err(error) = &result {
+            if phase.ends_with("-throw") {
+                let thrown = error.thrown_value().unwrap();
+                let atom = vm.intern_atom("kind");
+                let kind = vm.own_property(thrown, atom).unwrap();
+                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+            } else {
+                assert!(vm.format_error(&program, error).contains("TypeError"));
+            }
+        }
+        if let Ok(record) = result {
+            let value = if phase == "data-success" {
+                let value = record.value.unwrap();
+                let atom = vm.intern_atom("rank");
+                assert_eq!(vm.own_property(value, atom), Some(Value::number(42.0)));
+                value
+            } else {
+                let getter = record.getter.unwrap();
+                assert_eq!(
+                    vm.call_value(&program, getter, Value::UNDEFINED, &[])
+                        .unwrap(),
+                    Value::number(42.0)
+                );
+                getter
+            };
+            let weak = vm.heap.weak_handle(value).unwrap();
+            let projection = vm.from_property_descriptor(record).unwrap();
             assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            if let Err(error) = &result {
-                if phase.ends_with("-throw") {
-                    let thrown = error.thrown_value().unwrap();
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm.own_property(thrown, atom).unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                } else {
-                    assert!(vm.format_error(&program, error).contains("TypeError"));
-                }
-            }
-            if let Ok(record) = result {
-                let value = if phase == "data-success" {
-                    let value = record.value.unwrap();
-                    let atom = vm.intern_atom("rank");
-                    assert_eq!(vm.own_property(value, atom), Some(Value::number(42.0)));
-                    value
-                } else {
-                    let getter = record.getter.unwrap();
-                    assert_eq!(
-                        vm.call_value(&program, getter, Value::UNDEFINED, &[])
-                            .unwrap(),
-                        Value::number(42.0)
-                    );
-                    getter
-                };
-                let weak = vm.heap.weak_handle(value).unwrap();
-                let projection = vm.from_property_descriptor(record).unwrap();
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                let projection = vm.heap.weak_handle(projection).unwrap();
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(weak).is_none());
-                assert!(vm.heap.weak_value(projection).is_none());
-            }
+            let projection = vm.heap.weak_handle(projection).unwrap();
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak).is_none());
+            assert!(vm.heap.weak_value(projection).is_none());
         }
     }
 }
 
 #[test]
 fn error_stack_setter_roots_release_after_each_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "missing",
+        "data",
+        "accessor",
+        "empty-accessor",
+        "getter-only",
+        "readonly",
+        "nonextensible",
+        "home",
+        "primitive",
+        "nonstring",
+        "descriptor-lookup-throw",
+        "descriptor-call-throw",
+        "define-lookup-throw",
+        "define-call-throw",
+        "define-false",
+        "set-false",
+        "set-call-throw",
+        "accessor-throw",
     ] {
-        for phase in [
-            "missing",
-            "data",
-            "accessor",
-            "empty-accessor",
-            "getter-only",
-            "readonly",
-            "nonextensible",
-            "home",
-            "primitive",
-            "nonstring",
-            "descriptor-lookup-throw",
-            "descriptor-call-throw",
-            "define-lookup-throw",
-            "define-call-throw",
-            "define-false",
-            "set-false",
-            "set-call-throw",
-            "accessor-throw",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var marker = {{rank:42}};
-                function factory() {{
-                    if ('{phase}' === 'home') return Error.prototype;
-                    if ('{phase}' === 'primitive') return 1;
-                    var target = {{}};
-                    if ('{phase}' === 'data' || '{phase}' === 'readonly' || '{phase}'.startsWith('set-'))
-                        Object.defineProperty(target, 'stack', {{value:'old', writable:'{phase}' !== 'readonly', configurable:true}});
-                    if ('{phase}' === 'accessor' || '{phase}' === 'accessor-throw')
-                        Object.defineProperty(target, 'stack', {{set(v) {{$262.gc(); if ('{phase}' === 'accessor-throw') throw marker; this.saved = v;}}}});
-                    if ('{phase}' === 'empty-accessor') Object.defineProperty(target, 'stack', {{get:undefined, set:undefined}});
-                    if ('{phase}' === 'getter-only') Object.defineProperty(target, 'stack', {{get() {{return 'old';}}}});
-                    if ('{phase}' === 'nonextensible') Object.preventExtensions(target);
-                    if ('{phase}'.startsWith('descriptor-') || '{phase}'.startsWith('define-') || '{phase}'.startsWith('set-'))
-                        return new Proxy(target, {{
-                            get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
-                                return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
-                            }},
-                            get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
-                                return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
-                                    if ('{phase}' === 'define-false') return false; return Reflect.defineProperty(t,k,d);}};
-                            }},
-                            set(t,k,v) {{$262.gc(); if ('{phase}' === 'set-call-throw') throw marker;
-                                if ('{phase}' === 'set-false') return false; return Reflect.set(t,k,v,t);
-                            }}
-                        }});
-                    return target;
-                }}
-            "#
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var marker = {{rank:42}};
+            function factory() {{
+                if ('{phase}' === 'home') return Error.prototype;
+                if ('{phase}' === 'primitive') return 1;
+                var target = {{}};
+                if ('{phase}' === 'data' || '{phase}' === 'readonly' || '{phase}'.startsWith('set-'))
+                    Object.defineProperty(target, 'stack', {{value:'old', writable:'{phase}' !== 'readonly', configurable:true}});
+                if ('{phase}' === 'accessor' || '{phase}' === 'accessor-throw')
+                    Object.defineProperty(target, 'stack', {{set(v) {{$262.gc(); if ('{phase}' === 'accessor-throw') throw marker; this.saved = v;}}}});
+                if ('{phase}' === 'empty-accessor') Object.defineProperty(target, 'stack', {{get:undefined, set:undefined}});
+                if ('{phase}' === 'getter-only') Object.defineProperty(target, 'stack', {{get() {{return 'old';}}}});
+                if ('{phase}' === 'nonextensible') Object.preventExtensions(target);
+                if ('{phase}'.startsWith('descriptor-') || '{phase}'.startsWith('define-') || '{phase}'.startsWith('set-'))
+                    return new Proxy(target, {{
+                        get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
+                            return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
+                        }},
+                        get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
+                            return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
+                                if ('{phase}' === 'define-false') return false; return Reflect.defineProperty(t,k,d);}};
+                        }},
+                        set(t,k,v) {{$262.gc(); if ('{phase}' === 'set-call-throw') throw marker;
+                            if ('{phase}' === 'set-false') return false; return Reflect.set(t,k,v,t);
+                        }}
+                    }});
+                return target;
+            }}
+        "#
+        );
+        let program = compile(&source, "error-stack-root-lifecycle.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("factory");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let target = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let hold = vm.heap.root(target);
+        let value = if phase == "nonstring" {
+            Value::number(1.0)
+        } else {
+            vm.heap
+                .alloc_string("fresh-stack".into())
+        };
+        let target = vm.heap.root_value(hold).unwrap();
+        let target_weak = vm.heap.weak_handle(target);
+        let value_weak = vm.heap.weak_handle(value);
+        vm.heap.release_root(hold);
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let outcome = vm.error_stack_setter(&program, target, &[value]);
+        // A borrowed V8 stack setter ignores receivers without captured
+        // stack data, including proxies, primitives and arbitrary accessors.
+        // It must not invoke their descriptor or setter hooks.
+        assert!(outcome.is_ok(), "{phase}");
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+        assert_eq!(vm.active_call_roots.len(), calls);
+        vm.collect_now(&program);
+        if let Some(weak) = target_weak {
+            assert_eq!(
+                vm.heap.weak_value(weak).is_some(),
+                phase == "home",
+                "{phase}"
             );
-            let program = compile(&source, "error-stack-root-lifecycle.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("factory");
-            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-            let target = vm
-                .call_value(&program, factory, Value::UNDEFINED, &[])
-                .unwrap();
-            let hold = vm.heap.root(target);
-            let value = if phase == "nonstring" {
-                Value::number(1.0)
-            } else {
-                vm.heap
-                    .alloc_string("fresh-stack".into())
-            };
-            let target = vm.heap.root_value(hold).unwrap();
-            let target_weak = vm.heap.weak_handle(target);
-            let value_weak = vm.heap.weak_handle(value);
-            vm.heap.release_root(hold);
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let outcome = vm.error_stack_setter(&program, target, &[value]);
-            // A borrowed V8 stack setter ignores receivers without captured
-            // stack data, including proxies, primitives and arbitrary accessors.
-            // It must not invoke their descriptor or setter hooks.
-            assert!(outcome.is_ok(), "{phase}");
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
-            assert_eq!(vm.active_call_roots.len(), calls);
-            vm.collect_now(&program);
-            if let Some(weak) = target_weak {
-                assert_eq!(
-                    vm.heap.weak_value(weak).is_some(),
-                    phase == "home",
-                    "{phase}"
-                );
-            }
-            if let Some(weak) = value_weak {
-                assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
-            }
+        }
+        if let Some(weak) = value_weak {
+            assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
         }
     }
 }
 
 #[test]
 fn module_namespace_operations_share_uninitialized_export_errors() {
-    for compile in [
-        Engine::specialize_module as fn(&str, &str) -> _,
-        Engine::specialize_module_unspecialized,
+    let compile = Engine::specialize_module;
+    for operation in [
+        "get",
+        "descriptor",
+        "define",
+        "seal",
+        "freeze",
+        "is-sealed",
+        "is-frozen",
     ] {
-        for operation in [
-            "get",
-            "descriptor",
-            "define",
-            "seal",
-            "freeze",
-            "is-sealed",
-            "is-frozen",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let program = compile("export let answer;", "uninitialized-module-export.mjs").unwrap();
-            vm.initialize(&program).unwrap();
-            let namespace = vm.object();
-            // A namespace takes its own dictionary shape, as `Vm::module_namespace` gives it.
-            vm.mark_object_dictionary(namespace, super::DictionaryTrigger::ModuleNamespace);
-            let atom = vm.intern_atom("answer");
-            vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.function(0)
-                .local_atoms
-                .iter()
-                .position(|candidate| *candidate == atom)
-                .unwrap();
-            let environment = vm.heap.alloc_environment(
-                Value::NULL,
-                super::ROOT_FUNCTION_ID,
-                vec![Value::DELETED; program.function(0).local_atoms.len()]
-                    .into_boxed_slice()
-                    .into(),
-                crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                    program: Some(super::program_store::ProgramId::MAIN.raw()),
-                    root_eval_scope: false,
-                    binding_site_pc: None,
-                    dynamic_bindings: vec![].into(),
-                    with_objects: Box::default(),
-                }),
-            ).0;
-            vm.programs
-                .set_module_environment(super::program_store::ProgramId::MAIN, environment);
-            let attributes = super::PropertyAttributes {
-                configurable: false,
-                ..super::DEFAULT_PROPERTY_ATTRIBUTES
-            };
-            vm.set_property_attributes(
-                namespace,
-                super::property_key::PropertyKey::string(atom),
-                attributes,
-            );
-            // A namespace is a class cell; its module data lives in the extras its header names.
-            vm.heap.ensure_cell_extras(namespace);
-            let mut object = vm.heap.object_mut(namespace).unwrap();
-            object.set_proto(Value::NULL);
-            object.set_module_namespace();
-            object.set_module_bindings(vec![(
-                atom,
-                super::program_store::ProgramId::MAIN,
-                u16::try_from(slot).unwrap(),
-            )]);
-            object.set_extensible(false);
-            let key = vm.heap.alloc_string("answer".into());
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let outcome = match operation {
-                "get" => vm.get_property(&program, namespace, atom),
-                "descriptor" => vm.object_get_own_property_descriptor(&program, &[namespace, key]),
-                "define" => vm
-                    .define_own_property_record(
-                        &program,
-                        namespace,
-                        key,
-                        super::object_descriptors::PropertyDescriptorRecord::data(Value::number(
-                            42.0,
-                        )),
-                    )
-                    .map(Vm::integrity_bool),
-                "seal" | "freeze" => {
-                    vm.object_set_integrity(&program, &[namespace], operation == "freeze")
-                }
-                "is-sealed" | "is-frozen" => {
-                    vm.object_is_integrity_level(&program, &[namespace], operation == "is-frozen")
-                }
-                _ => unreachable!(),
-            };
-            let error = outcome.unwrap_err();
-            assert!(
-                vm.format_error(&program, &error)
-                    .starts_with("ReferenceError:"),
-                "{operation}"
-            );
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-        }
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = compile("export let answer;", "uninitialized-module-export.mjs").unwrap();
+        vm.initialize(&program).unwrap();
+        let namespace = vm.object();
+        // A namespace takes its own dictionary shape, as `Vm::module_namespace` gives it.
+        vm.mark_object_dictionary(namespace, super::DictionaryTrigger::ModuleNamespace);
+        let atom = vm.intern_atom("answer");
+        vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
+        let slot = program.function(0)
+            .local_atoms
+            .iter()
+            .position(|candidate| *candidate == atom)
+            .unwrap();
+        let environment = vm.heap.alloc_environment(
+            Value::NULL,
+            super::ROOT_FUNCTION_ID,
+            vec![Value::DELETED; program.function(0).local_atoms.len()]
+                .into_boxed_slice()
+                .into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(super::program_store::ProgramId::MAIN.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: vec![].into(),
+                with_objects: Box::default(),
+            }),
+        ).0;
+        vm.programs
+            .set_module_environment(super::program_store::ProgramId::MAIN, environment);
+        let attributes = super::PropertyAttributes {
+            configurable: false,
+            ..super::DEFAULT_PROPERTY_ATTRIBUTES
+        };
+        vm.set_property_attributes(
+            namespace,
+            super::property_key::PropertyKey::string(atom),
+            attributes,
+        );
+        // A namespace is a class cell; its module data lives in the extras its header names.
+        vm.heap.ensure_cell_extras(namespace);
+        let mut object = vm.heap.object_mut(namespace).unwrap();
+        object.set_proto(Value::NULL);
+        object.set_module_namespace();
+        object.set_module_bindings(vec![(
+            atom,
+            super::program_store::ProgramId::MAIN,
+            u16::try_from(slot).unwrap(),
+        )]);
+        object.set_extensible(false);
+        let key = vm.heap.alloc_string("answer".into());
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let outcome = match operation {
+            "get" => vm.get_property(&program, namespace, atom),
+            "descriptor" => vm.object_get_own_property_descriptor(&program, &[namespace, key]),
+            "define" => vm
+                .define_own_property_record(
+                    &program,
+                    namespace,
+                    key,
+                    super::object_descriptors::PropertyDescriptorRecord::data(Value::number(
+                        42.0,
+                    )),
+                )
+                .map(Vm::integrity_bool),
+            "seal" | "freeze" => {
+                vm.object_set_integrity(&program, &[namespace], operation == "freeze")
+            }
+            "is-sealed" | "is-frozen" => {
+                vm.object_is_integrity_level(&program, &[namespace], operation == "is-frozen")
+            }
+            _ => unreachable!(),
+        };
+        let error = outcome.unwrap_err();
+        assert!(
+            vm.format_error(&program, &error)
+                .starts_with("ReferenceError:"),
+            "{operation}"
+        );
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
     }
 }
 
 #[test]
 fn integrity_operation_roots_release_after_each_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for freeze in [false, true] {
-            for test in [false, true] {
-                let phases: &[&str] = if test {
-                    &[
-                        "success",
-                        "extensible",
-                        "extensible-lookup-throw",
-                        "extensible-call-throw",
-                        "keys-lookup-throw",
-                        "keys-call-throw",
-                        "descriptor-lookup-throw",
-                        "descriptor-call-throw",
-                        "configurable",
-                        "writable",
-                        "primitive",
-                        "revoked",
-                    ]
-                } else {
-                    &[
-                        "success",
-                        "prevent-lookup-throw",
-                        "prevent-call-throw",
-                        "prevent-false",
-                        "keys-lookup-throw",
-                        "keys-call-throw",
-                        "descriptor-lookup-throw",
-                        "descriptor-call-throw",
-                        "define-lookup-throw",
-                        "define-call-throw",
-                        "define-false",
-                        "primitive",
-                        "revoked",
-                    ]
-                };
-                for &phase in phases {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        var marker = {{rank:42}};
-                        function factory() {{
-                            if ('{phase}' === 'primitive') return 1;
-                            var target = {{alpha:42, beta:43}};
-                            if ({test} && '{phase}' !== 'extensible') {{
-                                Object.defineProperty(target, 'alpha', {{configurable:'{phase}' === 'configurable', writable:!{freeze} || '{phase}' === 'writable'}});
-                                Object.defineProperty(target, 'beta', {{configurable:false, writable:!{freeze}}});
-                                Object.preventExtensions(target);
-                            }}
-                            var handler = {{
-                                get preventExtensions() {{$262.gc(); if ('{phase}' === 'prevent-lookup-throw') throw marker;
-                                    return function(t) {{$262.gc(); if ('{phase}' === 'prevent-call-throw') throw marker;
-                                        if ('{phase}' === 'prevent-false') return false;
-                                        return Reflect.preventExtensions(t);
-                                    }};
-                                }},
-                                get isExtensible() {{$262.gc(); if ('{phase}' === 'extensible-lookup-throw') throw marker;
-                                    return function(t) {{$262.gc(); if ('{phase}' === 'extensible-call-throw') throw marker; return Reflect.isExtensible(t);}};
-                                }},
-                                get ownKeys() {{$262.gc(); if ('{phase}' === 'keys-lookup-throw') throw marker;
-                                    return function(t) {{$262.gc(); if ('{phase}' === 'keys-call-throw') throw marker; return ['al' + 'pha', 'be' + 'ta'];}};
-                                }},
-                                get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
-                                    return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
-                                }},
-                                get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
-                                    return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
-                                        if ('{phase}' === 'define-false') return false;
-                                        return Reflect.defineProperty(t,k,d);
-                                    }};
-                                }}
-                            }};
-                            if ('{phase}' === 'revoked') {{var revocable = Proxy.revocable(target, handler); revocable.revoke(); return revocable.proxy;}}
-                            return new Proxy(target, handler);
+    let compile = Engine::specialize;
+    for freeze in [false, true] {
+        for test in [false, true] {
+            let phases: &[&str] = if test {
+                &[
+                    "success",
+                    "extensible",
+                    "extensible-lookup-throw",
+                    "extensible-call-throw",
+                    "keys-lookup-throw",
+                    "keys-call-throw",
+                    "descriptor-lookup-throw",
+                    "descriptor-call-throw",
+                    "configurable",
+                    "writable",
+                    "primitive",
+                    "revoked",
+                ]
+            } else {
+                &[
+                    "success",
+                    "prevent-lookup-throw",
+                    "prevent-call-throw",
+                    "prevent-false",
+                    "keys-lookup-throw",
+                    "keys-call-throw",
+                    "descriptor-lookup-throw",
+                    "descriptor-call-throw",
+                    "define-lookup-throw",
+                    "define-call-throw",
+                    "define-false",
+                    "primitive",
+                    "revoked",
+                ]
+            };
+            for &phase in phases {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                    var marker = {{rank:42}};
+                    function factory() {{
+                        if ('{phase}' === 'primitive') return 1;
+                        var target = {{alpha:42, beta:43}};
+                        if ({test} && '{phase}' !== 'extensible') {{
+                            Object.defineProperty(target, 'alpha', {{configurable:'{phase}' === 'configurable', writable:!{freeze} || '{phase}' === 'writable'}});
+                            Object.defineProperty(target, 'beta', {{configurable:false, writable:!{freeze}}});
+                            Object.preventExtensions(target);
                         }}
-                    "#
-                    );
-                    let program = compile(&source, "integrity-root-lifecycle.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("factory");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let object = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let weak = vm.heap.weak_handle(object);
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome = if test {
-                        vm.object_is_integrity_level(&program, &[object], freeze)
-                    } else {
-                        vm.object_set_integrity(&program, &[object], freeze)
-                    };
-                    let descriptor_skipped = !test && !freeze && phase.starts_with("descriptor-");
-                    let fails = phase.ends_with("-throw") && !descriptor_skipped
-                        || phase == "revoked"
-                        || phase == "prevent-false"
-                        || phase == "define-false";
-                    assert_eq!(
-                        outcome.is_err(),
-                        fails,
-                        "test={test} freeze={freeze} phase={phase}"
-                    );
-                    if let Err(error) = outcome {
-                        if phase.ends_with("-throw") {
-                            let atom = vm.intern_atom("marker");
-                            assert_eq!(
-                                error.thrown_value(),
-                                vm.own_property(vm.realm.globals, atom)
-                            );
-                        }
-                    } else if test {
-                        let expected = phase != "extensible"
-                            && phase != "configurable"
-                            && !(freeze && phase == "writable");
+                        var handler = {{
+                            get preventExtensions() {{$262.gc(); if ('{phase}' === 'prevent-lookup-throw') throw marker;
+                                return function(t) {{$262.gc(); if ('{phase}' === 'prevent-call-throw') throw marker;
+                                    if ('{phase}' === 'prevent-false') return false;
+                                    return Reflect.preventExtensions(t);
+                                }};
+                            }},
+                            get isExtensible() {{$262.gc(); if ('{phase}' === 'extensible-lookup-throw') throw marker;
+                                return function(t) {{$262.gc(); if ('{phase}' === 'extensible-call-throw') throw marker; return Reflect.isExtensible(t);}};
+                            }},
+                            get ownKeys() {{$262.gc(); if ('{phase}' === 'keys-lookup-throw') throw marker;
+                                return function(t) {{$262.gc(); if ('{phase}' === 'keys-call-throw') throw marker; return ['al' + 'pha', 'be' + 'ta'];}};
+                            }},
+                            get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
+                                return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
+                            }},
+                            get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
+                                return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
+                                    if ('{phase}' === 'define-false') return false;
+                                    return Reflect.defineProperty(t,k,d);
+                                }};
+                            }}
+                        }};
+                        if ('{phase}' === 'revoked') {{var revocable = Proxy.revocable(target, handler); revocable.revoke(); return revocable.proxy;}}
+                        return new Proxy(target, handler);
+                    }}
+                "#
+                );
+                let program = compile(&source, "integrity-root-lifecycle.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("factory");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let object = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let weak = vm.heap.weak_handle(object);
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = if test {
+                    vm.object_is_integrity_level(&program, &[object], freeze)
+                } else {
+                    vm.object_set_integrity(&program, &[object], freeze)
+                };
+                let descriptor_skipped = !test && !freeze && phase.starts_with("descriptor-");
+                let fails = phase.ends_with("-throw") && !descriptor_skipped
+                    || phase == "revoked"
+                    || phase == "prevent-false"
+                    || phase == "define-false";
+                assert_eq!(
+                    outcome.is_err(),
+                    fails,
+                    "test={test} freeze={freeze} phase={phase}"
+                );
+                if let Err(error) = outcome {
+                    if phase.ends_with("-throw") {
+                        let atom = vm.intern_atom("marker");
                         assert_eq!(
-                            outcome.unwrap(),
-                            Vm::integrity_bool(expected),
-                            "{phase}"
+                            error.thrown_value(),
+                            vm.own_property(vm.realm.globals, atom)
                         );
-                    } else {
-                        assert_eq!(outcome.unwrap(), object);
                     }
+                } else if test {
+                    let expected = phase != "extensible"
+                        && phase != "configurable"
+                        && !(freeze && phase == "writable");
                     assert_eq!(
-                        vm.heap.root_count_for_test(),
-                        roots,
+                        outcome.unwrap(),
+                        Vm::integrity_bool(expected),
+                        "{phase}"
+                    );
+                } else {
+                    assert_eq!(outcome.unwrap(), object);
+                }
+                assert_eq!(
+                    vm.heap.root_count_for_test(),
+                    roots,
+                    "test={test} freeze={freeze} phase={phase}"
+                );
+                assert_eq!(vm.active_call_roots.len(), calls);
+                if let Some(weak) = weak {
+                    vm.collect_now(&program);
+                    assert!(
+                        vm.heap.weak_value(weak).is_none(),
                         "test={test} freeze={freeze} phase={phase}"
                     );
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    if let Some(weak) = weak {
-                        vm.collect_now(&program);
-                        assert!(
-                            vm.heap.weak_value(weak).is_none(),
-                            "test={test} freeze={freeze} phase={phase}"
-                        );
-                    }
                 }
             }
         }
@@ -5754,213 +5658,201 @@ fn integrity_operation_roots_release_after_each_completion() {
 
 #[test]
 fn reflect_definition_roots_release_after_callback_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "success",
+        "proxy-success",
+        "proxy-forward",
+        "proxy-revoke-during-getter",
+        "proxy-false",
+        "proxy-getter-throw",
+        "proxy-call-throw",
+        "proxy-revoked",
+        "descriptor-throw",
+        "key-throw",
+        "primitive-target",
+        "invalid-get",
+        "mixed",
     ] {
-        for phase in [
-            "success",
-            "proxy-success",
-            "proxy-forward",
-            "proxy-revoke-during-getter",
-            "proxy-false",
-            "proxy-getter-throw",
-            "proxy-call-throw",
-            "proxy-revoked",
-            "descriptor-throw",
-            "key-throw",
-            "primitive-target",
-            "invalid-get",
-            "mixed",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var target = '{phase}' === 'primitive-target' ? 1 : {{}};
-                if ('{phase}' === 'proxy-revoke-during-getter') {{
-                    var revocable = Proxy.revocable(target, {{get defineProperty() {{
-                        revocable.revoke(); $262.gc(); return function(target, key, descriptor) {{$262.gc(); return true;}};
-                    }}}}); target = revocable.proxy;
-                }} else if ('{phase}'.startsWith('proxy-')) {{
-                    if ('{phase}' === 'proxy-revoked') {{var revocable = Proxy.revocable(target, {{}}); target = revocable.proxy; revocable.revoke();}}
-                    else target = new Proxy(target, {{get defineProperty() {{$262.gc();
-                        if ('{phase}' === 'proxy-forward') return undefined;
-                        if ('{phase}' === 'proxy-getter-throw') throw {{kind:'{phase}'}};
-                        return function(target, key, descriptor) {{$262.gc();
-                            if ('{phase}' === 'proxy-call-throw') throw {{kind:'{phase}'}};
-                            return '{phase}' !== 'proxy-false';
-                        }};
-                    }}}});
-                }}
-                var key = {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key-throw') throw {{kind:'{phase}'}}; return Symbol('entry');}}}};
-                var descriptor = {{get value() {{$262.gc(); if ('{phase}' === 'descriptor-throw') throw {{kind:'{phase}'}}; return {{rank:42}};}},
-                    get writable() {{$262.gc(); return true;}}, configurable:true}};
-                if ('{phase}' === 'invalid-get' || '{phase}' === 'mixed')
-                    Object.defineProperty(descriptor, 'get', {{get() {{$262.gc(); return '{phase}' === 'invalid-get' ? 1 : undefined;}}}});
-            "#
-            );
-            let program = compile(&source, "reflect-definition-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let args = ["target", "key", "descriptor"].map(|name| {
-                let atom = vm.intern_atom(name);
-                vm.own_property(vm.realm.globals, atom).unwrap()
-            });
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.reflect_define_property(&program, &args);
-            let succeeds = matches!(
-                phase,
-                "success"
-                    | "proxy-success"
-                    | "proxy-false"
-                    | "proxy-forward"
-                    | "proxy-revoke-during-getter"
-            );
-            assert_eq!(result.is_ok(), succeeds, "{phase}");
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var target = '{phase}' === 'primitive-target' ? 1 : {{}};
+            if ('{phase}' === 'proxy-revoke-during-getter') {{
+                var revocable = Proxy.revocable(target, {{get defineProperty() {{
+                    revocable.revoke(); $262.gc(); return function(target, key, descriptor) {{$262.gc(); return true;}};
+                }}}}); target = revocable.proxy;
+            }} else if ('{phase}'.startsWith('proxy-')) {{
+                if ('{phase}' === 'proxy-revoked') {{var revocable = Proxy.revocable(target, {{}}); target = revocable.proxy; revocable.revoke();}}
+                else target = new Proxy(target, {{get defineProperty() {{$262.gc();
+                    if ('{phase}' === 'proxy-forward') return undefined;
+                    if ('{phase}' === 'proxy-getter-throw') throw {{kind:'{phase}'}};
+                    return function(target, key, descriptor) {{$262.gc();
+                        if ('{phase}' === 'proxy-call-throw') throw {{kind:'{phase}'}};
+                        return '{phase}' !== 'proxy-false';
+                    }};
+                }}}});
+            }}
+            var key = {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key-throw') throw {{kind:'{phase}'}}; return Symbol('entry');}}}};
+            var descriptor = {{get value() {{$262.gc(); if ('{phase}' === 'descriptor-throw') throw {{kind:'{phase}'}}; return {{rank:42}};}},
+                get writable() {{$262.gc(); return true;}}, configurable:true}};
+            if ('{phase}' === 'invalid-get' || '{phase}' === 'mixed')
+                Object.defineProperty(descriptor, 'get', {{get() {{$262.gc(); return '{phase}' === 'invalid-get' ? 1 : undefined;}}}});
+        "#
+        );
+        let program = compile(&source, "reflect-definition-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let args = ["target", "key", "descriptor"].map(|name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        });
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.reflect_define_property(&program, &args);
+        let succeeds = matches!(
+            phase,
+            "success"
+                | "proxy-success"
+                | "proxy-false"
+                | "proxy-forward"
+                | "proxy-revoke-during-getter"
+        );
+        assert_eq!(result.is_ok(), succeeds, "{phase}");
 
-            if let Err(error) = &result {
-                if phase.ends_with("-throw") {
-                    let thrown = error.thrown_value().unwrap();
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm.own_property(thrown, atom).unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                } else {
-                    assert!(vm.format_error(&program, error).contains("TypeError"));
-                }
+        if let Err(error) = &result {
+            if phase.ends_with("-throw") {
+                let thrown = error.thrown_value().unwrap();
+                let atom = vm.intern_atom("kind");
+                let kind = vm.own_property(thrown, atom).unwrap();
+                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+            } else {
+                assert!(vm.format_error(&program, error).contains("TypeError"));
             }
-            if succeeds {
-                assert_eq!(
-                    result.unwrap(),
-                    Vm::integrity_bool(phase != "proxy-false")
-                );
-            }
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
         }
+        if succeeds {
+            assert_eq!(
+                result.unwrap(),
+                Vm::integrity_bool(phase != "proxy-false")
+            );
+        }
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
     }
 }
 
 #[test]
 fn from_entries_roots_release_after_iterator_and_entry_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in [
+        "success",
+        "next-getter",
+        "next",
+        "done",
+        "value",
+        "entry",
+        "key",
+        "entry-value",
+        "convert",
     ] {
-        for phase in [
-            "success",
-            "next-getter",
-            "next",
-            "done",
-            "value",
-            "entry",
-            "key",
-            "entry-value",
-            "convert",
-        ] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var source = {{[Symbol.iterator]() {{var index = 0; return {{
-                    get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'{phase}'}};
-                        return function() {{$262.gc(); if ('{phase}' === 'next') throw {{kind:'{phase}'}};
-                            if (index++) return {{done:true}};
-                            return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'{phase}'}}; return false;}},
-                                get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'{phase}'}};
-                                    if ('{phase}' === 'entry') return 1;
-                                    return {{get 0() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'{phase}'}};
-                                        return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'convert') throw {{kind:'{phase}'}}; return '__proto__';}}}};}},
-                                        get 1() {{$262.gc(); if ('{phase}' === 'entry-value') throw {{kind:'{phase}'}}; return {{rank:42}};}}}};}}
-                            }};
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var source = {{[Symbol.iterator]() {{var index = 0; return {{
+                get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'{phase}'}};
+                    return function() {{$262.gc(); if ('{phase}' === 'next') throw {{kind:'{phase}'}};
+                        if (index++) return {{done:true}};
+                        return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'{phase}'}}; return false;}},
+                            get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'{phase}'}};
+                                if ('{phase}' === 'entry') return 1;
+                                return {{get 0() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'{phase}'}};
+                                    return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'convert') throw {{kind:'{phase}'}}; return '__proto__';}}}};}},
+                                    get 1() {{$262.gc(); if ('{phase}' === 'entry-value') throw {{kind:'{phase}'}}; return {{rank:42}};}}}};}}
                         }};
-                    }},
-                    get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
-                }};}}}};
-            "#
-            );
-            let program = compile(&source, "from-entries-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("source");
-            let source = vm.own_property(vm.realm.globals, atom).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.object_from_entries(&program, source);
-            assert_eq!(result.is_err(), phase != "success", "{phase}");
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            match result {
-                Ok(result) => {
-                    let weak = vm.heap.weak_handle(result).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(weak).is_none());
-                }
-                Err(error) if phase != "entry" => {
-                    let error = error.thrown_value().unwrap();
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm.own_property(error, atom).unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                }
-                Err(error) => assert!(vm.format_error(&program, &error).contains("TypeError")),
+                    }};
+                }},
+                get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
+            }};}}}};
+        "#
+        );
+        let program = compile(&source, "from-entries-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("source");
+        let source = vm.own_property(vm.realm.globals, atom).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.object_from_entries(&program, source);
+        assert_eq!(result.is_err(), phase != "success", "{phase}");
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        match result {
+            Ok(result) => {
+                let weak = vm.heap.weak_handle(result).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(weak).is_none());
             }
+            Err(error) if phase != "entry" => {
+                let error = error.thrown_value().unwrap();
+                let atom = vm.intern_atom("kind");
+                let kind = vm.own_property(error, atom).unwrap();
+                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+            }
+            Err(error) => assert!(vm.format_error(&program, &error).contains("TypeError")),
         }
     }
 }
 
 #[test]
 fn group_by_roots_release_after_iterator_and_callback_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for kind in [super::GroupByKind::Object, super::GroupByKind::Map] {
-            for phase in [
-                "success",
-                "next-getter",
-                "next",
-                "done",
-                "value",
-                "callback",
-                "key",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    var source = {{[Symbol.iterator]() {{var index = 0; return {{
-                        get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'next-getter'}}; return function() {{
-                            $262.gc(); if ('{phase}' === 'next') throw {{kind:'next'}};
-                            if (index++) return {{done:true}};
-                            return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'done'}}; return false;}},
-                                get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'value'}}; return {{rank:42}};}}}};
-                        }};}},
-                        get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
-                    }};}}}};
-                    var callback = function(value) {{$262.gc(); if ('{phase}' === 'callback') throw {{kind:'callback'}};
-                        return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'key'}}; return 'group';}}}};}};
-                "#
-                );
-                let program = compile(&source, "group-by-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let source_atom = vm.intern_atom("source");
-                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                let callback_atom = vm.intern_atom("callback");
-                let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.group_by(&program, &[source, callback], kind);
-                let fails = phase != "success"
-                    && !(phase == "key" && matches!(kind, super::GroupByKind::Map));
-                assert_eq!(result.is_err(), fails, "{phase}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                if let Ok(result) = result {
-                    let weak = vm.heap.weak_handle(result).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(weak).is_none());
-                } else if let Err(error) = result {
-                    let error = error.thrown_value().unwrap();
-                    let kind_atom = vm.intern_atom("kind");
-                    let value = vm.own_property(error, kind_atom).unwrap();
-                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                }
+    let compile = Engine::specialize;
+    for kind in [super::GroupByKind::Object, super::GroupByKind::Map] {
+        for phase in [
+            "success",
+            "next-getter",
+            "next",
+            "done",
+            "value",
+            "callback",
+            "key",
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                var source = {{[Symbol.iterator]() {{var index = 0; return {{
+                    get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'next-getter'}}; return function() {{
+                        $262.gc(); if ('{phase}' === 'next') throw {{kind:'next'}};
+                        if (index++) return {{done:true}};
+                        return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'done'}}; return false;}},
+                            get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'value'}}; return {{rank:42}};}}}};
+                    }};}},
+                    get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
+                }};}}}};
+                var callback = function(value) {{$262.gc(); if ('{phase}' === 'callback') throw {{kind:'callback'}};
+                    return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'key'}}; return 'group';}}}};}};
+            "#
+            );
+            let program = compile(&source, "group-by-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let source_atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+            let callback_atom = vm.intern_atom("callback");
+            let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.group_by(&program, &[source, callback], kind);
+            let fails = phase != "success"
+                && !(phase == "key" && matches!(kind, super::GroupByKind::Map));
+            assert_eq!(result.is_err(), fails, "{phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            if let Ok(result) = result {
+                let weak = vm.heap.weak_handle(result).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(weak).is_none());
+            } else if let Err(error) = result {
+                let error = error.thrown_value().unwrap();
+                let kind_atom = vm.intern_atom("kind");
+                let value = vm.own_property(error, kind_atom).unwrap();
+                assert_eq!(vm.to_string(&program, value).unwrap(), phase);
             }
         }
     }
@@ -5968,56 +5860,52 @@ fn group_by_roots_release_after_iterator_and_callback_completion() {
 
 #[test]
 fn dynamic_constructor_roots_release_after_prototype_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for native in [
+        Native::Function,
+        Native::AsyncFunction,
+        Native::GeneratorFunction,
+        Native::AsyncGeneratorFunction,
     ] {
-        for native in [
-            Native::Function,
-            Native::AsyncFunction,
-            Native::GeneratorFunction,
-            Native::AsyncGeneratorFunction,
+        for (action, fails, intrinsic) in [
+            ("return prototype", false, false),
+            ("return null", false, true),
+            ("throw new Error('prototype')", true, false),
         ] {
-            for (action, fails, intrinsic) in [
-                ("return prototype", false, false),
-                ("return null", false, true),
-                ("throw new Error('prototype')", true, false),
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let program = compile(&format!("var prototype = {{rank:42}}; var target = new Proxy(function Target() {{}}, {{get(object, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(object, key, receiver);}}}});"), "dynamic-constructor-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let target_atom = vm.intern_atom("target");
-                let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
-                let prototype_atom = vm.prototype_atom();
-                let prototype = if intrinsic {
-                    vm.realm.intrinsics.builtin_prototypes[&(vm.realm.globals, native)]
-                } else {
-                    vm.own_property(vm.realm.globals, prototype_atom).unwrap()
-                };
-                let constructor = vm.native_value(native);
-                let argument = vm.heap.alloc_string("return 42".into());
-                let weak_argument = vm.heap.weak_handle(argument).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.construct_value_with_new_target(
-                    &program,
-                    constructor,
-                    target,
-                    &[argument],
-                );
-                assert_eq!(result.is_err(), fails);
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let weak_result = result.ok().map(|result| {
-                    assert!(vm.is_function(result));
-                    assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
-                    vm.heap.weak_handle(result).unwrap()
-                });
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(weak_argument).is_none());
-                if let Some(result) = weak_result {
-                    assert!(vm.heap.weak_value(result).is_none());
-                }
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let program = compile(&format!("var prototype = {{rank:42}}; var target = new Proxy(function Target() {{}}, {{get(object, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(object, key, receiver);}}}});"), "dynamic-constructor-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let target_atom = vm.intern_atom("target");
+            let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
+            let prototype_atom = vm.prototype_atom();
+            let prototype = if intrinsic {
+                vm.realm.intrinsics.builtin_prototypes[&(vm.realm.globals, native)]
+            } else {
+                vm.own_property(vm.realm.globals, prototype_atom).unwrap()
+            };
+            let constructor = vm.native_value(native);
+            let argument = vm.heap.alloc_string("return 42".into());
+            let weak_argument = vm.heap.weak_handle(argument).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.construct_value_with_new_target(
+                &program,
+                constructor,
+                target,
+                &[argument],
+            );
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let weak_result = result.ok().map(|result| {
+                assert!(vm.is_function(result));
+                assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
+                vm.heap.weak_handle(result).unwrap()
+            });
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak_argument).is_none());
+            if let Some(result) = weak_result {
+                assert!(vm.heap.weak_value(result).is_none());
             }
         }
     }
@@ -6025,160 +5913,152 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
 
 #[test]
 fn error_constructor_and_call_scopes_release_after_coercion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for native in [
+        Native::Error,
+        Native::EvalError,
+        Native::RangeError,
+        Native::ReferenceError,
+        Native::SyntaxError,
+        Native::TypeError,
+        Native::URIError,
+        Native::SuppressedError,
     ] {
-        for native in [
-            Native::Error,
-            Native::EvalError,
-            Native::RangeError,
-            Native::ReferenceError,
-            Native::SyntaxError,
-            Native::TypeError,
-            Native::URIError,
-            Native::SuppressedError,
+        for (setup, fails) in [
+            (
+                "var message = {toString() {$262.gc(); return 'message'}}; var options = {get cause() {$262.gc(); return {rank: 7}}};",
+                false,
+            ),
+            (
+                "var message = {toString() {$262.gc(); throw new Error('message')}}; var options;",
+                true,
+            ),
+            (
+                "var message; var options = {get cause() {$262.gc(); throw new Error('cause')}};",
+                true,
+            ),
         ] {
-            for (setup, fails) in [
-                (
-                    "var message = {toString() {$262.gc(); return 'message'}}; var options = {get cause() {$262.gc(); return {rank: 7}}};",
-                    false,
-                ),
-                (
-                    "var message = {toString() {$262.gc(); throw new Error('message')}}; var options;",
-                    true,
-                ),
-                (
-                    "var message; var options = {get cause() {$262.gc(); throw new Error('cause')}};",
-                    true,
-                ),
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let program = compile(setup, "error-root-scope.js").unwrap();
-                vm.execute(&program).unwrap();
-                let message_atom = vm.intern_atom("message");
-                let message = vm.own_property(vm.realm.globals, message_atom).unwrap();
-                let options_atom = vm.intern_atom("options");
-                let options = vm.own_property(vm.realm.globals, options_atom).unwrap();
-                let args = if native == Native::SuppressedError {
-                    vec![Value::UNDEFINED, Value::UNDEFINED, message]
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let program = compile(setup, "error-root-scope.js").unwrap();
+            vm.execute(&program).unwrap();
+            let message_atom = vm.intern_atom("message");
+            let message = vm.own_property(vm.realm.globals, message_atom).unwrap();
+            let options_atom = vm.intern_atom("options");
+            let options = vm.own_property(vm.realm.globals, options_atom).unwrap();
+            let args = if native == Native::SuppressedError {
+                vec![Value::UNDEFINED, Value::UNDEFINED, message]
+            } else {
+                vec![message, options]
+            };
+            for with_new_target in [false, true] {
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if with_new_target {
+                    let new_target = vm.native_value(native);
+                    vm.construct_error_with_new_target(&program, native, &args, new_target)
                 } else {
-                    vec![message, options]
+                    vm.construct_error_native(&program, native, &args)
                 };
-                for with_new_target in [false, true] {
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = if with_new_target {
-                        let new_target = vm.native_value(native);
-                        vm.construct_error_with_new_target(&program, native, &args, new_target)
-                    } else {
-                        vm.construct_error_native(&program, native, &args)
-                    };
-                    assert_eq!(
-                        result.is_err(),
-                        fails && (native != Native::SuppressedError || !message.is_undefined())
-                    );
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    if let Ok(value) = result {
-                        let handle = vm.heap.weak_handle(value).unwrap();
-                        vm.collect_now(&program);
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                assert_eq!(
+                    result.is_err(),
+                    fails && (native != Native::SuppressedError || !message.is_undefined())
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                if let Ok(value) = result {
+                    let handle = vm.heap.weak_handle(value).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
-        for fails in [false, true] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let action = if fails {
-                "throw new Error('prototype')"
-            } else {
-                "return {}"
-            };
-            let program = compile(&format!("var constructor = new Proxy(function C(value) {{$262.gc(); this.answer = value.answer;}}, {{get(target, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(target, key, receiver);}}}});"), "construct-scope.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("constructor");
-            let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
-            let argument = vm.object();
-            vm.set_named(&program, argument, "answer", Value::number(42.0))
-                .unwrap();
-            let weak = vm.heap.weak_handle(argument).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.construct_value(&program, constructor, &[argument]);
-            assert_eq!(result.is_err(), fails);
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            if let Ok(result) = result {
-                let atom = vm.intern_atom("answer");
-                assert_eq!(vm.own_property(result, atom), Some(Value::number(42.0)));
-            }
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(weak).is_none());
+    }
+    for fails in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let action = if fails {
+            "throw new Error('prototype')"
+        } else {
+            "return {}"
+        };
+        let program = compile(&format!("var constructor = new Proxy(function C(value) {{$262.gc(); this.answer = value.answer;}}, {{get(target, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(target, key, receiver);}}}});"), "construct-scope.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("constructor");
+        let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+        let argument = vm.object();
+        vm.set_named(&program, argument, "answer", Value::number(42.0))
+            .unwrap();
+        let weak = vm.heap.weak_handle(argument).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.construct_value(&program, constructor, &[argument]);
+        assert_eq!(result.is_err(), fails);
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        if let Ok(result) = result {
+            let atom = vm.intern_atom("answer");
+            assert_eq!(vm.own_property(result, atom), Some(Value::number(42.0)));
         }
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(weak).is_none());
     }
 }
 
 #[test]
 fn error_new_target_roots_release_after_prototype_success_and_throw() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for native in [
+        Native::Error,
+        Native::EvalError,
+        Native::RangeError,
+        Native::ReferenceError,
+        Native::SyntaxError,
+        Native::TypeError,
+        Native::URIError,
+        Native::SuppressedError,
+        Native::AggregateError,
     ] {
-        for native in [
-            Native::Error,
-            Native::EvalError,
-            Native::RangeError,
-            Native::ReferenceError,
-            Native::SyntaxError,
-            Native::TypeError,
-            Native::URIError,
-            Native::SuppressedError,
-            Native::AggregateError,
-        ] {
-            for fails in [false, true] {
-                let action = if fails { "throw 37" } else { "return {}" };
-                let source = format!(
-                    "var target = new Proxy(function Target() {{}}, {{get(t, k, r) {{if(k === 'prototype') {{$262.gc(); {action};}} return Reflect.get(t, k, r);}}}}); function coerce() {{$262.gc(); return 'message';}}"
-                );
-                let program = compile(&source, "error-new-target-roots.js").unwrap();
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                vm.execute(&program).unwrap();
-                let target_atom = vm.intern_atom("target");
-                let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
-                let coerce_atom = vm.intern_atom("coerce");
-                let coerce = vm.own_property(vm.realm.globals, coerce_atom).unwrap();
-                let message = vm.object();
-                vm.set_named(&program, message, "toString", coerce).unwrap();
-                let cause = vm.object();
-                let options = vm.object();
-                vm.set_named(&program, options, "cause", cause).unwrap();
-                let args = match native {
-                    Native::AggregateError => vec![vm.new_array(vec![cause]), message, options],
-                    Native::SuppressedError => vec![cause, options, message],
-                    _ => vec![message, options],
-                };
-                let weak = args
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
-                    .collect::<Vec<_>>();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let constructor = vm.native_value(native);
-                let result =
-                    vm.construct_value_with_new_target(&program, constructor, target, &args);
-                assert_eq!(result.is_err(), fails);
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let result = result.ok().map(|value| vm.heap.weak_handle(value).unwrap());
-                vm.collect_now(&program);
-                assert!(
-                    weak.into_iter()
-                        .all(|value| vm.heap.weak_value(value).is_none())
-                );
-                if let Some(value) = result {
-                    assert!(vm.heap.weak_value(value).is_none());
-                }
+        for fails in [false, true] {
+            let action = if fails { "throw 37" } else { "return {}" };
+            let source = format!(
+                "var target = new Proxy(function Target() {{}}, {{get(t, k, r) {{if(k === 'prototype') {{$262.gc(); {action};}} return Reflect.get(t, k, r);}}}}); function coerce() {{$262.gc(); return 'message';}}"
+            );
+            let program = compile(&source, "error-new-target-roots.js").unwrap();
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            vm.execute(&program).unwrap();
+            let target_atom = vm.intern_atom("target");
+            let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
+            let coerce_atom = vm.intern_atom("coerce");
+            let coerce = vm.own_property(vm.realm.globals, coerce_atom).unwrap();
+            let message = vm.object();
+            vm.set_named(&program, message, "toString", coerce).unwrap();
+            let cause = vm.object();
+            let options = vm.object();
+            vm.set_named(&program, options, "cause", cause).unwrap();
+            let args = match native {
+                Native::AggregateError => vec![vm.new_array(vec![cause]), message, options],
+                Native::SuppressedError => vec![cause, options, message],
+                _ => vec![message, options],
+            };
+            let weak = args
+                .iter()
+                .map(|value| vm.heap.weak_handle(*value).unwrap())
+                .collect::<Vec<_>>();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let constructor = vm.native_value(native);
+            let result =
+                vm.construct_value_with_new_target(&program, constructor, target, &args);
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result = result.ok().map(|value| vm.heap.weak_handle(value).unwrap());
+            vm.collect_now(&program);
+            assert!(
+                weak.into_iter()
+                    .all(|value| vm.heap.weak_value(value).is_none())
+            );
+            if let Some(value) = result {
+                assert!(vm.heap.weak_value(value).is_none());
             }
         }
     }
@@ -6228,42 +6108,38 @@ fn spread_and_aggregate_roots_release_after_guest_failures() {
             true,
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (setup, spread_fails, aggregate_fails) in cases {
-            for aggregate in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let program = compile(setup, "spread-aggregate-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let mut args = Vec::new();
-                for name in ["source", "message", "options", "AggregateError"] {
-                    let atom = vm.intern_atom(name);
-                    args.push(vm.own_property(vm.realm.globals, atom).unwrap());
-                }
-                let roots = vm.heap.root_count_for_test();
-                let result = if aggregate {
-                    vm.construct_aggregate_error(&program, &args[..3], args[3])
+    let compile = Engine::specialize;
+    for (setup, spread_fails, aggregate_fails) in cases {
+        for aggregate in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let program = compile(setup, "spread-aggregate-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let mut args = Vec::new();
+            for name in ["source", "message", "options", "AggregateError"] {
+                let atom = vm.intern_atom(name);
+                args.push(vm.own_property(vm.realm.globals, atom).unwrap());
+            }
+            let roots = vm.heap.root_count_for_test();
+            let result = if aggregate {
+                vm.construct_aggregate_error(&program, &args[..3], args[3])
+            } else {
+                let array = vm.new_array(Vec::new());
+                vm.spread_into_array(&program, array, args[0])
+                    .map(|()| array)
+            };
+            assert_eq!(
+                result.is_err(),
+                if aggregate {
+                    aggregate_fails
                 } else {
-                    let array = vm.new_array(Vec::new());
-                    vm.spread_into_array(&program, array, args[0])
-                        .map(|()| array)
-                };
-                assert_eq!(
-                    result.is_err(),
-                    if aggregate {
-                        aggregate_fails
-                    } else {
-                        spread_fails
-                    }
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                if let Ok(value) = result {
-                    let handle = vm.heap.weak_handle(value).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
+                    spread_fails
                 }
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            if let Ok(value) = result {
+                let handle = vm.heap.weak_handle(value).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -6302,46 +6178,42 @@ fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
             true,
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (name, kind) in [
+        ("Uint8Array", TypedArrayKind::Uint8),
+        ("BigInt64Array", TypedArrayKind::BigInt64),
+        ("BigUint64Array", TypedArrayKind::BigUint64),
     ] {
-        for (name, kind) in [
-            ("Uint8Array", TypedArrayKind::Uint8),
-            ("BigInt64Array", TypedArrayKind::BigInt64),
-            ("BigUint64Array", TypedArrayKind::BigUint64),
-        ] {
-            for (source, fails) in sources {
-                for from in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let program = compile(
-                        &format!("var source = {source};"),
-                        "typed-initialization-roots.js",
+        for (source, fails) in sources {
+            for from in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let program = compile(
+                    &format!("var source = {source};"),
+                    "typed-initialization-roots.js",
+                )
+                .unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, atom).unwrap();
+                let atom = vm.intern_atom(name);
+                let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let outcome = if from {
+                    vm.array_from_native(
+                        &program,
+                        constructor,
+                        &[source],
+                        super::array_modern::ArrayFromTarget::TypedArray,
                     )
-                    .unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("source");
-                    let source = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let atom = vm.intern_atom(name);
-                    let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let roots = vm.heap.root_count_for_test();
-                    let outcome = if from {
-                        vm.array_from_native(
-                            &program,
-                            constructor,
-                            &[source],
-                            super::array_modern::ArrayFromTarget::TypedArray,
-                        )
-                    } else {
-                        vm.construct_typed_array_native(&program, &[source], kind, name)
-                    };
-                    assert_eq!(outcome.is_err(), fails, "{name}, from={from}, {source:?}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    if let Ok(result) = outcome {
-                        let handle = vm.heap.weak_handle(result).unwrap();
-                        vm.collect_now(&program);
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                } else {
+                    vm.construct_typed_array_native(&program, &[source], kind, name)
+                };
+                assert_eq!(outcome.is_err(), fails, "{name}, from={from}, {source:?}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                if let Ok(result) = outcome {
+                    let handle = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -6350,109 +6222,101 @@ fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
 
 #[test]
 fn typed_fill_and_assignment_roots_release_after_coercion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
-            let element = if constructor == "Uint8Array" {
-                "7"
+    let compile = Engine::specialize;
+    for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
+        let element = if constructor == "Uint8Array" {
+            "7"
+        } else {
+            "7n"
+        };
+        for (setup, fails) in [
+            (format!("var value = {element}; var start = 0; var end = undefined;"), false),
+            ("var value = {valueOf() {$262.gc(); throw new Error('value')}}; var start = 0; var end = undefined;".into(), true),
+            (format!("var value = {element}; var start = {{valueOf() {{$262.gc(); throw new Error('start')}}}}; var end = undefined;"), true),
+            (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.gc(); throw new Error('end')}}}};"), true),
+            (format!("var value = {element}; var start = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 0}}}}; var end = undefined;"), true),
+            (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 1}}}};"), true),
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let program = compile(&format!("var source = new {constructor}(3); {setup}"), "typed-fill-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let mut values = Vec::new();
+            for name in ["source", "value", "start", "end"] {
+                let atom = vm.intern_atom(name);
+                values.push(vm.own_property(vm.realm.globals, atom).unwrap());
+            }
+            let roots = vm.heap.root_count_for_test();
+            let result = vm.call_native_dispatch(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
+            assert_eq!(result.is_err(), fails, "{constructor}: {setup}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+        }
+        for fails in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let coercion = if fails {
+                "throw new Error('value')".to_owned()
             } else {
-                "7n"
+                format!("return {element}")
             };
-            for (setup, fails) in [
-                (format!("var value = {element}; var start = 0; var end = undefined;"), false),
-                ("var value = {valueOf() {$262.gc(); throw new Error('value')}}; var start = 0; var end = undefined;".into(), true),
-                (format!("var value = {element}; var start = {{valueOf() {{$262.gc(); throw new Error('start')}}}}; var end = undefined;"), true),
-                (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.gc(); throw new Error('end')}}}};"), true),
-                (format!("var value = {element}; var start = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 0}}}}; var end = undefined;"), true),
-                (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 1}}}};"), true),
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let program = compile(&format!("var source = new {constructor}(3); {setup}"), "typed-fill-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let mut values = Vec::new();
-                for name in ["source", "value", "start", "end"] {
-                    let atom = vm.intern_atom(name);
-                    values.push(vm.own_property(vm.realm.globals, atom).unwrap());
-                }
-                let roots = vm.heap.root_count_for_test();
-                let result = vm.call_native_dispatch(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
-                assert_eq!(result.is_err(), fails, "{constructor}: {setup}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-            }
-            for fails in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let coercion = if fails {
-                    "throw new Error('value')".to_owned()
-                } else {
-                    format!("return {element}")
-                };
-                let program = compile(&format!("var source = new {constructor}(1); var value = {{valueOf() {{$262.gc(); {coercion}}}}};"), "typed-set-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let source_atom = vm.intern_atom("source");
-                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                let value_atom = vm.intern_atom("value");
-                let value = vm.own_property(vm.realm.globals, value_atom).unwrap();
-                let roots = vm.heap.root_count_for_test();
-                let result = vm.typed_array_set(&program, source, 0, value);
-                assert_eq!(result.is_err(), fails);
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-            }
+            let program = compile(&format!("var source = new {constructor}(1); var value = {{valueOf() {{$262.gc(); {coercion}}}}};"), "typed-set-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let source_atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+            let value_atom = vm.intern_atom("value");
+            let value = vm.own_property(vm.realm.globals, value_atom).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let result = vm.typed_array_set(&program, source, 0, value);
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots);
         }
     }
 }
 
 #[test]
 fn typed_sort_snapshot_roots_release_after_comparator_errors() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
-            for (comparator, fails) in [
-                ("undefined", false),
-                (
-                    "(left, right) => left < right ? -1 : left > right ? 1 : 0",
-                    false,
-                ),
-                ("() => {throw new Error('compare')}", true),
-                ("() => ({valueOf() {throw new Error('coercion')}})", true),
+    let compile = Engine::specialize;
+    for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
+        for (comparator, fails) in [
+            ("undefined", false),
+            (
+                "(left, right) => left < right ? -1 : left > right ? 1 : 0",
+                false,
+            ),
+            ("() => {throw new Error('compare')}", true),
+            ("() => ({valueOf() {throw new Error('coercion')}})", true),
+        ] {
+            for native in [
+                Native::TypedArraySort,
+                Native::TypedArrayToSorted,
+                Native::TypedArrayToReversed,
             ] {
-                for native in [
-                    Native::TypedArraySort,
-                    Native::TypedArrayToSorted,
-                    Native::TypedArrayToReversed,
-                ] {
-                    let mut vm = Vm::new(TestHost::default());
-                    let values = if constructor == "Uint8Array" {
-                        "[3, 1, 2]"
-                    } else {
-                        "[3n, 1n, 2n]"
-                    };
-                    let source = format!(
-                        "var source = new {constructor}({values}); var comparator = {comparator};"
-                    );
-                    let program = compile(&source, "typed-sort-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let source_atom = vm.intern_atom("source");
-                    let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                    let comparator_atom = vm.intern_atom("comparator");
-                    let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
-                    let roots_before = vm.heap.root_count_for_test();
-                    let outcome = vm.call_native_dispatch(&program, native, source, &[comparator]);
-                    assert_eq!(
-                        outcome.is_err(),
-                        fails && native != Native::TypedArrayToReversed
-                    );
-                    assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                    if native != Native::TypedArraySort
-                        && let Ok(result) = outcome
-                    {
-                        let handle = vm.heap.weak_handle(result).unwrap();
-                        vm.collect_now(&program);
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                let mut vm = Vm::new(TestHost::default());
+                let values = if constructor == "Uint8Array" {
+                    "[3, 1, 2]"
+                } else {
+                    "[3n, 1n, 2n]"
+                };
+                let source = format!(
+                    "var source = new {constructor}({values}); var comparator = {comparator};"
+                );
+                let program = compile(&source, "typed-sort-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let comparator_atom = vm.intern_atom("comparator");
+                let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
+                let roots_before = vm.heap.root_count_for_test();
+                let outcome = vm.call_native_dispatch(&program, native, source, &[comparator]);
+                assert_eq!(
+                    outcome.is_err(),
+                    fails && native != Native::TypedArrayToReversed
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                if native != Native::TypedArraySort
+                    && let Ok(result) = outcome
+                {
+                    let handle = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -6507,33 +6371,29 @@ fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
             false,
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (source, sort_fails, copy_fails) in cases {
-            for (native, fails) in [
-                (Native::ArraySort, sort_fails),
-                (Native::ArrayToSorted, copy_fails),
-            ] {
-                let mut vm = Vm::new(TestHost::default());
-                let program = compile(source, "sort-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let source_atom = vm.intern_atom("source");
-                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                let comparator_atom = vm.intern_atom("comparator");
-                let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
-                let roots_before = vm.heap.root_count_for_test();
-                let outcome = vm.array_sort_native(&program, source, &[comparator], native == Native::ArraySort);
-                assert_eq!(outcome.is_err(), fails);
-                assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                if native == Native::ArrayToSorted
-                    && let Ok(result) = outcome
-                {
-                    let handle = vm.heap.weak_handle(result).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+    let compile = Engine::specialize;
+    for (source, sort_fails, copy_fails) in cases {
+        for (native, fails) in [
+            (Native::ArraySort, sort_fails),
+            (Native::ArrayToSorted, copy_fails),
+        ] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = compile(source, "sort-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let source_atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+            let comparator_atom = vm.intern_atom("comparator");
+            let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
+            let roots_before = vm.heap.root_count_for_test();
+            let outcome = vm.array_sort_native(&program, source, &[comparator], native == Native::ArraySort);
+            assert_eq!(outcome.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots_before);
+            if native == Native::ArrayToSorted
+                && let Ok(result) = outcome
+            {
+                let handle = vm.heap.weak_handle(result).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -6541,50 +6401,46 @@ fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
 
 #[test]
 fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (source, getters_fail, coercion_fails) in [
+        ("var source = [1, 2, 3]; var index = 1;", false, false),
+        (
+            "var source = [1, 2, 3]; var index = 1; \
+          for (var key of [0, 1, 2]) Object.defineProperty(source, key, \
+          {get() {throw new Error('getter')}});",
+            true,
+            false,
+        ),
+        (
+            "var source = [1, 2, 3]; var index = {valueOf() {throw new Error('coercion')}};",
+            false,
+            true,
+        ),
     ] {
-        for (source, getters_fail, coercion_fails) in [
-            ("var source = [1, 2, 3]; var index = 1;", false, false),
-            (
-                "var source = [1, 2, 3]; var index = 1; \
-              for (var key of [0, 1, 2]) Object.defineProperty(source, key, \
-              {get() {throw new Error('getter')}});",
-                true,
-                false,
-            ),
-            (
-                "var source = [1, 2, 3]; var index = {valueOf() {throw new Error('coercion')}};",
-                false,
-                true,
-            ),
+        for native in [
+            Native::ArrayWith,
+            Native::ArrayToReversed,
+            Native::ArrayToSpliced,
         ] {
-            for native in [
-                Native::ArrayWith,
-                Native::ArrayToReversed,
-                Native::ArrayToSpliced,
-            ] {
-                let mut vm = Vm::new(TestHost::default());
-                let program = compile(source, "copy-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let source_atom = vm.intern_atom("source");
-                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                let index_atom = vm.intern_atom("index");
-                let index = vm.own_property(vm.realm.globals, index_atom).unwrap();
-                let roots_before = vm.heap.root_count_for_test();
-                let outcome =
-                    vm.array_copy_native(&program, native, source, &[index, Value::number(1.0)]);
-                assert_eq!(
-                    outcome.is_err(),
-                    getters_fail || (coercion_fails && native != Native::ArrayToReversed)
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                if let Ok(result) = outcome {
-                    let handle = vm.heap.weak_handle(result).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+            let mut vm = Vm::new(TestHost::default());
+            let program = compile(source, "copy-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let source_atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+            let index_atom = vm.intern_atom("index");
+            let index = vm.own_property(vm.realm.globals, index_atom).unwrap();
+            let roots_before = vm.heap.root_count_for_test();
+            let outcome =
+                vm.array_copy_native(&program, native, source, &[index, Value::number(1.0)]);
+            assert_eq!(
+                outcome.is_err(),
+                getters_fail || (coercion_fails && native != Native::ArrayToReversed)
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots_before);
+            if let Ok(result) = outcome {
+                let handle = vm.heap.weak_handle(result).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -6622,35 +6478,31 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
             false,
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for native in [Native::ArrayReduce, Native::ArrayReduceRight] {
-            for (source, fails_without_initial, fails_with_initial) in cases {
-                for (initial, fails) in [(false, fails_without_initial), (true, fails_with_initial)]
-                {
-                    let mut vm = Vm::new(TestHost::default());
-                    let program = compile(source, "reduce-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let source_atom = vm.intern_atom("source");
-                    let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                    let callback_atom = vm.intern_atom("callback");
-                    let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
-                    let mut args = vec![callback];
-                    if initial {
-                        args.push(Value::UNDEFINED);
-                    }
-                    let roots_before = vm.heap.root_count_for_test();
-                    let outcome = vm.array_callback_native(&program, native, source, &args);
-                    assert_eq!(outcome.is_err(), fails);
-                    assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                    if let Ok(result) = outcome
-                        && let Some(handle) = vm.heap.weak_handle(result) {
-                            vm.collect_now(&program);
-                            assert!(vm.heap.weak_value(handle).is_none());
-                        }
+    let compile = Engine::specialize;
+    for native in [Native::ArrayReduce, Native::ArrayReduceRight] {
+        for (source, fails_without_initial, fails_with_initial) in cases {
+            for (initial, fails) in [(false, fails_without_initial), (true, fails_with_initial)]
+            {
+                let mut vm = Vm::new(TestHost::default());
+                let program = compile(source, "reduce-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let callback_atom = vm.intern_atom("callback");
+                let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
+                let mut args = vec![callback];
+                if initial {
+                    args.push(Value::UNDEFINED);
                 }
+                let roots_before = vm.heap.root_count_for_test();
+                let outcome = vm.array_callback_native(&program, native, source, &args);
+                assert_eq!(outcome.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                if let Ok(result) = outcome
+                    && let Some(handle) = vm.heap.weak_handle(result) {
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
             }
         }
     }
@@ -6689,36 +6541,32 @@ fn flattening_roots_release_after_success_and_abrupt_completion() {
             true,
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (source, flat_fails, flat_map_fails) in cases {
-            for (native, fails) in [
-                (Native::ArrayFlat, flat_fails),
-                (Native::ArrayFlatMap, flat_map_fails),
-            ] {
-                let mut vm = Vm::new(TestHost::default());
-                let program = compile(source, "flatten-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let source_atom = vm.intern_atom("source");
-                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
-                let mapper_atom = vm.intern_atom("mapper");
-                let mapper = vm.own_property(vm.realm.globals, mapper_atom).unwrap();
-                let args = if native == Native::ArrayFlatMap {
-                    vec![mapper]
-                } else {
-                    vec![]
-                };
-                let roots_before = vm.heap.root_count_for_test();
-                let outcome = vm.array_flatten_native(&program, native, source, &args);
-                assert_eq!(outcome.is_err(), fails);
-                assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                if let Ok(result) = outcome {
-                    let handle = vm.heap.weak_handle(result).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+    let compile = Engine::specialize;
+    for (source, flat_fails, flat_map_fails) in cases {
+        for (native, fails) in [
+            (Native::ArrayFlat, flat_fails),
+            (Native::ArrayFlatMap, flat_map_fails),
+        ] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = compile(source, "flatten-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let source_atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+            let mapper_atom = vm.intern_atom("mapper");
+            let mapper = vm.own_property(vm.realm.globals, mapper_atom).unwrap();
+            let args = if native == Native::ArrayFlatMap {
+                vec![mapper]
+            } else {
+                vec![]
+            };
+            let roots_before = vm.heap.root_count_for_test();
+            let outcome = vm.array_flatten_native(&program, native, source, &args);
+            assert_eq!(outcome.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots_before);
+            if let Ok(result) = outcome {
+                let handle = vm.heap.weak_handle(result).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -6786,79 +6634,77 @@ fn bound_function_observes_proxy_metadata_order_and_prototype() {
         bound = Function.prototype.bind.call(plain);
         print(Object.getPrototypeOf(bound) === null);
     "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        let program = compile(source, "bound-proxy-metadata.js").unwrap();
-        if let Err(error) = vm.execute(&program) {
-            panic!("{}", vm.format_error(&program, &error));
-        }
-        assert_eq!(
-            output.borrow().as_slice(),
-            [
-                "prototype,own:length,get:length,get:name",
-                "true",
-                "2",
-                "bound example",
-                "42",
-                "false",
-                "false",
-                "true",
-                "0",
-                "bound ",
-                "true",
-            ]
-        );
+    let compile = Engine::specialize;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = compile(source, "bound-proxy-metadata.js").unwrap();
+    if let Err(error) = vm.execute(&program) {
+        panic!("{}", vm.format_error(&program, &error));
     }
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            "prototype,own:length,get:length,get:name",
+            "true",
+            "2",
+            "bound example",
+            "42",
+            "false",
+            "false",
+            "true",
+            "0",
+            "bound ",
+            "true",
+        ]
+    );
 }
 
 #[test]
 fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        for phase in ["accept", "prototype", "descriptor", "length", "name"] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                var marker = {{}};
-                var target = new Proxy(function() {{}}, {{
-                    getPrototypeOf() {{
-                        $262.gc(); if ('{phase}' === 'prototype') throw marker;
-                        return null;
-                    }},
-                    getOwnPropertyDescriptor() {{
-                        $262.gc(); if ('{phase}' === 'descriptor') throw marker;
-                        return {{value: 3, configurable: true}};
-                    }},
-                    get(target, key) {{
-                        $262.gc(); if ('{phase}' === key) throw marker;
-                        return key === 'length' ? 3 : 'rooted';
-                    }}
-                }});
-            "#
-            );
-            let program = compile(&source, "bound-proxy-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("target");
-            let target = vm.own_property(vm.realm.globals, atom).unwrap();
-            let roots_before = vm.heap.root_count_for_test();
-            let outcome = vm.bind_function(&program, target, &[]);
-            assert_eq!(vm.heap.root_count_for_test(), roots_before, "{phase}");
-            match outcome {
-                Ok(function) => {
-                    assert_eq!(phase, "accept");
-                    assert!(vm.heap.object(function).unwrap().proto().is_null());
-                    let atom = vm.intern_atom("length");
-                    assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
-                    let handle = vm.heap.weak_handle(function).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
-                Err(error) => {
-                    assert_ne!(phase, "accept");
-                    let atom = vm.intern_atom("marker");
-                    let marker = vm.own_property(vm.realm.globals, atom).unwrap();
-                    assert_eq!(error.thrown_value(), Some(marker), "{phase}");
-                }
+    let compile = Engine::specialize;
+    for phase in ["accept", "prototype", "descriptor", "length", "name"] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            var marker = {{}};
+            var target = new Proxy(function() {{}}, {{
+                getPrototypeOf() {{
+                    $262.gc(); if ('{phase}' === 'prototype') throw marker;
+                    return null;
+                }},
+                getOwnPropertyDescriptor() {{
+                    $262.gc(); if ('{phase}' === 'descriptor') throw marker;
+                    return {{value: 3, configurable: true}};
+                }},
+                get(target, key) {{
+                    $262.gc(); if ('{phase}' === key) throw marker;
+                    return key === 'length' ? 3 : 'rooted';
+                }}
+            }});
+        "#
+        );
+        let program = compile(&source, "bound-proxy-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("target");
+        let target = vm.own_property(vm.realm.globals, atom).unwrap();
+        let roots_before = vm.heap.root_count_for_test();
+        let outcome = vm.bind_function(&program, target, &[]);
+        assert_eq!(vm.heap.root_count_for_test(), roots_before, "{phase}");
+        match outcome {
+            Ok(function) => {
+                assert_eq!(phase, "accept");
+                assert!(vm.heap.object(function).unwrap().proto().is_null());
+                let atom = vm.intern_atom("length");
+                assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
+                let handle = vm.heap.weak_handle(function).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+            Err(error) => {
+                assert_ne!(phase, "accept");
+                let atom = vm.intern_atom("marker");
+                let marker = vm.own_property(vm.realm.globals, atom).unwrap();
+                assert_eq!(error.thrown_value(), Some(marker), "{phase}");
             }
         }
     }
@@ -6866,42 +6712,38 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
 
 #[test]
 fn bound_function_metadata_roots_release_on_normal_and_abrupt_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (metadata, fails) in [
+        (None, false),
+        (Some("length"), true),
+        (Some("name"), true),
+        (Some("getPrototypeOf"), true),
+        (Some("getOwnPropertyDescriptor"), true),
     ] {
-        for (metadata, fails) in [
-            (None, false),
-            (Some("length"), true),
-            (Some("name"), true),
-            (Some("getPrototypeOf"), true),
-            (Some("getOwnPropertyDescriptor"), true),
-        ] {
-            let mut vm = Vm::new(TestHost::default());
-            let source = match metadata {
-                None => "function target() {}".to_owned(),
-                Some(trap @ ("getPrototypeOf" | "getOwnPropertyDescriptor")) => format!(
-                    "var target = new Proxy(function() {{}}, {{ \
-                     {trap}() {{throw new Error('{trap}')}} }});"
-                ),
-                Some(property) => format!(
-                    "function target() {{}} Object.defineProperty(target, '{property}', \
-                     {{get() {{throw new Error('{property}')}}}});"
-                ),
-            };
-            let program = compile(&source, "bound-metadata-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("target");
-            let target = vm.own_property(vm.realm.globals, atom).unwrap();
-            let roots_before = vm.heap.root_count_for_test();
-            let outcome = vm.bind_function(&program, target, &[]);
-            assert_eq!(outcome.is_err(), fails, "{metadata:?}");
-            assert_eq!(vm.heap.root_count_for_test(), roots_before, "{metadata:?}");
-            if let Ok(function) = outcome {
-                let handle = vm.heap.weak_handle(function).unwrap();
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(handle).is_none());
-            }
+        let mut vm = Vm::new(TestHost::default());
+        let source = match metadata {
+            None => "function target() {}".to_owned(),
+            Some(trap @ ("getPrototypeOf" | "getOwnPropertyDescriptor")) => format!(
+                "var target = new Proxy(function() {{}}, {{ \
+                 {trap}() {{throw new Error('{trap}')}} }});"
+            ),
+            Some(property) => format!(
+                "function target() {{}} Object.defineProperty(target, '{property}', \
+                 {{get() {{throw new Error('{property}')}}}});"
+            ),
+        };
+        let program = compile(&source, "bound-metadata-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("target");
+        let target = vm.own_property(vm.realm.globals, atom).unwrap();
+        let roots_before = vm.heap.root_count_for_test();
+        let outcome = vm.bind_function(&program, target, &[]);
+        assert_eq!(outcome.is_err(), fails, "{metadata:?}");
+        assert_eq!(vm.heap.root_count_for_test(), roots_before, "{metadata:?}");
+        if let Ok(function) = outcome {
+            let handle = vm.heap.weak_handle(function).unwrap();
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(handle).is_none());
         }
     }
 }
@@ -7412,135 +7254,123 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
 
 #[test]
 fn regression_collection_preserves_unused_regexp_iterator_prototype() {
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        let program = compile(
-            "function later() { print((/a/g)[Symbol.matchAll]('a').next().value[0]); }",
-            "regexp-after-collection.js",
-        )
-        .unwrap();
-        vm.execute(&program).unwrap();
-        let atom = vm.intern_atom("later");
-        let callback = vm.own_property(vm.realm.globals, atom).unwrap();
-        let root = vm.root(callback);
-        vm.collect_now(&program);
-        vm.enqueue_job(vm.root_value(root).unwrap(), vec![]);
-        if let Err(error) = vm.drain_jobs(&program) {
-            panic!("{mode}: {}", vm.format_error(&program, &error));
-        }
-        assert_eq!(output.borrow().as_slice(), ["a"], "{mode}");
-        assert!(vm.release_root(root));
+    let compile = Engine::specialize;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = compile(
+        "function later() { print((/a/g)[Symbol.matchAll]('a').next().value[0]); }",
+        "regexp-after-collection.js",
+    )
+    .unwrap();
+    vm.execute(&program).unwrap();
+    let atom = vm.intern_atom("later");
+    let callback = vm.own_property(vm.realm.globals, atom).unwrap();
+    let root = vm.root(callback);
+    vm.collect_now(&program);
+    vm.enqueue_job(vm.root_value(root).unwrap(), vec![]);
+    if let Err(error) = vm.drain_jobs(&program) {
+        panic!("{}", vm.format_error(&program, &error));
     }
+    assert_eq!(output.borrow().as_slice(), ["a"]);
+    assert!(vm.release_root(root));
 }
 
 #[test]
 fn error_data_survives_collection_without_retaining_dead_errors() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for kind in [
+        Native::Error,
+        Native::TypeError,
+        Native::AggregateError,
+        Native::SuppressedError,
     ] {
-        for kind in [
-            Native::Error,
-            Native::TypeError,
-            Native::AggregateError,
-            Native::SuppressedError,
-        ] {
-            let mut vm = Vm::new(TestHost::default());
-            let program = compile("", "error-data-roots.js").unwrap();
-            vm.initialize(&program).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let error = vm.construct_error_native(&program, kind, &[]).unwrap();
-            assert!(vm.error_is_error(error));
-            let root = vm.heap.root(error);
-            assert!(matches!(
-                vm.embedding_builtin_data(root),
-                Ok(Some(crate::BuiltinData::Error))
-            ));
-            let weak = vm.heap.weak_handle(error).unwrap();
-            vm.collect_now(&program);
-            let error = vm.heap.root_value(root).unwrap();
-            assert!(vm.error_is_error(error));
-            assert!(matches!(
-                vm.embedding_builtin_data(root),
-                Ok(Some(crate::BuiltinData::Error))
-            ));
-            // A second error of the same kind: an ordinary object is a class cell, so it has no record to copy.
-            let clone = vm.construct_error_native(&program, kind, &[]).unwrap();
-            assert!(vm.error_is_error(clone));
-            vm.heap.release_root(root);
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(weak).is_none());
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            let plain = vm.object();
-            assert!(!vm.error_is_error(plain));
-        }
         let mut vm = Vm::new(TestHost::default());
-        let program = compile("", "error-data-internal.js").unwrap();
+        let program = compile("", "error-data-roots.js").unwrap();
         vm.initialize(&program).unwrap();
-        let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
-        assert!(vm.error_is_error(exhausted));
-        let aggregate = vm.aggregate_error(&program, vec![]).unwrap();
-        assert!(vm.error_is_error(aggregate));
+        let roots = vm.heap.root_count_for_test();
+        let error = vm.construct_error_native(&program, kind, &[]).unwrap();
+        assert!(vm.error_is_error(error));
+        let root = vm.heap.root(error);
+        assert!(matches!(
+            vm.embedding_builtin_data(root),
+            Ok(Some(crate::BuiltinData::Error))
+        ));
+        let weak = vm.heap.weak_handle(error).unwrap();
+        vm.collect_now(&program);
+        let error = vm.heap.root_value(root).unwrap();
+        assert!(vm.error_is_error(error));
+        assert!(matches!(
+            vm.embedding_builtin_data(root),
+            Ok(Some(crate::BuiltinData::Error))
+        ));
+        // A second error of the same kind: an ordinary object is a class cell, so it has no record to copy.
+        let clone = vm.construct_error_native(&program, kind, &[]).unwrap();
+        assert!(vm.error_is_error(clone));
+        vm.heap.release_root(root);
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(weak).is_none());
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        let plain = vm.object();
+        assert!(!vm.error_is_error(plain));
     }
+    let mut vm = Vm::new(TestHost::default());
+    let program = compile("", "error-data-internal.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
+    assert!(vm.error_is_error(exhausted));
+    let aggregate = vm.aggregate_error(&program, vec![]).unwrap();
+    assert!(vm.error_is_error(aggregate));
 }
 
 #[test]
 fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for foreign in [false, true] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let program = compile(
-                "var foreign = $262.createRealm().global;",
-                "aggregate-intrinsics-roots.js",
-            )
-            .unwrap();
-            vm.execute(&program).unwrap();
-            if foreign {
-                let atom = vm.intern_atom("foreign");
-                let global = vm.own_property(vm.realm.globals, atom).unwrap();
-                vm.switch_realm_global(global);
-            }
-            let global = vm.realm.globals;
-            let error_prototype =
-                vm.realm.intrinsics.builtin_prototypes[&(global, Native::AggregateError)];
-            let array_prototype = vm.array_prototype_for_realm(global);
-            let promise_prototype =
-                vm.realm.intrinsics.builtin_prototypes[&(global, Native::Promise)];
-            for name in ["AggregateError", "Array", "Promise"] {
-                let atom = vm.intern_atom(name);
-                vm.set_property(global, atom, Value::NULL).unwrap();
-            }
-            vm.collect_now(&program);
-            assert!(vm.heap.is_live(promise_prototype));
-            let roots = vm.heap.root_count_for_test();
-            let reason = vm.object();
-            let reason_weak = vm.heap.weak_handle(reason).unwrap();
-            let error = vm.aggregate_error(&program, vec![reason]).unwrap();
-            assert!(vm.error_is_error(error));
-            assert_eq!(vm.heap.object(error).unwrap().proto(), error_prototype);
-            let errors_atom = vm.intern_atom("errors");
-            let errors = vm.own_property(error, errors_atom).unwrap();
-            assert_eq!(vm.heap.object(errors).unwrap().proto(), array_prototype);
-            let error_weak = vm.heap.weak_handle(error).unwrap();
-            let errors_weak = vm.heap.weak_handle(errors).unwrap();
-            let root = vm.heap.root(error);
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(reason_weak).is_some());
-            assert!(vm.heap.weak_value(errors_weak).is_some());
-            vm.heap.release_root(root);
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(reason_weak).is_none());
-            assert!(vm.heap.weak_value(errors_weak).is_none());
-            assert!(vm.heap.weak_value(error_weak).is_none());
-            assert_eq!(vm.heap.root_count_for_test(), roots);
+    let compile = Engine::specialize;
+    for foreign in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = compile(
+            "var foreign = $262.createRealm().global;",
+            "aggregate-intrinsics-roots.js",
+        )
+        .unwrap();
+        vm.execute(&program).unwrap();
+        if foreign {
+            let atom = vm.intern_atom("foreign");
+            let global = vm.own_property(vm.realm.globals, atom).unwrap();
+            vm.switch_realm_global(global);
         }
+        let global = vm.realm.globals;
+        let error_prototype =
+            vm.realm.intrinsics.builtin_prototypes[&(global, Native::AggregateError)];
+        let array_prototype = vm.array_prototype_for_realm(global);
+        let promise_prototype =
+            vm.realm.intrinsics.builtin_prototypes[&(global, Native::Promise)];
+        for name in ["AggregateError", "Array", "Promise"] {
+            let atom = vm.intern_atom(name);
+            vm.set_property(global, atom, Value::NULL).unwrap();
+        }
+        vm.collect_now(&program);
+        assert!(vm.heap.is_live(promise_prototype));
+        let roots = vm.heap.root_count_for_test();
+        let reason = vm.object();
+        let reason_weak = vm.heap.weak_handle(reason).unwrap();
+        let error = vm.aggregate_error(&program, vec![reason]).unwrap();
+        assert!(vm.error_is_error(error));
+        assert_eq!(vm.heap.object(error).unwrap().proto(), error_prototype);
+        let errors_atom = vm.intern_atom("errors");
+        let errors = vm.own_property(error, errors_atom).unwrap();
+        assert_eq!(vm.heap.object(errors).unwrap().proto(), array_prototype);
+        let error_weak = vm.heap.weak_handle(error).unwrap();
+        let errors_weak = vm.heap.weak_handle(errors).unwrap();
+        let root = vm.heap.root(error);
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(reason_weak).is_some());
+        assert!(vm.heap.weak_value(errors_weak).is_some());
+        vm.heap.release_root(root);
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(reason_weak).is_none());
+        assert!(vm.heap.weak_value(errors_weak).is_none());
+        assert!(vm.heap.weak_value(error_weak).is_none());
+        assert_eq!(vm.heap.root_count_for_test(), roots);
     }
 }
 
@@ -7566,97 +7396,89 @@ fn promise_finally_restores_roots_after_each_effect_completion() {
         ),
     ];
     let callable_case = "({constructor: undefined, get then() {$262.gc(); throw 'then';}})";
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (source, fails, callable) in cases
-            .into_iter()
-            .map(|(source, fails)| (source, fails, false))
-            .chain(std::iter::once((callable_case, true, true)))
-        {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let program = compile(
-                &format!("function create() {{return {source};}} function createHandler() {{return function() {{}};}}"),
-                "finally-roots.js",
-            )
+    let compile = Engine::specialize;
+    for (source, fails, callable) in cases
+        .into_iter()
+        .map(|(source, fails)| (source, fails, false))
+        .chain(std::iter::once((callable_case, true, true)))
+    {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = compile(
+            &format!("function create() {{return {source};}} function createHandler() {{return function() {{}};}}"),
+            "finally-roots.js",
+        )
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("create");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let receiver = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
             .unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("create");
+        let handler = if callable {
+            let atom = vm.intern_atom("createHandler");
             let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-            let receiver = vm
-                .call_value(&program, factory, Value::UNDEFINED, &[])
-                .unwrap();
-            let handler = if callable {
-                let atom = vm.intern_atom("createHandler");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                vm.call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap()
-            } else {
-                vm.object()
-            };
-            let receiver_weak = vm.heap.weak_handle(receiver).unwrap();
-            let handler_weak = vm.heap.weak_handle(handler).unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let incoming = vm.active_call_roots.len();
-            let result = vm.call_native(&program, Native::PromiseFinally, receiver, &[handler]);
-            assert_eq!(result.is_err(), fails, "{source}");
-            if !fails {
-                assert_eq!(result.unwrap(), Value::number(42.0));
-            }
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{source}");
-            assert_eq!(vm.active_call_roots.len(), incoming, "{source}");
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(receiver_weak).is_none(), "{source}");
-            assert!(vm.heap.weak_value(handler_weak).is_none(), "{source}");
+            vm.call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap()
+        } else {
+            vm.object()
+        };
+        let receiver_weak = vm.heap.weak_handle(receiver).unwrap();
+        let handler_weak = vm.heap.weak_handle(handler).unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let incoming = vm.active_call_roots.len();
+        let result = vm.call_native(&program, Native::PromiseFinally, receiver, &[handler]);
+        assert_eq!(result.is_err(), fails, "{source}");
+        if !fails {
+            assert_eq!(result.unwrap(), Value::number(42.0));
         }
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{source}");
+        assert_eq!(vm.active_call_roots.len(), incoming, "{source}");
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(receiver_weak).is_none(), "{source}");
+        assert!(vm.heap.weak_value(handler_weak).is_none(), "{source}");
     }
 }
 
 #[test]
 fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        let mut vm = Vm::new(TestHost::default().with_test262());
-        let program = compile(
-            "var foreign = $262.createRealm().global; var invalid = () => {};",
-            "promise-intrinsic-roots.js",
-        )
+    let compile = Engine::specialize;
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = compile(
+        "var foreign = $262.createRealm().global; var invalid = () => {};",
+        "promise-intrinsic-roots.js",
+    )
+    .unwrap();
+    vm.execute(&program).unwrap();
+    let invalid_atom = vm.intern_atom("invalid");
+    let invalid = vm.own_property(vm.realm.globals, invalid_atom).unwrap();
+    let foreign_atom = vm.intern_atom("foreign");
+    let foreign = vm.own_property(vm.realm.globals, foreign_atom).unwrap();
+    vm.switch_realm_global(foreign);
+    let constructor = vm.realm.intrinsics.promise_constructors[&foreign];
+    let weak = vm.heap.weak_handle(constructor).unwrap();
+    let prototype = vm.realm.intrinsics.builtin_prototypes[&(foreign, Native::Promise)];
+    let promise_atom = vm.intern_atom("Promise");
+    vm.set_property(foreign, promise_atom, Value::NULL).unwrap();
+    let constructor_atom = vm.intern_atom("constructor");
+    vm.set_property(prototype, constructor_atom, Value::NULL)
         .unwrap();
-        vm.execute(&program).unwrap();
-        let invalid_atom = vm.intern_atom("invalid");
-        let invalid = vm.own_property(vm.realm.globals, invalid_atom).unwrap();
-        let foreign_atom = vm.intern_atom("foreign");
-        let foreign = vm.own_property(vm.realm.globals, foreign_atom).unwrap();
-        vm.switch_realm_global(foreign);
-        let constructor = vm.realm.intrinsics.promise_constructors[&foreign];
-        let weak = vm.heap.weak_handle(constructor).unwrap();
-        let prototype = vm.realm.intrinsics.builtin_prototypes[&(foreign, Native::Promise)];
-        let promise_atom = vm.intern_atom("Promise");
-        vm.set_property(foreign, promise_atom, Value::NULL).unwrap();
-        let constructor_atom = vm.intern_atom("constructor");
-        vm.set_property(prototype, constructor_atom, Value::NULL)
-            .unwrap();
-        vm.collect_now(&program);
-        assert_eq!(vm.heap.weak_value(weak), Some(constructor));
-        let source = vm.promise_object().unwrap();
-        vm.set_property(source, constructor_atom, Value::UNDEFINED)
-            .unwrap();
-        let roots = vm.heap.root_count_for_test();
-        let result = vm
-            .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
-            .unwrap();
-        assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
-        assert_eq!(vm.heap.root_count_for_test(), roots);
-        let value = vm.object();
-        assert!(
-            vm.promise_resolve_for_constructor(&program, invalid, value)
-                .is_err()
-        );
-        assert_eq!(vm.heap.root_count_for_test(), roots);
-    }
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(weak), Some(constructor));
+    let source = vm.promise_object().unwrap();
+    vm.set_property(source, constructor_atom, Value::UNDEFINED)
+        .unwrap();
+    let roots = vm.heap.root_count_for_test();
+    let result = vm
+        .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
+        .unwrap();
+    assert_eq!(vm.heap.object(result).unwrap().proto(), prototype);
+    assert_eq!(vm.heap.root_count_for_test(), roots);
+    let value = vm.object();
+    assert!(
+        vm.promise_resolve_for_constructor(&program, invalid, value)
+            .is_err()
+    );
+    assert_eq!(vm.heap.root_count_for_test(), roots);
 }
 
 #[test]
@@ -7714,141 +7536,133 @@ fn aggregate_native_roots_restore_after_reject_callbacks_throw() {
             "({get first() {return {rank:42};}, get last() {$262.gc(); throw 'read';}})",
         ),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (mode, resolve, input) in cases {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let setup = format!(
-                "function Constructor(executor) {{executor(function() {{}}, function() {{$262.gc(); throw 'reject';}}); return {{}};}} Object.defineProperty(Constructor, 'resolve', Object.getOwnPropertyDescriptor({{{resolve}}}, 'resolve')); function create() {{return {input};}}"
-            );
-            let program = compile(&setup, "aggregate-root-errors.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("Constructor");
-            let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
-            let atom = vm.intern_atom("create");
-            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-            let input = vm
-                .call_value(&program, factory, Value::UNDEFINED, &[])
-                .unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let incoming = vm.active_call_roots.len();
-            assert!(
-                vm.promise_aggregate(&program, constructor, &[input], mode)
-                    .is_err(),
-                "{setup}"
-            );
-            assert_eq!(vm.heap.root_count_for_test(), roots, "{setup}");
-            assert_eq!(vm.active_call_roots.len(), incoming, "{setup}");
-        }
+    let compile = Engine::specialize;
+    for (mode, resolve, input) in cases {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let setup = format!(
+            "function Constructor(executor) {{executor(function() {{}}, function() {{$262.gc(); throw 'reject';}}); return {{}};}} Object.defineProperty(Constructor, 'resolve', Object.getOwnPropertyDescriptor({{{resolve}}}, 'resolve')); function create() {{return {input};}}"
+        );
+        let program = compile(&setup, "aggregate-root-errors.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("Constructor");
+        let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.intern_atom("create");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let input = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let incoming = vm.active_call_roots.len();
+        assert!(
+            vm.promise_aggregate(&program, constructor, &[input], mode)
+                .is_err(),
+            "{setup}"
+        );
+        assert_eq!(vm.heap.root_count_for_test(), roots, "{setup}");
+        assert_eq!(vm.active_call_roots.len(), incoming, "{setup}");
     }
 }
 
 #[test]
 fn property_copy_roots_release_after_callback_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for create in [false, true] {
-            for phase in [
-                "success",
-                "keys",
-                "descriptor",
-                "get",
-                "write",
-                "reject",
-                "excluded",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operands() {{
-                        var source=new Proxy({{first:1,later:2}}, {{
-                            ownKeys(object) {{$262.gc(); if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}},
-                            getOwnPropertyDescriptor(object,key) {{$262.gc();if (('{phase}'==='descriptor' && key==='later') || ('{phase}'==='excluded' && key==='first')) throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
-                            get(object,key) {{$262.gc();if ('{phase}'==='get' && key==='later') throw {{kind:'get'}};return {{rank:key==='first'?42:43}};}}
-                        }});
-                        var target=new Proxy({{}}, {{
-                            set(object,key,value) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.set(object,key,value);}},
-                            defineProperty(object,key,descriptor) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.defineProperty(object,key,descriptor);}}
-                        }});
-                        return [target,source];
-                    }}
-                "#
-                );
-                let program = compile(&source, "copy-root-scope.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let operands = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let args = vm
-                    .heap
-                    .array_elements(operands)
-                    .map(|elements| elements.to_vec())
-                    .expect("operands");
-                let handles = args
-                    .iter()
-                    .map(|v| vm.heap.weak_handle(*v).unwrap())
-                    .collect::<Vec<_>>();
-                let excluded = if phase == "excluded" {
-                    vec![vm.heap.alloc_string("first".into())]
+    let compile = Engine::specialize;
+    for create in [false, true] {
+        for phase in [
+            "success",
+            "keys",
+            "descriptor",
+            "get",
+            "write",
+            "reject",
+            "excluded",
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{
+                    var source=new Proxy({{first:1,later:2}}, {{
+                        ownKeys(object) {{$262.gc(); if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}},
+                        getOwnPropertyDescriptor(object,key) {{$262.gc();if (('{phase}'==='descriptor' && key==='later') || ('{phase}'==='excluded' && key==='first')) throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
+                        get(object,key) {{$262.gc();if ('{phase}'==='get' && key==='later') throw {{kind:'get'}};return {{rank:key==='first'?42:43}};}}
+                    }});
+                    var target=new Proxy({{}}, {{
+                        set(object,key,value) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.set(object,key,value);}},
+                        defineProperty(object,key,descriptor) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.defineProperty(object,key,descriptor);}}
+                    }});
+                    return [target,source];
+                }}
+            "#
+            );
+            let program = compile(&source, "copy-root-scope.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let operands = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let args = vm
+                .heap
+                .array_elements(operands)
+                .map(|elements| elements.to_vec())
+                .expect("operands");
+            let handles = args
+                .iter()
+                .map(|v| vm.heap.weak_handle(*v).unwrap())
+                .collect::<Vec<_>>();
+            let excluded = if phase == "excluded" {
+                vec![vm.heap.alloc_string("first".into())]
+            } else {
+                vec![]
+            };
+            let first_atom = vm.intern_atom("first");
+            let later_atom = vm.intern_atom("later");
+            let rank_atom = vm.intern_atom("rank");
+            let excluded_handles = excluded
+                .iter()
+                .map(|value| vm.heap.weak_handle(*value).unwrap())
+                .collect::<Vec<_>>();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let kind = if create {
+                super::object_symbols::PropertyCopyKind::CreateDataProperty
+            } else {
+                super::object_symbols::PropertyCopyKind::Set
+            };
+            let result =
+                vm.copy_enumerable_properties(&program, args[0], args[1], &excluded, kind);
+            assert_eq!(
+                result.is_ok(),
+                matches!(phase, "success" | "excluded"),
+                "create={create} {phase}"
+            );
+            if let Err(error) = &result {
+                if phase == "reject" {
+                    assert!(vm.format_error(&program, error).contains("TypeError"));
                 } else {
-                    vec![]
-                };
-                let first_atom = vm.intern_atom("first");
-                let later_atom = vm.intern_atom("later");
-                let rank_atom = vm.intern_atom("rank");
-                let excluded_handles = excluded
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
-                    .collect::<Vec<_>>();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let kind = if create {
-                    super::object_symbols::PropertyCopyKind::CreateDataProperty
-                } else {
-                    super::object_symbols::PropertyCopyKind::Set
-                };
-                let result =
-                    vm.copy_enumerable_properties(&program, args[0], args[1], &excluded, kind);
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                }
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            if phase != "keys" && phase != "excluded" {
+                let value = vm.get_property(&program, args[0], first_atom).unwrap();
+                let rank = vm.get_property(&program, value, rank_atom).unwrap();
+                assert_eq!(rank, Value::number(42.0));
+            }
+            if phase == "success" || phase == "excluded" {
+                let value = vm.get_property(&program, args[0], later_atom).unwrap();
                 assert_eq!(
-                    result.is_ok(),
-                    matches!(phase, "success" | "excluded"),
-                    "create={create} {phase}"
+                    vm.get_property(&program, value, rank_atom).unwrap(),
+                    Value::number(43.0)
                 );
-                if let Err(error) = &result {
-                    if phase == "reject" {
-                        assert!(vm.format_error(&program, error).contains("TypeError"));
-                    } else {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                    }
-                }
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                if phase != "keys" && phase != "excluded" {
-                    let value = vm.get_property(&program, args[0], first_atom).unwrap();
-                    let rank = vm.get_property(&program, value, rank_atom).unwrap();
-                    assert_eq!(rank, Value::number(42.0));
-                }
-                if phase == "success" || phase == "excluded" {
-                    let value = vm.get_property(&program, args[0], later_atom).unwrap();
-                    assert_eq!(
-                        vm.get_property(&program, value, rank_atom).unwrap(),
-                        Value::number(43.0)
-                    );
-                }
-                vm.collect_now(&program);
-                for handle in handles.into_iter().chain(excluded_handles) {
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+            }
+            vm.collect_now(&program);
+            for handle in handles.into_iter().chain(excluded_handles) {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -7856,83 +7670,79 @@ fn property_copy_roots_release_after_callback_completion() {
 
 #[test]
 fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for descriptors in [false, true] {
-            for fails in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operands() {{return [1,new Proxy({{first:1,later:2}},{{
-                        getOwnPropertyDescriptor(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{value:{{rank:key==='first'?42:43}},writable:true,enumerable:true,configurable:true}};}},
-                        get(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{rank:key==='first'?42:43}};}}
-                    }}),{{late:47}}];}}
-                "#
-                );
-                let program = compile(&source, "snapshot-native-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let operands = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
+    let compile = Engine::specialize;
+    for descriptors in [false, true] {
+        for fails in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{return [1,new Proxy({{first:1,later:2}},{{
+                    getOwnPropertyDescriptor(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{value:{{rank:key==='first'?42:43}},writable:true,enumerable:true,configurable:true}};}},
+                    get(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{rank:key==='first'?42:43}};}}
+                }}),{{late:47}}];}}
+            "#
+            );
+            let program = compile(&source, "snapshot-native-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let operands = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let args = vm
+                .heap
+                .array_elements(operands)
+                .map(|elements| elements.to_vec())
+                .expect("operands");
+            let source_handle = vm.heap.weak_handle(args[1]).unwrap();
+            let later_handle = vm.heap.weak_handle(args[2]).unwrap();
+            let first_atom = vm.intern_atom("first");
+            let rank_atom = vm.intern_atom("rank");
+            let value_atom = vm.intern_atom("value");
+            let late_atom = vm.intern_atom("late");
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = if descriptors {
+                vm.object_get_own_property_descriptors(&program, &args[1..2])
+            } else {
+                vm.object_assign(&program, &args)
+            };
+            assert_eq!(result.is_err(), fails);
+            if let Err(error) = &result {
+                let atom = vm.intern_atom("kind");
+                let kind = vm
+                    .own_property(error.thrown_value().unwrap(), atom)
                     .unwrap();
-                let args = vm
-                    .heap
-                    .array_elements(operands)
-                    .map(|elements| elements.to_vec())
-                    .expect("operands");
-                let source_handle = vm.heap.weak_handle(args[1]).unwrap();
-                let later_handle = vm.heap.weak_handle(args[2]).unwrap();
-                let first_atom = vm.intern_atom("first");
-                let rank_atom = vm.intern_atom("rank");
-                let value_atom = vm.intern_atom("value");
-                let late_atom = vm.intern_atom("late");
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = if descriptors {
-                    vm.object_get_own_property_descriptors(&program, &args[1..2])
+                assert_eq!(vm.to_string(&program, kind).unwrap(), "later");
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = if let Ok(result) = result {
+                let first = vm.get_property(&program, result, first_atom).unwrap();
+                let first = if descriptors {
+                    vm.get_property(&program, first, value_atom).unwrap()
                 } else {
-                    vm.object_assign(&program, &args)
+                    first
                 };
-                assert_eq!(result.is_err(), fails);
-                if let Err(error) = &result {
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm
-                        .own_property(error.thrown_value().unwrap(), atom)
-                        .unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), "later");
-                }
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = if let Ok(result) = result {
-                    let first = vm.get_property(&program, result, first_atom).unwrap();
-                    let first = if descriptors {
-                        vm.get_property(&program, first, value_atom).unwrap()
-                    } else {
-                        first
-                    };
+                assert_eq!(
+                    vm.get_property(&program, first, rank_atom).unwrap(),
+                    Value::number(42.0)
+                );
+                if !descriptors {
                     assert_eq!(
-                        vm.get_property(&program, first, rank_atom).unwrap(),
-                        Value::number(42.0)
+                        vm.get_property(&program, result, late_atom).unwrap(),
+                        Value::number(47.0)
                     );
-                    if !descriptors {
-                        assert_eq!(
-                            vm.get_property(&program, result, late_atom).unwrap(),
-                            Value::number(47.0)
-                        );
-                    }
-                    Some(vm.heap.weak_handle(result).unwrap())
-                } else {
-                    None
-                };
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(source_handle).is_none());
-                assert!(vm.heap.weak_value(later_handle).is_none());
-                if let Some(handle) = result_handle {
-                    assert!(vm.heap.weak_value(handle).is_none());
                 }
+                Some(vm.heap.weak_handle(result).unwrap())
+            } else {
+                None
+            };
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(source_handle).is_none());
+            assert!(vm.heap.weak_value(later_handle).is_none());
+            if let Some(handle) = result_handle {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -7940,129 +7750,125 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
 
 #[test]
 fn for_in_roots_release_after_prototype_and_key_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for query in [false, true] {
-            for phase in [
-                "success",
-                "keys-getter",
-                "keys",
-                "descriptor-getter",
-                "descriptor",
-                "prototype-getter",
-                "prototype",
-                "cycle",
-                "shadow",
-                "missing",
-            ] {
-                if query && matches!(phase, "keys-getter" | "keys") {
-                    continue;
+    let compile = Engine::specialize;
+    for query in [false, true] {
+        for phase in [
+            "success",
+            "keys-getter",
+            "keys",
+            "descriptor-getter",
+            "descriptor",
+            "prototype-getter",
+            "prototype",
+            "cycle",
+            "shadow",
+            "missing",
+        ] {
+            if query && matches!(phase, "keys-getter" | "keys") {
+                continue;
+            }
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operand() {{
+                    var object={{first:1,later:2}};
+                    Object.defineProperty(object,'hidden',{{value:4,enumerable:false,configurable:true}});
+                    var source=new Proxy(object,{{
+                        get ownKeys() {{$262.gc();if ('{phase}'==='keys-getter') throw {{kind:'keys-getter'}};
+                            return function(object) {{$262.gc();if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}};
+                        }},
+                        get getOwnPropertyDescriptor() {{$262.gc();if ('{phase}'==='descriptor-getter') throw {{kind:'descriptor-getter'}};
+                            return function(object,key) {{$262.gc();if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}};
+                        }},
+                        get getPrototypeOf() {{$262.gc();if ('{phase}'==='prototype-getter') throw {{kind:'prototype-getter'}};
+                            return function() {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};
+                                if ('{phase}'==='cycle') return source;
+                                return new Proxy({{inherited:3,hidden:5}},{{
+                                    ownKeys(object) {{$262.gc();return Reflect.ownKeys(object);}},
+                                    getOwnPropertyDescriptor(object,key) {{$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);}},
+                                    getPrototypeOf() {{$262.gc();return null;}}
+                                }});
+                            }};
+                        }}
+                    }});
+                    return source;
+                }}
+            "#
+            );
+            let program = compile(&source, "for-in-native-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operand");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let source = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let source_handle = vm.heap.weak_handle(source).unwrap();
+            let key = vm.heap.alloc_string(
+                match phase {
+                    "shadow" => "hidden",
+                    "missing" => "absent",
+                    _ => "inherited",
                 }
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operand() {{
-                        var object={{first:1,later:2}};
-                        Object.defineProperty(object,'hidden',{{value:4,enumerable:false,configurable:true}});
-                        var source=new Proxy(object,{{
-                            get ownKeys() {{$262.gc();if ('{phase}'==='keys-getter') throw {{kind:'keys-getter'}};
-                                return function(object) {{$262.gc();if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}};
-                            }},
-                            get getOwnPropertyDescriptor() {{$262.gc();if ('{phase}'==='descriptor-getter') throw {{kind:'descriptor-getter'}};
-                                return function(object,key) {{$262.gc();if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}};
-                            }},
-                            get getPrototypeOf() {{$262.gc();if ('{phase}'==='prototype-getter') throw {{kind:'prototype-getter'}};
-                                return function() {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};
-                                    if ('{phase}'==='cycle') return source;
-                                    return new Proxy({{inherited:3,hidden:5}},{{
-                                        ownKeys(object) {{$262.gc();return Reflect.ownKeys(object);}},
-                                        getOwnPropertyDescriptor(object,key) {{$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);}},
-                                        getPrototypeOf() {{$262.gc();return null;}}
-                                    }});
-                                }};
-                            }}
-                        }});
-                        return source;
-                    }}
-                "#
-                );
-                let program = compile(&source, "for-in-native-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operand");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let source = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let source_handle = vm.heap.weak_handle(source).unwrap();
-                let key = vm.heap.alloc_string(
-                    match phase {
-                        "shadow" => "hidden",
-                        "missing" => "absent",
-                        _ => "inherited",
-                    }
-                    .into(),
-                );
-                let key_handle = vm.heap.weak_handle(key).unwrap();
-                // Snapshot collection has no key input to keep alive.
-                let key_root = (!query).then(|| vm.heap.root(key));
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = if query {
-                    vm.object_for_in_key_is_enumerable(&program, source, key)
-                        .map(Vm::integrity_bool)
-                } else {
-                    vm.object_for_in_keys(&program, source)
-                };
-                let succeeds = matches!(phase, "success" | "cycle" | "shadow" | "missing");
-                assert_eq!(result.is_ok(), succeeds, "query={query} {phase}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = match result {
-                    Ok(result) if query => {
-                        assert_eq!(
-                            result,
-                            Vm::integrity_bool(phase == "success")
-                        );
-                        None
-                    }
-                    Ok(result) => {
-                        let elements = vm
-                            .heap
-                            .array_elements(result)
-                            .map(|elements| elements.to_vec())
-                            .expect("key snapshot");
-                        let names = elements
-                            .into_iter()
-                            .map(|key| vm.to_string(&program, key).unwrap())
-                            .collect::<Vec<_>>();
-                        let expected = if phase == "cycle" {
-                            vec!["first", "later"]
-                        } else {
-                            vec!["first", "later", "inherited"]
-                        };
-                        assert_eq!(names, expected);
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
-                    Err(error) => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                        None
-                    }
-                };
-                if let Some(root) = key_root {
-                    vm.heap.release_root(root);
+                .into(),
+            );
+            let key_handle = vm.heap.weak_handle(key).unwrap();
+            // Snapshot collection has no key input to keep alive.
+            let key_root = (!query).then(|| vm.heap.root(key));
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = if query {
+                vm.object_for_in_key_is_enumerable(&program, source, key)
+                    .map(Vm::integrity_bool)
+            } else {
+                vm.object_for_in_keys(&program, source)
+            };
+            let succeeds = matches!(phase, "success" | "cycle" | "shadow" | "missing");
+            assert_eq!(result.is_ok(), succeeds, "query={query} {phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = match result {
+                Ok(result) if query => {
+                    assert_eq!(
+                        result,
+                        Vm::integrity_bool(phase == "success")
+                    );
+                    None
                 }
-                vm.collect_now(&program);
-                assert!(vm.heap.weak_value(source_handle).is_none());
-                assert!(vm.heap.weak_value(key_handle).is_none());
-                if let Some(handle) = result_handle {
-                    assert!(vm.heap.weak_value(handle).is_none());
+                Ok(result) => {
+                    let elements = vm
+                        .heap
+                        .array_elements(result)
+                        .map(|elements| elements.to_vec())
+                        .expect("key snapshot");
+                    let names = elements
+                        .into_iter()
+                        .map(|key| vm.to_string(&program, key).unwrap())
+                        .collect::<Vec<_>>();
+                    let expected = if phase == "cycle" {
+                        vec!["first", "later"]
+                    } else {
+                        vec!["first", "later", "inherited"]
+                    };
+                    assert_eq!(names, expected);
+                    Some(vm.heap.weak_handle(result).unwrap())
                 }
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    None
+                }
+            };
+            if let Some(root) = key_root {
+                vm.heap.release_root(root);
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(source_handle).is_none());
+            assert!(vm.heap.weak_value(key_handle).is_none());
+            if let Some(handle) = result_handle {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -8070,184 +7876,180 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
 
 #[test]
 fn proxy_introspection_roots_release_after_nested_validation() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for operation in ["prototype", "descriptor", "extensible"] {
-            let phases: &[&str] = match operation {
-                "prototype" => &[
-                    "success",
-                    "getter",
-                    "trap",
-                    "extensible",
-                    "target-prototype",
-                    "fallback",
-                    "revoke-fallback",
-                    "invalid-trap",
-                    "invalid-result",
-                    "mismatch",
-                    "revoked",
-                    "sealed",
-                ],
-                "descriptor" => &[
-                    "success",
-                    "key",
-                    "getter",
-                    "trap",
-                    "target-descriptor",
-                    "extensible",
-                    "descriptor-value",
-                    "fallback",
-                    "revoke-fallback",
-                    "invalid-trap",
-                    "invalid-result",
-                    "mismatch",
-                    "revoked",
-                    "hide-absent",
-                    "hide-present",
-                    "hide-frozen",
-                ],
-                _ => &[
-                    "success",
-                    "getter",
-                    "trap",
-                    "extensible",
-                    "fallback",
-                    "revoke-fallback",
-                    "invalid-trap",
-                    "mismatch",
-                    "revoked",
-                ],
-            };
-            for phase in phases {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operands() {{
-                        var raw=Object.create({{rank:46}});raw.entry={{rank:42}};
-                        if ('{phase}'==='hide-frozen') Object.defineProperty(raw,'entry',{{configurable:false}});
-                        if ('{operation}'==='prototype' && ('{phase}'==='target-prototype' || '{phase}'==='mismatch' || '{phase}'==='sealed')) Object.preventExtensions(raw);
-                        var target=new Proxy(raw,{{
-                            getOwnPropertyDescriptor(object,key) {{$262.gc();if ('{phase}'==='target-descriptor') throw {{kind:'target-descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
-                            get isExtensible() {{$262.gc();return function(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}};}},
-                            getPrototypeOf(object) {{$262.gc();if ('{phase}'==='target-prototype') throw {{kind:'target-prototype'}};return Reflect.getPrototypeOf(object);}}
-                        }});
-                        function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
-                            if ('{phase}'==='invalid-trap') return 1;
-                            if ('{phase}'==='revoke-fallback') {{revocable.revoke();$262.gc();return null;}}
-                            if ('{phase}'==='fallback') return undefined;
-                            return function() {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
-                                if ('{phase}'==='invalid-result') return 1;
-                                if ('{operation}'==='extensible') return '{phase}'!=='mismatch';
-                                if ('{operation}'==='prototype') return '{phase}'==='sealed' ? Reflect.getPrototypeOf(target) : {{rank:44}};
-                                if ('{phase}'.startsWith('hide-')) return undefined;
-                                return {{get value() {{$262.gc();if ('{phase}'==='descriptor-value') throw {{kind:'descriptor-value'}};return {{rank:43}};}},
-                                    writable:true,enumerable:true,configurable:'{phase}'!=='mismatch'}};
-                            }};
-                        }}
-                        var revocable=Proxy.revocable(target,{{get getPrototypeOf() {{return method();}},get getOwnPropertyDescriptor() {{return method();}},get isExtensible() {{return method();}}}});
-                        if ('{phase}'==='revoked') revocable.revoke();
-                        return [revocable.proxy,{{toString() {{$262.gc();if ('{phase}'==='key') throw {{kind:'key'}};return '{phase}'==='hide-absent' ? 'missing' : 'entry';}}}}];
+    let compile = Engine::specialize;
+    for operation in ["prototype", "descriptor", "extensible"] {
+        let phases: &[&str] = match operation {
+            "prototype" => &[
+                "success",
+                "getter",
+                "trap",
+                "extensible",
+                "target-prototype",
+                "fallback",
+                "revoke-fallback",
+                "invalid-trap",
+                "invalid-result",
+                "mismatch",
+                "revoked",
+                "sealed",
+            ],
+            "descriptor" => &[
+                "success",
+                "key",
+                "getter",
+                "trap",
+                "target-descriptor",
+                "extensible",
+                "descriptor-value",
+                "fallback",
+                "revoke-fallback",
+                "invalid-trap",
+                "invalid-result",
+                "mismatch",
+                "revoked",
+                "hide-absent",
+                "hide-present",
+                "hide-frozen",
+            ],
+            _ => &[
+                "success",
+                "getter",
+                "trap",
+                "extensible",
+                "fallback",
+                "revoke-fallback",
+                "invalid-trap",
+                "mismatch",
+                "revoked",
+            ],
+        };
+        for phase in phases {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{
+                    var raw=Object.create({{rank:46}});raw.entry={{rank:42}};
+                    if ('{phase}'==='hide-frozen') Object.defineProperty(raw,'entry',{{configurable:false}});
+                    if ('{operation}'==='prototype' && ('{phase}'==='target-prototype' || '{phase}'==='mismatch' || '{phase}'==='sealed')) Object.preventExtensions(raw);
+                    var target=new Proxy(raw,{{
+                        getOwnPropertyDescriptor(object,key) {{$262.gc();if ('{phase}'==='target-descriptor') throw {{kind:'target-descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
+                        get isExtensible() {{$262.gc();return function(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}};}},
+                        getPrototypeOf(object) {{$262.gc();if ('{phase}'==='target-prototype') throw {{kind:'target-prototype'}};return Reflect.getPrototypeOf(object);}}
+                    }});
+                    function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                        if ('{phase}'==='invalid-trap') return 1;
+                        if ('{phase}'==='revoke-fallback') {{revocable.revoke();$262.gc();return null;}}
+                        if ('{phase}'==='fallback') return undefined;
+                        return function() {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                            if ('{phase}'==='invalid-result') return 1;
+                            if ('{operation}'==='extensible') return '{phase}'!=='mismatch';
+                            if ('{operation}'==='prototype') return '{phase}'==='sealed' ? Reflect.getPrototypeOf(target) : {{rank:44}};
+                            if ('{phase}'.startsWith('hide-')) return undefined;
+                            return {{get value() {{$262.gc();if ('{phase}'==='descriptor-value') throw {{kind:'descriptor-value'}};return {{rank:43}};}},
+                                writable:true,enumerable:true,configurable:'{phase}'!=='mismatch'}};
+                        }};
                     }}
-                "#
-                );
-                let program = compile(&source, "proxy-introspection-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let operands = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let args = vm
-                    .heap
-                    .array_elements(operands)
-                    .map(|elements| elements.to_vec())
-                    .expect("operands");
-                let handles = args
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
-                    .collect::<Vec<_>>();
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = match operation {
-                    "prototype" => vm.object_get_prototype_of(&program, args[0]),
-                    "descriptor" => vm.object_get_own_property_descriptor(&program, &args),
-                    _ => vm.object_is_extensible(&program, &args[..1]),
-                };
-                let succeeds = matches!(
-                    *phase,
-                    "success"
-                        | "fallback"
-                        | "revoke-fallback"
-                        | "sealed"
-                        | "hide-absent"
-                        | "hide-present"
-                );
-                assert_eq!(result.is_ok(), succeeds, "{operation} {phase}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = match result {
-                    Ok(result) if operation == "extensible" => {
-                        assert_eq!(result, Value::TRUE);
-                        None
-                    }
-                    Ok(result) if phase.starts_with("hide-") => {
-                        assert!(result.is_undefined());
-                        None
-                    }
-                    Ok(result) => {
-                        let rank_atom = vm.intern_atom("rank");
-                        let value_atom = vm.intern_atom("value");
-                        let value = if operation == "descriptor" {
-                            vm.own_property(result, value_atom).unwrap()
+                    var revocable=Proxy.revocable(target,{{get getPrototypeOf() {{return method();}},get getOwnPropertyDescriptor() {{return method();}},get isExtensible() {{return method();}}}});
+                    if ('{phase}'==='revoked') revocable.revoke();
+                    return [revocable.proxy,{{toString() {{$262.gc();if ('{phase}'==='key') throw {{kind:'key'}};return '{phase}'==='hide-absent' ? 'missing' : 'entry';}}}}];
+                }}
+            "#
+            );
+            let program = compile(&source, "proxy-introspection-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let operands = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let args = vm
+                .heap
+                .array_elements(operands)
+                .map(|elements| elements.to_vec())
+                .expect("operands");
+            let handles = args
+                .iter()
+                .map(|value| vm.heap.weak_handle(*value).unwrap())
+                .collect::<Vec<_>>();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = match operation {
+                "prototype" => vm.object_get_prototype_of(&program, args[0]),
+                "descriptor" => vm.object_get_own_property_descriptor(&program, &args),
+                _ => vm.object_is_extensible(&program, &args[..1]),
+            };
+            let succeeds = matches!(
+                *phase,
+                "success"
+                    | "fallback"
+                    | "revoke-fallback"
+                    | "sealed"
+                    | "hide-absent"
+                    | "hide-present"
+            );
+            assert_eq!(result.is_ok(), succeeds, "{operation} {phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = match result {
+                Ok(result) if operation == "extensible" => {
+                    assert_eq!(result, Value::TRUE);
+                    None
+                }
+                Ok(result) if phase.starts_with("hide-") => {
+                    assert!(result.is_undefined());
+                    None
+                }
+                Ok(result) => {
+                    let rank_atom = vm.intern_atom("rank");
+                    let value_atom = vm.intern_atom("value");
+                    let value = if operation == "descriptor" {
+                        vm.own_property(result, value_atom).unwrap()
+                    } else {
+                        result
+                    };
+                    let expected = if operation == "descriptor" {
+                        if phase.ends_with("fallback") {
+                            42.0
                         } else {
-                            result
-                        };
-                        let expected = if operation == "descriptor" {
-                            if phase.ends_with("fallback") {
-                                42.0
-                            } else {
-                                43.0
-                            }
-                        } else if phase.ends_with("fallback") || *phase == "sealed" {
-                            46.0
-                        } else {
-                            44.0
-                        };
-                        assert_eq!(
-                            vm.own_property(value, rank_atom),
-                            Some(Value::number(expected))
-                        );
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
-                    Err(error) => {
-                        if matches!(
-                            *phase,
-                            "invalid-trap"
-                                | "invalid-result"
-                                | "mismatch"
-                                | "revoked"
-                                | "hide-frozen"
-                        ) {
-                            assert!(vm.format_error(&program, &error).contains("TypeError"));
-                        } else {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                            43.0
                         }
-                        None
+                    } else if phase.ends_with("fallback") || *phase == "sealed" {
+                        46.0
+                    } else {
+                        44.0
+                    };
+                    assert_eq!(
+                        vm.own_property(value, rank_atom),
+                        Some(Value::number(expected))
+                    );
+                    Some(vm.heap.weak_handle(result).unwrap())
+                }
+                Err(error) => {
+                    if matches!(
+                        *phase,
+                        "invalid-trap"
+                            | "invalid-result"
+                            | "mismatch"
+                            | "revoked"
+                            | "hide-frozen"
+                    ) {
+                        assert!(vm.format_error(&program, &error).contains("TypeError"));
+                    } else {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
-                };
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none(), "{operation} {phase}");
+                    None
                 }
-                if let Some(handle) = result_handle {
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+            };
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none(), "{operation} {phase}");
+            }
+            if let Some(handle) = result_handle {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -8255,169 +8057,317 @@ fn proxy_introspection_roots_release_after_nested_validation() {
 
 #[test]
 fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for symbol in [false, true] {
+    let compile = Engine::specialize;
+    for symbol in [false, true] {
+        for phase in [
+            "success",
+            "getter",
+            "trap",
+            "descriptor",
+            "field",
+            "fallback",
+            "invalid-trap",
+            "revoked",
+            "frozen-same",
+            "frozen-different",
+            "no-getter-undefined",
+            "no-getter-value",
+            "result-symbol",
+        ] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{
+                    var target=new Proxy({{}},{{getOwnPropertyDescriptor(object,key) {{$262.gc();
+                        if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
+                        if ('{phase}'==='field') return {{get value() {{$262.gc();throw {{kind:'field'}};}},writable:true,enumerable:true,configurable:true}};
+                        return Reflect.getOwnPropertyDescriptor(object,key);
+                    }}}});
+                    var handler={{get get() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                        if ('{phase}'==='invalid-trap') return 1;
+                        if ('{phase}'==='fallback') return null;
+                        return function(object,key,receiver) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                            if ('{phase}'==='result-symbol') return Symbol('answer');
+                            if ('{phase}'==='frozen-same') return 42;
+                            if ('{phase}'==='frozen-different') return 43;
+                            if ('{phase}'==='no-getter-undefined') return undefined;
+                            if ('{phase}'==='no-getter-value') return 42;
+                            return {{rank:47,key:key,receiver:receiver}};
+                        }};
+                    }}}};
+                    return [target,handler,{{rank:46}}];
+                }}
+            "#
+            );
+            let program = compile(&source, "proxy-read-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let operands = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let args = vm
+                .heap
+                .array_elements(operands)
+                .map(|elements| elements.to_vec())
+                .expect("operands");
+            let handles = args
+                .iter()
+                .map(|value| vm.heap.weak_handle(*value).unwrap())
+                .collect::<Vec<_>>();
+            let atom = vm.intern_atom("entry");
+            let property = if symbol {
+                super::property_key::PropertyKey::symbol(vm.heap.alloc_symbol(
+                    crate::heap::SymbolData::public(Some("entry".into())),
+                ))
+            } else {
+                super::property_key::PropertyKey::string(atom)
+            };
+            let key = if symbol {
+                property.symbol_value().unwrap()
+            } else {
+                vm.heap.alloc_string("entry".into())
+            };
+            let key_handle = vm.heap.weak_handle(key).unwrap();
+            if phase.starts_with("frozen-")
+                || phase.starts_with("no-getter-")
+                || phase == "fallback"
+            {
+                let record = if phase.starts_with("no-getter-") {
+                    super::object_descriptors::PropertyDescriptorRecord {
+                        value: None,
+                        writable: None,
+                        getter: Some(Value::UNDEFINED),
+                        setter: Some(Value::UNDEFINED),
+                        enumerable: Some(true),
+                        configurable: Some(false),
+                    }
+                } else {
+                    super::object_descriptors::PropertyDescriptorRecord {
+                        writable: Some(false),
+                        configurable: Some(false),
+                        ..super::object_descriptors::PropertyDescriptorRecord::data(
+                            Value::number(42.0),
+                        )
+                    }
+                };
+                vm.define_property_or_throw(&program, args[0], key, record)
+                    .unwrap();
+            }
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let handler = if phase == "revoked" {
+                Value::NULL
+            } else {
+                args[1]
+            };
+            let result = vm.proxy_get(&program, args[0], handler, args[2], property);
+            assert_eq!(
+                result.is_ok(),
+                matches!(
+                    phase,
+                    "success"
+                        | "fallback"
+                        | "frozen-same"
+                        | "no-getter-undefined"
+                        | "result-symbol"
+                ),
+                "symbol={symbol} {phase}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = match result {
+                Ok(result) if phase == "success" => {
+                    let rank = vm.intern_atom("rank");
+                    let receiver = vm.intern_atom("receiver");
+                    let key_atom = vm.intern_atom("key");
+                    assert_eq!(vm.own_property(result, rank), Some(Value::number(47.0)));
+                    assert_eq!(vm.own_property(result, receiver), Some(args[2]));
+                    assert_eq!(vm.own_property(args[2], rank), Some(Value::number(46.0)));
+                    let returned_key = vm.own_property(result, key_atom).unwrap();
+                    if symbol {
+                        assert_eq!(returned_key, key);
+                        assert!(
+                            matches!(vm.heap.symbol_data(returned_key), Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref() == "entry")
+                        );
+                    } else {
+                        assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
+                    }
+                    Some(vm.heap.weak_handle(result).unwrap())
+                }
+                Ok(result) if phase == "result-symbol" => {
+                    assert!(
+                        matches!(vm.heap.symbol_data(result),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="answer")
+                    );
+                    Some(vm.heap.weak_handle(result).unwrap())
+                }
+                Ok(result) => {
+                    assert_eq!(
+                        result,
+                        if phase == "no-getter-undefined" {
+                            Value::UNDEFINED
+                        } else {
+                            Value::number(42.0)
+                        }
+                    );
+                    None
+                }
+                Err(error) => {
+                    if matches!(
+                        phase,
+                        "invalid-trap" | "revoked" | "frozen-different" | "no-getter-value"
+                    ) {
+                        assert!(vm.format_error(&program, &error).contains("TypeError"));
+                    } else {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    }
+                    None
+                }
+            };
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(
+                    vm.heap.weak_value(handle).is_none(),
+                    "symbol={symbol} {phase}"
+                );
+            }
+            // A raw handle names a record id, which a string allocated after the collection may
+            // reuse: the key is gone when its record no longer holds it.
+            assert!(
+                vm.heap.weak_value(key_handle).is_none()
+                    || vm.heap.string(key).is_some_and(|text| text.host_string() != "entry"),
+                "symbol={symbol} {phase}"
+            );
+            if let Some(handle) = result_handle {
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
+    let compile = Engine::specialize;
+    for reflect in [false, true] {
+        for prototype in [false, true] {
             for phase in [
                 "success",
                 "getter",
                 "trap",
-                "descriptor",
-                "field",
-                "fallback",
+                "extensible",
+                "prototype",
+                "reject",
                 "invalid-trap",
+                "fallback",
+                "invariant",
                 "revoked",
-                "frozen-same",
-                "frozen-different",
-                "no-getter-undefined",
-                "no-getter-value",
-                "result-symbol",
             ] {
+                if !prototype && phase == "prototype" {
+                    continue;
+                }
                 let mut vm = Vm::new(TestHost::default().with_test262());
                 let source = format!(
                     r#"
-                    function operands() {{
-                        var target=new Proxy({{}},{{getOwnPropertyDescriptor(object,key) {{$262.gc();
-                            if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
-                            if ('{phase}'==='field') return {{get value() {{$262.gc();throw {{kind:'field'}};}},writable:true,enumerable:true,configurable:true}};
-                            return Reflect.getOwnPropertyDescriptor(object,key);
-                        }}}});
-                        var handler={{get get() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                    function operand() {{
+                        var raw={{}};
+                        if ({prototype} && ('{phase}'==='prototype' || '{phase}'==='invariant')) Object.preventExtensions(raw);
+                        var target=new Proxy(raw,{{
+                            isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}},
+                            getPrototypeOf(object) {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};return Reflect.getPrototypeOf(object);}},
+                            setPrototypeOf(object,proto) {{$262.gc();return Reflect.setPrototypeOf(object,proto);}},
+                            preventExtensions(object) {{$262.gc();return Reflect.preventExtensions(object);}}
+                        }});
+                        function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
                             if ('{phase}'==='invalid-trap') return 1;
                             if ('{phase}'==='fallback') return null;
-                            return function(object,key,receiver) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
-                                if ('{phase}'==='result-symbol') return Symbol('answer');
-                                if ('{phase}'==='frozen-same') return 42;
-                                if ('{phase}'==='frozen-different') return 43;
-                                if ('{phase}'==='no-getter-undefined') return undefined;
-                                if ('{phase}'==='no-getter-value') return 42;
-                                return {{rank:47,key:key,receiver:receiver}};
+                            return function(object,proto) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                if ('{phase}'==='reject') return false;
+                                if ('{phase}'==='invariant' || '{phase}'==='prototype' || '{phase}'==='extensible') return true;
+                                return {prototype} ? Reflect.setPrototypeOf(object,proto) : Reflect.preventExtensions(object);
                             }};
-                        }}}};
-                        return [target,handler,{{rank:46}}];
+                        }}
+                        if ('{phase}'==='revoked') {{var revocable=Proxy.revocable(target,{{}});revocable.revoke();return revocable.proxy;}}
+                        return new Proxy(target,{{get setPrototypeOf() {{return method();}},get preventExtensions() {{return method();}}}});
                     }}
                 "#
                 );
-                let program = compile(&source, "proxy-read-roots.js").unwrap();
+                let program = compile(&source, "proxy-mutation-roots.js").unwrap();
                 vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
+                let atom = vm.intern_atom("operand");
                 let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let operands = vm
+                let target = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = vm
-                    .heap
-                    .array_elements(operands)
-                    .map(|elements| elements.to_vec())
-                    .expect("operands");
-                let handles = args
-                    .iter()
-                    .map(|value| vm.heap.weak_handle(*value).unwrap())
-                    .collect::<Vec<_>>();
-                let atom = vm.intern_atom("entry");
-                let property = if symbol {
-                    super::property_key::PropertyKey::symbol(vm.heap.alloc_symbol(
-                        crate::heap::SymbolData::public(Some("entry".into())),
-                    ))
+                let target_handle = vm.heap.weak_handle(target).unwrap();
+                let proto = if prototype {
+                    let proto = vm.object();
+                    vm.set_named(&program, proto, "rank", Value::number(42.0)).unwrap();
+                    proto
                 } else {
-                    super::property_key::PropertyKey::string(atom)
+                    Value::NULL
                 };
-                let key = if symbol {
-                    property.symbol_value().unwrap()
-                } else {
-                    vm.heap.alloc_string("entry".into())
-                };
-                let key_handle = vm.heap.weak_handle(key).unwrap();
-                if phase.starts_with("frozen-")
-                    || phase.starts_with("no-getter-")
-                    || phase == "fallback"
-                {
-                    let record = if phase.starts_with("no-getter-") {
-                        super::object_descriptors::PropertyDescriptorRecord {
-                            value: None,
-                            writable: None,
-                            getter: Some(Value::UNDEFINED),
-                            setter: Some(Value::UNDEFINED),
-                            enumerable: Some(true),
-                            configurable: Some(false),
-                        }
-                    } else {
-                        super::object_descriptors::PropertyDescriptorRecord {
-                            writable: Some(false),
-                            configurable: Some(false),
-                            ..super::object_descriptors::PropertyDescriptorRecord::data(
-                                Value::number(42.0),
-                            )
-                        }
-                    };
-                    vm.define_property_or_throw(&program, args[0], key, record)
-                        .unwrap();
-                }
+                let proto_handle = vm.heap.weak_handle(proto);
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
-                let handler = if phase == "revoked" {
-                    Value::NULL
-                } else {
-                    args[1]
+                let native = match (reflect, prototype) {
+                    (false, false) => Native::ObjectPreventExtensions,
+                    (false, true) => Native::ObjectSetPrototypeOf,
+                    (true, false) => Native::ReflectPreventExtensions,
+                    (true, true) => Native::ReflectSetPrototypeOf,
                 };
-                let result = vm.proxy_get(&program, args[0], handler, args[2], property);
+                let args = if prototype {
+                    vec![target, proto]
+                } else {
+                    vec![target]
+                };
+                let result = if reflect {
+                    vm.call_reflect_native(&program, native, &args)
+                } else {
+                    vm.call_object_native(&program, native, &args)
+                };
+                let success = phase == "success" || phase == "fallback";
                 assert_eq!(
                     result.is_ok(),
-                    matches!(
-                        phase,
-                        "success"
-                            | "fallback"
-                            | "frozen-same"
-                            | "no-getter-undefined"
-                            | "result-symbol"
-                    ),
-                    "symbol={symbol} {phase}"
+                    success || (reflect && phase == "reject"),
+                    "reflect={reflect} prototype={prototype} {phase}"
                 );
                 assert_eq!(vm.heap.root_count_for_test(), roots);
                 assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = match result {
-                    Ok(result) if phase == "success" => {
-                        let rank = vm.intern_atom("rank");
-                        let receiver = vm.intern_atom("receiver");
-                        let key_atom = vm.intern_atom("key");
-                        assert_eq!(vm.own_property(result, rank), Some(Value::number(47.0)));
-                        assert_eq!(vm.own_property(result, receiver), Some(args[2]));
-                        assert_eq!(vm.own_property(args[2], rank), Some(Value::number(46.0)));
-                        let returned_key = vm.own_property(result, key_atom).unwrap();
-                        if symbol {
-                            assert_eq!(returned_key, key);
-                            assert!(
-                                matches!(vm.heap.symbol_data(returned_key), Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref() == "entry")
-                            );
-                        } else {
-                            assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
-                        }
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
-                    Ok(result) if phase == "result-symbol" => {
-                        assert!(
-                            matches!(vm.heap.symbol_data(result),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="answer")
-                        );
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
+                match result {
                     Ok(result) => {
                         assert_eq!(
                             result,
-                            if phase == "no-getter-undefined" {
-                                Value::UNDEFINED
+                            if reflect {
+                                Vm::integrity_bool(success)
                             } else {
-                                Value::number(42.0)
+                                target
                             }
                         );
-                        None
+                        assert_eq!(
+                            vm.heap.weak_value(target_handle),
+                            Some(target),
+                            "reflect={reflect} prototype={prototype} {phase}"
+                        );
+                        if prototype {
+                            assert_eq!(vm.heap.weak_value(proto_handle.unwrap()), Some(proto));
+                            let rank = vm.intern_atom("rank");
+                            assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
+                            if success {
+                                let raw = vm.proxy_target(target);
+                                assert_eq!(vm.heap.object(raw).unwrap().proto(), proto);
+                            }
+                        } else if success {
+                            let raw = vm.proxy_target(target);
+                            assert!(!vm.heap.object(raw).unwrap().is_extensible());
+                        }
                     }
                     Err(error) => {
-                        if matches!(
-                            phase,
-                            "invalid-trap" | "revoked" | "frozen-different" | "no-getter-value"
-                        ) {
+                        if matches!(phase, "reject" | "invalid-trap" | "invariant" | "revoked")
+                        {
                             assert!(vm.format_error(&program, &error).contains("TypeError"));
                         } else {
                             let atom = vm.intern_atom("kind");
@@ -8426,168 +8376,12 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                                 .unwrap();
                             assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
                         }
-                        None
                     }
-                };
+                }
                 vm.collect_now(&program);
-                for handle in handles {
-                    assert!(
-                        vm.heap.weak_value(handle).is_none(),
-                        "symbol={symbol} {phase}"
-                    );
-                }
-                // A raw handle names a record id, which a string allocated after the collection may
-                // reuse: the key is gone when its record no longer holds it.
-                assert!(
-                    vm.heap.weak_value(key_handle).is_none()
-                        || vm.heap.string(key).is_some_and(|text| text.host_string() != "entry"),
-                    "symbol={symbol} {phase}"
-                );
-                if let Some(handle) = result_handle {
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for reflect in [false, true] {
-            for prototype in [false, true] {
-                for phase in [
-                    "success",
-                    "getter",
-                    "trap",
-                    "extensible",
-                    "prototype",
-                    "reject",
-                    "invalid-trap",
-                    "fallback",
-                    "invariant",
-                    "revoked",
-                ] {
-                    if !prototype && phase == "prototype" {
-                        continue;
-                    }
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        function operand() {{
-                            var raw={{}};
-                            if ({prototype} && ('{phase}'==='prototype' || '{phase}'==='invariant')) Object.preventExtensions(raw);
-                            var target=new Proxy(raw,{{
-                                isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}},
-                                getPrototypeOf(object) {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};return Reflect.getPrototypeOf(object);}},
-                                setPrototypeOf(object,proto) {{$262.gc();return Reflect.setPrototypeOf(object,proto);}},
-                                preventExtensions(object) {{$262.gc();return Reflect.preventExtensions(object);}}
-                            }});
-                            function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
-                                if ('{phase}'==='invalid-trap') return 1;
-                                if ('{phase}'==='fallback') return null;
-                                return function(object,proto) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
-                                    if ('{phase}'==='reject') return false;
-                                    if ('{phase}'==='invariant' || '{phase}'==='prototype' || '{phase}'==='extensible') return true;
-                                    return {prototype} ? Reflect.setPrototypeOf(object,proto) : Reflect.preventExtensions(object);
-                                }};
-                            }}
-                            if ('{phase}'==='revoked') {{var revocable=Proxy.revocable(target,{{}});revocable.revoke();return revocable.proxy;}}
-                            return new Proxy(target,{{get setPrototypeOf() {{return method();}},get preventExtensions() {{return method();}}}});
-                        }}
-                    "#
-                    );
-                    let program = compile(&source, "proxy-mutation-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operand");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let target = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let target_handle = vm.heap.weak_handle(target).unwrap();
-                    let proto = if prototype {
-                        let proto = vm.object();
-                        vm.set_named(&program, proto, "rank", Value::number(42.0)).unwrap();
-                        proto
-                    } else {
-                        Value::NULL
-                    };
-                    let proto_handle = vm.heap.weak_handle(proto);
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let native = match (reflect, prototype) {
-                        (false, false) => Native::ObjectPreventExtensions,
-                        (false, true) => Native::ObjectSetPrototypeOf,
-                        (true, false) => Native::ReflectPreventExtensions,
-                        (true, true) => Native::ReflectSetPrototypeOf,
-                    };
-                    let args = if prototype {
-                        vec![target, proto]
-                    } else {
-                        vec![target]
-                    };
-                    let result = if reflect {
-                        vm.call_reflect_native(&program, native, &args)
-                    } else {
-                        vm.call_object_native(&program, native, &args)
-                    };
-                    let success = phase == "success" || phase == "fallback";
-                    assert_eq!(
-                        result.is_ok(),
-                        success || (reflect && phase == "reject"),
-                        "reflect={reflect} prototype={prototype} {phase}"
-                    );
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    match result {
-                        Ok(result) => {
-                            assert_eq!(
-                                result,
-                                if reflect {
-                                    Vm::integrity_bool(success)
-                                } else {
-                                    target
-                                }
-                            );
-                            assert_eq!(
-                                vm.heap.weak_value(target_handle),
-                                Some(target),
-                                "reflect={reflect} prototype={prototype} {phase}"
-                            );
-                            if prototype {
-                                assert_eq!(vm.heap.weak_value(proto_handle.unwrap()), Some(proto));
-                                let rank = vm.intern_atom("rank");
-                                assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
-                                if success {
-                                    let raw = vm.proxy_target(target);
-                                    assert_eq!(vm.heap.object(raw).unwrap().proto(), proto);
-                                }
-                            } else if success {
-                                let raw = vm.proxy_target(target);
-                                assert!(!vm.heap.object(raw).unwrap().is_extensible());
-                            }
-                        }
-                        Err(error) => {
-                            if matches!(phase, "reject" | "invalid-trap" | "invariant" | "revoked")
-                            {
-                                assert!(vm.format_error(&program, &error).contains("TypeError"));
-                            } else {
-                                let atom = vm.intern_atom("kind");
-                                let kind = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                            }
-                        }
-                    }
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(target_handle).is_none());
-                    if let Some(proto_handle) = proto_handle {
-                        assert!(vm.heap.weak_value(proto_handle).is_none(), "reflect={reflect} prototype={prototype} {phase}");
-                    }
+                assert!(vm.heap.weak_value(target_handle).is_none());
+                if let Some(proto_handle) = proto_handle {
+                    assert!(vm.heap.weak_value(proto_handle).is_none(), "reflect={reflect} prototype={prototype} {phase}");
                 }
             }
         }
@@ -8596,130 +8390,126 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
 
 #[test]
 fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for construct in [false, true] {
-            for phase in [
-                "success",
-                "fallback",
-                "getter",
-                "trap",
-                "invalid-trap",
-                "primitive-result",
-                "revoked",
-            ] {
-                if !construct && phase == "primitive-result" {
-                    continue;
-                }
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let method = if construct { "construct" } else { "apply" };
-                let source = format!(
-                    r#"
-                    function operand() {{
-                        function target(arg) {{ $262.gc(); return {{rank:42,arg:arg,receiver:this}}; }}
-                        var handler={{get {method}() {{
+    let compile = Engine::specialize;
+    for construct in [false, true] {
+        for phase in [
+            "success",
+            "fallback",
+            "getter",
+            "trap",
+            "invalid-trap",
+            "primitive-result",
+            "revoked",
+        ] {
+            if !construct && phase == "primitive-result" {
+                continue;
+            }
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let method = if construct { "construct" } else { "apply" };
+            let source = format!(
+                r#"
+                function operand() {{
+                    function target(arg) {{ $262.gc(); return {{rank:42,arg:arg,receiver:this}}; }}
+                    var handler={{get {method}() {{
+                        $262.gc();
+                        if ('{phase}'==='getter') throw {{kind:'getter'}};
+                        if ('{phase}'==='fallback') return null;
+                        if ('{phase}'==='invalid-trap') return 1;
+                        return function(target,second,third) {{
                             $262.gc();
-                            if ('{phase}'==='getter') throw {{kind:'getter'}};
-                            if ('{phase}'==='fallback') return null;
-                            if ('{phase}'==='invalid-trap') return 1;
-                            return function(target,second,third) {{
-                                $262.gc();
-                                if ('{phase}'==='trap') throw {{kind:'trap'}};
-                                if ('{phase}'==='primitive-result') return 1;
-                                return {{rank:42,arg:{construct} ? second[0] : third[0],receiver:{construct} ? third : second}};
-                            }};
-                        }}}};
-                        if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return r.proxy;}}
-                        return new Proxy(target,handler);
-                    }}
-                "#
-                );
-                let program = compile(&source, "proxy-invocation-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operand");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let proxy = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let receiver = vm.object();
-                vm.set_named(&program, receiver, "rank", Value::number(46.0))
-                    .unwrap();
-                let arg = vm.object();
-                vm.set_named(&program, arg, "rank", Value::number(47.0))
-                    .unwrap();
-                let handles =
-                    [proxy, receiver, arg].map(|value| vm.heap.weak_handle(value).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = if construct {
-                    vm.proxy_construct(&program, proxy, proxy, &[arg])
-                } else {
-                    vm.proxy_call(&program, proxy, receiver, &[arg])
-                };
-                assert_eq!(
-                    result.is_ok(),
-                    matches!(phase, "success" | "fallback"),
-                    "construct={construct} {phase}"
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = match result {
-                    Ok(result) => {
-                        assert_eq!(
-                            vm.heap.weak_value(handles[0]),
-                            Some(proxy),
-                            "construct={construct} {phase}"
-                        );
-                        assert_eq!(vm.heap.weak_value(handles[2]), Some(arg));
-                        let rank = vm.intern_atom("rank");
-                        assert_eq!(vm.own_property(result, rank), Some(Value::number(42.0)));
-                        assert_eq!(vm.own_property(arg, rank), Some(Value::number(47.0)));
-                        let atom = vm.intern_atom("arg");
-                        assert_eq!(vm.own_property(result, atom), Some(arg));
-                        if !construct || phase == "success" {
-                            let atom = vm.intern_atom("receiver");
-                            assert_eq!(
-                                vm.own_property(result, atom),
-                                Some(if construct { proxy } else { receiver })
-                            );
-                            if !construct {
-                                assert_eq!(
-                                    vm.own_property(receiver, rank),
-                                    Some(Value::number(46.0))
-                                );
-                            }
-                        }
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
-                    Err(error) => {
-                        if matches!(phase, "getter" | "trap") {
-                            let atom = vm.intern_atom("kind");
-                            let kind = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                        } else {
-                            assert!(
-                                vm.format_error(&program, &error).contains("TypeError"),
-                                "construct={construct} {phase}: {}",
-                                vm.format_error(&program, &error)
-                            );
-                        }
-                        None
-                    }
-                };
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(
-                        vm.heap.weak_value(handle).is_none(),
+                            if ('{phase}'==='trap') throw {{kind:'trap'}};
+                            if ('{phase}'==='primitive-result') return 1;
+                            return {{rank:42,arg:{construct} ? second[0] : third[0],receiver:{construct} ? third : second}};
+                        }};
+                    }}}};
+                    if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return r.proxy;}}
+                    return new Proxy(target,handler);
+                }}
+            "#
+            );
+            let program = compile(&source, "proxy-invocation-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operand");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let proxy = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let receiver = vm.object();
+            vm.set_named(&program, receiver, "rank", Value::number(46.0))
+                .unwrap();
+            let arg = vm.object();
+            vm.set_named(&program, arg, "rank", Value::number(47.0))
+                .unwrap();
+            let handles =
+                [proxy, receiver, arg].map(|value| vm.heap.weak_handle(value).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = if construct {
+                vm.proxy_construct(&program, proxy, proxy, &[arg])
+            } else {
+                vm.proxy_call(&program, proxy, receiver, &[arg])
+            };
+            assert_eq!(
+                result.is_ok(),
+                matches!(phase, "success" | "fallback"),
+                "construct={construct} {phase}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = match result {
+                Ok(result) => {
+                    assert_eq!(
+                        vm.heap.weak_value(handles[0]),
+                        Some(proxy),
                         "construct={construct} {phase}"
                     );
+                    assert_eq!(vm.heap.weak_value(handles[2]), Some(arg));
+                    let rank = vm.intern_atom("rank");
+                    assert_eq!(vm.own_property(result, rank), Some(Value::number(42.0)));
+                    assert_eq!(vm.own_property(arg, rank), Some(Value::number(47.0)));
+                    let atom = vm.intern_atom("arg");
+                    assert_eq!(vm.own_property(result, atom), Some(arg));
+                    if !construct || phase == "success" {
+                        let atom = vm.intern_atom("receiver");
+                        assert_eq!(
+                            vm.own_property(result, atom),
+                            Some(if construct { proxy } else { receiver })
+                        );
+                        if !construct {
+                            assert_eq!(
+                                vm.own_property(receiver, rank),
+                                Some(Value::number(46.0))
+                            );
+                        }
+                    }
+                    Some(vm.heap.weak_handle(result).unwrap())
                 }
-                if let Some(handle) = result_handle {
-                    assert!(vm.heap.weak_value(handle).is_none());
+                Err(error) => {
+                    if matches!(phase, "getter" | "trap") {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    } else {
+                        assert!(
+                            vm.format_error(&program, &error).contains("TypeError"),
+                            "construct={construct} {phase}: {}",
+                            vm.format_error(&program, &error)
+                        );
+                    }
+                    None
                 }
+            };
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(
+                    vm.heap.weak_value(handle).is_none(),
+                    "construct={construct} {phase}"
+                );
+            }
+            if let Some(handle) = result_handle {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -8727,168 +8517,164 @@ fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
 
 #[test]
 fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for remove in [false, true] {
-            for symbol in [false, true] {
-                for phase in [
-                    "success",
-                    "skip-validation",
-                    "getter",
-                    "trap",
-                    "descriptor",
-                    "field",
-                    "extensible",
-                    "invalid-trap",
-                    "fallback",
-                    "nonconfig",
-                    "nonext",
-                    "revoked",
-                    "coercion",
-                ] {
-                    if symbol && phase == "coercion" {
-                        continue;
-                    }
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let method = if remove { "deleteProperty" } else { "has" };
-                    let source = format!(
-                        r#"
-                        function operands() {{
-                            var raw={{entry:42}};
-                            if ('{phase}'==='nonconfig') Object.defineProperty(raw,'entry',{{configurable:false}});
-                            if ('{phase}'==='nonext') Object.preventExtensions(raw);
-                            var target=new Proxy(raw,{{
-                                getOwnPropertyDescriptor(object,key) {{$262.gc();
-                                    if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
-                                    if ('{phase}'==='field') return {{value:42,writable:true,enumerable:true,get configurable() {{$262.gc();throw {{kind:'field'}};}}}};
-                                    return Reflect.getOwnPropertyDescriptor(object,key);
-                                }},
-                                isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}}
-                            }});
-                            var handler={{get {method}() {{$262.gc();
-                                if ('{phase}'==='getter') throw {{kind:'getter'}};
-                                if ('{phase}'==='invalid-trap') return 1;
-                                if ('{phase}'==='fallback') return null;
-                                return function(object,key) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
-                                    return '{phase}'==='skip-validation' ? !{remove} : {remove};
-                                }};
-                            }}}};
-                            if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return [r.proxy,raw];}}
-                            return [new Proxy(target,handler),raw];
-                        }}
-                        function keyOperand() {{return {{toString() {{$262.gc();throw {{kind:'coercion'}};}}}};}}
-                    "#
-                    );
-                    let program = compile(&source, "proxy-presence-delete-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operands");
+    let compile = Engine::specialize;
+    for remove in [false, true] {
+        for symbol in [false, true] {
+            for phase in [
+                "success",
+                "skip-validation",
+                "getter",
+                "trap",
+                "descriptor",
+                "field",
+                "extensible",
+                "invalid-trap",
+                "fallback",
+                "nonconfig",
+                "nonext",
+                "revoked",
+                "coercion",
+            ] {
+                if symbol && phase == "coercion" {
+                    continue;
+                }
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let method = if remove { "deleteProperty" } else { "has" };
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        var raw={{entry:42}};
+                        if ('{phase}'==='nonconfig') Object.defineProperty(raw,'entry',{{configurable:false}});
+                        if ('{phase}'==='nonext') Object.preventExtensions(raw);
+                        var target=new Proxy(raw,{{
+                            getOwnPropertyDescriptor(object,key) {{$262.gc();
+                                if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
+                                if ('{phase}'==='field') return {{value:42,writable:true,enumerable:true,get configurable() {{$262.gc();throw {{kind:'field'}};}}}};
+                                return Reflect.getOwnPropertyDescriptor(object,key);
+                            }},
+                            isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}}
+                        }});
+                        var handler={{get {method}() {{$262.gc();
+                            if ('{phase}'==='getter') throw {{kind:'getter'}};
+                            if ('{phase}'==='invalid-trap') return 1;
+                            if ('{phase}'==='fallback') return null;
+                            return function(object,key) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                return '{phase}'==='skip-validation' ? !{remove} : {remove};
+                            }};
+                        }}}};
+                        if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return [r.proxy,raw];}}
+                        return [new Proxy(target,handler),raw];
+                    }}
+                    function keyOperand() {{return {{toString() {{$262.gc();throw {{kind:'coercion'}};}}}};}}
+                "#
+                );
+                let program = compile(&source, "proxy-presence-delete-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let values = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let (proxy, raw) = vm
+                    .heap
+                    .array_elements(values)
+                    .map(|elements| (elements[0], elements[1]))
+                    .expect("operands");
+                let key = if symbol {
+                    vm.heap
+                        .alloc_symbol(crate::heap::SymbolData::public(Some(
+                            "entry".into(),
+                        )))
+                } else if phase == "coercion" {
+                    let atom = vm.intern_atom("keyOperand");
                     let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let values = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let (proxy, raw) = vm
-                        .heap
-                        .array_elements(values)
-                        .map(|elements| (elements[0], elements[1]))
-                        .expect("operands");
-                    let key = if symbol {
-                        vm.heap
-                            .alloc_symbol(crate::heap::SymbolData::public(Some(
-                                "entry".into(),
-                            )))
-                    } else if phase == "coercion" {
-                        let atom = vm.intern_atom("keyOperand");
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        vm.call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap()
-                    } else {
-                        vm.heap.alloc_string("entry".into())
-                    };
-                    if symbol {
-                        if phase == "nonext" {
-                            vm.heap.object_mut(raw).unwrap().set_extensible(true);
-                        }
-                        vm.define_property_or_throw(
-                            &program,
-                            raw,
-                            key,
-                            super::object_descriptors::PropertyDescriptorRecord {
-                                configurable: Some(phase != "nonconfig"),
-                                ..super::object_descriptors::PropertyDescriptorRecord::data(
-                                    Value::number(42.0),
-                                )
-                            },
-                        )
-                        .unwrap();
-                        if phase == "nonext" {
-                            vm.heap.object_mut(raw).unwrap().set_extensible(false);
-                        }
+                    vm.call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap()
+                } else {
+                    vm.heap.alloc_string("entry".into())
+                };
+                if symbol {
+                    if phase == "nonext" {
+                        vm.heap.object_mut(raw).unwrap().set_extensible(true);
                     }
-                    let handles = [proxy, key].map(|value| vm.heap.weak_handle(value).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = vm.call_reflect_native(
+                    vm.define_property_or_throw(
                         &program,
-                        if remove {
-                            Native::ReflectDeleteProperty
-                        } else {
-                            Native::ReflectHas
+                        raw,
+                        key,
+                        super::object_descriptors::PropertyDescriptorRecord {
+                            configurable: Some(phase != "nonconfig"),
+                            ..super::object_descriptors::PropertyDescriptorRecord::data(
+                                Value::number(42.0),
+                            )
                         },
-                        &[proxy, key],
-                    );
-                    assert_eq!(
-                        result.is_ok(),
-                        matches!(phase, "success" | "skip-validation" | "fallback"),
-                        "remove={remove} symbol={symbol} {phase}"
-                    );
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    match result {
-                        Ok(result) => {
-                            assert_eq!(
-                                result,
-                                Vm::integrity_bool(if phase == "fallback" {
-                                    true
-                                } else if phase == "skip-validation" {
-                                    !remove
-                                } else {
-                                    remove
-                                })
-                            );
-                            assert_eq!(
-                                vm.heap.weak_value(handles[0]),
-                                Some(proxy),
-                                "remove={remove} symbol={symbol} {phase}"
-                            );
-                            assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
-                            assert!(if symbol {
-                                matches!(vm.heap.symbol_data(key),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
-                            } else {
-                                vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
-                            });
-                        }
-                        Err(error) => {
-                            if matches!(phase, "invalid-trap" | "nonconfig" | "nonext" | "revoked")
-                            {
-                                assert!(vm.format_error(&program, &error).contains("TypeError"));
-                            } else {
-                                let atom = vm.intern_atom("kind");
-                                let kind = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                            }
-                        }
+                    )
+                    .unwrap();
+                    if phase == "nonext" {
+                        vm.heap.object_mut(raw).unwrap().set_extensible(false);
                     }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(
-                            vm.heap.weak_value(handle).is_none(),
+                }
+                let handles = [proxy, key].map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.call_reflect_native(
+                    &program,
+                    if remove {
+                        Native::ReflectDeleteProperty
+                    } else {
+                        Native::ReflectHas
+                    },
+                    &[proxy, key],
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(phase, "success" | "skip-validation" | "fallback"),
+                    "remove={remove} symbol={symbol} {phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(result) => {
+                        assert_eq!(
+                            result,
+                            Vm::integrity_bool(if phase == "fallback" {
+                                true
+                            } else if phase == "skip-validation" {
+                                !remove
+                            } else {
+                                remove
+                            })
+                        );
+                        assert_eq!(
+                            vm.heap.weak_value(handles[0]),
+                            Some(proxy),
                             "remove={remove} symbol={symbol} {phase}"
                         );
+                        assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
+                        assert!(if symbol {
+                            matches!(vm.heap.symbol_data(key),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
+                        } else {
+                            vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
+                        });
                     }
+                    Err(error) => {
+                        if matches!(phase, "invalid-trap" | "nonconfig" | "nonext" | "revoked")
+                        {
+                            assert!(vm.format_error(&program, &error).contains("TypeError"));
+                        } else {
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        }
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
+                        "remove={remove} symbol={symbol} {phase}"
+                    );
                 }
             }
         }
@@ -8897,134 +8683,130 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
 
 #[test]
 fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (kind, body, callable, constructable) in [
+        ("object", "return {};", false, false),
+        ("callable", "return ()=>42;", true, false),
+        ("constructor", "return function(){return 42;};", true, true),
     ] {
-        for (kind, body, callable, constructable) in [
-            ("object", "return {};", false, false),
-            ("callable", "return ()=>42;", true, false),
-            ("constructor", "return function(){return 42;};", true, true),
-        ] {
-            for owner in ["proxy", "revoker", "record"] {
-                for entry in ["direct", "call", "guarded"] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let program = compile(
-                        &format!("function operand() {{{body}}}"),
-                        "proxy-revocation-owners.js",
-                    )
+        for owner in ["proxy", "revoker", "record"] {
+            for entry in ["direct", "call", "guarded"] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let program = compile(
+                    &format!("function operand() {{{body}}}"),
+                    "proxy-revocation-owners.js",
+                )
+                .unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let target = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operand");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let target = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let handler = vm.object();
-                    let record = vm.proxy_revocable(&program, &[target, handler]).unwrap();
-                    let atom = vm.intern_atom("proxy");
-                    let proxy = vm.own_property(record, atom).unwrap();
-                    let atom = vm.intern_atom("revoke");
-                    let revoke = vm.own_property(record, atom).unwrap();
-                    let handles = [target, handler, proxy, revoke, record]
-                        .map(|value| vm.heap.weak_handle(value).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let active_native = vm.host_frame_count();
-                    let realm = vm.realm.globals;
-                    let revoke_root = vm.heap.root(revoke);
-                    let owner_root = match owner {
-                        "proxy" => Some(vm.heap.root(proxy)),
-                        "record" => Some(vm.heap.root(record)),
-                        _ => None,
+                let handler = vm.object();
+                let record = vm.proxy_revocable(&program, &[target, handler]).unwrap();
+                let atom = vm.intern_atom("proxy");
+                let proxy = vm.own_property(record, atom).unwrap();
+                let atom = vm.intern_atom("revoke");
+                let revoke = vm.own_property(record, atom).unwrap();
+                let handles = [target, handler, proxy, revoke, record]
+                    .map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let active_native = vm.host_frame_count();
+                let realm = vm.realm.globals;
+                let revoke_root = vm.heap.root(revoke);
+                let owner_root = match owner {
+                    "proxy" => Some(vm.heap.root(proxy)),
+                    "record" => Some(vm.heap.root(record)),
+                    _ => None,
+                };
+                if owner == "record" {
+                    let key = vm.heap.alloc_string("proxy".into());
+                    assert_eq!(
+                        vm.object_delete_property(&program, &[record, key]).unwrap(),
+                        Value::TRUE
+                    );
+                }
+                vm.collect_now(&program);
+                for (handle, value) in handles[..4].iter().zip([target, handler, proxy, revoke])
+                {
+                    assert_eq!(
+                        vm.heap.weak_value(*handle),
+                        Some(value),
+                        "{kind} {owner} {entry}"
+                    );
+                }
+                for _ in 0..2 {
+                    let result = match entry {
+                        "direct" => vm.proxy_revoke(revoke),
+                        "call" => vm.call_value(&program, revoke, Value::TRUE, &[Value::FALSE]),
+                        _ => vm.call_native_guarded(
+                            &program,
+                            Native::ProxyRevoke,
+                            Value::TRUE,
+                            &[Value::FALSE],
+                            revoke,
+                        ),
                     };
-                    if owner == "record" {
-                        let key = vm.heap.alloc_string("proxy".into());
-                        assert_eq!(
-                            vm.object_delete_property(&program, &[record, key]).unwrap(),
-                            Value::TRUE
-                        );
-                    }
-                    vm.collect_now(&program);
-                    for (handle, value) in handles[..4].iter().zip([target, handler, proxy, revoke])
-                    {
-                        assert_eq!(
-                            vm.heap.weak_value(*handle),
-                            Some(value),
-                            "{kind} {owner} {entry}"
-                        );
-                    }
-                    for _ in 0..2 {
-                        let result = match entry {
-                            "direct" => vm.proxy_revoke(revoke),
-                            "call" => vm.call_value(&program, revoke, Value::TRUE, &[Value::FALSE]),
-                            _ => vm.call_native_guarded(
-                                &program,
-                                Native::ProxyRevoke,
-                                Value::TRUE,
-                                &[Value::FALSE],
-                                revoke,
-                            ),
-                        };
-                        assert_eq!(result.unwrap(), Value::UNDEFINED);
-                        assert_eq!(vm.active_call_roots.len(), calls);
-                        assert_eq!(vm.host_frame_count(), active_native);
-                        assert_eq!(vm.realm.globals, realm);
-                    }
-                    assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
+                    assert_eq!(result.unwrap(), Value::UNDEFINED);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    assert_eq!(vm.host_frame_count(), active_native);
+                    assert_eq!(vm.realm.globals, realm);
+                }
+                assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
+                assert_eq!(
+                    vm.is_constructable(proxy),
+                    constructable,
+                    "{kind} {owner} {entry}"
+                );
+                if owner != "revoker" {
+                    vm.heap.release_root(revoke_root);
+                }
+                vm.collect_now(&program);
+                assert!(
+                    vm.heap.weak_value(handles[0]).is_none(),
+                    "target retained: {kind} {owner} {entry}"
+                );
+                assert!(
+                    vm.heap.weak_value(handles[1]).is_none(),
+                    "handler retained: {kind} {owner} {entry}"
+                );
+                assert_eq!(
+                    vm.heap.weak_value(handles[2]),
+                    (owner == "proxy").then_some(proxy),
+                    "{kind} {owner} {entry}"
+                );
+                assert_eq!(
+                    vm.heap.weak_value(handles[3]),
+                    (owner != "proxy").then_some(revoke)
+                );
+                assert_eq!(
+                    vm.heap.weak_value(handles[4]),
+                    (owner == "record").then_some(record)
+                );
+                if owner != "proxy" {
+                    assert!(
+                        matches!(vm.heap.function(revoke),Some(crate::heap::FunctionRecord {env,..}) if env.is_null())
+                    );
                     assert_eq!(
-                        vm.is_constructable(proxy),
-                        constructable,
+                        vm.call_value(&program, revoke, Value::UNDEFINED, &[])
+                            .unwrap(),
+                        Value::UNDEFINED
+                    );
+                }
+                if let Some(root) = owner_root {
+                    vm.heap.release_root(root);
+                } else {
+                    vm.heap.release_root(revoke_root);
+                }
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
                         "{kind} {owner} {entry}"
                     );
-                    if owner != "revoker" {
-                        vm.heap.release_root(revoke_root);
-                    }
-                    vm.collect_now(&program);
-                    assert!(
-                        vm.heap.weak_value(handles[0]).is_none(),
-                        "target retained: {kind} {owner} {entry}"
-                    );
-                    assert!(
-                        vm.heap.weak_value(handles[1]).is_none(),
-                        "handler retained: {kind} {owner} {entry}"
-                    );
-                    assert_eq!(
-                        vm.heap.weak_value(handles[2]),
-                        (owner == "proxy").then_some(proxy),
-                        "{kind} {owner} {entry}"
-                    );
-                    assert_eq!(
-                        vm.heap.weak_value(handles[3]),
-                        (owner != "proxy").then_some(revoke)
-                    );
-                    assert_eq!(
-                        vm.heap.weak_value(handles[4]),
-                        (owner == "record").then_some(record)
-                    );
-                    if owner != "proxy" {
-                        assert!(
-                            matches!(vm.heap.function(revoke),Some(crate::heap::FunctionRecord {env,..}) if env.is_null())
-                        );
-                        assert_eq!(
-                            vm.call_value(&program, revoke, Value::UNDEFINED, &[])
-                                .unwrap(),
-                            Value::UNDEFINED
-                        );
-                    }
-                    if let Some(root) = owner_root {
-                        vm.heap.release_root(root);
-                    } else {
-                        vm.heap.release_root(revoke_root);
-                    }
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(
-                            vm.heap.weak_value(handle).is_none(),
-                            "{kind} {owner} {entry}"
-                        );
-                    }
                 }
             }
         }
@@ -9033,96 +8815,92 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
 
 #[test]
 fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for trapped in [false, true] {
-            for phase in ["success", "getter", "target", "trap"] {
-                if !trapped && phase == "trap" {
-                    continue;
+    let compile = Engine::specialize;
+    for trapped in [false, true] {
+        for phase in ["success", "getter", "target", "trap"] {
+            if !trapped && phase == "trap" {
+                continue;
+            }
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operand() {{
+                    var revoke;
+                    var r=Proxy.revocable(new Proxy({{first:42,[Symbol('entry')]:43}},{{ownKeys(object) {{
+                        $262.gc();if ('{phase}'==='target') throw {{kind:'target'}};return Reflect.ownKeys(object);
+                    }}}}),{{get ownKeys() {{
+                        revoke();$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                        if (!{trapped}) return null;
+                        return function(object) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};return Reflect.ownKeys(object);}};
+                    }}}});
+                    revoke=r.revoke;
+                    return r.proxy;
+                }}
+            "#
+            );
+            let program = compile(&source, "proxy-own-keys-revocation-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operand");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let proxy = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let (target, handler) = match vm.heap.get(proxy) {
+                Some(super::Cell::Proxy {
+                    target, handler, ..
+                }) => (*target, *handler),
+                _ => panic!("proxy"),
+            };
+            let handles =
+                [proxy, target, handler].map(|value| vm.heap.weak_handle(value).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.proxy_own_keys(&program, proxy);
+            assert_eq!(
+                result.is_ok(),
+                phase == "success",
+                "trapped={trapped} {phase}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let keys = match result {
+                Ok(keys) => {
+                    assert_eq!(keys.len(), 2);
+                    assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
+                    assert!(
+                        matches!(vm.heap.symbol_data(keys[1]),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
+                    );
+                    for (handle, value) in handles.iter().zip([proxy, target, handler]) {
+                        assert_eq!(
+                            vm.heap.weak_value(*handle),
+                            Some(value),
+                            "trapped={trapped} {phase}"
+                        );
+                    }
+                    assert!(
+                        matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
+                    );
+                    // A key a program spells is its shared atom string (`Vm::atom_string`),
+                    // kept with the program; the symbol key is the proxy target's own.
+                    let first = vm.intern_atom("first");
+                    assert_eq!(keys[0], vm.atom_string(first));
+                    vec![vm.heap.weak_handle(keys[1]).unwrap()]
                 }
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operand() {{
-                        var revoke;
-                        var r=Proxy.revocable(new Proxy({{first:42,[Symbol('entry')]:43}},{{ownKeys(object) {{
-                            $262.gc();if ('{phase}'==='target') throw {{kind:'target'}};return Reflect.ownKeys(object);
-                        }}}}),{{get ownKeys() {{
-                            revoke();$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
-                            if (!{trapped}) return null;
-                            return function(object) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};return Reflect.ownKeys(object);}};
-                        }}}});
-                        revoke=r.revoke;
-                        return r.proxy;
-                    }}
-                "#
-                );
-                let program = compile(&source, "proxy-own-keys-revocation-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operand");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let proxy = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let (target, handler) = match vm.heap.get(proxy) {
-                    Some(super::Cell::Proxy {
-                        target, handler, ..
-                    }) => (*target, *handler),
-                    _ => panic!("proxy"),
-                };
-                let handles =
-                    [proxy, target, handler].map(|value| vm.heap.weak_handle(value).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.proxy_own_keys(&program, proxy);
-                assert_eq!(
-                    result.is_ok(),
-                    phase == "success",
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    Vec::new()
+                }
+            };
+            vm.collect_now(&program);
+            for handle in handles.into_iter().chain(keys) {
+                assert!(
+                    vm.heap.weak_value(handle).is_none(),
                     "trapped={trapped} {phase}"
                 );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let keys = match result {
-                    Ok(keys) => {
-                        assert_eq!(keys.len(), 2);
-                        assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
-                        assert!(
-                            matches!(vm.heap.symbol_data(keys[1]),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
-                        );
-                        for (handle, value) in handles.iter().zip([proxy, target, handler]) {
-                            assert_eq!(
-                                vm.heap.weak_value(*handle),
-                                Some(value),
-                                "trapped={trapped} {phase}"
-                            );
-                        }
-                        assert!(
-                            matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
-                        );
-                        // A key a program spells is its shared atom string (`Vm::atom_string`),
-                        // kept with the program; the symbol key is the proxy target's own.
-                        let first = vm.intern_atom("first");
-                        assert_eq!(keys[0], vm.atom_string(first));
-                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
-                    }
-                    Err(error) => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                        Vec::new()
-                    }
-                };
-                vm.collect_now(&program);
-                for handle in handles.into_iter().chain(keys) {
-                    assert!(
-                        vm.heap.weak_value(handle).is_none(),
-                        "trapped={trapped} {phase}"
-                    );
-                }
             }
         }
     }
@@ -9131,106 +8909,102 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
 #[test]
 fn coerced_binary_operands_restore_roots_after_each_completion() {
     use crate::operator::BinaryOperator;
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for kind in ["string", "numeric-string", "bigint"] {
-            for (operator, token) in [
-                (BinaryOperator::LessThan, "<"),
-                (BinaryOperator::GreaterEqualThan, ">="),
-                (BinaryOperator::Addition, "+"),
-                (BinaryOperator::Subtraction, "-"),
-            ] {
-                for phase in ["success", "left", "right"] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        function operands() {{return [
-                            {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='left') throw {{kind:'left'}};
-                                return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(42):'{kind}'==='numeric-string'?String.fromCharCode(52,50):String.fromCharCode(97,98);}};
-                            }}}},
-                            {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='right') throw {{kind:'right'}};
-                                return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(7):'{kind}'==='numeric-string'?String.fromCharCode(55):String.fromCharCode(99);}};
-                            }}}}
-                        ];}}
-                    "#
-                    );
-                    let program = compile(&source, "binary-coercion-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operands");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let values = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let (left, right) = vm
-                        .heap
-                        .array_elements(values)
-                        .map(|elements| (elements[0], elements[1]))
-                        .expect("operands");
-                    let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = vm.binary(&program, operator as u32, left, right);
-                    assert_eq!(result.is_ok(), phase == "success", "{kind} {token} {phase}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    let result_handle = match result {
-                        Ok(value) => {
-                            let expected = match token {
-                                "<" => {
-                                    if kind == "bigint" {
-                                        "false"
-                                    } else {
-                                        "true"
-                                    }
+    let compile = Engine::specialize;
+    for kind in ["string", "numeric-string", "bigint"] {
+        for (operator, token) in [
+            (BinaryOperator::LessThan, "<"),
+            (BinaryOperator::GreaterEqualThan, ">="),
+            (BinaryOperator::Addition, "+"),
+            (BinaryOperator::Subtraction, "-"),
+        ] {
+            for phase in ["success", "left", "right"] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                    function operands() {{return [
+                        {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='left') throw {{kind:'left'}};
+                            return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(42):'{kind}'==='numeric-string'?String.fromCharCode(52,50):String.fromCharCode(97,98);}};
+                        }}}},
+                        {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='right') throw {{kind:'right'}};
+                            return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(7):'{kind}'==='numeric-string'?String.fromCharCode(55):String.fromCharCode(99);}};
+                        }}}}
+                    ];}}
+                "#
+                );
+                let program = compile(&source, "binary-coercion-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let values = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let (left, right) = vm
+                    .heap
+                    .array_elements(values)
+                    .map(|elements| (elements[0], elements[1]))
+                    .expect("operands");
+                let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.binary(&program, operator as u32, left, right);
+                assert_eq!(result.is_ok(), phase == "success", "{kind} {token} {phase}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(value) => {
+                        let expected = match token {
+                            "<" => {
+                                if kind == "bigint" {
+                                    "false"
+                                } else {
+                                    "true"
                                 }
-                                ">=" => {
-                                    if kind == "bigint" {
-                                        "true"
-                                    } else {
-                                        "false"
-                                    }
-                                }
-                                "+" => match kind {
-                                    "bigint" => "49",
-                                    "numeric-string" => "427",
-                                    _ => "abc",
-                                },
-                                _ => {
-                                    if kind == "string" {
-                                        "NaN"
-                                    } else {
-                                        "35"
-                                    }
-                                }
-                            };
-                            assert_eq!(
-                                vm.to_string(&program, value).unwrap(),
-                                expected,
-                                "{kind} {token}"
-                            );
-                            for (handle, value) in handles.iter().zip([left, right]) {
-                                assert_eq!(vm.heap.weak_value(*handle), Some(value));
                             }
-                            value.is_heap().then(|| vm.heap.weak_handle(value).unwrap())
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let kind = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                            None
-                        }
-                    };
-                    vm.collect_now(&program);
-                    for handle in handles.into_iter().chain(result_handle) {
-                        assert!(
-                            vm.heap.weak_value(handle).is_none(),
-                            "{kind} {token} {phase}"
+                            ">=" => {
+                                if kind == "bigint" {
+                                    "true"
+                                } else {
+                                    "false"
+                                }
+                            }
+                            "+" => match kind {
+                                "bigint" => "49",
+                                "numeric-string" => "427",
+                                _ => "abc",
+                            },
+                            _ => {
+                                if kind == "string" {
+                                    "NaN"
+                                } else {
+                                    "35"
+                                }
+                            }
+                        };
+                        assert_eq!(
+                            vm.to_string(&program, value).unwrap(),
+                            expected,
+                            "{kind} {token}"
                         );
+                        for (handle, value) in handles.iter().zip([left, right]) {
+                            assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                        }
+                        value.is_heap().then(|| vm.heap.weak_handle(value).unwrap())
                     }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        None
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in handles.into_iter().chain(result_handle) {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
+                        "{kind} {token} {phase}"
+                    );
                 }
             }
         }
@@ -9270,66 +9044,62 @@ fn numeric_binary_fast_paths_preserve_number_edges_and_generic_coercion() {
 
 #[test]
 fn equality_roots_the_opposite_primitive_during_object_coercion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for bigint in [false, true] {
-            for reversed in [false, true] {
-                for throws in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"function operand() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ({throws}) throw {{kind:'coercion'}};return {bigint}?BigInt(43):String.fromCharCode(97,99);}}}};}}"#
-                    );
-                    let program = compile(&source, "equality-coercion-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operand");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let object = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let primitive = if bigint {
-                        vm.heap.alloc(super::Cell::bigint(42.into()))
-                    } else {
-                        vm.heap.alloc_string("ab".into())
-                    };
-                    let handles =
-                        [object, primitive].map(|value| vm.heap.weak_handle(value).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = if reversed {
-                        vm.equal(&program, object, primitive)
-                    } else {
-                        vm.equal(&program, primitive, object)
-                    };
-                    assert_eq!(
-                        result.is_ok(),
-                        !throws,
-                        "bigint={bigint} reversed={reversed} throws={throws}"
-                    );
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    match result {
-                        Ok(value) => {
-                            assert!(!value);
-                            assert_eq!(
-                                vm.to_string(&program, primitive).unwrap(),
-                                if bigint { "42" } else { "ab" }
-                            );
-                            assert_eq!(vm.heap.weak_value(handles[1]), Some(primitive));
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let kind = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, kind).unwrap(), "coercion");
-                        }
+    let compile = Engine::specialize;
+    for bigint in [false, true] {
+        for reversed in [false, true] {
+            for throws in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"function operand() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ({throws}) throw {{kind:'coercion'}};return {bigint}?BigInt(43):String.fromCharCode(97,99);}}}};}}"#
+                );
+                let program = compile(&source, "equality-coercion-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let object = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let primitive = if bigint {
+                    vm.heap.alloc(super::Cell::bigint(42.into()))
+                } else {
+                    vm.heap.alloc_string("ab".into())
+                };
+                let handles =
+                    [object, primitive].map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if reversed {
+                    vm.equal(&program, object, primitive)
+                } else {
+                    vm.equal(&program, primitive, object)
+                };
+                assert_eq!(
+                    result.is_ok(),
+                    !throws,
+                    "bigint={bigint} reversed={reversed} throws={throws}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(value) => {
+                        assert!(!value);
+                        assert_eq!(
+                            vm.to_string(&program, primitive).unwrap(),
+                            if bigint { "42" } else { "ab" }
+                        );
+                        assert_eq!(vm.heap.weak_value(handles[1]), Some(primitive));
                     }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), "coercion");
                     }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -9338,75 +9108,71 @@ fn equality_roots_the_opposite_primitive_during_object_coercion() {
 
 #[test]
 fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for ordinary in [false, true] {
-            for phase in ["success", "prototype", "traversal"] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operands() {{
-                        function C() {{}}
-                        return [new Proxy(Object.create(C.prototype), {{getPrototypeOf(target) {{
-                            $262.gc(); if ('{phase}'==='traversal') throw {{kind:'traversal'}};
-                            return Reflect.getPrototypeOf(target);
-                        }}}}), new Proxy(C, {{get(target,key) {{
-                            $262.gc();
-                            if (key===Symbol.hasInstance) return null;
-                            if (key==='prototype' && '{phase}'==='prototype') throw {{kind:'prototype'}};
-                            return Reflect.get(target,key);
-                        }}}})];
-                    }}
-                "#
-                );
-                let program = compile(&source, "instanceof-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let values = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let (value, constructor) = vm
-                    .heap
-                    .array_elements(values)
-                    .map(|elements| (elements[0], elements[1]))
-                    .expect("operands");
-                let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = if ordinary {
-                    vm.ordinary_has_instance(&program, constructor, value)
-                } else {
-                    vm.instanceof(&program, value, constructor)
-                };
-                assert_eq!(
-                    result.is_ok(),
-                    phase == "success",
-                    "ordinary={ordinary} {phase}"
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                match result {
-                    Ok(result) => {
-                        assert!(result, "ordinary={ordinary}");
-                        for (handle, value) in handles.iter().zip([value, constructor]) {
-                            assert_eq!(vm.heap.weak_value(*handle), Some(value));
-                        }
-                    }
-                    Err(error) => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+    let compile = Engine::specialize;
+    for ordinary in [false, true] {
+        for phase in ["success", "prototype", "traversal"] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{
+                    function C() {{}}
+                    return [new Proxy(Object.create(C.prototype), {{getPrototypeOf(target) {{
+                        $262.gc(); if ('{phase}'==='traversal') throw {{kind:'traversal'}};
+                        return Reflect.getPrototypeOf(target);
+                    }}}}), new Proxy(C, {{get(target,key) {{
+                        $262.gc();
+                        if (key===Symbol.hasInstance) return null;
+                        if (key==='prototype' && '{phase}'==='prototype') throw {{kind:'prototype'}};
+                        return Reflect.get(target,key);
+                    }}}})];
+                }}
+            "#
+            );
+            let program = compile(&source, "instanceof-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let values = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let (value, constructor) = vm
+                .heap
+                .array_elements(values)
+                .map(|elements| (elements[0], elements[1]))
+                .expect("operands");
+            let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = if ordinary {
+                vm.ordinary_has_instance(&program, constructor, value)
+            } else {
+                vm.instanceof(&program, value, constructor)
+            };
+            assert_eq!(
+                result.is_ok(),
+                phase == "success",
+                "ordinary={ordinary} {phase}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            match result {
+                Ok(result) => {
+                    assert!(result, "ordinary={ordinary}");
+                    for (handle, value) in handles.iter().zip([value, constructor]) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
                     }
                 }
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none());
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
                 }
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -9414,67 +9180,63 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
 
 #[test]
 fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for ordinary in [false, true] {
-            for throws in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function operands() {{
-                        function C() {{}}
-                        Object.defineProperty(C,Symbol.hasInstance,{{value:null}});
-                        return [new Proxy({{}},{{getPrototypeOf() {{
-                            C.prototype={{}}; $262.gc();
-                            return new Proxy({{}},{{getPrototypeOf() {{
-                                $262.gc(); if ({throws}) throw {{kind:'cursor'}}; return null;
-                            }}}});
-                        }}}}),C,C.prototype];
-                    }}
-                "#
-                );
-                let program = compile(&source, "instanceof-detached-prototype.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("operands");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let operands = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let values = vm
-                    .heap
-                    .array_elements(operands)
-                    .map(|elements| [elements[0], elements[1], elements[2]])
-                    .expect("operands");
-                let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = if ordinary {
-                    vm.ordinary_has_instance(&program, values[1], values[0])
-                } else {
-                    vm.instanceof(&program, values[0], values[1])
-                };
-                assert_eq!(result.is_err(), throws);
-                match result {
-                    Ok(result) => assert!(!result),
-                    Err(error) => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), "cursor");
-                    }
+    let compile = Engine::specialize;
+    for ordinary in [false, true] {
+        for throws in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function operands() {{
+                    function C() {{}}
+                    Object.defineProperty(C,Symbol.hasInstance,{{value:null}});
+                    return [new Proxy({{}},{{getPrototypeOf() {{
+                        C.prototype={{}}; $262.gc();
+                        return new Proxy({{}},{{getPrototypeOf() {{
+                            $262.gc(); if ({throws}) throw {{kind:'cursor'}}; return null;
+                        }}}});
+                    }}}}),C,C.prototype];
+                }}
+            "#
+            );
+            let program = compile(&source, "instanceof-detached-prototype.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("operands");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let operands = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let values = vm
+                .heap
+                .array_elements(operands)
+                .map(|elements| [elements[0], elements[1], elements[2]])
+                .expect("operands");
+            let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = if ordinary {
+                vm.ordinary_has_instance(&program, values[1], values[0])
+            } else {
+                vm.instanceof(&program, values[0], values[1])
+            };
+            assert_eq!(result.is_err(), throws);
+            match result {
+                Ok(result) => assert!(!result),
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), "cursor");
                 }
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                for (handle, value) in handles.iter().zip(values) {
-                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
-                }
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none());
-                }
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip(values) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value));
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -9482,85 +9244,81 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
 
 #[test]
 fn iterator_step_roots_receiver_through_result_accessors() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for cached in [false, true] {
-            for wrapped in [false, true] {
-                for phase in ["value", "done", "done-throw", "value-throw", "invalid"] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    function step() {{if ('{phase}'==='invalid') return 42; return {{
-                            get done() {{$262.gc(); if ('{phase}'==='done-throw') throw {{kind:'done-throw'}}; return '{phase}'==='done';}},
-                            get value() {{$262.gc(); if ('{phase}'==='value-throw') throw {{kind:'value-throw'}}; return {{tag:42}};}}
-                        }};}}
-                    function operand() {{var iterator={{next() {{$262.gc();return step();}}}};return {wrapped}?Iterator.from(iterator):iterator;}}
-                "#
-                    );
-                    let program = compile(&source, "iterator-step-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("operand");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let iterator = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let handle = vm.heap.weak_handle(iterator).unwrap();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = if cached {
-                        let iterator_root = vm.heap.root(iterator);
-                        let atom = vm.intern_atom("next");
-                        let method = vm.get_property(&program, iterator, atom).unwrap();
-                        let method_root = vm.heap.root(method);
-                        let result =
-                            vm.rooted_iterator_step_value(&program, iterator_root, method_root);
-                        vm.heap.release_root(method_root);
-                        vm.heap.release_root(iterator_root);
-                        result
-                    } else {
-                        vm.iterator_step_value(&program, iterator)
-                    };
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    assert_eq!(
-                        vm.heap.weak_value(handle),
-                        Some(iterator),
-                        "cached={cached} {phase}"
-                    );
-                    let value_handle = match result {
-                        Ok(Some(value)) => {
-                            assert_eq!(phase, "value");
-                            let atom = vm.intern_atom("tag");
-                            assert_eq!(
-                                vm.own_property(value, atom).unwrap().as_number(),
-                                Some(42.0)
-                            );
-                            Some(vm.heap.weak_handle(value).unwrap())
-                        }
-                        Ok(None) => {
-                            assert_eq!(phase, "done");
-                            None
-                        }
-                        Err(error) => {
-                            if phase == "invalid" {
-                                assert!(error.to_string().contains("not an object"));
-                            } else {
-                                assert!(phase.ends_with("throw"));
-                                let atom = vm.intern_atom("kind");
-                                let kind = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                            }
-                            None
-                        }
-                    };
-                    vm.collect_now(&program);
-                    for handle in std::iter::once(handle).chain(value_handle) {
-                        assert!(vm.heap.weak_value(handle).is_none());
+    let compile = Engine::specialize;
+    for cached in [false, true] {
+        for wrapped in [false, true] {
+            for phase in ["value", "done", "done-throw", "value-throw", "invalid"] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function step() {{if ('{phase}'==='invalid') return 42; return {{
+                        get done() {{$262.gc(); if ('{phase}'==='done-throw') throw {{kind:'done-throw'}}; return '{phase}'==='done';}},
+                        get value() {{$262.gc(); if ('{phase}'==='value-throw') throw {{kind:'value-throw'}}; return {{tag:42}};}}
+                    }};}}
+                function operand() {{var iterator={{next() {{$262.gc();return step();}}}};return {wrapped}?Iterator.from(iterator):iterator;}}
+            "#
+                );
+                let program = compile(&source, "iterator-step-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let iterator = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let handle = vm.heap.weak_handle(iterator).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if cached {
+                    let iterator_root = vm.heap.root(iterator);
+                    let atom = vm.intern_atom("next");
+                    let method = vm.get_property(&program, iterator, atom).unwrap();
+                    let method_root = vm.heap.root(method);
+                    let result =
+                        vm.rooted_iterator_step_value(&program, iterator_root, method_root);
+                    vm.heap.release_root(method_root);
+                    vm.heap.release_root(iterator_root);
+                    result
+                } else {
+                    vm.iterator_step_value(&program, iterator)
+                };
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                assert_eq!(
+                    vm.heap.weak_value(handle),
+                    Some(iterator),
+                    "cached={cached} {phase}"
+                );
+                let value_handle = match result {
+                    Ok(Some(value)) => {
+                        assert_eq!(phase, "value");
+                        let atom = vm.intern_atom("tag");
+                        assert_eq!(
+                            vm.own_property(value, atom).unwrap().as_number(),
+                            Some(42.0)
+                        );
+                        Some(vm.heap.weak_handle(value).unwrap())
                     }
+                    Ok(None) => {
+                        assert_eq!(phase, "done");
+                        None
+                    }
+                    Err(error) => {
+                        if phase == "invalid" {
+                            assert!(error.to_string().contains("not an object"));
+                        } else {
+                            assert!(phase.ends_with("throw"));
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        }
+                        None
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in std::iter::once(handle).chain(value_handle) {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -9726,118 +9484,114 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
 
 #[test]
 fn array_iterator_advance_roots_owner_and_applies_index_transition() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for native in [Native::ArrayKeys, Native::ArrayValues, Native::ArrayEntries] {
-            for phase in ["value", "length", "item", "done"] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"function source() {{return {{
-                    get length() {{$262.gc(); if ('{phase}'==='length') throw {{kind:'length'}}; return '{phase}'==='done'?0:2;}},
-                    get 0() {{$262.gc(); if ('{phase}'==='item') throw {{kind:'item'}};return {{tag:42}};}}
-                }};}}"#
-                );
-                let program = compile(&source, "array-iterator-advance.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("source");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let source = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let iterator = vm.array_iterator_native(&program, native, source).unwrap();
-                let handles = [iterator, source].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.iterator_next(&program, iterator);
-                let throws = phase == "length" || (phase == "item" && native != Native::ArrayKeys);
-                assert_eq!(result.is_err(), throws);
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                assert_eq!(
-                    vm.heap.weak_value(handles[0]),
-                    Some(iterator),
-                    "{native:?} {phase}"
-                );
-                match result {
-                    Ok(result) => {
-                        let atom = vm.intern_atom("done");
-                        assert_eq!(
-                            vm.own_property(result, atom),
-                            Some(if phase == "done" {
-                                Value::TRUE
-                            } else {
-                                Value::FALSE
-                            })
-                        );
-                        if phase != "done" {
-                            let atom = vm.intern_atom("value");
-                            let mut value = vm.own_property(result, atom).unwrap();
-                            if native == Native::ArrayEntries {
-                                value = vm
-                                    .heap
-                                    .array_elements(value)
-                                    .map(|elements| {
-                                        assert_eq!(elements[0].as_number(), Some(0.0));
-                                        elements[1]
-                                    })
-                                    .expect("entry");
-                            }
-                            if native == Native::ArrayKeys {
-                                assert_eq!(value.as_number(), Some(0.0));
-                            } else {
-                                let atom = vm.intern_atom("tag");
-                                assert_eq!(
-                                    vm.own_property(value, atom).unwrap().as_number(),
-                                    Some(42.0)
-                                );
-                            }
+    let compile = Engine::specialize;
+    for native in [Native::ArrayKeys, Native::ArrayValues, Native::ArrayEntries] {
+        for phase in ["value", "length", "item", "done"] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"function source() {{return {{
+                get length() {{$262.gc(); if ('{phase}'==='length') throw {{kind:'length'}}; return '{phase}'==='done'?0:2;}},
+                get 0() {{$262.gc(); if ('{phase}'==='item') throw {{kind:'item'}};return {{tag:42}};}}
+            }};}}"#
+            );
+            let program = compile(&source, "array-iterator-advance.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("source");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let source = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let iterator = vm.array_iterator_native(&program, native, source).unwrap();
+            let handles = [iterator, source].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.iterator_next(&program, iterator);
+            let throws = phase == "length" || (phase == "item" && native != Native::ArrayKeys);
+            assert_eq!(result.is_err(), throws);
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            assert_eq!(
+                vm.heap.weak_value(handles[0]),
+                Some(iterator),
+                "{native:?} {phase}"
+            );
+            match result {
+                Ok(result) => {
+                    let atom = vm.intern_atom("done");
+                    assert_eq!(
+                        vm.own_property(result, atom),
+                        Some(if phase == "done" {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        })
+                    );
+                    if phase != "done" {
+                        let atom = vm.intern_atom("value");
+                        let mut value = vm.own_property(result, atom).unwrap();
+                        if native == Native::ArrayEntries {
+                            value = vm
+                                .heap
+                                .array_elements(value)
+                                .map(|elements| {
+                                    assert_eq!(elements[0].as_number(), Some(0.0));
+                                    elements[1]
+                                })
+                                .expect("entry");
+                        }
+                        if native == Native::ArrayKeys {
+                            assert_eq!(value.as_number(), Some(0.0));
+                        } else {
+                            let atom = vm.intern_atom("tag");
+                            assert_eq!(
+                                vm.own_property(value, atom).unwrap().as_number(),
+                                Some(42.0)
+                            );
                         }
                     }
-                    Err(error) => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                    }
                 }
-                match vm.heap.iterator(iterator) {
-                    Some(crate::heap::IteratorRecord {
-                        index,
-                        done,
-                        source: owner,
-                        ..
-                    }) => {
-                        assert_eq!(
-                            *index,
-                            if phase == "length" || phase == "done" {
-                                0
-                            } else {
-                                1
-                            }
-                        );
-                        assert_eq!(*done, phase == "done");
-                        assert_eq!(
-                            *owner,
-                            if phase == "done" {
-                                Value::UNDEFINED
-                            } else {
-                                source
-                            }
-                        );
-                    }
-                    _ => panic!("iterator"),
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
                 }
-                let owner = vm.heap.root(iterator);
-                vm.collect_now(&program);
-                assert_eq!(vm.heap.weak_value(handles[1]).is_none(), phase == "done");
-                vm.heap.release_root(owner);
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none());
+            }
+            match vm.heap.iterator(iterator) {
+                Some(crate::heap::IteratorRecord {
+                    index,
+                    done,
+                    source: owner,
+                    ..
+                }) => {
+                    assert_eq!(
+                        *index,
+                        if phase == "length" || phase == "done" {
+                            0
+                        } else {
+                            1
+                        }
+                    );
+                    assert_eq!(*done, phase == "done");
+                    assert_eq!(
+                        *owner,
+                        if phase == "done" {
+                            Value::UNDEFINED
+                        } else {
+                            source
+                        }
+                    );
                 }
+                _ => panic!("iterator"),
+            }
+            let owner = vm.heap.root(iterator);
+            vm.collect_now(&program);
+            assert_eq!(vm.heap.weak_value(handles[1]).is_none(), phase == "done");
+            vm.heap.release_root(owner);
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -9845,23 +9599,68 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
 
 #[test]
 fn array_iterator_retains_captured_source_after_reentrant_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = compile(
+        r#"
+        var iterator,nested=false;
+        function lengthValue() {return {[Symbol.toPrimitive]() {
+            nested=true;iterator.next();$262.gc();return 1;
+        }};}
+        function source() {return {
+            get length() {return nested?0:lengthValue();},
+            get 0() {$262.gc();return {tag:42};}
+        };}
+    "#,
+        "array-iterator-captured-source.js",
+    )
+    .unwrap();
+    vm.execute(&program).unwrap();
+    let atom = vm.intern_atom("source");
+    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+    let source = vm
+        .call_value(&program, factory, Value::UNDEFINED, &[])
+        .unwrap();
+    let iterator = vm
+        .array_iterator_native(&program, Native::ArrayValues, source)
+        .unwrap();
+    let atom = vm.intern_atom("iterator");
+    vm.set_property(vm.realm.globals, atom, iterator).unwrap();
+    let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+    let roots = vm.heap.root_count_for_test();
+    let calls = vm.active_call_roots.len();
+    let result = vm.iterator_next(&program, iterator).unwrap();
+    let value_atom = vm.intern_atom("value");
+    let value = vm.own_property(result, value_atom).unwrap();
+    let tag = vm.intern_atom("tag");
+    assert_eq!(vm.own_property(value, tag).unwrap().as_number(), Some(42.0));
+    assert_eq!(vm.heap.weak_value(handles[0]), Some(source));
+    assert_eq!(vm.heap.root_count_for_test(), roots);
+    assert_eq!(vm.active_call_roots.len(), calls);
+    assert!(
+        matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {source,index:1,done:true,..}) if source.is_undefined())
+    );
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(handles[0]).is_none());
+    assert_eq!(vm.heap.weak_value(handles[1]), Some(iterator));
+    vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+        .unwrap();
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(handles[1]).is_none());
+}
+
+#[test]
+fn completed_typed_array_iterators_release_source_and_backing() {
+    let compile = Engine::specialize;
+    for native in [
+        Native::Uint8ArrayKeys,
+        Native::Uint8ArrayValues,
+        Native::Uint8ArrayEntries,
     ] {
         let mut vm = Vm::new(TestHost::default().with_test262());
         let program = compile(
-            r#"
-            var iterator,nested=false;
-            function lengthValue() {return {[Symbol.toPrimitive]() {
-                nested=true;iterator.next();$262.gc();return 1;
-            }};}
-            function source() {return {
-                get length() {return nested?0:lengthValue();},
-                get 0() {$262.gc();return {tag:42};}
-            };}
-        "#,
-            "array-iterator-captured-source.js",
+            "function source() {return new Uint8Array([42]);}",
+            "typed-iterator-release.js",
         )
         .unwrap();
         vm.execute(&program).unwrap();
@@ -9870,211 +9669,154 @@ fn array_iterator_retains_captured_source_after_reentrant_completion() {
         let source = vm
             .call_value(&program, factory, Value::UNDEFINED, &[])
             .unwrap();
-        let iterator = vm
-            .array_iterator_native(&program, Native::ArrayValues, source)
-            .unwrap();
-        let atom = vm.intern_atom("iterator");
-        vm.set_property(vm.realm.globals, atom, iterator).unwrap();
-        let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
-        let roots = vm.heap.root_count_for_test();
-        let calls = vm.active_call_roots.len();
+        let buffer = match vm.heap.get(source) {
+            Some(super::Cell::TypedArray { buffer, .. }) => *buffer,
+            _ => panic!("typed source"),
+        };
+        let iterator = vm.array_iterator_native(&program, native, source).unwrap();
+        let handles = [iterator, source, buffer].map(|v| vm.heap.weak_handle(v).unwrap());
+        let owner = vm.heap.root(iterator);
+        vm.collect_now(&program);
+        for (handle, value) in handles.iter().zip([iterator, source, buffer]) {
+            assert_eq!(vm.heap.weak_value(*handle), Some(value));
+        }
+        vm.iterator_next(&program, iterator).unwrap();
         let result = vm.iterator_next(&program, iterator).unwrap();
-        let value_atom = vm.intern_atom("value");
-        let value = vm.own_property(result, value_atom).unwrap();
-        let tag = vm.intern_atom("tag");
-        assert_eq!(vm.own_property(value, tag).unwrap().as_number(), Some(42.0));
-        assert_eq!(vm.heap.weak_value(handles[0]), Some(source));
-        assert_eq!(vm.heap.root_count_for_test(), roots);
-        assert_eq!(vm.active_call_roots.len(), calls);
-        assert!(
-            matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {source,index:1,done:true,..}) if source.is_undefined())
-        );
+        let atom = vm.intern_atom("done");
+        assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
+        vm.collect_now(&program);
+        assert_eq!(vm.heap.weak_value(handles[0]), Some(iterator));
+        assert!(vm.heap.weak_value(handles[1]).is_none());
+        assert!(vm.heap.weak_value(handles[2]).is_none());
+        let result = vm.iterator_next(&program, iterator).unwrap();
+        assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
+        vm.heap.release_root(owner);
         vm.collect_now(&program);
         assert!(vm.heap.weak_value(handles[0]).is_none());
-        assert_eq!(vm.heap.weak_value(handles[1]), Some(iterator));
-        vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
-            .unwrap();
-        vm.collect_now(&program);
-        assert!(vm.heap.weak_value(handles[1]).is_none());
     }
 }
 
 #[test]
-fn completed_typed_array_iterators_release_source_and_backing() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for native in [
-            Native::Uint8ArrayKeys,
-            Native::Uint8ArrayValues,
-            Native::Uint8ArrayEntries,
+fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
+    let compile = Engine::specialize;
+    for wrapper in ["raw", "protocol", "async-from-sync"] {
+        for phase in [
+            "success",
+            "getter",
+            "call",
+            "primitive",
+            "method",
+            "absent",
+            "null",
         ] {
             let mut vm = Vm::new(TestHost::default().with_test262());
-            let program = compile(
-                "function source() {return new Uint8Array([42]);}",
-                "typed-iterator-release.js",
-            )
-            .unwrap();
+            let source = format!(
+                r#"
+                var log=[];function readLog() {{return log.join(',');}}
+                function close() {{log.push('call:'+this.tag);$262.gc();if ('{phase}'==='call') throw {{kind:'call'}};
+                    return '{phase}'==='primitive'?42:{{tag:this.tag}};
+                }}
+                function source() {{return {{tag:42,next() {{return {{done:true}};}},get return() {{
+                    log.push('get:'+this.tag);$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                    return '{phase}'==='absent'?undefined:'{phase}'==='null'?null:'{phase}'==='method'?42:close;
+                }}}};}}
+            "#
+            );
+            let program = compile(&source, "iterator-close-ownership.js").unwrap();
             vm.execute(&program).unwrap();
             let atom = vm.intern_atom("source");
             let factory = vm.own_property(vm.realm.globals, atom).unwrap();
             let source = vm
                 .call_value(&program, factory, Value::UNDEFINED, &[])
                 .unwrap();
-            let buffer = match vm.heap.get(source) {
-                Some(super::Cell::TypedArray { buffer, .. }) => *buffer,
-                _ => panic!("typed source"),
+            let iterator = match wrapper {
+                "raw" => source,
+                "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
+                _ => vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                    object: Vm::empty_object(
+                        vm.async_from_sync_iterator_proto,
+                    ),
+                    source,
+                    kind: super::IteratorKind::AsyncFromSync,
+                    index: 0,
+                    done: false,
+                    ext: crate::heap::IteratorExt::default(),
+                }),
             };
-            let iterator = vm.array_iterator_native(&program, native, source).unwrap();
-            let handles = [iterator, source, buffer].map(|v| vm.heap.weak_handle(v).unwrap());
-            let owner = vm.heap.root(iterator);
-            vm.collect_now(&program);
-            for (handle, value) in handles.iter().zip([iterator, source, buffer]) {
-                assert_eq!(vm.heap.weak_value(*handle), Some(value));
-            }
-            vm.iterator_next(&program, iterator).unwrap();
-            let result = vm.iterator_next(&program, iterator).unwrap();
-            let atom = vm.intern_atom("done");
-            assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
-            vm.collect_now(&program);
-            assert_eq!(vm.heap.weak_value(handles[0]), Some(iterator));
-            assert!(vm.heap.weak_value(handles[1]).is_none());
-            assert!(vm.heap.weak_value(handles[2]).is_none());
-            let result = vm.iterator_next(&program, iterator).unwrap();
-            assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
-            vm.heap.release_root(owner);
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(handles[0]).is_none());
-        }
-    }
-}
+            let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.iterator_close(&program, iterator);
 
-#[test]
-fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for wrapper in ["raw", "protocol", "async-from-sync"] {
-            for phase in [
-                "success",
-                "getter",
-                "call",
-                "primitive",
-                "method",
-                "absent",
-                "null",
-            ] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    var log=[];function readLog() {{return log.join(',');}}
-                    function close() {{log.push('call:'+this.tag);$262.gc();if ('{phase}'==='call') throw {{kind:'call'}};
-                        return '{phase}'==='primitive'?42:{{tag:this.tag}};
-                    }}
-                    function source() {{return {{tag:42,next() {{return {{done:true}};}},get return() {{
-                        log.push('get:'+this.tag);$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
-                        return '{phase}'==='absent'?undefined:'{phase}'==='null'?null:'{phase}'==='method'?42:close;
-                    }}}};}}
-                "#
-                );
-                let program = compile(&source, "iterator-close-ownership.js").unwrap();
-                vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("source");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let source = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let iterator = match wrapper {
-                    "raw" => source,
-                    "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
-                    _ => vm.heap.alloc_iterator(crate::heap::IteratorRecord {
-                        object: Vm::empty_object(
-                            vm.async_from_sync_iterator_proto,
-                        ),
-                        source,
-                        kind: super::IteratorKind::AsyncFromSync,
-                        index: 0,
-                        done: false,
-                        ext: crate::heap::IteratorExt::default(),
-                    }),
-                };
-                let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.iterator_close(&program, iterator);
-
+            assert_eq!(
+                result.is_ok(),
+                matches!(phase, "success" | "absent" | "null")
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([source, iterator]) {
                 assert_eq!(
-                    result.is_ok(),
-                    matches!(phase, "success" | "absent" | "null")
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                for (handle, value) in handles.iter().zip([source, iterator]) {
-                    assert_eq!(
-                        vm.heap.weak_value(*handle),
-                        Some(value),
-                        "{wrapper} {phase}"
-                    );
-                }
-                let log = vm.with_call_roots(
-                    result
-                        .iter()
-                        .copied()
-                        .chain(result.as_ref().err().and_then(|error| error.thrown_value())),
-                    |vm| {
-                        let atom = vm.intern_atom("readLog");
-                        let reader = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let log = vm
-                            .call_value(&program, reader, Value::UNDEFINED, &[])
-                            .unwrap();
-                        vm.to_string(&program, log).unwrap()
-                    },
-                );
-                assert_eq!(
-                    log,
-                    if matches!(phase, "success" | "call" | "primitive") {
-                        "get:42,call:42"
-                    } else {
-                        "get:42"
-                    },
+                    vm.heap.weak_value(*handle),
+                    Some(value),
                     "{wrapper} {phase}"
                 );
-                let result_handle = match result {
-                    Ok(result) if phase == "success" => {
-                        let atom = vm.intern_atom("tag");
-                        assert_eq!(
-                            vm.own_property(result, atom).unwrap().as_number(),
-                            Some(42.0)
-                        );
-                        Some(vm.heap.weak_handle(result).unwrap())
-                    }
-                    Ok(result) => {
-                        assert!(result.is_undefined());
-                        None
-                    }
-                    Err(error) if matches!(phase, "getter" | "call") => {
-                        let atom = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), atom)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                        None
-                    }
-                    Err(error) => {
-                        assert!(error.to_string().contains(if phase == "method" {
-                            "not callable"
-                        } else {
-                            "not an object"
-                        }));
-                        None
-                    }
-                };
-                vm.collect_now(&program);
-                for handle in handles.into_iter().chain(result_handle) {
-                    assert!(vm.heap.weak_value(handle).is_none());
+            }
+            let log = vm.with_call_roots(
+                result
+                    .iter()
+                    .copied()
+                    .chain(result.as_ref().err().and_then(|error| error.thrown_value())),
+                |vm| {
+                    let atom = vm.intern_atom("readLog");
+                    let reader = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let log = vm
+                        .call_value(&program, reader, Value::UNDEFINED, &[])
+                        .unwrap();
+                    vm.to_string(&program, log).unwrap()
+                },
+            );
+            assert_eq!(
+                log,
+                if matches!(phase, "success" | "call" | "primitive") {
+                    "get:42,call:42"
+                } else {
+                    "get:42"
+                },
+                "{wrapper} {phase}"
+            );
+            let result_handle = match result {
+                Ok(result) if phase == "success" => {
+                    let atom = vm.intern_atom("tag");
+                    assert_eq!(
+                        vm.own_property(result, atom).unwrap().as_number(),
+                        Some(42.0)
+                    );
+                    Some(vm.heap.weak_handle(result).unwrap())
                 }
+                Ok(result) => {
+                    assert!(result.is_undefined());
+                    None
+                }
+                Err(error) if matches!(phase, "getter" | "call") => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    None
+                }
+                Err(error) => {
+                    assert!(error.to_string().contains(if phase == "method" {
+                        "not callable"
+                    } else {
+                        "not an object"
+                    }));
+                    None
+                }
+            };
+            vm.collect_now(&program);
+            for handle in handles.into_iter().chain(result_handle) {
+                assert!(vm.heap.weak_value(handle).is_none());
             }
         }
     }
@@ -10082,69 +9824,65 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
 
 #[test]
 fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in ["success", "flags", "construct", "index", "setter"] {
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            let source = format!(
-                r#"
-                function speciesFactory() {{return function Species() {{$262.gc();if ('{phase}'==='construct') throw {{kind:'construct'}};return matcherFactory();}};}}
-                function matcherFactory() {{return {{exec() {{return null;}},set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}}};}}
-                function source() {{return {{
-                    get constructor() {{$262.gc();return {{[Symbol.species]:speciesFactory()}};}},
-                    get flags() {{$262.gc();if ('{phase}'==='flags') throw {{kind:'flags'}};return 'g';}},
-                    get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return {{[Symbol.toPrimitive]() {{$262.gc();return 0;}}}};}}
-                }};}}
-            "#
-            );
-            let program = compile(&source, "match-all-creation-roots.js").unwrap();
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("source");
-            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-            let receiver = vm
-                .call_value(&program, factory, Value::UNDEFINED, &[])
-                .unwrap();
-            let input = vm.heap.alloc_string("a".into());
-            let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.regexp_symbol_match_all(&program, receiver, &[input]);
-            assert_eq!(result.is_ok(), phase == "success", "{phase}");
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            for (handle, value) in handles.iter().zip([receiver, input]) {
-                assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}");
+    let compile = Engine::specialize;
+    for phase in ["success", "flags", "construct", "index", "setter"] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let source = format!(
+            r#"
+            function speciesFactory() {{return function Species() {{$262.gc();if ('{phase}'==='construct') throw {{kind:'construct'}};return matcherFactory();}};}}
+            function matcherFactory() {{return {{exec() {{return null;}},set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}}};}}
+            function source() {{return {{
+                get constructor() {{$262.gc();return {{[Symbol.species]:speciesFactory()}};}},
+                get flags() {{$262.gc();if ('{phase}'==='flags') throw {{kind:'flags'}};return 'g';}},
+                get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return {{[Symbol.toPrimitive]() {{$262.gc();return 0;}}}};}}
+            }};}}
+        "#
+        );
+        let program = compile(&source, "match-all-creation-roots.js").unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("source");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let receiver = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let input = vm.heap.alloc_string("a".into());
+        let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.regexp_symbol_match_all(&program, receiver, &[input]);
+        assert_eq!(result.is_ok(), phase == "success", "{phase}");
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        for (handle, value) in handles.iter().zip([receiver, input]) {
+            assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}");
+        }
+        match result {
+            Ok(iterator) => {
+                let matcher = match vm.heap.iterator(iterator) {
+                    Some(crate::heap::IteratorRecord { source, .. }) => *source,
+                    _ => panic!("regexp iterator"),
+                };
+                assert!(vm.is_object_like(matcher));
+                let matcher_handle = vm.heap.weak_handle(matcher).unwrap();
+                let owner = vm.heap.root(iterator);
+                vm.collect_now(&program);
+                assert_eq!(vm.heap.weak_value(matcher_handle), Some(matcher));
+                // The iterator keeps the string it matches, not the receiver.
+                assert!(vm.heap.weak_value(handles[0]).is_none() && vm.heap.weak_value(handles[1]) == Some(input));
+                vm.heap.release_root(owner);
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(matcher_handle).is_none());
+                assert!(vm.heap.weak_value(handles[1]).is_none());
             }
-            match result {
-                Ok(iterator) => {
-                    let matcher = match vm.heap.iterator(iterator) {
-                        Some(crate::heap::IteratorRecord { source, .. }) => *source,
-                        _ => panic!("regexp iterator"),
-                    };
-                    assert!(vm.is_object_like(matcher));
-                    let matcher_handle = vm.heap.weak_handle(matcher).unwrap();
-                    let owner = vm.heap.root(iterator);
-                    vm.collect_now(&program);
-                    assert_eq!(vm.heap.weak_value(matcher_handle), Some(matcher));
-                    // The iterator keeps the string it matches, not the receiver.
-                    assert!(vm.heap.weak_value(handles[0]).is_none() && vm.heap.weak_value(handles[1]) == Some(input));
-                    vm.heap.release_root(owner);
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(matcher_handle).is_none());
-                    assert!(vm.heap.weak_value(handles[1]).is_none());
-                }
-                Err(error) => {
-                    let atom = vm.intern_atom("kind");
-                    let kind = vm
-                        .own_property(error.thrown_value().unwrap(), atom)
-                        .unwrap();
-                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+            Err(error) => {
+                let atom = vm.intern_atom("kind");
+                let kind = vm
+                    .own_property(error.thrown_value().unwrap(), atom)
+                    .unwrap();
+                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -10153,113 +9891,432 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
 
 #[test]
 fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (full, phases) in [
+        (false, &["success"][..]),
+        (
+            true,
+            &[
+                "success", "exec", "match", "coercion", "index", "numeric", "setter", "done",
+            ][..],
+        ),
     ] {
-        for (full, phases) in [
-            (false, &["success"][..]),
-            (
-                true,
-                &[
-                    "success", "exec", "match", "coercion", "index", "numeric", "setter", "done",
-                ][..],
-            ),
-        ] {
-            for &phase in phases {
+        for &phase in phases {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let input_code = if full { 55296 } else { 97 };
+            let source = format!(
+                r#"
+            function execute(input) {{$262.gc();if (input.charCodeAt(0)!=={input_code}) throw {{kind:'input'}};return '{phase}'==='done'?null:resultFactory();}}
+            function resultFactory() {{return {{tag:42,get 0() {{$262.gc();if ('{phase}'==='match') throw {{kind:'match'}};
+                return {full}?{{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='coercion') throw {{kind:'coercion'}};return '';}}}}:'';
+            }}}};}}
+            function numeric() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='numeric') throw {{kind:'numeric'}};return 0;}}}};}}
+            function matcher() {{if (!{full}) return {{exec:execute,lastIndex:{{valueOf() {{$262.gc();return 0;}}}}}};return {{
+                get exec() {{$262.gc();if ('{phase}'==='exec') throw {{kind:'exec'}};return execute;}},
+                get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return numeric();}},
+                set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}
+            }};}}
+        "#
+            );
+            let program = compile(&source, "regexp-iterator-advance-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("matcher");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let matcher = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let input = vm.heap.alloc_string(JsString::from_units(if full { &[0xd800, 97] } else { &[97] }));
+            let iterator = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                object: Vm::empty_object(
+                    vm.regexp_string_iterator_proto,
+                ),
+                source: matcher,
+                kind: super::IteratorKind::RegExpStringMatchAll,
+                index: 0,
+                done: false,
+                ext: crate::heap::IteratorExt {
+                    helper: Some(Box::new(
+                        crate::heap::IteratorHelper::RegExpStringMatchAll {
+                            input,
+                            global: true,
+                            unicode: true,
+                        },
+                    )),
+                    ..Default::default()
+                },
+            });
+            let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.iterator_next(&program, iterator);
+            assert_eq!(
+                result.is_ok(),
+                matches!(phase, "success" | "done"),
+                "{phase}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_handle = match result {
+                Ok(result) => {
+                    let done = vm.intern_atom("done");
+                    assert_eq!(
+                        vm.own_property(result, done),
+                        Some(if phase == "done" {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        })
+                    );
+                    if phase != "done" {
+                        let atom = vm.intern_atom("value");
+                        let matched = vm.own_property(result, atom).unwrap();
+                        let tag = vm.intern_atom("tag");
+                        assert_eq!(
+                            vm.own_property(matched, tag).unwrap().as_number(),
+                            Some(42.0)
+                        );
+                    }
+                    Some(vm.heap.weak_handle(result).unwrap())
+                }
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    None
+                }
+            };
+            for (handle, value) in handles.iter().zip([matcher, iterator]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value));
+            }
+            assert!(
+                matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {done,..}) if *done==(phase=="done"))
+            );
+            vm.collect_now(&program);
+            for handle in handles.into_iter().chain(result_handle) {
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
+    let compile = Engine::specialize;
+    for phase in [
+        "limit",
+        "set",
+        "exec-get",
+        "exec",
+        "index",
+        "index-number",
+        "length",
+        "length-number",
+        "capture1",
+        "capture2",
+        "second-exec",
+    ] {
+        for abrupt in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function hit(name) {{if (name==='{phase}') {{$262.gc();if ({abrupt}) throw {{kind:name}};}}}}
+                function capture(tag) {{return {{tag:tag}};}}
+                function result() {{return {{
+                    get length() {{hit('length');return {{valueOf() {{hit('length-number');return 3;}}}};}},
+                    get 1() {{hit('capture1');return capture(42);}},
+                    get 2() {{hit('capture2');return capture(43);}}
+                }};}}
+                function matcher() {{var index=0,matched=0;return {{
+                    set lastIndex(value) {{hit('set');index=value;}},
+                    get lastIndex() {{hit('index');return {{valueOf() {{hit('index-number');return index;}}}};}},
+                    get exec() {{hit('exec-get');return function(input) {{hit('exec');if (input!=='a,b,c') throw {{kind:'input'}};if (index===1||index===3) {{if (matched++) hit('second-exec');index++;return result();}}return null;}};}}
+                }};}}
+                function receiver() {{return {{constructor:{{[Symbol.species]:function Species() {{return matcher();}}}},flags:'g'}};}}
+                function limit() {{return {{valueOf() {{hit('limit');return 100;}}}};}}
+            "#
+            );
+            let program = compile(&source, "regexp-split-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let factory = vm.intern_atom("receiver");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let input = vm.heap.alloc_string("a,b,c".into());
+            let receiver_root = vm.heap.root(receiver);
+            let input_root = vm.heap.root(input);
+            let factory = vm.intern_atom("limit");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let limit = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            vm.heap.release_root(receiver_root);
+            vm.heap.release_root(input_root);
+            let handles = [receiver, input, limit].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = vm.regexp_symbol_split(&program, receiver, &[input, limit]);
+            assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([receiver, input, limit]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+            }
+            match outcome {
+                Ok(array) => {
+                    let array_root = vm.heap.root(array);
+                    vm.collect_now(&program);
+                    for (index, expected) in [(0, "a"), (3, "b"), (6, "c")] {
+                        let value = vm
+                            .get_index(&program, array, Value::number(index as f64))
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), expected, "{phase}");
+                    }
+                    for (index, expected) in [(1, 42.0), (2, 43.0), (4, 42.0), (5, 43.0)] {
+                        let value = vm
+                            .get_index(&program, array, Value::number(index as f64))
+                            .unwrap();
+                        let tag = vm.intern_atom("tag");
+                        assert_eq!(
+                            vm.own_property(value, tag).and_then(Value::as_number),
+                            Some(expected),
+                            "{phase}/{index}"
+                        );
+                    }
+                    vm.heap.release_root(array_root);
+                }
+                Err(error) => {
+                    let kind = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), kind)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                }
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+            }
+        }
+    }
+}
+
+#[test]
+fn regexp_search_roots_saved_index_and_fresh_result_across_callbacks() {
+    let compile = Engine::specialize;
+    for phase in [
+        "input", "previous", "reset", "exec-get", "exec", "current", "restore", "index",
+    ] {
+        for abrupt in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function previous() {{return {{tag:41,valueOf() {{throw {{kind:'coerced-previous'}};}}}};}}
+                function result() {{return {{get index() {{hit('index');return 43;}}}};}}
+                function receiver() {{var reads=0;return {{
+                    get lastIndex() {{if(reads++===0) {{hit('previous');return previous();}}hit('current');return 1;}},
+                    set lastIndex(value) {{if(value===0)hit('reset');else {{hit('restore');if(value.tag!==41)throw {{kind:'previous-value'}};}}}},
+                    get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};return result();}};}}
+                }};}}
+                function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
+            "#
+            );
+            let program = compile(&source, "regexp-search-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let factory = vm.intern_atom("receiver");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let receiver_root = vm.heap.root(receiver);
+            let factory = vm.intern_atom("input");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let input = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            vm.heap.release_root(receiver_root);
+            let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = vm.regexp_symbol_search(&program, receiver, &[input]);
+            assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([receiver, input]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+            }
+            match outcome {
+                Ok(value) => assert_eq!(value.as_number(), Some(43.0), "{phase}"),
+                Err(error) => {
+                    let kind = vm.intern_atom("kind");
+                    let value = vm
+                        .own_property(error.thrown_value().unwrap(), kind)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                }
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+            }
+        }
+    }
+}
+
+#[test]
+fn regexp_match_roots_input_and_accumulated_strings_across_callbacks() {
+    let compile = Engine::specialize;
+    for phase in [
+        "input",
+        "flags",
+        "flags-string",
+        "reset",
+        "exec-get",
+        "exec",
+        "match",
+        "match-string",
+        "index",
+        "index-number",
+        "advance",
+        "second-exec",
+    ] {
+        for abrupt in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function result(text) {{return {{get 0() {{hit('match');return {{[Symbol.toPrimitive](hint) {{hit('match-string');if(hint!=='string')throw {{kind:'match-hint'}};return text;}}}};}}}};}}
+                function receiver() {{var index=0,writes=0,calls=0;return {{
+                    get flags() {{hit('flags');return {{[Symbol.toPrimitive](hint) {{hit('flags-string');if(hint!=='string')throw {{kind:'flags-hint'}};return 'g';}}}};}},
+                    set lastIndex(value) {{hit(writes++===0?'reset':'advance');index=value;}},
+                    get lastIndex() {{hit('index');return {{[Symbol.toPrimitive](hint) {{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return index;}}}};}},
+                    get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};calls++;if(calls===4) {{hit('second-exec');return null;}}return result(calls===1?'A':calls===2?'':'B');}};}}
+                }};}}
+                function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
+            "#
+            );
+            let program = compile(&source, "regexp-match-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let factory = vm.intern_atom("receiver");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let receiver_root = vm.heap.root(receiver);
+            let factory = vm.intern_atom("input");
+            let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+            let input = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            vm.heap.release_root(receiver_root);
+            let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = vm.regexp_symbol_match(&program, receiver, &[input]);
+            assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([receiver, input]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+            }
+            match outcome {
+                Ok(array) => {
+                    let root = vm.heap.root(array);
+                    vm.collect_now(&program);
+                    for (index, text) in ["A", "", "B"].iter().enumerate() {
+                        let value = vm
+                            .get_index(&program, array, Value::number(index as f64))
+                            .unwrap();
+                        assert_eq!(
+                            vm.to_string(&program, value).unwrap(),
+                            *text,
+                            "{phase}/{index}"
+                        );
+                    }
+                    vm.heap.release_root(root);
+                }
+                Err(error) => {
+                    let kind = vm.intern_atom("kind");
+                    let value = vm
+                        .own_property(error.thrown_value().unwrap(), kind)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                }
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+            }
+        }
+    }
+}
+
+#[test]
+fn string_match_search_custom_dispatch_roots_original_inputs() {
+    let compile = Engine::specialize;
+    for (native, name) in [
+        (super::Native::StringMatch, "match"),
+        (super::Native::StringSearch, "search"),
+    ] {
+        for phase in ["get", "call"] {
+            for abrupt in [false, true] {
                 let mut vm = Vm::new(TestHost::default().with_test262());
-                let input_code = if full { 55296 } else { 97 };
                 let source = format!(
                     r#"
-                function execute(input) {{$262.gc();if (input.charCodeAt(0)!=={input_code}) throw {{kind:'input'}};return '{phase}'==='done'?null:resultFactory();}}
-                function resultFactory() {{return {{tag:42,get 0() {{$262.gc();if ('{phase}'==='match') throw {{kind:'match'}};
-                    return {full}?{{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='coercion') throw {{kind:'coercion'}};return '';}}}}:'';
-                }}}};}}
-                function numeric() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='numeric') throw {{kind:'numeric'}};return 0;}}}};}}
-                function matcher() {{if (!{full}) return {{exec:execute,lastIndex:{{valueOf() {{$262.gc();return 0;}}}}}};return {{
-                    get exec() {{$262.gc();if ('{phase}'==='exec') throw {{kind:'exec'}};return execute;}},
-                    get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return numeric();}},
-                    set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}
-                }};}}
-            "#
+                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function selected() {{return function(arg) {{hit('call');if(this.tag!==43||arg.tag!==42)throw {{kind:'identity'}};return {{tag:44,argument:arg,receiver:this}};}};}}
+                    function receiver() {{return {{tag:42,[Symbol.toPrimitive]() {{throw {{kind:'coerced'}};}}}};}}
+                    function pattern() {{return {{tag:43,get [Symbol.{name}]() {{hit('get');return selected();}}}};}}
+                "#
                 );
-                let program = compile(&source, "regexp-iterator-advance-roots.js").unwrap();
+                let program = compile(&source, "string-custom-dispatch-roots.js").unwrap();
                 vm.execute(&program).unwrap();
-                let atom = vm.intern_atom("matcher");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let matcher = vm
+                let factory = vm.intern_atom("receiver");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let receiver = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let input = vm.heap.alloc_string(JsString::from_units(if full { &[0xd800, 97] } else { &[97] }));
-                let iterator = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
-                    object: Vm::empty_object(
-                        vm.regexp_string_iterator_proto,
-                    ),
-                    source: matcher,
-                    kind: super::IteratorKind::RegExpStringMatchAll,
-                    index: 0,
-                    done: false,
-                    ext: crate::heap::IteratorExt {
-                        helper: Some(Box::new(
-                            crate::heap::IteratorHelper::RegExpStringMatchAll {
-                                input,
-                                global: true,
-                                unicode: true,
-                            },
-                        )),
-                        ..Default::default()
-                    },
-                });
-                let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+                let root = vm.heap.root(receiver);
+                let factory = vm.intern_atom("pattern");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let pattern = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                vm.heap.release_root(root);
+                let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
-                let result = vm.iterator_next(&program, iterator);
-                assert_eq!(
-                    result.is_ok(),
-                    matches!(phase, "success" | "done"),
-                    "{phase}"
-                );
+                let outcome =
+                    vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
                 assert_eq!(vm.heap.root_count_for_test(), roots);
                 assert_eq!(vm.active_call_roots.len(), calls);
-                let result_handle = match result {
-                    Ok(result) => {
-                        let done = vm.intern_atom("done");
-                        assert_eq!(
-                            vm.own_property(result, done),
-                            Some(if phase == "done" {
-                                Value::TRUE
-                            } else {
-                                Value::FALSE
-                            })
-                        );
-                        if phase != "done" {
-                            let atom = vm.intern_atom("value");
-                            let matched = vm.own_property(result, atom).unwrap();
-                            let tag = vm.intern_atom("tag");
-                            assert_eq!(
-                                vm.own_property(matched, tag).unwrap().as_number(),
-                                Some(42.0)
-                            );
+                for (handle, value) in handles.iter().zip([receiver, pattern]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        for (key, expected) in [("argument", receiver), ("receiver", pattern)] {
+                            let atom = vm.intern_atom(key);
+                            assert_eq!(vm.own_property(value, atom), Some(expected));
                         }
-                        Some(vm.heap.weak_handle(result).unwrap())
+                        vm.heap.release_root(owner);
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
-                        let kind = vm
+                        let value = vm
                             .own_property(error.thrown_value().unwrap(), atom)
                             .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                        None
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
                     }
-                };
-                for (handle, value) in handles.iter().zip([matcher, iterator]) {
-                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
                 }
-                assert!(
-                    matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {done,..}) if *done==(phase=="done"))
-                );
                 vm.collect_now(&program);
-                for handle in handles.into_iter().chain(result_handle) {
+                for handle in handles {
                     assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
@@ -10268,419 +10325,76 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
 }
 
 #[test]
-fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in [
-            "limit",
-            "set",
-            "exec-get",
-            "exec",
-            "index",
-            "index-number",
-            "length",
-            "length-number",
-            "capture1",
-            "capture2",
-            "second-exec",
-        ] {
-            for abrupt in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function hit(name) {{if (name==='{phase}') {{$262.gc();if ({abrupt}) throw {{kind:name}};}}}}
-                    function capture(tag) {{return {{tag:tag}};}}
-                    function result() {{return {{
-                        get length() {{hit('length');return {{valueOf() {{hit('length-number');return 3;}}}};}},
-                        get 1() {{hit('capture1');return capture(42);}},
-                        get 2() {{hit('capture2');return capture(43);}}
-                    }};}}
-                    function matcher() {{var index=0,matched=0;return {{
-                        set lastIndex(value) {{hit('set');index=value;}},
-                        get lastIndex() {{hit('index');return {{valueOf() {{hit('index-number');return index;}}}};}},
-                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if (input!=='a,b,c') throw {{kind:'input'}};if (index===1||index===3) {{if (matched++) hit('second-exec');index++;return result();}}return null;}};}}
-                    }};}}
-                    function receiver() {{return {{constructor:{{[Symbol.species]:function Species() {{return matcher();}}}},flags:'g'}};}}
-                    function limit() {{return {{valueOf() {{hit('limit');return 100;}}}};}}
-                "#
-                );
-                let program = compile(&source, "regexp-split-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let factory = vm.intern_atom("receiver");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let receiver = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let input = vm.heap.alloc_string("a,b,c".into());
-                let receiver_root = vm.heap.root(receiver);
-                let input_root = vm.heap.root(input);
-                let factory = vm.intern_atom("limit");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let limit = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                vm.heap.release_root(receiver_root);
-                vm.heap.release_root(input_root);
-                let handles = [receiver, input, limit].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let outcome = vm.regexp_symbol_split(&program, receiver, &[input, limit]);
-                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                for (handle, value) in handles.iter().zip([receiver, input, limit]) {
-                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
-                }
-                match outcome {
-                    Ok(array) => {
-                        let array_root = vm.heap.root(array);
-                        vm.collect_now(&program);
-                        for (index, expected) in [(0, "a"), (3, "b"), (6, "c")] {
-                            let value = vm
-                                .get_index(&program, array, Value::number(index as f64))
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), expected, "{phase}");
-                        }
-                        for (index, expected) in [(1, 42.0), (2, 43.0), (4, 42.0), (5, 43.0)] {
-                            let value = vm
-                                .get_index(&program, array, Value::number(index as f64))
-                                .unwrap();
-                            let tag = vm.intern_atom("tag");
-                            assert_eq!(
-                                vm.own_property(value, tag).and_then(Value::as_number),
-                                Some(expected),
-                                "{phase}/{index}"
-                            );
-                        }
-                        vm.heap.release_root(array_root);
-                    }
-                    Err(error) => {
-                        let kind = vm.intern_atom("kind");
-                        let kind = vm
-                            .own_property(error.thrown_value().unwrap(), kind)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
-                    }
-                }
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn regexp_search_roots_saved_index_and_fresh_result_across_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in [
-            "input", "previous", "reset", "exec-get", "exec", "current", "restore", "index",
-        ] {
-            for abrupt in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function previous() {{return {{tag:41,valueOf() {{throw {{kind:'coerced-previous'}};}}}};}}
-                    function result() {{return {{get index() {{hit('index');return 43;}}}};}}
-                    function receiver() {{var reads=0;return {{
-                        get lastIndex() {{if(reads++===0) {{hit('previous');return previous();}}hit('current');return 1;}},
-                        set lastIndex(value) {{if(value===0)hit('reset');else {{hit('restore');if(value.tag!==41)throw {{kind:'previous-value'}};}}}},
-                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};return result();}};}}
-                    }};}}
-                    function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
-                "#
-                );
-                let program = compile(&source, "regexp-search-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let factory = vm.intern_atom("receiver");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let receiver = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let receiver_root = vm.heap.root(receiver);
-                let factory = vm.intern_atom("input");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let input = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                vm.heap.release_root(receiver_root);
-                let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let outcome = vm.regexp_symbol_search(&program, receiver, &[input]);
-                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                for (handle, value) in handles.iter().zip([receiver, input]) {
-                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
-                }
-                match outcome {
-                    Ok(value) => assert_eq!(value.as_number(), Some(43.0), "{phase}"),
-                    Err(error) => {
-                        let kind = vm.intern_atom("kind");
-                        let value = vm
-                            .own_property(error.thrown_value().unwrap(), kind)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                    }
-                }
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn regexp_match_roots_input_and_accumulated_strings_across_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for phase in [
-            "input",
-            "flags",
-            "flags-string",
-            "reset",
-            "exec-get",
-            "exec",
-            "match",
-            "match-string",
-            "index",
-            "index-number",
-            "advance",
-            "second-exec",
-        ] {
-            for abrupt in [false, true] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                let source = format!(
-                    r#"
-                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function result(text) {{return {{get 0() {{hit('match');return {{[Symbol.toPrimitive](hint) {{hit('match-string');if(hint!=='string')throw {{kind:'match-hint'}};return text;}}}};}}}};}}
-                    function receiver() {{var index=0,writes=0,calls=0;return {{
-                        get flags() {{hit('flags');return {{[Symbol.toPrimitive](hint) {{hit('flags-string');if(hint!=='string')throw {{kind:'flags-hint'}};return 'g';}}}};}},
-                        set lastIndex(value) {{hit(writes++===0?'reset':'advance');index=value;}},
-                        get lastIndex() {{hit('index');return {{[Symbol.toPrimitive](hint) {{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return index;}}}};}},
-                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};calls++;if(calls===4) {{hit('second-exec');return null;}}return result(calls===1?'A':calls===2?'':'B');}};}}
-                    }};}}
-                    function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
-                "#
-                );
-                let program = compile(&source, "regexp-match-roots.js").unwrap();
-                vm.execute(&program).unwrap();
-                let factory = vm.intern_atom("receiver");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let receiver = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                let receiver_root = vm.heap.root(receiver);
-                let factory = vm.intern_atom("input");
-                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                let input = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
-                vm.heap.release_root(receiver_root);
-                let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let outcome = vm.regexp_symbol_match(&program, receiver, &[input]);
-                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                for (handle, value) in handles.iter().zip([receiver, input]) {
-                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
-                }
-                match outcome {
-                    Ok(array) => {
-                        let root = vm.heap.root(array);
-                        vm.collect_now(&program);
-                        for (index, text) in ["A", "", "B"].iter().enumerate() {
-                            let value = vm
-                                .get_index(&program, array, Value::number(index as f64))
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, value).unwrap(),
-                                *text,
-                                "{phase}/{index}"
-                            );
-                        }
-                        vm.heap.release_root(root);
-                    }
-                    Err(error) => {
-                        let kind = vm.intern_atom("kind");
-                        let value = vm
-                            .own_property(error.thrown_value().unwrap(), kind)
-                            .unwrap();
-                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                    }
-                }
-                vm.collect_now(&program);
-                for handle in handles {
-                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn string_match_search_custom_dispatch_roots_original_inputs() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (native, name) in [
-            (super::Native::StringMatch, "match"),
-            (super::Native::StringSearch, "search"),
-        ] {
-            for phase in ["get", "call"] {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                        function selected() {{return function(arg) {{hit('call');if(this.tag!==43||arg.tag!==42)throw {{kind:'identity'}};return {{tag:44,argument:arg,receiver:this}};}};}}
-                        function receiver() {{return {{tag:42,[Symbol.toPrimitive]() {{throw {{kind:'coerced'}};}}}};}}
-                        function pattern() {{return {{tag:43,get [Symbol.{name}]() {{hit('get');return selected();}}}};}}
-                    "#
-                    );
-                    let program = compile(&source, "string-custom-dispatch-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let factory = vm.intern_atom("receiver");
-                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                    let receiver = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let root = vm.heap.root(receiver);
-                    let factory = vm.intern_atom("pattern");
-                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                    let pattern = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    vm.heap.release_root(root);
-                    let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome =
-                        vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip([receiver, pattern]) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
-                    }
-                    match outcome {
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            for (key, expected) in [("argument", receiver), ("receiver", pattern)] {
-                                let atom = vm.intern_atom(key);
-                                assert_eq!(vm.own_property(value, atom), Some(expected));
-                            }
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (native, name) in [
+        (super::Native::StringMatch, "match"),
+        (super::Native::StringSearch, "search"),
     ] {
-        for (native, name) in [
-            (super::Native::StringMatch, "match"),
-            (super::Native::StringSearch, "search"),
-        ] {
-            for phase in ["input", "pattern", "method", "call"] {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                        function selected() {{return function(input) {{hit('call');if(input.charCodeAt(0)!==55296||this.source!=='a')throw {{kind:'values'}};return {{tag:44,matcher:this,input:input}};}};}}
-                        Object.defineProperty(RegExp.prototype,Symbol.{name},{{configurable:true,get() {{hit('method');return selected();}}}});
-                        function receiver() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return String.fromCharCode(55296,97);}}}};}}
-                        function pattern() {{return {{[Symbol.{name}]:null,[Symbol.toPrimitive](hint) {{hit('pattern');if(hint!=='string')throw {{kind:'pattern-hint'}};return 'a';}}}};}}
-                    "#
-                    );
-                    let program = compile(&source, "string-fallback-dispatch-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let factory = vm.intern_atom("receiver");
-                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                    let receiver = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let root = vm.heap.root(receiver);
-                    let factory = vm.intern_atom("pattern");
-                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
-                    let pattern = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    vm.heap.release_root(root);
-                    let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome =
-                        vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip([receiver, pattern]) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
+        for phase in ["input", "pattern", "method", "call"] {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function selected() {{return function(input) {{hit('call');if(input.charCodeAt(0)!==55296||this.source!=='a')throw {{kind:'values'}};return {{tag:44,matcher:this,input:input}};}};}}
+                    Object.defineProperty(RegExp.prototype,Symbol.{name},{{configurable:true,get() {{hit('method');return selected();}}}});
+                    function receiver() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return String.fromCharCode(55296,97);}}}};}}
+                    function pattern() {{return {{[Symbol.{name}]:null,[Symbol.toPrimitive](hint) {{hit('pattern');if(hint!=='string')throw {{kind:'pattern-hint'}};return 'a';}}}};}}
+                "#
+                );
+                let program = compile(&source, "string-fallback-dispatch-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let factory = vm.intern_atom("receiver");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let receiver = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let root = vm.heap.root(receiver);
+                let factory = vm.intern_atom("pattern");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let pattern = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                vm.heap.release_root(root);
+                let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome =
+                    vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip([receiver, pattern]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        let atom = vm.intern_atom("matcher");
+                        let matcher = vm.own_property(value, atom).unwrap();
+                        assert!(
+                            matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a")
+                        );
+                        let atom = vm.intern_atom("input");
+                        let input = vm.own_property(value, atom).unwrap();
+                        assert!(
+                            vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
+                        );
+                        vm.heap.release_root(owner);
                     }
-                    match outcome {
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            let atom = vm.intern_atom("matcher");
-                            let matcher = vm.own_property(value, atom).unwrap();
-                            assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a")
-                            );
-                            let atom = vm.intern_atom("input");
-                            let input = vm.own_property(value, atom).unwrap();
-                            assert!(
-                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
-                            );
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                        }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
                     }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -10689,26 +10403,92 @@ fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
 
 #[test]
 fn string_match_all_custom_dispatch_roots_flags_and_original_receiver() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for phase in ["is-regexp", "flags", "flags-string", "method", "call"] {
+        for abrupt in [false, true] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            let source = format!(
+                r#"
+                function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function selected() {{return function(arg) {{hit('call');if(this.tag!==43||arg.tag!==42)throw {{kind:'identity'}};return {{tag:44,argument:arg,receiver:this}};}};}}
+                function receiver() {{return {{tag:42,[Symbol.toPrimitive]() {{throw {{kind:'coerced'}};}}}};}}
+                function pattern() {{return {{tag:43,
+                    get [Symbol.match]() {{hit('is-regexp');return true;}},
+                    get flags() {{hit('flags');return {{[Symbol.toPrimitive](hint) {{hit('flags-string');if(hint!=='string')throw {{kind:'flags-hint'}};return 'g';}}}};}},
+                    get [Symbol.matchAll]() {{hit('method');return selected();}}
+                }};}}
+            "#
+            );
+            let program = compile(&source, "string-match-all-custom-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("receiver");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let root = vm.heap.root(receiver);
+            let atom = vm.intern_atom("pattern");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let pattern = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            vm.heap.release_root(root);
+            let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = vm.string_match_all_native(&program, receiver, &[pattern]);
+            assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([receiver, pattern]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value));
+            }
+            match outcome {
+                Ok(value) => {
+                    let root = vm.heap.root(value);
+                    vm.collect_now(&program);
+                    for (key, expected) in [("argument", receiver), ("receiver", pattern)] {
+                        let atom = vm.intern_atom(key);
+                        assert_eq!(vm.own_property(value, atom), Some(expected));
+                    }
+                    vm.heap.release_root(root);
+                }
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let value = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                }
+            }
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
+    let compile = Engine::specialize;
+    for (kind, phases) in [
+        ("object", &["input", "pattern", "method", "call"][..]),
+        ("primitive", &["input", "method", "call"][..]),
     ] {
-        for phase in ["is-regexp", "flags", "flags-string", "method", "call"] {
+        for phase in phases {
             for abrupt in [false, true] {
                 let mut vm = Vm::new(TestHost::default().with_test262());
                 let source = format!(
                     r#"
                     function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function selected() {{return function(arg) {{hit('call');if(this.tag!==43||arg.tag!==42)throw {{kind:'identity'}};return {{tag:44,argument:arg,receiver:this}};}};}}
-                    function receiver() {{return {{tag:42,[Symbol.toPrimitive]() {{throw {{kind:'coerced'}};}}}};}}
-                    function pattern() {{return {{tag:43,
-                        get [Symbol.match]() {{hit('is-regexp');return true;}},
-                        get flags() {{hit('flags');return {{[Symbol.toPrimitive](hint) {{hit('flags-string');if(hint!=='string')throw {{kind:'flags-hint'}};return 'g';}}}};}},
-                        get [Symbol.matchAll]() {{hit('method');return selected();}}
-                    }};}}
+                    function selected() {{return function(input) {{hit('call');if(input.charCodeAt(0)!==55296||this.source!=='a'||this.flags!=='g')throw {{kind:'values'}};return {{tag:44,matcher:this,input:input}};}};}}
+                    Object.defineProperty(RegExp.prototype,Symbol.matchAll,{{configurable:true,get() {{hit('method');return selected();}}}});
+                    function receiver() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return String.fromCharCode(55296,97);}}}};}}
+                    function pattern() {{return {{[Symbol.match]:false,[Symbol.matchAll]:null,[Symbol.toPrimitive](hint) {{hit('pattern');if(hint!=='string')throw {{kind:'pattern-hint'}};return 'a';}}}};}}
                 "#
                 );
-                let program = compile(&source, "string-match-all-custom-roots.js").unwrap();
+                let program = compile(&source, "string-match-all-fallback-roots.js").unwrap();
                 vm.execute(&program).unwrap();
                 let atom = vm.intern_atom("receiver");
                 let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -10716,17 +10496,20 @@ fn string_match_all_custom_dispatch_roots_flags_and_original_receiver() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let root = vm.heap.root(receiver);
-                let atom = vm.intern_atom("pattern");
-                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                let pattern = vm
-                    .call_value(&program, factory, Value::UNDEFINED, &[])
-                    .unwrap();
+                let pattern = if kind == "object" {
+                    let atom = vm.intern_atom("pattern");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    vm.call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap()
+                } else {
+                    vm.heap.alloc_string("a".into())
+                };
                 vm.heap.release_root(root);
                 let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let outcome = vm.string_match_all_native(&program, receiver, &[pattern]);
-                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
                 assert_eq!(vm.heap.root_count_for_test(), roots);
                 assert_eq!(vm.active_call_roots.len(), calls);
                 for (handle, value) in handles.iter().zip([receiver, pattern]) {
@@ -10736,10 +10519,16 @@ fn string_match_all_custom_dispatch_roots_flags_and_original_receiver() {
                     Ok(value) => {
                         let root = vm.heap.root(value);
                         vm.collect_now(&program);
-                        for (key, expected) in [("argument", receiver), ("receiver", pattern)] {
-                            let atom = vm.intern_atom(key);
-                            assert_eq!(vm.own_property(value, atom), Some(expected));
-                        }
+                        let atom = vm.intern_atom("matcher");
+                        let matcher = vm.own_property(value, atom).unwrap();
+                        assert!(
+                            matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags.text()=="g")
+                        );
+                        let atom = vm.intern_atom("input");
+                        let input = vm.own_property(value, atom).unwrap();
+                        assert!(
+                            vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
+                        );
                         vm.heap.release_root(root);
                     }
                     Err(error) => {
@@ -10747,7 +10536,91 @@ fn string_match_all_custom_dispatch_roots_flags_and_original_receiver() {
                         let value = vm
                             .own_property(error.thrown_value().unwrap(), atom)
                             .unwrap();
-                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                    }
+                }
+                vm.collect_now(&program);
+                // A primitive pattern is the one-unit string `'a'`, the heap's shared string
+                // for its unit (`Heap::ascii_unit_strings`), which the program's own `'a'`
+                // keeps: strings have no identity, so only the receiver must die.
+                let released = if kind == "object" { handles.len() } else { 1 };
+                for handle in handles.into_iter().take(released) {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn string_replace_protocol_roots_receiver_search_and_replacement() {
+    let compile = Engine::specialize;
+    for (all, phases) in [
+        (false, &["method", "call"][..]),
+        (
+            true,
+            &["is-regexp", "flags", "flags-string", "method", "call"][..],
+        ),
+    ] {
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function selected(){{return function(input,replacement){{hit('call');if(this.tag!==43||input.tag!==42||replacement.tag!==44)throw {{kind:'identity'}};return {{input:input,search:this,replacement:replacement}};}};}}
+                function receiver(){{return {{tag:42,[Symbol.toPrimitive](){{throw {{kind:'coerced'}};}}}};}}
+                function replacement(){{return {{tag:44,[Symbol.toPrimitive](){{throw {{kind:'coerced'}};}}}};}}
+                function search(){{return {{tag:43,get [Symbol.match](){{hit('is-regexp');return true;}},get flags(){{hit('flags');return {{[Symbol.toPrimitive](hint){{hit('flags-string');return 'g';}}}};}},get [Symbol.replace](){{hit('method');return selected();}}}};}}
+            "#
+                );
+                let program = compile(&source, "string-replace-protocol-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["receiver", "search", "replacement"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                let handles = values
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.string_replace_native(&program, values[0], &values[1..], all);
+                assert_eq!(outcome.is_ok(), !abrupt, "{all}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        for (key, expected) in
+                            ["input", "search", "replacement"].iter().zip(&values)
+                        {
+                            let atom = vm.intern_atom(key);
+                            assert_eq!(vm.own_property(value, atom), Some(*expected));
+                        }
+                        vm.heap.release_root(owner);
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
                 }
                 vm.collect_now(&program);
@@ -10760,118 +10633,30 @@ fn string_match_all_custom_dispatch_roots_flags_and_original_receiver() {
 }
 
 #[test]
-fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (kind, phases) in [
-            ("object", &["input", "pattern", "method", "call"][..]),
-            ("primitive", &["input", "method", "call"][..]),
-        ] {
+fn string_replace_fallback_roots_conversions_and_repeated_callback_input() {
+    let compile = Engine::specialize;
+    for all in [false, true] {
+        for kind in ["template", "empty", "nonempty"] {
+            let phases = if kind == "template" {
+                &["input", "search", "replacement"][..]
+            } else if all {
+                &["input", "search", "call", "return-string", "second-call"][..]
+            } else {
+                &["input", "search", "call", "return-string"][..]
+            };
             for phase in phases {
                 for abrupt in [false, true] {
                     let mut vm = Vm::new(TestHost::default().with_test262());
                     let source = format!(
                         r#"
-                        function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                        function selected() {{return function(input) {{hit('call');if(input.charCodeAt(0)!==55296||this.source!=='a'||this.flags!=='g')throw {{kind:'values'}};return {{tag:44,matcher:this,input:input}};}};}}
-                        Object.defineProperty(RegExp.prototype,Symbol.matchAll,{{configurable:true,get() {{hit('method');return selected();}}}});
-                        function receiver() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return String.fromCharCode(55296,97);}}}};}}
-                        function pattern() {{return {{[Symbol.match]:false,[Symbol.matchAll]:null,[Symbol.toPrimitive](hint) {{hit('pattern');if(hint!=='string')throw {{kind:'pattern-hint'}};return 'a';}}}};}}
-                    "#
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function receiver(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
+                function search(){{return {{[Symbol.match]:false,[Symbol.replace]:null,[Symbol.toPrimitive](hint){{hit('search');if(hint!=='string')throw {{kind:'search-hint'}};return '{kind}'==='empty'?'':'a';}}}};}}
+                function replacement(){{if('{kind}'==='template')return {{[Symbol.toPrimitive](hint){{hit('replacement');if(hint!=='string')throw {{kind:'replacement-hint'}};return 'X';}}}};
+                    var calls=0;return function(matched,index,input){{hit('call');if(calls++===1)hit('second-call');if(input!=='a-a'||matched!==('{kind}'==='empty'?'':'a'))throw {{kind:'arguments'}};return {{[Symbol.toPrimitive](hint){{hit('return-string');if(hint!=='string')throw {{kind:'return-hint'}};return 'X';}}}};}};}}
+            "#
                     );
-                    let program = compile(&source, "string-match-all-fallback-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let atom = vm.intern_atom("receiver");
-                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let receiver = vm
-                        .call_value(&program, factory, Value::UNDEFINED, &[])
-                        .unwrap();
-                    let root = vm.heap.root(receiver);
-                    let pattern = if kind == "object" {
-                        let atom = vm.intern_atom("pattern");
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        vm.call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap()
-                    } else {
-                        vm.heap.alloc_string("a".into())
-                    };
-                    vm.heap.release_root(root);
-                    let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome = vm.string_match_all_native(&program, receiver, &[pattern]);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip([receiver, pattern]) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
-                    }
-                    match outcome {
-                        Ok(value) => {
-                            let root = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            let atom = vm.intern_atom("matcher");
-                            let matcher = vm.own_property(value, atom).unwrap();
-                            assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags.text()=="g")
-                            );
-                            let atom = vm.intern_atom("input");
-                            let input = vm.own_property(value, atom).unwrap();
-                            assert!(
-                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
-                            );
-                            vm.heap.release_root(root);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    // A primitive pattern is the one-unit string `'a'`, the heap's shared string
-                    // for its unit (`Heap::ascii_unit_strings`), which the program's own `'a'`
-                    // keeps: strings have no identity, so only the receiver must die.
-                    let released = if kind == "object" { handles.len() } else { 1 };
-                    for handle in handles.into_iter().take(released) {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn string_replace_protocol_roots_receiver_search_and_replacement() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (all, phases) in [
-            (false, &["method", "call"][..]),
-            (
-                true,
-                &["is-regexp", "flags", "flags-string", "method", "call"][..],
-            ),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function selected(){{return function(input,replacement){{hit('call');if(this.tag!==43||input.tag!==42||replacement.tag!==44)throw {{kind:'identity'}};return {{input:input,search:this,replacement:replacement}};}};}}
-                    function receiver(){{return {{tag:42,[Symbol.toPrimitive](){{throw {{kind:'coerced'}};}}}};}}
-                    function replacement(){{return {{tag:44,[Symbol.toPrimitive](){{throw {{kind:'coerced'}};}}}};}}
-                    function search(){{return {{tag:43,get [Symbol.match](){{hit('is-regexp');return true;}},get flags(){{hit('flags');return {{[Symbol.toPrimitive](hint){{hit('flags-string');return 'g';}}}};}},get [Symbol.replace](){{hit('method');return selected();}}}};}}
-                "#
-                    );
-                    let program = compile(&source, "string-replace-protocol-roots.js").unwrap();
+                    let program = compile(&source, "string-replace-fallback-roots.js").unwrap();
                     vm.execute(&program).unwrap();
                     let mut values = Vec::new();
                     let mut owners = Vec::new();
@@ -10893,25 +10678,25 @@ fn string_replace_protocol_roots_receiver_search_and_replacement() {
                         .collect::<Vec<_>>();
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
-                    let outcome = vm.string_replace_native(&program, values[0], &values[1..], all);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{all}/{phase}/{abrupt}");
+                    let outcome =
+                        vm.string_replace_native(&program, values[0], &values[1..], all);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{all}/{kind}/{phase}/{abrupt}");
                     assert_eq!(vm.heap.root_count_for_test(), roots);
                     assert_eq!(vm.active_call_roots.len(), calls);
                     for (handle, value) in handles.iter().zip(&values) {
                         assert_eq!(vm.heap.weak_value(*handle), Some(*value));
                     }
                     match outcome {
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            for (key, expected) in
-                                ["input", "search", "replacement"].iter().zip(&values)
-                            {
-                                let atom = vm.intern_atom(key);
-                                assert_eq!(vm.own_property(value, atom), Some(*expected));
-                            }
-                            vm.heap.release_root(owner);
-                        }
+                        Ok(value) => assert_eq!(
+                            vm.to_string(&program, value).unwrap(),
+                            match (all, kind) {
+                                (false, "empty") => "Xa-a",
+                                (true, "empty") => "XaX-XaX",
+                                (false, _) => "X-a",
+                                (true, _) => "X-X",
+                            },
+                            "{all}/{kind}/{phase}"
+                        ),
                         Err(error) => {
                             let atom = vm.intern_atom("kind");
                             let value = vm
@@ -10923,93 +10708,6 @@ fn string_replace_protocol_roots_receiver_search_and_replacement() {
                     vm.collect_now(&program);
                     for handle in handles {
                         assert!(vm.heap.weak_value(handle).is_none());
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn string_replace_fallback_roots_conversions_and_repeated_callback_input() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for all in [false, true] {
-            for kind in ["template", "empty", "nonempty"] {
-                let phases = if kind == "template" {
-                    &["input", "search", "replacement"][..]
-                } else if all {
-                    &["input", "search", "call", "return-string", "second-call"][..]
-                } else {
-                    &["input", "search", "call", "return-string"][..]
-                };
-                for phase in phases {
-                    for abrupt in [false, true] {
-                        let mut vm = Vm::new(TestHost::default().with_test262());
-                        let source = format!(
-                            r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function receiver(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
-                    function search(){{return {{[Symbol.match]:false,[Symbol.replace]:null,[Symbol.toPrimitive](hint){{hit('search');if(hint!=='string')throw {{kind:'search-hint'}};return '{kind}'==='empty'?'':'a';}}}};}}
-                    function replacement(){{if('{kind}'==='template')return {{[Symbol.toPrimitive](hint){{hit('replacement');if(hint!=='string')throw {{kind:'replacement-hint'}};return 'X';}}}};
-                        var calls=0;return function(matched,index,input){{hit('call');if(calls++===1)hit('second-call');if(input!=='a-a'||matched!==('{kind}'==='empty'?'':'a'))throw {{kind:'arguments'}};return {{[Symbol.toPrimitive](hint){{hit('return-string');if(hint!=='string')throw {{kind:'return-hint'}};return 'X';}}}};}};}}
-                "#
-                        );
-                        let program = compile(&source, "string-replace-fallback-roots.js").unwrap();
-                        vm.execute(&program).unwrap();
-                        let mut values = Vec::new();
-                        let mut owners = Vec::new();
-                        for name in ["receiver", "search", "replacement"] {
-                            let atom = vm.intern_atom(name);
-                            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let value = vm
-                                .call_value(&program, factory, Value::UNDEFINED, &[])
-                                .unwrap();
-                            values.push(value);
-                            owners.push(vm.heap.root(value));
-                        }
-                        for owner in owners {
-                            vm.heap.release_root(owner);
-                        }
-                        let handles = values
-                            .iter()
-                            .map(|v| vm.heap.weak_handle(*v).unwrap())
-                            .collect::<Vec<_>>();
-                        let roots = vm.heap.root_count_for_test();
-                        let calls = vm.active_call_roots.len();
-                        let outcome =
-                            vm.string_replace_native(&program, values[0], &values[1..], all);
-                        assert_eq!(outcome.is_ok(), !abrupt, "{all}/{kind}/{phase}/{abrupt}");
-                        assert_eq!(vm.heap.root_count_for_test(), roots);
-                        assert_eq!(vm.active_call_roots.len(), calls);
-                        for (handle, value) in handles.iter().zip(&values) {
-                            assert_eq!(vm.heap.weak_value(*handle), Some(*value));
-                        }
-                        match outcome {
-                            Ok(value) => assert_eq!(
-                                vm.to_string(&program, value).unwrap(),
-                                match (all, kind) {
-                                    (false, "empty") => "Xa-a",
-                                    (true, "empty") => "XaX-XaX",
-                                    (false, _) => "X-a",
-                                    (true, _) => "X-X",
-                                },
-                                "{all}/{kind}/{phase}"
-                            ),
-                            Err(error) => {
-                                let atom = vm.intern_atom("kind");
-                                let value = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                            }
-                        }
-                        vm.collect_now(&program);
-                        for handle in handles {
-                            assert!(vm.heap.weak_value(handle).is_none());
-                        }
                     }
                 }
             }
@@ -11019,85 +10717,81 @@ fn string_replace_fallback_roots_conversions_and_repeated_callback_input() {
 
 #[test]
 fn string_split_roots_protocol_and_conversion_inputs() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (custom, phases) in [
+        (true, &["method", "call"][..]),
+        (false, &["method", "input", "limit", "separator"][..]),
     ] {
-        for (custom, phases) in [
-            (true, &["method", "call"][..]),
-            (false, &["method", "input", "limit", "separator"][..]),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function receiver(){{return {{tag:42,[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
-                    function limit(){{return {{tag:44,[Symbol.toPrimitive](hint){{hit('limit');if(hint!=='number')throw {{kind:'limit-hint'}};return 2;}}}};}}
-                    function separator(){{return {{tag:43,get [Symbol.split](){{hit('method');if(!{custom})return null;return function(input,limit){{hit('call');if(this.tag!==43||input.tag!==42||limit.tag!==44)throw {{kind:'identity'}};return {{input:input,separator:this,limit:limit}};}};}},[Symbol.toPrimitive](hint){{hit('separator');if(hint!=='string')throw {{kind:'separator-hint'}};return '-';}}}};}}
-                "#
-                    );
-                    let program = compile(&source, "string-split-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let mut values = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in ["receiver", "separator", "limit"] {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap();
-                        values.push(value);
-                        owners.push(vm.heap.root(value));
-                    }
-                    for owner in owners {
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function receiver(){{return {{tag:42,[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
+                function limit(){{return {{tag:44,[Symbol.toPrimitive](hint){{hit('limit');if(hint!=='number')throw {{kind:'limit-hint'}};return 2;}}}};}}
+                function separator(){{return {{tag:43,get [Symbol.split](){{hit('method');if(!{custom})return null;return function(input,limit){{hit('call');if(this.tag!==43||input.tag!==42||limit.tag!==44)throw {{kind:'identity'}};return {{input:input,separator:this,limit:limit}};}};}},[Symbol.toPrimitive](hint){{hit('separator');if(hint!=='string')throw {{kind:'separator-hint'}};return '-';}}}};}}
+            "#
+                );
+                let program = compile(&source, "string-split-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["receiver", "separator", "limit"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                let handles = values
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.string_split_native(&program, values[0], &values[1..]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{custom}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        if custom {
+                            for (key, expected) in
+                                ["input", "separator", "limit"].iter().zip(&values)
+                            {
+                                let atom = vm.intern_atom(key);
+                                assert_eq!(vm.own_property(value, atom), Some(*expected));
+                            }
+                        } else {
+                            let atom = vm.intern_atom("join");
+                            let join = vm.get_property(&program, value, atom).unwrap();
+                            let joined = vm.call_value(&program, join, value, &[]).unwrap();
+                            assert_eq!(vm.to_string(&program, joined).unwrap(), "a,a");
+                        }
                         vm.heap.release_root(owner);
                     }
-                    let handles = values
-                        .iter()
-                        .map(|v| vm.heap.weak_handle(*v).unwrap())
-                        .collect::<Vec<_>>();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome = vm.string_split_native(&program, values[0], &values[1..]);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{custom}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip(&values) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
-                    match outcome {
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            if custom {
-                                for (key, expected) in
-                                    ["input", "separator", "limit"].iter().zip(&values)
-                                {
-                                    let atom = vm.intern_atom(key);
-                                    assert_eq!(vm.own_property(value, atom), Some(*expected));
-                                }
-                            } else {
-                                let atom = vm.intern_atom("join");
-                                let join = vm.get_property(&program, value, atom).unwrap();
-                                let joined = vm.call_value(&program, join, value, &[]).unwrap();
-                                assert_eq!(vm.to_string(&program, joined).unwrap(), "a,a");
-                            }
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -11106,109 +10800,105 @@ fn string_split_roots_protocol_and_conversion_inputs() {
 
 #[test]
 fn regexp_replace_roots_inputs_results_and_converted_captures() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (callable, phases) in [
+        (
+            false,
+            &[
+                "input",
+                "replacement",
+                "flags",
+                "flags-string",
+                "set-index",
+                "exec",
+                "matched",
+                "matched-string",
+                "length",
+                "length-number",
+                "index",
+                "index-number",
+                "capture",
+                "capture-string",
+                "groups",
+                "group",
+                "group-string",
+            ][..],
+        ),
+        (
+            true,
+            &[
+                "input",
+                "flags",
+                "flags-string",
+                "set-index",
+                "exec",
+                "matched",
+                "matched-string",
+                "length",
+                "length-number",
+                "index",
+                "index-number",
+                "capture",
+                "capture-string",
+                "groups",
+                "call",
+                "return-string",
+            ][..],
+        ),
     ] {
-        for (callable, phases) in [
-            (
-                false,
-                &[
-                    "input",
-                    "replacement",
-                    "flags",
-                    "flags-string",
-                    "set-index",
-                    "exec",
-                    "matched",
-                    "matched-string",
-                    "length",
-                    "length-number",
-                    "index",
-                    "index-number",
-                    "capture",
-                    "capture-string",
-                    "groups",
-                    "group",
-                    "group-string",
-                ][..],
-            ),
-            (
-                true,
-                &[
-                    "input",
-                    "flags",
-                    "flags-string",
-                    "set-index",
-                    "exec",
-                    "matched",
-                    "matched-string",
-                    "length",
-                    "length-number",
-                    "index",
-                    "index-number",
-                    "capture",
-                    "capture-string",
-                    "groups",
-                    "call",
-                    "return-string",
-                ][..],
-            ),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function input(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
-                    function replacement(){{if(!{callable})return {{[Symbol.toPrimitive](hint){{hit('replacement');return '$<x>';}}}};return function(matched,capture,missing,index,input,groups){{hit('call');if(matched!=='a'||capture!=='C'||missing!==undefined||index!==0||input!=='a-a'||groups.tag!==44)throw {{kind:'arguments'}};return {{[Symbol.toPrimitive](hint){{hit('return-string');return 'X';}}}};}};}}
-                    function receiver(){{var calls=0;return {{get flags(){{hit('flags');return {{[Symbol.toPrimitive](hint){{hit('flags-string');return 'g';}}}};}},set lastIndex(value){{hit('set-index');}},exec(input){{hit('exec');if(input!=='a-a')throw {{kind:'exec-input'}};if(calls++>0)return null;return {{get 0(){{hit('matched');return {{[Symbol.toPrimitive](hint){{hit('matched-string');return 'a';}}}};}},get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');if(hint!=='number')throw {{kind:'length-hint'}};return 3;}}}};}},get index(){{hit('index');return {{[Symbol.toPrimitive](hint){{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};}},get 1(){{hit('capture');return {{[Symbol.toPrimitive](hint){{hit('capture-string');return 'C';}}}};}},get groups(){{hit('groups');return {{tag:44,get x(){{hit('group');return {{[Symbol.toPrimitive](hint){{hit('group-string');return 'X';}}}};}}}};}}}};}}}};}}
-                "#
-                    );
-                    let program = compile(&source, "regexp-replace-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let mut values = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in ["receiver", "input", "replacement"] {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function input(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
+                function replacement(){{if(!{callable})return {{[Symbol.toPrimitive](hint){{hit('replacement');return '$<x>';}}}};return function(matched,capture,missing,index,input,groups){{hit('call');if(matched!=='a'||capture!=='C'||missing!==undefined||index!==0||input!=='a-a'||groups.tag!==44)throw {{kind:'arguments'}};return {{[Symbol.toPrimitive](hint){{hit('return-string');return 'X';}}}};}};}}
+                function receiver(){{var calls=0;return {{get flags(){{hit('flags');return {{[Symbol.toPrimitive](hint){{hit('flags-string');return 'g';}}}};}},set lastIndex(value){{hit('set-index');}},exec(input){{hit('exec');if(input!=='a-a')throw {{kind:'exec-input'}};if(calls++>0)return null;return {{get 0(){{hit('matched');return {{[Symbol.toPrimitive](hint){{hit('matched-string');return 'a';}}}};}},get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');if(hint!=='number')throw {{kind:'length-hint'}};return 3;}}}};}},get index(){{hit('index');return {{[Symbol.toPrimitive](hint){{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};}},get 1(){{hit('capture');return {{[Symbol.toPrimitive](hint){{hit('capture-string');return 'C';}}}};}},get groups(){{hit('groups');return {{tag:44,get x(){{hit('group');return {{[Symbol.toPrimitive](hint){{hit('group-string');return 'X';}}}};}}}};}}}};}}}};}}
+            "#
+                );
+                let program = compile(&source, "regexp-replace-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["receiver", "input", "replacement"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                let handles = values
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.regexp_symbol_replace(&program, values[0], &values[1..]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{callable}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                }
+                match outcome {
+                    Ok(value) => assert_eq!(vm.to_string(&program, value).unwrap(), "X-a"),
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
                         let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .own_property(error.thrown_value().unwrap(), atom)
                             .unwrap();
-                        values.push(value);
-                        owners.push(vm.heap.root(value));
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
-                    for owner in owners {
-                        vm.heap.release_root(owner);
-                    }
-                    let handles = values
-                        .iter()
-                        .map(|v| vm.heap.weak_handle(*v).unwrap())
-                        .collect::<Vec<_>>();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome = vm.regexp_symbol_replace(&program, values[0], &values[1..]);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{callable}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip(&values) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
-                    }
-                    match outcome {
-                        Ok(value) => assert_eq!(vm.to_string(&program, value).unwrap(), "X-a"),
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -11217,132 +10907,128 @@ fn regexp_replace_roots_inputs_results_and_converted_captures() {
 
 #[test]
 fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (kind, phases) in [
+        ("identity", &["is-regexp", "constructor"][..]),
+        (
+            "observable-call",
+            &[
+                "is-regexp",
+                "constructor",
+                "source",
+                "flags",
+                "source-string",
+                "flags-string",
+            ][..],
+        ),
+        (
+            "observable-new",
+            &[
+                "is-regexp",
+                "source",
+                "flags",
+                "prototype",
+                "source-string",
+                "flags-string",
+            ][..],
+        ),
+        (
+            "raw-new",
+            &["is-regexp", "prototype", "source-string", "flags-string"][..],
+        ),
+        (
+            "internal-new",
+            &["is-regexp", "prototype", "flags-string"][..],
+        ),
     ] {
-        for (kind, phases) in [
-            ("identity", &["is-regexp", "constructor"][..]),
-            (
-                "observable-call",
-                &[
-                    "is-regexp",
-                    "constructor",
-                    "source",
-                    "flags",
-                    "source-string",
-                    "flags-string",
-                ][..],
-            ),
-            (
-                "observable-new",
-                &[
-                    "is-regexp",
-                    "source",
-                    "flags",
-                    "prototype",
-                    "source-string",
-                    "flags-string",
-                ][..],
-            ),
-            (
-                "raw-new",
-                &["is-regexp", "prototype", "source-string", "flags-string"][..],
-            ),
-            (
-                "internal-new",
-                &["is-regexp", "prototype", "flags-string"][..],
-            ),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                        function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                        function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
-                        function pattern(){{if('{kind}'==='internal-new'){{var value=/a/g;Object.defineProperty(value,Symbol.match,{{get(){{hit('is-regexp');return false;}}}});return value;}}
-                            return {{get [Symbol.match](){{hit('is-regexp');return '{kind}'!=='raw-new';}},get constructor(){{hit('constructor');return '{kind}'==='identity'?RegExp:null;}},get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','i');}},[Symbol.toPrimitive](hint){{hit('source-string');if(hint!=='string')throw {{kind:'hint'}};return 'a';}}}};}}
-                        function flags(){{return text('flags-string','i');}}
-                        function target(){{return new Proxy(function(){{}},{{get(object,key,receiver){{if(key==='prototype'){{hit('prototype');return {{tag:42}};}}return Reflect.get(object,key,receiver);}}}});}}
-                    "#
-                    );
-                    let program = compile(&source, "regexp-construction-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let construct = kind.ends_with("new");
-                    let explicit_flags = matches!(kind, "raw-new" | "internal-new");
-                    let mut values = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in [
-                        Some("pattern"),
-                        explicit_flags.then_some("flags"),
-                        construct.then_some("target"),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap();
-                        values.push(value);
-                        owners.push(vm.heap.root(value));
-                    }
-                    for owner in owners {
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                    function pattern(){{if('{kind}'==='internal-new'){{var value=/a/g;Object.defineProperty(value,Symbol.match,{{get(){{hit('is-regexp');return false;}}}});return value;}}
+                        return {{get [Symbol.match](){{hit('is-regexp');return '{kind}'!=='raw-new';}},get constructor(){{hit('constructor');return '{kind}'==='identity'?RegExp:null;}},get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','i');}},[Symbol.toPrimitive](hint){{hit('source-string');if(hint!=='string')throw {{kind:'hint'}};return 'a';}}}};}}
+                    function flags(){{return text('flags-string','i');}}
+                    function target(){{return new Proxy(function(){{}},{{get(object,key,receiver){{if(key==='prototype'){{hit('prototype');return {{tag:42}};}}return Reflect.get(object,key,receiver);}}}});}}
+                "#
+                );
+                let program = compile(&source, "regexp-construction-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let construct = kind.ends_with("new");
+                let explicit_flags = matches!(kind, "raw-new" | "internal-new");
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in [
+                    Some("pattern"),
+                    explicit_flags.then_some("flags"),
+                    construct.then_some("target"),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                let handles = values
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let args = if explicit_flags {
+                    &values[..2]
+                } else {
+                    &values[..1]
+                };
+                let target = construct.then(|| *values.last().unwrap());
+                let outcome = vm.construct_regexp_native(&program, args, target);
+                assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                }
+                match outcome {
+                    Ok(value) if kind == "identity" => assert_eq!(value, values[0]),
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        let Some(super::Cell::RegExp { object, meta, .. }) = vm.heap.get(value)
+                        else {
+                            panic!("constructor returns RegExp");
+                        };
+                        let (source, flags) = (&meta.source, meta.flags.text());
+                        assert_eq!(source.units(), &[u16::from(b'a')]);
+                        assert_eq!(flags, "i");
+                        if construct {
+                            let proto = object.proto();
+                            let atom = vm.intern_atom("tag");
+                            let tag = vm.own_property(proto, atom).unwrap();
+                            assert_eq!(tag, Value::number(42.0));
+                        }
                         vm.heap.release_root(owner);
                     }
-                    let handles = values
-                        .iter()
-                        .map(|value| vm.heap.weak_handle(*value).unwrap())
-                        .collect::<Vec<_>>();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let args = if explicit_flags {
-                        &values[..2]
-                    } else {
-                        &values[..1]
-                    };
-                    let target = construct.then(|| *values.last().unwrap());
-                    let outcome = vm.construct_regexp_native(&program, args, target);
-                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip(&values) {
-                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
-                    match outcome {
-                        Ok(value) if kind == "identity" => assert_eq!(value, values[0]),
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            let Some(super::Cell::RegExp { object, meta, .. }) = vm.heap.get(value)
-                            else {
-                                panic!("constructor returns RegExp");
-                            };
-                            let (source, flags) = (&meta.source, meta.flags.text());
-                            assert_eq!(source.units(), &[u16::from(b'a')]);
-                            assert_eq!(flags, "i");
-                            if construct {
-                                let proto = object.proto();
-                                let atom = vm.intern_atom("tag");
-                                let tag = vm.own_property(proto, atom).unwrap();
-                                assert_eq!(tag, Value::number(42.0));
-                            }
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -11351,139 +11037,135 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
 
 #[test]
 fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (kind, phases) in [
+        ("compile", &["input", "flags-string"][..]),
+        (
+            "format",
+            &["source", "source-string", "flags", "flags-string"][..],
+        ),
+        (
+            "flags",
+            &[
+                "hasIndices",
+                "global",
+                "ignoreCase",
+                "multiline",
+                "dotAll",
+                "unicode",
+                "unicodeSets",
+                "sticky",
+            ][..],
+        ),
+        ("exec", &["input", "last-index"][..]),
+        ("test", &["input", "exec-get", "exec-call"][..]),
     ] {
-        for (kind, phases) in [
-            ("compile", &["input", "flags-string"][..]),
-            (
-                "format",
-                &["source", "source-string", "flags", "flags-string"][..],
-            ),
-            (
-                "flags",
-                &[
-                    "hasIndices",
-                    "global",
-                    "ignoreCase",
-                    "multiline",
-                    "dotAll",
-                    "unicode",
-                    "unicodeSets",
-                    "sticky",
-                ][..],
-            ),
-            ("exec", &["input", "last-index"][..]),
-            ("test", &["input", "exec-get", "exec-call"][..]),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    let source = format!(
-                        r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
-                    function input(){{return text('input','a');}}
-                    function flags(){{return text('flags-string','g');}}
-                    function receiver(){{if('{kind}'==='compile')return /old/;
-                        if('{kind}'==='exec'){{var value=/a/g;value.lastIndex={{[Symbol.toPrimitive](hint){{hit('last-index');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};return value;}}
-                        if('{kind}'==='test')return {{get exec(){{hit('exec-get');return function(input){{hit('exec-call');if(input!=='a')throw {{kind:'input'}};return {{}};}};}}}};
-                        if('{kind}'==='format')return {{get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','g');}}}};
-                        var result={{}};for(var name of ['hasIndices','global','ignoreCase','multiline','dotAll','unicode','unicodeSets','sticky']){{(function(name){{Object.defineProperty(result,name,{{get(){{hit(name);return true;}}}});}})(name);}}return result;
-                    }}
-                "#
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                function input(){{return text('input','a');}}
+                function flags(){{return text('flags-string','g');}}
+                function receiver(){{if('{kind}'==='compile')return /old/;
+                    if('{kind}'==='exec'){{var value=/a/g;value.lastIndex={{[Symbol.toPrimitive](hint){{hit('last-index');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};return value;}}
+                    if('{kind}'==='test')return {{get exec(){{hit('exec-get');return function(input){{hit('exec-call');if(input!=='a')throw {{kind:'input'}};return {{}};}};}}}};
+                    if('{kind}'==='format')return {{get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','g');}}}};
+                    var result={{}};for(var name of ['hasIndices','global','ignoreCase','multiline','dotAll','unicode','unicodeSets','sticky']){{(function(name){{Object.defineProperty(result,name,{{get(){{hit(name);return true;}}}});}})(name);}}return result;
+                }}
+            "#
+                );
+                let program = compile(&source, "regexp-entrypoint-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in [
+                    Some("receiver"),
+                    matches!(kind, "compile" | "exec" | "test").then_some("input"),
+                    (kind == "compile").then_some("flags"),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                let handles = values
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = match kind {
+                    "compile" => vm.regexp_compile_native(&program, values[0], &values[1..]),
+                    "format" => vm.regexp_to_string_native(&program, values[0]),
+                    "flags" => vm.regexp_flags_native(&program, values[0]),
+                    "exec" => vm.regexp_builtin_exec(&program, values[0], &values[1..]),
+                    "test" => vm.regexp_test(&program, values[0], &values[1..]),
+                    _ => unreachable!(),
+                };
+                assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(
+                        vm.heap.weak_value(*handle),
+                        Some(*value),
+                        "{kind}/{phase}/{abrupt}"
                     );
-                    let program = compile(&source, "regexp-entrypoint-roots.js").unwrap();
-                    vm.execute(&program).unwrap();
-                    let mut values = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in [
-                        Some("receiver"),
-                        matches!(kind, "compile" | "exec" | "test").then_some("input"),
-                        (kind == "compile").then_some("flags"),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap();
-                        values.push(value);
-                        owners.push(vm.heap.root(value));
-                    }
-                    for owner in owners {
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        match kind {
+                            "compile" => {
+                                assert_eq!(value, values[0]);
+                                let Some(super::Cell::RegExp { meta, .. }) = vm.heap.get(value)
+                                else {
+                                    panic!("compiled receiver retained");
+                                };
+                                let (source, flags) = (&meta.source, meta.flags.text());
+                                assert_eq!(source.units(), &[u16::from(b'a')]);
+                                assert_eq!(flags, "g");
+                            }
+                            "format" => {
+                                assert_eq!(vm.to_string(&program, value).unwrap(), "/a/g")
+                            }
+                            "flags" => {
+                                assert_eq!(vm.to_string(&program, value).unwrap(), "dgimsuvy")
+                            }
+                            "test" => assert_eq!(value, Value::TRUE),
+                            "exec" => {
+                                let matched =
+                                    vm.get_index(&program, value, Value::number(0.0)).unwrap();
+                                assert_eq!(vm.to_string(&program, matched).unwrap(), "a");
+                            }
+                            _ => unreachable!(),
+                        };
                         vm.heap.release_root(owner);
                     }
-                    let handles = values
-                        .iter()
-                        .map(|value| vm.heap.weak_handle(*value).unwrap())
-                        .collect::<Vec<_>>();
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let outcome = match kind {
-                        "compile" => vm.regexp_compile_native(&program, values[0], &values[1..]),
-                        "format" => vm.regexp_to_string_native(&program, values[0]),
-                        "flags" => vm.regexp_flags_native(&program, values[0]),
-                        "exec" => vm.regexp_builtin_exec(&program, values[0], &values[1..]),
-                        "test" => vm.regexp_test(&program, values[0], &values[1..]),
-                        _ => unreachable!(),
-                    };
-                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    for (handle, value) in handles.iter().zip(&values) {
-                        assert_eq!(
-                            vm.heap.weak_value(*handle),
-                            Some(*value),
-                            "{kind}/{phase}/{abrupt}"
-                        );
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                     }
-                    match outcome {
-                        Ok(value) => {
-                            let owner = vm.heap.root(value);
-                            vm.collect_now(&program);
-                            match kind {
-                                "compile" => {
-                                    assert_eq!(value, values[0]);
-                                    let Some(super::Cell::RegExp { meta, .. }) = vm.heap.get(value)
-                                    else {
-                                        panic!("compiled receiver retained");
-                                    };
-                                    let (source, flags) = (&meta.source, meta.flags.text());
-                                    assert_eq!(source.units(), &[u16::from(b'a')]);
-                                    assert_eq!(flags, "g");
-                                }
-                                "format" => {
-                                    assert_eq!(vm.to_string(&program, value).unwrap(), "/a/g")
-                                }
-                                "flags" => {
-                                    assert_eq!(vm.to_string(&program, value).unwrap(), "dgimsuvy")
-                                }
-                                "test" => assert_eq!(value, Value::TRUE),
-                                "exec" => {
-                                    let matched =
-                                        vm.get_index(&program, value, Value::number(0.0)).unwrap();
-                                    assert_eq!(vm.to_string(&program, matched).unwrap(), "a");
-                                }
-                                _ => unreachable!(),
-                            };
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                        }
-                    }
-                    vm.collect_now(&program);
-                    for handle in handles {
-                        assert!(vm.heap.weak_value(handle).is_none());
-                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
                 }
             }
         }
@@ -11572,182 +11254,44 @@ fn regexp_argument_literals_share_an_object_only_while_no_evaluation_can_tell() 
 
 #[test]
 fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for (native, kind, phases) in [
+        (
+            Native::StringSubstring,
+            "substring",
+            &["input", "first", "second"][..],
+        ),
+        (
+            Native::StringConcat,
+            "concat",
+            &["input", "first", "second"][..],
+        ),
+        (Native::StringAnchor, "anchor", &["input", "first"][..]),
     ] {
-        for (native, kind, phases) in [
-            (
-                Native::StringSubstring,
-                "substring",
-                &["input", "first", "second"][..],
-            ),
-            (
-                Native::StringConcat,
-                "concat",
-                &["input", "first", "second"][..],
-            ),
-            (Native::StringAnchor, "anchor", &["input", "first"][..]),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
-                    for entry in ["direct", "guarded"] {
-                        let mut vm = Vm::new(TestHost::default().with_test262());
-                        let source = format!(
-                            r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function receiver(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'abc';}}}};}}
-                    function first(){{return {{[Symbol.toPrimitive](hint){{hit('first');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'first-hint'}};return '{kind}'==='substring'?1:'X';}}}};}}
-                    function second(){{return {{[Symbol.toPrimitive](hint){{hit('second');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'second-hint'}};return '{kind}'==='substring'?2:'Y';}}}};}}
-                "#
-                        );
-                        let program = compile(&source, "native-dispatch-roots.js").unwrap();
-                        vm.execute(&program).unwrap();
-                        let mut values = Vec::new();
-                        let mut owners = Vec::new();
-                        for name in [
-                            Some("receiver"),
-                            Some("first"),
-                            (kind != "anchor").then_some("second"),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        {
-                            let atom = vm.intern_atom(name);
-                            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let value = vm
-                                .call_value(&program, factory, Value::UNDEFINED, &[])
-                                .unwrap();
-                            values.push(value);
-                            owners.push(vm.heap.root(value));
-                        }
-                        if kind != "substring" {
-                            for owner in &owners {
-                                vm.heap.release_root(*owner);
-                            }
-                        }
-                        let handles = values
-                            .iter()
-                            .map(|value| vm.heap.weak_handle(*value).unwrap())
-                            .collect::<Vec<_>>();
-                        let roots = vm.heap.root_count_for_test();
-                        let calls = vm.active_call_roots.len();
-                        let active_native = vm.host_frame_count();
-                        let callee = (entry == "guarded").then(|| {
-                            let function = vm.native_with_env(native, Value::UNDEFINED);
-                            (function, vm.heap.weak_handle(function).unwrap())
-                        });
-                        let outcome = match callee {
-                            Some((function, _)) => vm.call_native_guarded(
-                                &program,
-                                native,
-                                values[0],
-                                &values[1..],
-                                function,
-                            ),
-                            None => vm.call_native(&program, native, values[0], &values[1..]),
-                        };
-                        assert_eq!(vm.host_frame_count(), active_native);
-                        if let Some((function, handle)) = callee {
-                            assert_eq!(vm.heap.weak_value(handle), Some(function));
-                        }
-                        assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                        assert_eq!(vm.heap.root_count_for_test(), roots);
-                        assert_eq!(vm.active_call_roots.len(), calls);
-                        for (handle, value) in handles.iter().zip(&values) {
-                            assert_eq!(
-                                vm.heap.weak_value(*handle),
-                                Some(*value),
-                                "{kind}/{phase}/{abrupt}"
-                            );
-                        }
-                        match outcome {
-                            Ok(value) => {
-                                let owner = vm.heap.root(value);
-                                vm.collect_now(&program);
-                                assert_eq!(
-                                    vm.to_string(&program, value).unwrap(),
-                                    match kind {
-                                        "concat" => "abcXY",
-                                        "anchor" => "<a name=\"X\">abc</a>",
-                                        "substring" => "b",
-                                        _ => unreachable!(),
-                                    }
-                                );
-                                vm.heap.release_root(owner);
-                            }
-                            Err(error) => {
-                                let atom = vm.intern_atom("kind");
-                                let value = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
-                            }
-                        }
-                        if kind == "substring" {
-                            for owner in owners {
-                                vm.heap.release_root(owner);
-                            }
-                        }
-                        vm.collect_now(&program);
-                        for handle in handles {
-                            assert!(vm.heap.weak_value(handle).is_none());
-                        }
-                        if let Some((_, handle)) = callee {
-                            assert!(vm.heap.weak_value(handle).is_none());
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (kind, phases) in [
-            (
-                "object",
-                &[
-                    "raw",
-                    "length",
-                    "length-number",
-                    "segment0",
-                    "segment0-string",
-                    "substitution0-string",
-                    "segment1",
-                    "segment1-string",
-                    "substitution1-string",
-                    "segment2",
-                    "segment2-string",
-                ][..],
-            ),
-            (
-                "string",
-                &["raw", "substitution0-string", "substitution1-string"][..],
-            ),
-        ] {
-            for phase in phases {
-                for abrupt in [false, true] {
+        for phase in phases {
+            for abrupt in [false, true] {
+                for entry in ["direct", "guarded"] {
                     let mut vm = Vm::new(TestHost::default().with_test262());
                     let source = format!(
                         r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
-                    function template(){{return {{get raw(){{hit('raw');if('{kind}'==='string')return 'abc';return {{get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');return 3.9;}}}};}},get 0(){{hit('segment0');return text('segment0-string','a');}},get 1(){{hit('segment1');return text('segment1-string','b');}},get 2(){{hit('segment2');return text('segment2-string','c');}}}};}}}};}}
-                    function first(){{return text('substitution0-string','X');}}
-                    function second(){{return text('substitution1-string','Y');}}
-                "#
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function receiver(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'abc';}}}};}}
+                function first(){{return {{[Symbol.toPrimitive](hint){{hit('first');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'first-hint'}};return '{kind}'==='substring'?1:'X';}}}};}}
+                function second(){{return {{[Symbol.toPrimitive](hint){{hit('second');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'second-hint'}};return '{kind}'==='substring'?2:'Y';}}}};}}
+            "#
                     );
-                    let program = compile(&source, "string-raw-roots.js").unwrap();
+                    let program = compile(&source, "native-dispatch-roots.js").unwrap();
                     vm.execute(&program).unwrap();
                     let mut values = Vec::new();
                     let mut owners = Vec::new();
-                    for name in ["template", "first", "second"] {
+                    for name in [
+                        Some("receiver"),
+                        Some("first"),
+                        (kind != "anchor").then_some("second"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
                         let atom = vm.intern_atom(name);
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
                         let value = vm
@@ -11756,7 +11300,7 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
                         values.push(value);
                         owners.push(vm.heap.root(value));
                     }
-                    if kind != "object" {
+                    if kind != "substring" {
                         for owner in &owners {
                             vm.heap.release_root(*owner);
                         }
@@ -11767,7 +11311,25 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
                         .collect::<Vec<_>>();
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
-                    let outcome = vm.string_raw(&program, &values);
+                    let active_native = vm.host_frame_count();
+                    let callee = (entry == "guarded").then(|| {
+                        let function = vm.native_with_env(native, Value::UNDEFINED);
+                        (function, vm.heap.weak_handle(function).unwrap())
+                    });
+                    let outcome = match callee {
+                        Some((function, _)) => vm.call_native_guarded(
+                            &program,
+                            native,
+                            values[0],
+                            &values[1..],
+                            function,
+                        ),
+                        None => vm.call_native(&program, native, values[0], &values[1..]),
+                    };
+                    assert_eq!(vm.host_frame_count(), active_native);
+                    if let Some((function, handle)) = callee {
+                        assert_eq!(vm.heap.weak_value(handle), Some(function));
+                    }
                     assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
                     assert_eq!(vm.heap.root_count_for_test(), roots);
                     assert_eq!(vm.active_call_roots.len(), calls);
@@ -11782,7 +11344,15 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
                         Ok(value) => {
                             let owner = vm.heap.root(value);
                             vm.collect_now(&program);
-                            assert_eq!(vm.to_string(&program, value).unwrap(), "aXbYc");
+                            assert_eq!(
+                                vm.to_string(&program, value).unwrap(),
+                                match kind {
+                                    "concat" => "abcXY",
+                                    "anchor" => "<a name=\"X\">abc</a>",
+                                    "substring" => "b",
+                                    _ => unreachable!(),
+                                }
+                            );
                             vm.heap.release_root(owner);
                         }
                         Err(error) => {
@@ -11793,13 +11363,16 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
                             assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
                         }
                     }
-                    if kind == "object" {
+                    if kind == "substring" {
                         for owner in owners {
                             vm.heap.release_root(owner);
                         }
                     }
                     vm.collect_now(&program);
                     for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                    if let Some((_, handle)) = callee {
                         assert!(vm.heap.weak_value(handle).is_none());
                     }
                 }
@@ -11809,103 +11382,382 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
 }
 
 #[test]
-fn collator_construction_roots_boxed_locale_and_option_views() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
+    let compile = Engine::specialize;
+    for (kind, phases) in [
+        (
+            "object",
+            &[
+                "raw",
+                "length",
+                "length-number",
+                "segment0",
+                "segment0-string",
+                "substitution0-string",
+                "segment1",
+                "segment1-string",
+                "substitution1-string",
+                "segment2",
+                "segment2-string",
+            ][..],
+        ),
+        (
+            "string",
+            &["raw", "substitution0-string", "substitution1-string"][..],
+        ),
     ] {
-        for phase in [
-            "usage-string",
-            "usage",
-            "length",
-            "index",
-            "locale",
-            "localeMatcher",
-            "collation",
-            "numeric",
-            "caseFirst",
-            "sensitivity",
-            "ignorePunctuation",
-        ] {
+        for phase in phases {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                function template(){{return {{get raw(){{hit('raw');if('{kind}'==='string')return 'abc';return {{get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');return 3.9;}}}};}},get 0(){{hit('segment0');return text('segment0-string','a');}},get 1(){{hit('segment1');return text('segment1-string','b');}},get 2(){{hit('segment2');return text('segment2-string','c');}}}};}}}};}}
+                function first(){{return text('substitution0-string','X');}}
+                function second(){{return text('substitution1-string','Y');}}
+            "#
+                );
+                let program = compile(&source, "string-raw-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["template", "first", "second"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    values.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                if kind != "object" {
+                    for owner in &owners {
+                        vm.heap.release_root(*owner);
+                    }
+                }
+                let handles = values
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.string_raw(&program, &values);
+                assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(&values) {
+                    assert_eq!(
+                        vm.heap.weak_value(*handle),
+                        Some(*value),
+                        "{kind}/{phase}/{abrupt}"
+                    );
+                }
+                match outcome {
+                    Ok(value) => {
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        assert_eq!(vm.to_string(&program, value).unwrap(), "aXbYc");
+                        vm.heap.release_root(owner);
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                    }
+                }
+                if kind == "object" {
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn collator_construction_roots_boxed_locale_and_option_views() {
+    let compile = Engine::specialize;
+    for phase in [
+        "usage-string",
+        "usage",
+        "length",
+        "index",
+        "locale",
+        "localeMatcher",
+        "collation",
+        "numeric",
+        "caseFirst",
+        "sensitivity",
+        "ignorePunctuation",
+    ] {
+        for abrupt in [false, true] {
+            let source = format!(
+                r#"
+            var trace=[];function traceLog(){{return trace.join(',');}}
+            function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+            function localeValue(){{return {{toString(){{hit('locale');return 'en';}}}};}}
+            function usageValue(){{return {{toString(){{hit('usage-string');return 'sort';}}}};}}
+            Object.defineProperty(Number.prototype,'length',{{configurable:true,get(){{hit('length');return 1;}}}});
+            Object.defineProperty(Number.prototype,'0',{{configurable:true,get(){{hit('index');return localeValue();}}}});
+            for(var key of ['usage','localeMatcher','collation','numeric','caseFirst','sensitivity','ignorePunctuation']){{
+                ((name)=>Object.defineProperty(Number.prototype,name,{{configurable:true,get(){{hit(name);if(name==='usage')return usageValue();return undefined;}}}}))(key);
+            }}
+            "#
+            );
+            let program = compile(&source, "collator-boxed-roots.js").unwrap();
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            vm.execute(&program).unwrap();
+            let constructor = *vm
+                .realm
+                .intrinsics
+                .intl_collator_constructors
+                .get(&vm.realm.globals)
+                .unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let locales = if matches!(phase, "length" | "index" | "locale") {
+                Value::number(42.0)
+            } else {
+                vm.heap.alloc_string("en".into())
+            };
+            let result = vm.intl_collator_construct(
+                &program,
+                &[locales, Value::number(7.0)],
+                constructor,
+            );
+            assert_eq!(result.is_ok(), !abrupt, "{phase}/{abrupt}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            match result {
+                Ok(collator) => {
+                    let owner = vm.heap.root(collator);
+                    vm.collect_now(&program);
+                    let left = vm.heap.alloc_string("a".into());
+                    let right = vm.heap.alloc_string("b".into());
+                    let result = vm
+                        .intl_collator_native(
+                            &program,
+                            Native::IntlCollatorCompare,
+                            collator,
+                            &[left, right],
+                        )
+                        .unwrap();
+                    assert_eq!(result.as_number(), Some(-1.0), "{phase}");
+                    let atom = vm.intern_atom("traceLog");
+                    let logger = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let trace = vm
+                        .call_value(&program, logger, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let prefix = if matches!(phase, "length" | "index" | "locale") {
+                        "length,index,locale,"
+                    } else {
+                        ""
+                    };
+                    assert_eq!(
+                        vm.to_string(&program, trace).unwrap(),
+                        format!(
+                            "{prefix}usage,usage-string,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation"
+                        ),
+                        "{phase}"
+                    );
+                    vm.heap.release_root(owner);
+                }
+                Err(error) => {
+                    let kind = vm.intern_atom("kind");
+                    let value = vm
+                        .own_property(error.thrown_value().unwrap(), kind)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                }
+            }
+            vm.collect_now(&program);
+        }
+    }
+}
+
+#[test]
+fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
+    let compile = Engine::specialize;
+    for (kind, key, expected) in [
+        ("NumberFormat", "style", "percent"),
+        ("PluralRules", "type", "ordinal"),
+        ("RelativeTimeFormat", "numeric", "auto"),
+    ] {
+        for phase in ["convert", "matcher", "selected"] {
             for abrupt in [false, true] {
                 let source = format!(
                     r#"
-                var trace=[];function traceLog(){{return trace.join(',');}}
+                var trace=[];
                 function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                function localeValue(){{return {{toString(){{hit('locale');return 'en';}}}};}}
-                function usageValue(){{return {{toString(){{hit('usage-string');return 'sort';}}}};}}
-                Object.defineProperty(Number.prototype,'length',{{configurable:true,get(){{hit('length');return 1;}}}});
-                Object.defineProperty(Number.prototype,'0',{{configurable:true,get(){{hit('index');return localeValue();}}}});
-                for(var key of ['usage','localeMatcher','collation','numeric','caseFirst','sensitivity','ignorePunctuation']){{
-                    ((name)=>Object.defineProperty(Number.prototype,name,{{configurable:true,get(){{hit(name);if(name==='usage')return usageValue();return undefined;}}}}))(key);
-                }}
+                function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
+                Object.defineProperty(Number.prototype,'localeMatcher',{{get(){{hit('matcher');return matcher();}},configurable:true}});
+                Object.defineProperty(Number.prototype,'{key}',{{get(){{hit('selected');return '{expected}';}},configurable:true}});
+                function inspect(value){{return Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
+                function traceLog(){{return trace.join(',');}}
                 "#
                 );
-                let program = compile(&source, "collator-boxed-roots.js").unwrap();
+                let program = compile(&source, "intl-coerced-view.js").unwrap();
                 let mut vm = Vm::new(TestHost::default().with_test262());
                 vm.execute(&program).unwrap();
-                let constructor = *vm
-                    .realm
-                    .intrinsics
-                    .intl_collator_constructors
-                    .get(&vm.realm.globals)
-                    .unwrap();
+                let intl = vm.intern_atom("Intl");
+                vm.materialize_lazy_data_property(&program, vm.realm.globals, super::property_key::PropertyKey::string(intl)).unwrap();
+                let intl = vm.own_property(vm.realm.globals, intl).unwrap();
+                let name = vm.intern_atom(kind);
+                let constructor = vm.own_property(intl, name).unwrap();
+                let locale = vm.heap.alloc_string("en".into());
+                let weak = vm.heap.weak_handle(locale).unwrap();
+                let locale_owner = vm.heap.root(locale);
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
-                let locales = if matches!(phase, "length" | "index" | "locale") {
-                    Value::number(42.0)
-                } else {
-                    vm.heap.alloc_string("en".into())
+                let result = match kind {
+                    "NumberFormat" => vm.intl_number_format_construct(
+                        &program,
+                        &[locale, Value::number(7.0)],
+                        constructor,
+                    ),
+                    "PluralRules" => vm.intl_plural_rules_construct(
+                        &program,
+                        &[locale, Value::number(7.0)],
+                        constructor,
+                    ),
+                    "RelativeTimeFormat" => vm.intl_relative_time_format_construct(
+                        &program,
+                        &[locale, Value::number(7.0)],
+                        constructor,
+                    ),
+                    _ => unreachable!(),
                 };
-                let result = vm.intl_collator_construct(
-                    &program,
-                    &[locales, Value::number(7.0)],
-                    constructor,
-                );
-                assert_eq!(result.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
                 assert_eq!(vm.heap.root_count_for_test(), roots);
                 assert_eq!(vm.active_call_roots.len(), calls);
+                assert_eq!(vm.heap.weak_value(weak), Some(locale), "{kind}/{phase}");
                 match result {
-                    Ok(collator) => {
-                        let owner = vm.heap.root(collator);
+                    Ok(instance) => {
+                        let owner = vm.heap.root(instance);
                         vm.collect_now(&program);
-                        let left = vm.heap.alloc_string("a".into());
-                        let right = vm.heap.alloc_string("b".into());
-                        let result = vm
-                            .intl_collator_native(
-                                &program,
-                                Native::IntlCollatorCompare,
-                                collator,
-                                &[left, right],
-                            )
+                        let atom = vm.intern_atom("inspect");
+                        let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let output = vm
+                            .call_value(&program, inspect, Value::UNDEFINED, &[instance])
                             .unwrap();
-                        assert_eq!(result.as_number(), Some(-1.0), "{phase}");
+                        assert_eq!(
+                            vm.to_string(&program, output).unwrap(),
+                            expected,
+                            "{kind}/{phase}"
+                        );
                         let atom = vm.intern_atom("traceLog");
                         let logger = vm.own_property(vm.realm.globals, atom).unwrap();
                         let trace = vm
                             .call_value(&program, logger, Value::UNDEFINED, &[])
                             .unwrap();
-                        let prefix = if matches!(phase, "length" | "index" | "locale") {
-                            "length,index,locale,"
-                        } else {
-                            ""
-                        };
                         assert_eq!(
                             vm.to_string(&program, trace).unwrap(),
-                            format!(
-                                "{prefix}usage,usage-string,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation"
-                            ),
-                            "{phase}"
+                            "matcher,convert,selected",
+                            "{kind}/{phase}"
                         );
                         vm.heap.release_root(owner);
                     }
                     Err(error) => {
-                        let kind = vm.intern_atom("kind");
+                        let atom = vm.intern_atom("kind");
                         let value = vm
-                            .own_property(error.thrown_value().unwrap(), kind)
+                            .own_property(error.thrown_value().unwrap(), atom)
                             .unwrap();
                         assert_eq!(vm.to_string(&program, value).unwrap(), phase);
                     }
+                }
+                vm.heap.release_root(locale_owner);
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(weak).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn intl_constructor_views_survive_prototype_and_option_callbacks() {
+    let compile = Engine::specialize;
+    for (kind, key, expected) in [
+        ("DisplayNames", "type", "language"),
+        ("DurationFormat", "style", "short"),
+        ("DateTimeFormat", "year", "numeric"),
+    ] {
+        for phase in ["prototype", "locale", "matcher", "convert", "selected"] {
+            for abrupt in [false, true] {
+                let source = format!(
+                    r#"
+                function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
+                function locales(){{return {{get length(){{hit('locale');return 1;}},0:'en'}};}}
+                function options(){{var value={{get localeMatcher(){{hit('matcher');return matcher();}}}};Object.defineProperty(value,'{key}',{{get(){{hit('selected');return '{expected}';}}}});return value;}}
+                function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
+                function inspect(value){{return Object.getPrototypeOf(value).marker+':'+Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
+                "#
+                );
+                let program = compile(&source, "intl-constructor-views.js").unwrap();
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                vm.execute(&program).unwrap();
+                let mut args = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["locales", "options", "target"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    args.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = match kind {
+                    "DisplayNames" => {
+                        vm.intl_display_names_construct(&program, &args[..2], args[2])
+                    }
+                    "DurationFormat" => {
+                        vm.intl_duration_format_construct(&program, &args[..2], args[2])
+                    }
+                    "DateTimeFormat" => {
+                        vm.intl_date_time_format_construct(&program, &args[..2], args[2])
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(instance) => {
+                        let owner = vm.heap.root(instance);
+                        vm.collect_now(&program);
+                        let atom = vm.intern_atom("inspect");
+                        let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let output = vm
+                            .call_value(&program, inspect, Value::UNDEFINED, &[instance])
+                            .unwrap();
+                        assert_eq!(
+                            vm.to_string(&program, output).unwrap(),
+                            format!("expected:{expected}"),
+                            "{kind}/{phase}"
+                        );
+                        vm.heap.release_root(owner);
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
                 }
                 vm.collect_now(&program);
             }
@@ -11914,295 +11766,101 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
 }
 
 #[test]
-fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (kind, key, expected) in [
-            ("NumberFormat", "style", "percent"),
-            ("PluralRules", "type", "ordinal"),
-            ("RelativeTimeFormat", "numeric", "auto"),
-        ] {
-            for phase in ["convert", "matcher", "selected"] {
-                for abrupt in [false, true] {
-                    let source = format!(
-                        r#"
-                    var trace=[];
-                    function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
-                    Object.defineProperty(Number.prototype,'localeMatcher',{{get(){{hit('matcher');return matcher();}},configurable:true}});
-                    Object.defineProperty(Number.prototype,'{key}',{{get(){{hit('selected');return '{expected}';}},configurable:true}});
-                    function inspect(value){{return Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
-                    function traceLog(){{return trace.join(',');}}
-                    "#
-                    );
-                    let program = compile(&source, "intl-coerced-view.js").unwrap();
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    vm.execute(&program).unwrap();
-                    let intl = vm.intern_atom("Intl");
-                    vm.materialize_lazy_data_property(&program, vm.realm.globals, super::property_key::PropertyKey::string(intl)).unwrap();
-                    let intl = vm.own_property(vm.realm.globals, intl).unwrap();
-                    let name = vm.intern_atom(kind);
-                    let constructor = vm.own_property(intl, name).unwrap();
-                    let locale = vm.heap.alloc_string("en".into());
-                    let weak = vm.heap.weak_handle(locale).unwrap();
-                    let locale_owner = vm.heap.root(locale);
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = match kind {
-                        "NumberFormat" => vm.intl_number_format_construct(
-                            &program,
-                            &[locale, Value::number(7.0)],
-                            constructor,
-                        ),
-                        "PluralRules" => vm.intl_plural_rules_construct(
-                            &program,
-                            &[locale, Value::number(7.0)],
-                            constructor,
-                        ),
-                        "RelativeTimeFormat" => vm.intl_relative_time_format_construct(
-                            &program,
-                            &[locale, Value::number(7.0)],
-                            constructor,
-                        ),
-                        _ => unreachable!(),
-                    };
-                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    assert_eq!(vm.heap.weak_value(weak), Some(locale), "{kind}/{phase}");
-                    match result {
-                        Ok(instance) => {
-                            let owner = vm.heap.root(instance);
-                            vm.collect_now(&program);
-                            let atom = vm.intern_atom("inspect");
-                            let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let output = vm
-                                .call_value(&program, inspect, Value::UNDEFINED, &[instance])
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, output).unwrap(),
-                                expected,
-                                "{kind}/{phase}"
-                            );
-                            let atom = vm.intern_atom("traceLog");
-                            let logger = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let trace = vm
-                                .call_value(&program, logger, Value::UNDEFINED, &[])
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, trace).unwrap(),
-                                "matcher,convert,selected",
-                                "{kind}/{phase}"
-                            );
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                        }
-                    }
-                    vm.heap.release_root(locale_owner);
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(weak).is_none());
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn intl_constructor_views_survive_prototype_and_option_callbacks() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for (kind, key, expected) in [
-            ("DisplayNames", "type", "language"),
-            ("DurationFormat", "style", "short"),
-            ("DateTimeFormat", "year", "numeric"),
-        ] {
-            for phase in ["prototype", "locale", "matcher", "convert", "selected"] {
-                for abrupt in [false, true] {
-                    let source = format!(
-                        r#"
-                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
-                    function locales(){{return {{get length(){{hit('locale');return 1;}},0:'en'}};}}
-                    function options(){{var value={{get localeMatcher(){{hit('matcher');return matcher();}}}};Object.defineProperty(value,'{key}',{{get(){{hit('selected');return '{expected}';}}}});return value;}}
-                    function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
-                    function inspect(value){{return Object.getPrototypeOf(value).marker+':'+Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
-                    "#
-                    );
-                    let program = compile(&source, "intl-constructor-views.js").unwrap();
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    vm.execute(&program).unwrap();
-                    let mut args = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in ["locales", "options", "target"] {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap();
-                        args.push(value);
-                        owners.push(vm.heap.root(value));
-                    }
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = match kind {
-                        "DisplayNames" => {
-                            vm.intl_display_names_construct(&program, &args[..2], args[2])
-                        }
-                        "DurationFormat" => {
-                            vm.intl_duration_format_construct(&program, &args[..2], args[2])
-                        }
-                        "DateTimeFormat" => {
-                            vm.intl_date_time_format_construct(&program, &args[..2], args[2])
-                        }
-                        _ => unreachable!(),
-                    };
-                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    match result {
-                        Ok(instance) => {
-                            let owner = vm.heap.root(instance);
-                            vm.collect_now(&program);
-                            let atom = vm.intern_atom("inspect");
-                            let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let output = vm
-                                .call_value(&program, inspect, Value::UNDEFINED, &[instance])
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, output).unwrap(),
-                                format!("expected:{expected}"),
-                                "{kind}/{phase}"
-                            );
-                            vm.heap.release_root(owner);
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                        }
-                    }
-                    for owner in owners {
-                        vm.heap.release_root(owner);
-                    }
-                    vm.collect_now(&program);
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn intl_locale_roots_boxed_options_and_fresh_prototype_views() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for kind in ["boxed", "object"] {
-            for phase in [
-                "language-string",
-                "prototype",
-                "tag",
-                "language",
-                "region",
-                "calendar",
-                "calendar-string",
-            ] {
-                for abrupt in [false, true] {
-                    let source = format!(
-                        r#"
-                    var trace=[];
-                    function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function language(){{return {{toString(){{hit('language-string');return 'fr';}}}};}}
-                    function calendar(){{return {{toString(){{hit('calendar-string');return 'gregory';}}}};}}
-                    Object.defineProperty(Number.prototype,'language',{{configurable:true,get(){{hit('language');return language();}}}});
-                    Object.defineProperty(Number.prototype,'region',{{configurable:true,get(){{hit('region');return 'US';}}}});
-                    Object.defineProperty(Number.prototype,'calendar',{{configurable:true,get(){{hit('calendar');return calendar();}}}});
-                    function tag(){{return {{toString(){{hit('tag');return 'en';}}}};}}
-                    function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
-                    function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
-                    function inspect(value){{return Object.getPrototypeOf(value).marker+'|'+Intl.Locale.prototype.toString.call(value);}}
-                    function traceLog(){{return trace.join(',');}}
-                    "#
-                    );
-                    let program = compile(&source, "intl-locale-views.js").unwrap();
-                    let mut vm = Vm::new(TestHost::default().with_test262());
-                    vm.execute(&program).unwrap();
-                    let mut args = Vec::new();
-                    let mut owners = Vec::new();
-                    for name in ["tag", "options", "target"] {
-                        let atom = vm.intern_atom(name);
-                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                        let value = vm
-                            .call_value(&program, factory, Value::UNDEFINED, &[])
-                            .unwrap();
-                        args.push(value);
-                        owners.push(vm.heap.root(value));
-                    }
-                    let roots = vm.heap.root_count_for_test();
-                    let calls = vm.active_call_roots.len();
-                    let result = vm.intl_namespace_construct(
-                        &program,
-                        Native::IntlLocale,
-                        &args[..2],
-                        args[2],
-                    );
-                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
-                    assert_eq!(vm.heap.root_count_for_test(), roots);
-                    assert_eq!(vm.active_call_roots.len(), calls);
-                    match result {
-                        Ok(instance) => {
-                            let weak = vm.heap.weak_handle(instance).unwrap();
-                            let owner = vm.heap.root(instance);
-                            vm.collect_now(&program);
-                            let atom = vm.intern_atom("inspect");
-                            let function = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let output = vm
-                                .call_value(&program, function, Value::UNDEFINED, &[instance])
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, output).unwrap(),
-                                "expected|fr-US-u-ca-gregory",
-                                "{kind}/{phase}"
-                            );
-                            let atom = vm.intern_atom("traceLog");
-                            let function = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let output = vm
-                                .call_value(&program, function, Value::UNDEFINED, &[])
-                                .unwrap();
-                            assert_eq!(
-                                vm.to_string(&program, output).unwrap(),
-                                "prototype,tag,language,language-string,region,calendar,calendar-string",
-                                "{kind}/{phase}"
-                            );
-                            vm.heap.release_root(owner);
-                            vm.collect_now(&program);
-                            assert!(vm.heap.weak_value(weak).is_none());
-                        }
-                        Err(error) => {
-                            let atom = vm.intern_atom("kind");
-                            let value = vm
-                                .own_property(error.thrown_value().unwrap(), atom)
-                                .unwrap();
-                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                        }
-                    }
-                    for owner in owners {
-                        vm.heap.release_root(owner);
-                    }
-                    vm.collect_now(&program);
+    let compile = Engine::specialize;
+    for kind in ["boxed", "object"] {
+        for phase in [
+            "language-string",
+            "prototype",
+            "tag",
+            "language",
+            "region",
+            "calendar",
+            "calendar-string",
+        ] {
+            for abrupt in [false, true] {
+                let source = format!(
+                    r#"
+                var trace=[];
+                function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function language(){{return {{toString(){{hit('language-string');return 'fr';}}}};}}
+                function calendar(){{return {{toString(){{hit('calendar-string');return 'gregory';}}}};}}
+                Object.defineProperty(Number.prototype,'language',{{configurable:true,get(){{hit('language');return language();}}}});
+                Object.defineProperty(Number.prototype,'region',{{configurable:true,get(){{hit('region');return 'US';}}}});
+                Object.defineProperty(Number.prototype,'calendar',{{configurable:true,get(){{hit('calendar');return calendar();}}}});
+                function tag(){{return {{toString(){{hit('tag');return 'en';}}}};}}
+                function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
+                function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
+                function inspect(value){{return Object.getPrototypeOf(value).marker+'|'+Intl.Locale.prototype.toString.call(value);}}
+                function traceLog(){{return trace.join(',');}}
+                "#
+                );
+                let program = compile(&source, "intl-locale-views.js").unwrap();
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                vm.execute(&program).unwrap();
+                let mut args = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["tag", "options", "target"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    args.push(value);
+                    owners.push(vm.heap.root(value));
                 }
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.intl_namespace_construct(
+                    &program,
+                    Native::IntlLocale,
+                    &args[..2],
+                    args[2],
+                );
+                assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(instance) => {
+                        let weak = vm.heap.weak_handle(instance).unwrap();
+                        let owner = vm.heap.root(instance);
+                        vm.collect_now(&program);
+                        let atom = vm.intern_atom("inspect");
+                        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let output = vm
+                            .call_value(&program, function, Value::UNDEFINED, &[instance])
+                            .unwrap();
+                        assert_eq!(
+                            vm.to_string(&program, output).unwrap(),
+                            "expected|fr-US-u-ca-gregory",
+                            "{kind}/{phase}"
+                        );
+                        let atom = vm.intern_atom("traceLog");
+                        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let output = vm
+                            .call_value(&program, function, Value::UNDEFINED, &[])
+                            .unwrap();
+                        assert_eq!(
+                            vm.to_string(&program, output).unwrap(),
+                            "prototype,tag,language,language-string,region,calendar,calendar-string",
+                            "{kind}/{phase}"
+                        );
+                        vm.heap.release_root(owner);
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(weak).is_none());
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                vm.collect_now(&program);
             }
         }
     }
@@ -12210,130 +11868,47 @@ fn intl_locale_roots_boxed_options_and_fresh_prototype_views() {
 
 #[test]
 fn intl_supported_locales_roots_callback_views_and_releases_results() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
+    let compile = Engine::specialize;
+    for service in [
+        "RelativeTimeFormat",
+        "Segmenter",
+        "Collator",
+        "NumberFormat",
+        "DateTimeFormat",
+        "PluralRules",
+        "DurationFormat",
+        "ListFormat",
+        "DisplayNames",
     ] {
-        for service in [
-            "RelativeTimeFormat",
-            "Segmenter",
-            "Collator",
-            "NumberFormat",
-            "DateTimeFormat",
-            "PluralRules",
-            "DurationFormat",
-            "ListFormat",
-            "DisplayNames",
-        ] {
-            for kind in ["boxed", "object"] {
-                for phase in [
-                    "length",
-                    "has",
-                    "index",
-                    "locale",
-                    "matcher",
-                    "matcher-string",
-                ] {
-                    for abrupt in [false, true] {
-                        let source = format!(
-                            r#"
-                        var trace=[];
-                        function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                        function locale(){{return {{toString(){{hit('locale');return 'en';}}}};}}
-                        function matcher(){{return {{toString(){{hit('matcher-string');return 'lookup';}}}};}}
-                        Object.defineProperty(Number.prototype,'localeMatcher',{{configurable:true,get(){{hit('matcher');return matcher();}}}});
-                        function locales(){{return new Proxy({{length:1}},{{get(value,key){{if(key==='length'){{hit('length');return 1;}}hit('index');return locale();}},has(){{hit('has');return true;}}}});}}
-                        function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
-                        function query(){{return Intl['{service}'].supportedLocalesOf;}}
-                        function inspect(value){{return value.join(',')+'|'+trace.join(',');}}
-                        "#
-                        );
-                        let program = compile(&source, "intl-supported-locales-views.js").unwrap();
-                        let mut vm = Vm::new(TestHost::default().with_test262());
-                        vm.execute(&program).unwrap();
-                        let mut inputs = Vec::new();
-                        let mut owners = Vec::new();
-                        for name in ["query", "locales", "options"] {
-                            let atom = vm.intern_atom(name);
-                            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-                            let value = vm
-                                .call_value(&program, factory, Value::UNDEFINED, &[])
-                                .unwrap();
-                            inputs.push(value);
-                            owners.push(vm.heap.root(value));
-                        }
-                        let roots = vm.heap.root_count_for_test();
-                        let calls = vm.active_call_roots.len();
-                        let result =
-                            vm.call_value(&program, inputs[0], Value::UNDEFINED, &inputs[1..]);
-                        assert_eq!(result.is_ok(), !abrupt, "{service}/{kind}/{phase}/{abrupt}");
-                        assert_eq!(vm.heap.root_count_for_test(), roots);
-                        assert_eq!(vm.active_call_roots.len(), calls);
-                        match result {
-                            Ok(value) => {
-                                let weak = vm.heap.weak_handle(value).unwrap();
-                                let owner = vm.heap.root(value);
-                                vm.collect_now(&program);
-                                let atom = vm.intern_atom("inspect");
-                                let function = vm.own_property(vm.realm.globals, atom).unwrap();
-                                let output = vm
-                                    .call_value(&program, function, Value::UNDEFINED, &[value])
-                                    .unwrap();
-                                assert_eq!(
-                                    vm.to_string(&program, output).unwrap(),
-                                    "en|length,has,index,locale,matcher,matcher-string",
-                                    "{service}/{kind}/{phase}"
-                                );
-                                vm.heap.release_root(owner);
-                                vm.collect_now(&program);
-                                assert!(vm.heap.weak_value(weak).is_none());
-                            }
-                            Err(error) => {
-                                let atom = vm.intern_atom("kind");
-                                let value = vm
-                                    .own_property(error.thrown_value().unwrap(), atom)
-                                    .unwrap();
-                                assert_eq!(vm.to_string(&program, value).unwrap(), phase);
-                            }
-                        }
-                        for owner in owners {
-                            vm.heap.release_root(owner);
-                        }
-                        vm.collect_now(&program);
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn list_format_roots_fresh_iterators_across_step_getters() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for method in ["format", "formatToParts"] {
-            for phase in ["done", "value", "iterator", "factory", "get-next", "next"] {
+        for kind in ["boxed", "object"] {
+            for phase in [
+                "length",
+                "has",
+                "index",
+                "locale",
+                "matcher",
+                "matcher-string",
+            ] {
                 for abrupt in [false, true] {
                     let source = format!(
                         r#"
                     var trace=[];
                     function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
-                    function step(index){{return {{get done(){{hit('done');return index===2;}},get value(){{hit('value');return index===0?'A':'B';}}}};}}
-                    function next(){{hit('next');return step(this.index++);}}
-                    function source(){{return {{get [Symbol.iterator](){{hit('iterator');return function(){{hit('factory');return {{index:0,get next(){{hit('get-next');return next;}},return(){{throw 'closed step failure';}}}};}};}}}};}}
-                    function formatter(){{return new Intl.ListFormat('en');}}
-                    function invoke(formatter,source){{return formatter['{method}'](source);}}
-                    function inspect(value){{return (typeof value==='string'?value:value.map(part=>part.value).join(''))+'|'+trace.join(',');}}
+                    function locale(){{return {{toString(){{hit('locale');return 'en';}}}};}}
+                    function matcher(){{return {{toString(){{hit('matcher-string');return 'lookup';}}}};}}
+                    Object.defineProperty(Number.prototype,'localeMatcher',{{configurable:true,get(){{hit('matcher');return matcher();}}}});
+                    function locales(){{return new Proxy({{length:1}},{{get(value,key){{if(key==='length'){{hit('length');return 1;}}hit('index');return locale();}},has(){{hit('has');return true;}}}});}}
+                    function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
+                    function query(){{return Intl['{service}'].supportedLocalesOf;}}
+                    function inspect(value){{return value.join(',')+'|'+trace.join(',');}}
                     "#
                     );
-                    let program = compile(&source, "list-format-iterator-views.js").unwrap();
+                    let program = compile(&source, "intl-supported-locales-views.js").unwrap();
                     let mut vm = Vm::new(TestHost::default().with_test262());
                     vm.execute(&program).unwrap();
                     let mut inputs = Vec::new();
                     let mut owners = Vec::new();
-                    for name in ["formatter", "source"] {
+                    for name in ["query", "locales", "options"] {
                         let atom = vm.intern_atom(name);
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
                         let value = vm
@@ -12344,10 +11919,9 @@ fn list_format_roots_fresh_iterators_across_step_getters() {
                     }
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
-                    let atom = vm.intern_atom("invoke");
-                    let function = vm.own_property(vm.realm.globals, atom).unwrap();
-                    let result = vm.call_value(&program, function, Value::UNDEFINED, &inputs);
-                    assert_eq!(result.is_ok(), !abrupt, "{method}/{phase}/{abrupt}");
+                    let result =
+                        vm.call_value(&program, inputs[0], Value::UNDEFINED, &inputs[1..]);
+                    assert_eq!(result.is_ok(), !abrupt, "{service}/{kind}/{phase}/{abrupt}");
                     assert_eq!(vm.heap.root_count_for_test(), roots);
                     assert_eq!(vm.active_call_roots.len(), calls);
                     match result {
@@ -12362,8 +11936,8 @@ fn list_format_roots_fresh_iterators_across_step_getters() {
                                 .unwrap();
                             assert_eq!(
                                 vm.to_string(&program, output).unwrap(),
-                                "A and B|iterator,factory,get-next,next,done,value,next,done,value,next,done",
-                                "{method}/{phase}"
+                                "en|length,has,index,locale,matcher,matcher-string",
+                                "{service}/{kind}/{phase}"
                             );
                             vm.heap.release_root(owner);
                             vm.collect_now(&program);
@@ -12388,293 +11962,349 @@ fn list_format_roots_fresh_iterators_across_step_getters() {
 }
 
 #[test]
+fn list_format_roots_fresh_iterators_across_step_getters() {
+    let compile = Engine::specialize;
+    for method in ["format", "formatToParts"] {
+        for phase in ["done", "value", "iterator", "factory", "get-next", "next"] {
+            for abrupt in [false, true] {
+                let source = format!(
+                    r#"
+                var trace=[];
+                function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function step(index){{return {{get done(){{hit('done');return index===2;}},get value(){{hit('value');return index===0?'A':'B';}}}};}}
+                function next(){{hit('next');return step(this.index++);}}
+                function source(){{return {{get [Symbol.iterator](){{hit('iterator');return function(){{hit('factory');return {{index:0,get next(){{hit('get-next');return next;}},return(){{throw 'closed step failure';}}}};}};}}}};}}
+                function formatter(){{return new Intl.ListFormat('en');}}
+                function invoke(formatter,source){{return formatter['{method}'](source);}}
+                function inspect(value){{return (typeof value==='string'?value:value.map(part=>part.value).join(''))+'|'+trace.join(',');}}
+                "#
+                );
+                let program = compile(&source, "list-format-iterator-views.js").unwrap();
+                let mut vm = Vm::new(TestHost::default().with_test262());
+                vm.execute(&program).unwrap();
+                let mut inputs = Vec::new();
+                let mut owners = Vec::new();
+                for name in ["formatter", "source"] {
+                    let atom = vm.intern_atom(name);
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let value = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    inputs.push(value);
+                    owners.push(vm.heap.root(value));
+                }
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let atom = vm.intern_atom("invoke");
+                let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &inputs);
+                assert_eq!(result.is_ok(), !abrupt, "{method}/{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(value) => {
+                        let weak = vm.heap.weak_handle(value).unwrap();
+                        let owner = vm.heap.root(value);
+                        vm.collect_now(&program);
+                        let atom = vm.intern_atom("inspect");
+                        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let output = vm
+                            .call_value(&program, function, Value::UNDEFINED, &[value])
+                            .unwrap();
+                        assert_eq!(
+                            vm.to_string(&program, output).unwrap(),
+                            "A and B|iterator,factory,get-next,next,done,value,next,done,value,next,done",
+                            "{method}/{phase}"
+                        );
+                        vm.heap.release_root(owner);
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(weak).is_none());
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                for owner in owners {
+                    vm.heap.release_root(owner);
+                }
+                vm.collect_now(&program);
+            }
+        }
+    }
+}
+
+#[test]
 fn segmenter_cursors_own_source_and_release_derived_records() {
     let cases: &[(&str, &str, &[(&str, usize)])] = &[
         ("grapheme", "A😀B", &[("A", 0), ("😀", 1), ("B", 3)]),
         ("word", "hi there", &[("hi", 0), (" ", 2), ("there", 3)]),
         ("sentence", "Hi. Bye.", &[("Hi. ", 0), ("Bye.", 4)]),
     ];
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for &(granularity, input, expected) in cases {
-            let source = format!(
-                r#"
-            function formatter(){{return new Intl.Segmenter('en',{{granularity:'{granularity}'}});}}
-            function input(){{return {{toString(){{$262.gc();return '{input}';}}}};}}
-            function make(formatter){{return formatter.segment(input());}}
-            "#
-            );
-            let program = compile(&source, "segmenter-source-ownership.js").unwrap();
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            vm.execute(&program).unwrap();
-            let initial = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let atom = vm.intern_atom("formatter");
-            let function = vm.own_property(vm.realm.globals, atom).unwrap();
-            let formatter = vm
-                .call_value(&program, function, Value::UNDEFINED, &[])
-                .unwrap();
-            let formatter_weak = vm.heap.weak_handle(formatter).unwrap();
-            let formatter_owner = vm.heap.root(formatter);
-            let atom = vm.intern_atom("make");
-            let function = vm.own_property(vm.realm.globals, atom).unwrap();
-            let segments = vm
-                .call_value(&program, function, Value::UNDEFINED, &[formatter])
-                .unwrap();
-            let segments_weak = vm.heap.weak_handle(segments).unwrap();
-            let segments_owner = vm.heap.root(segments);
-            let iterator = vm.get_iterator(&program, segments).unwrap();
-            let iterator_weak = vm.heap.weak_handle(iterator).unwrap();
-            let iterator_owner = vm.heap.root(iterator);
-            vm.heap.release_root(formatter_owner);
-            vm.heap.release_root(segments_owner);
-            vm.collect_now(&program);
-            assert!(
-                vm.heap.weak_value(formatter_weak).is_some(),
-                "{granularity}: cursor must own formatter"
-            );
-            assert!(
-                vm.heap.weak_value(segments_weak).is_none(),
-                "{granularity}: cursor must release public Segments wrapper"
-            );
-            let mut input_identity = None;
-            for &(text, index) in expected {
-                let roots = vm.heap.root_count_for_test();
-                let record = vm.iterator_step_value(&program, iterator).unwrap().unwrap();
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                let weak = vm.heap.weak_handle(record).unwrap();
-                let owner = vm.heap.root(record);
-                vm.collect_now(&program);
-                let atom = vm.intern_atom("segment");
-                let value = vm.own_property(record, atom).unwrap();
-                assert_eq!(vm.to_string(&program, value).unwrap(), text);
-                let atom = vm.intern_atom("index");
-                assert_eq!(
-                    vm.own_property(record, atom).unwrap(),
-                    Value::number(index as f64)
-                );
-                let atom = vm.intern_atom("input");
-                let value = vm.own_property(record, atom).unwrap();
-                assert_eq!(vm.to_string(&program, value).unwrap(), input);
-                if let Some(previous) = input_identity {
-                    assert_eq!(previous, value);
-                } else {
-                    input_identity = Some(value);
-                }
-                vm.heap.release_root(owner);
-                vm.collect_now(&program);
-                assert!(
-                    vm.heap.weak_value(weak).is_none(),
-                    "derived record must not be retained by its source"
-                );
-            }
-            assert!(
-                vm.iterator_step_value(&program, iterator)
-                    .unwrap()
-                    .is_none()
-            );
-            assert!(
-                vm.iterator_step_value(&program, iterator)
-                    .unwrap()
-                    .is_none()
-            );
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(formatter_weak).is_some());
-            assert!(vm.heap.weak_value(segments_weak).is_none());
-            vm.heap.release_root(iterator_owner);
-            vm.collect_now(&program);
-            for weak in [formatter_weak, segments_weak, iterator_weak] {
-                assert!(vm.heap.weak_value(weak).is_none());
-            }
-            assert_eq!(vm.heap.root_count_for_test(), initial);
+    let compile = Engine::specialize;
+    for &(granularity, input, expected) in cases {
+        let source = format!(
+            r#"
+        function formatter(){{return new Intl.Segmenter('en',{{granularity:'{granularity}'}});}}
+        function input(){{return {{toString(){{$262.gc();return '{input}';}}}};}}
+        function make(formatter){{return formatter.segment(input());}}
+        "#
+        );
+        let program = compile(&source, "segmenter-source-ownership.js").unwrap();
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        vm.execute(&program).unwrap();
+        let initial = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let atom = vm.intern_atom("formatter");
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        let formatter = vm
+            .call_value(&program, function, Value::UNDEFINED, &[])
+            .unwrap();
+        let formatter_weak = vm.heap.weak_handle(formatter).unwrap();
+        let formatter_owner = vm.heap.root(formatter);
+        let atom = vm.intern_atom("make");
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        let segments = vm
+            .call_value(&program, function, Value::UNDEFINED, &[formatter])
+            .unwrap();
+        let segments_weak = vm.heap.weak_handle(segments).unwrap();
+        let segments_owner = vm.heap.root(segments);
+        let iterator = vm.get_iterator(&program, segments).unwrap();
+        let iterator_weak = vm.heap.weak_handle(iterator).unwrap();
+        let iterator_owner = vm.heap.root(iterator);
+        vm.heap.release_root(formatter_owner);
+        vm.heap.release_root(segments_owner);
+        vm.collect_now(&program);
+        assert!(
+            vm.heap.weak_value(formatter_weak).is_some(),
+            "{granularity}: cursor must own formatter"
+        );
+        assert!(
+            vm.heap.weak_value(segments_weak).is_none(),
+            "{granularity}: cursor must release public Segments wrapper"
+        );
+        let mut input_identity = None;
+        for &(text, index) in expected {
+            let roots = vm.heap.root_count_for_test();
+            let record = vm.iterator_step_value(&program, iterator).unwrap().unwrap();
+            assert_eq!(vm.heap.root_count_for_test(), roots);
             assert_eq!(vm.active_call_roots.len(), calls);
+            let weak = vm.heap.weak_handle(record).unwrap();
+            let owner = vm.heap.root(record);
+            vm.collect_now(&program);
+            let atom = vm.intern_atom("segment");
+            let value = vm.own_property(record, atom).unwrap();
+            assert_eq!(vm.to_string(&program, value).unwrap(), text);
+            let atom = vm.intern_atom("index");
+            assert_eq!(
+                vm.own_property(record, atom).unwrap(),
+                Value::number(index as f64)
+            );
+            let atom = vm.intern_atom("input");
+            let value = vm.own_property(record, atom).unwrap();
+            assert_eq!(vm.to_string(&program, value).unwrap(), input);
+            if let Some(previous) = input_identity {
+                assert_eq!(previous, value);
+            } else {
+                input_identity = Some(value);
+            }
+            vm.heap.release_root(owner);
+            vm.collect_now(&program);
+            assert!(
+                vm.heap.weak_value(weak).is_none(),
+                "derived record must not be retained by its source"
+            );
         }
+        assert!(
+            vm.iterator_step_value(&program, iterator)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            vm.iterator_step_value(&program, iterator)
+                .unwrap()
+                .is_none()
+        );
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(formatter_weak).is_some());
+        assert!(vm.heap.weak_value(segments_weak).is_none());
+        vm.heap.release_root(iterator_owner);
+        vm.collect_now(&program);
+        for weak in [formatter_weak, segments_weak, iterator_weak] {
+            assert!(vm.heap.weak_value(weak).is_none());
+        }
+        assert_eq!(vm.heap.root_count_for_test(), initial);
+        assert_eq!(vm.active_call_roots.len(), calls);
     }
 }
 
 #[test]
 fn number_format_legacy_views_release_after_bound_or_options_completion() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for kind in ["getter", "options"] {
-            let source = format!(
-                r#"
-            var base=Object.create(Intl.NumberFormat.prototype);Intl.NumberFormat.call(base);
-            var symbol=Object.getOwnPropertySymbols(base)[0];var last;
-            function fresh(){{var value=new Intl.NumberFormat('en',{{style:'percent'}});Object.defineProperty(value,symbol,{{get(){{throw 'read actual fallback';}}}});return value;}}
-            function wrapper(){{var object=Object.create(Intl.NumberFormat.prototype);Object.defineProperty(object,symbol,{{get(){{$262.gc();last=fresh();return last;}}}});return object;}}
-            function method(){{return '{kind}'==='getter'?Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype,'format').get:Intl.NumberFormat.prototype.resolvedOptions;}}
-            function input(){{return {{valueOf(){{$262.gc();return 1;}}}};}}
-            "#
-            );
-            let program = compile(&source, "number-format-legacy-views.js").unwrap();
-            let mut vm = Vm::new(TestHost::default().with_test262());
-            vm.execute(&program).unwrap();
-            let atom = vm.intern_atom("wrapper");
+    let compile = Engine::specialize;
+    for kind in ["getter", "options"] {
+        let source = format!(
+            r#"
+        var base=Object.create(Intl.NumberFormat.prototype);Intl.NumberFormat.call(base);
+        var symbol=Object.getOwnPropertySymbols(base)[0];var last;
+        function fresh(){{var value=new Intl.NumberFormat('en',{{style:'percent'}});Object.defineProperty(value,symbol,{{get(){{throw 'read actual fallback';}}}});return value;}}
+        function wrapper(){{var object=Object.create(Intl.NumberFormat.prototype);Object.defineProperty(object,symbol,{{get(){{$262.gc();last=fresh();return last;}}}});return object;}}
+        function method(){{return '{kind}'==='getter'?Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype,'format').get:Intl.NumberFormat.prototype.resolvedOptions;}}
+        function input(){{return {{valueOf(){{$262.gc();return 1;}}}};}}
+        "#
+        );
+        let program = compile(&source, "number-format-legacy-views.js").unwrap();
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("wrapper");
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        let wrapper = vm
+            .call_value(&program, function, Value::UNDEFINED, &[])
+            .unwrap();
+        let wrapper_owner = vm.heap.root(wrapper);
+        let atom = vm.intern_atom("method");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let method = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.call_value(&program, method, wrapper, &[]).unwrap();
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        let result_weak = vm.heap.weak_handle(result).unwrap();
+        let owner = vm.heap.root(result);
+        let atom = vm.intern_atom("last");
+        let formatter = vm.own_property(vm.realm.globals, atom).unwrap();
+        let weak = vm.heap.weak_handle(formatter).unwrap();
+        vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+            .unwrap();
+        vm.collect_now(&program);
+        assert_eq!(vm.heap.weak_value(weak).is_some(), kind == "getter");
+        if kind == "getter" {
+            let atom = vm.intern_atom("input");
             let function = vm.own_property(vm.realm.globals, atom).unwrap();
-            let wrapper = vm
+            let input = vm
                 .call_value(&program, function, Value::UNDEFINED, &[])
                 .unwrap();
-            let wrapper_owner = vm.heap.root(wrapper);
-            let atom = vm.intern_atom("method");
-            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
-            let method = vm
-                .call_value(&program, factory, Value::UNDEFINED, &[])
+            let output = vm
+                .call_value(&program, result, Value::UNDEFINED, &[input])
                 .unwrap();
-            let roots = vm.heap.root_count_for_test();
-            let calls = vm.active_call_roots.len();
-            let result = vm.call_value(&program, method, wrapper, &[]).unwrap();
-            assert_eq!(vm.heap.root_count_for_test(), roots);
-            assert_eq!(vm.active_call_roots.len(), calls);
-            let result_weak = vm.heap.weak_handle(result).unwrap();
-            let owner = vm.heap.root(result);
-            let atom = vm.intern_atom("last");
-            let formatter = vm.own_property(vm.realm.globals, atom).unwrap();
-            let weak = vm.heap.weak_handle(formatter).unwrap();
-            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
-                .unwrap();
-            vm.collect_now(&program);
-            assert_eq!(vm.heap.weak_value(weak).is_some(), kind == "getter");
-            if kind == "getter" {
-                let atom = vm.intern_atom("input");
-                let function = vm.own_property(vm.realm.globals, atom).unwrap();
-                let input = vm
-                    .call_value(&program, function, Value::UNDEFINED, &[])
-                    .unwrap();
-                let output = vm
-                    .call_value(&program, result, Value::UNDEFINED, &[input])
-                    .unwrap();
-                assert_eq!(vm.to_string(&program, output).unwrap(), "100%");
-            } else {
-                let atom = vm.intern_atom("style");
-                let value = vm.own_property(result, atom).unwrap();
-                assert_eq!(vm.to_string(&program, value).unwrap(), "percent");
-            }
-            vm.heap.release_root(owner);
-            vm.heap.release_root(wrapper_owner);
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(weak).is_none());
-            assert!(vm.heap.weak_value(result_weak).is_none());
-            assert_eq!(vm.active_call_roots.len(), calls);
-            assert_eq!(vm.heap.root_count_for_test(), roots - 1);
+            assert_eq!(vm.to_string(&program, output).unwrap(), "100%");
+        } else {
+            let atom = vm.intern_atom("style");
+            let value = vm.own_property(result, atom).unwrap();
+            assert_eq!(vm.to_string(&program, value).unwrap(), "percent");
         }
+        vm.heap.release_root(owner);
+        vm.heap.release_root(wrapper_owner);
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(weak).is_none());
+        assert!(vm.heap.weak_value(result_weak).is_none());
+        assert_eq!(vm.active_call_roots.len(), calls);
+        assert_eq!(vm.heap.root_count_for_test(), roots - 1);
     }
 }
 
 #[test]
 fn weak_ref_targets_are_kept_until_host_checkpoint() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        for dereference in [false, true] {
-            let mut vm = Vm::new(TestHost::default());
-            let program = compile("var weak = new WeakRef({});", "weak-ref-job.js").unwrap();
-            vm.execute(&program).unwrap();
-            let key = vm.intern_atom("weak");
-            let weak = vm.own_property(vm.realm.globals, key).unwrap();
-            let target = match vm.heap.get(weak) {
-                Some(super::Cell::WeakRef { target, .. }) => target.unwrap(),
-                _ => panic!("expected weak reference"),
-            };
-            if dereference {
-                vm.clear_kept_objects();
-                let value = vm
-                    .call_native_dispatch(&program, Native::WeakRefDeref, weak, &[])
-                    .unwrap();
-                assert!(!value.is_undefined());
-            }
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(target).is_some());
+    let compile = Engine::specialize;
+    for dereference in [false, true] {
+        let mut vm = Vm::new(TestHost::default());
+        let program = compile("var weak = new WeakRef({});", "weak-ref-job.js").unwrap();
+        vm.execute(&program).unwrap();
+        let key = vm.intern_atom("weak");
+        let weak = vm.own_property(vm.realm.globals, key).unwrap();
+        let target = match vm.heap.get(weak) {
+            Some(super::Cell::WeakRef { target, .. }) => target.unwrap(),
+            _ => panic!("expected weak reference"),
+        };
+        if dereference {
             vm.clear_kept_objects();
-            vm.collect_now(&program);
-            assert!(vm.heap.weak_value(target).is_none());
+            let value = vm
+                .call_native_dispatch(&program, Native::WeakRefDeref, weak, &[])
+                .unwrap();
+            assert!(!value.is_undefined());
         }
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(target).is_some());
+        vm.clear_kept_objects();
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(target).is_none());
     }
 }
 
 #[test]
 fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        let mut vm = Vm::new(TestHost::default());
-        let program = compile("0;", "host-bytes.js").unwrap();
-        vm.execute(&program).unwrap();
-        for bytes in [vec![], vec![0, 127, 128, 255]] {
-            let view = vm.embedding_uint8_array(&bytes).unwrap();
-            let root = vm.heap.root(view);
-            let prototype = match vm.heap.get(view) {
-                Some(super::Cell::TypedArray {
-                    object,
-                    buffer,
-                    ..
-                }) => {
-                    assert_eq!(object.native.kind(), TypedArrayKind::Uint8);
-                    assert!(matches!(
-                        vm.heap.get(*buffer),
-                        Some(super::Cell::ArrayBuffer {
-                            shared: false,
-                            detached: false,
-                            resizable: false,
-                            immutable: false,
-                            ..
-                        })
-                    ));
-                    object.proto()
-                }
-                _ => panic!("expected Uint8Array"),
-            };
-            assert_eq!(prototype, vm.typed_array_proto(TypedArrayKind::Uint8));
-            vm.collect_now(&program);
-            let view = vm.heap.root_value(root).unwrap();
-            assert_eq!(vm.embedding_view_bytes(view).unwrap(), bytes);
-            vm.heap.release_root(root);
-        }
+    let compile = Engine::specialize;
+    let mut vm = Vm::new(TestHost::default());
+    let program = compile("0;", "host-bytes.js").unwrap();
+    vm.execute(&program).unwrap();
+    for bytes in [vec![], vec![0, 127, 128, 255]] {
+        let view = vm.embedding_uint8_array(&bytes).unwrap();
+        let root = vm.heap.root(view);
+        let prototype = match vm.heap.get(view) {
+            Some(super::Cell::TypedArray {
+                object,
+                buffer,
+                ..
+            }) => {
+                assert_eq!(object.native.kind(), TypedArrayKind::Uint8);
+                assert!(matches!(
+                    vm.heap.get(*buffer),
+                    Some(super::Cell::ArrayBuffer {
+                        shared: false,
+                        detached: false,
+                        resizable: false,
+                        immutable: false,
+                        ..
+                    })
+                ));
+                object.proto()
+            }
+            _ => panic!("expected Uint8Array"),
+        };
+        assert_eq!(prototype, vm.typed_array_proto(TypedArrayKind::Uint8));
+        vm.collect_now(&program);
+        let view = vm.heap.root_value(root).unwrap();
+        assert_eq!(vm.embedding_view_bytes(view).unwrap(), bytes);
+        vm.heap.release_root(root);
     }
 }
 
 #[test]
 fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        let mut vm = Vm::new(TestHost::default());
-        let program = compile("0;", "host-weak.js").unwrap();
-        vm.execute(&program).unwrap();
-        let target = vm
-            .heap
-            .alloc_object(Vm::empty_object(
-                Value::NULL,
-            ));
-        let strong = vm.heap.root(target);
-        let weak = vm.embedding_host_weak_root(strong).unwrap();
-        vm.collect_now(&program);
-        assert_eq!(
-            vm.embedding_host_weak_value(weak),
-            Some(vm.heap.root_value(strong).unwrap())
-        );
-        vm.heap.release_root(strong);
-        vm.collect_now(&program);
-        assert!(vm.embedding_host_weak_value(weak).is_none());
-        let replacement = vm
-            .heap
-            .alloc_object(Vm::empty_object(
-                Value::NULL,
-            ));
-        assert!(vm.heap.is_live(replacement));
-        assert!(vm.embedding_host_weak_value(weak).is_none());
-        let other = Vm::new(TestHost::default());
-        assert!(other.embedding_host_weak_value(weak).is_none());
-        vm.heap.release_root(weak);
-    }
+    let compile = Engine::specialize;
+    let mut vm = Vm::new(TestHost::default());
+    let program = compile("0;", "host-weak.js").unwrap();
+    vm.execute(&program).unwrap();
+    let target = vm
+        .heap
+        .alloc_object(Vm::empty_object(
+            Value::NULL,
+        ));
+    let strong = vm.heap.root(target);
+    let weak = vm.embedding_host_weak_root(strong).unwrap();
+    vm.collect_now(&program);
+    assert_eq!(
+        vm.embedding_host_weak_value(weak),
+        Some(vm.heap.root_value(strong).unwrap())
+    );
+    vm.heap.release_root(strong);
+    vm.collect_now(&program);
+    assert!(vm.embedding_host_weak_value(weak).is_none());
+    let replacement = vm
+        .heap
+        .alloc_object(Vm::empty_object(
+            Value::NULL,
+        ));
+    assert!(vm.heap.is_live(replacement));
+    assert!(vm.embedding_host_weak_value(weak).is_none());
+    let other = Vm::new(TestHost::default());
+    assert!(other.embedding_host_weak_value(weak).is_none());
+    vm.heap.release_root(weak);
 }
 
 #[test]
@@ -12690,22 +12320,21 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
       catch (error) {{ print(error.name + ':' + error.message); }}
     "#
     );
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(&source, "string-repeat-limit.js").unwrap();
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            [
-                limit.to_string(),
-                "140000000".into(),
-                "0".into(),
-                "3".into(),
-                "RangeError:Invalid string length".into()
-            ]
-        );
-    }
+    let compile = Engine::specialize;
+    let program = compile(&source, "string-repeat-limit.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            limit.to_string(),
+            "140000000".into(),
+            "0".into(),
+            "3".into(),
+            "RangeError:Invalid string length".into()
+        ]
+    );
 }
 
 #[test]
@@ -12909,28 +12538,27 @@ for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigI
  print(Array.from(target,String).join());
 }
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let output=Rc::new(RefCell::new(Vec::new()));
-        let mut vm=Vm::new(TestHost::writing_to(output.clone()));
-        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
-        vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            [
-                "RangeError",
-                "Start offset -1.5 is outside the bounds of the buffer",
-                "offset",
-                "5",
-                "true",
-                "TypeError",
-                "Cannot mix BigInt and other types, use explicit conversions",
-                "0,0",
-                "TypeError",
-                "Cannot mix BigInt and other types, use explicit conversions",
-                "0,0",
-            ]
-        );
-    }
+    let compile = Engine::specialize;
+    let output=Rc::new(RefCell::new(Vec::new()));
+    let mut vm=Vm::new(TestHost::writing_to(output.clone()));
+    let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            "RangeError",
+            "Start offset -1.5 is outside the bounds of the buffer",
+            "offset",
+            "5",
+            "true",
+            "TypeError",
+            "Cannot mix BigInt and other types, use explicit conversions",
+            "0,0",
+            "TypeError",
+            "Cannot mix BigInt and other types, use explicit conversions",
+            "0,0",
+        ]
+    );
 }
 
 #[test]
@@ -12985,13 +12613,12 @@ fn private_field_initialization_does_not_follow_proxy_prototypes() {
       const result=new Stamp(object);
       print(JSON.stringify([result===object,Stamp.has(object),Stamp.read(object),events]));
     "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program=compile(source,"private-proxy-prototype.js").unwrap();
-        let output=Rc::new(RefCell::new(Vec::new()));
-        let mut vm=Vm::new(TestHost::writing_to(output.clone()));
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["[true,true,42,[]]"]);
-    }
+    let compile = Engine::specialize;
+    let program=compile(source,"private-proxy-prototype.js").unwrap();
+    let output=Rc::new(RefCell::new(Vec::new()));
+    let mut vm=Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["[true,true,42,[]]"]);
 }
 
 #[test]
@@ -17878,32 +17505,31 @@ function make(){return class extends Base {#x;constructor(object,value){super(ob
 globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
 new A(instance,first);new B(instance,second);
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "private-data-roots.js").unwrap();
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
-        let mut weak = Vec::new();
-        for name in ["first", "second"] {
-            let atom = vm.intern_atom(name);
-            let value = vm.own_property(vm.realm.globals, atom).unwrap();
-            let strong = vm.heap.root(value);
-            weak.push(vm.embedding_host_weak_root(strong).unwrap());
-            vm.heap.release_root(strong);
-            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
-                .unwrap();
-        }
-        vm.collect_now(&program);
-        for root in &weak {
-            assert!(vm.embedding_host_weak_value(*root).is_some());
-        }
-        let instance = vm.intern_atom("instance");
-        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED)
+    let compile = Engine::specialize;
+    let program = compile(source, "private-data-roots.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let mut weak = Vec::new();
+    for name in ["first", "second"] {
+        let atom = vm.intern_atom(name);
+        let value = vm.own_property(vm.realm.globals, atom).unwrap();
+        let strong = vm.heap.root(value);
+        weak.push(vm.embedding_host_weak_root(strong).unwrap());
+        vm.heap.release_root(strong);
+        vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
             .unwrap();
-        vm.collect_now(&program);
-        for root in weak {
-            assert!(vm.embedding_host_weak_value(root).is_none());
-            vm.heap.release_root(root);
-        }
+    }
+    vm.collect_now(&program);
+    for root in &weak {
+        assert!(vm.embedding_host_weak_value(*root).is_some());
+    }
+    let instance = vm.intern_atom("instance");
+    vm.set_property(vm.realm.globals, instance, Value::UNDEFINED)
+        .unwrap();
+    vm.collect_now(&program);
+    for root in weak {
+        assert!(vm.embedding_host_weak_value(root).is_none());
+        vm.heap.release_root(root);
     }
 }
 
@@ -17923,15 +17549,14 @@ if(new Inner().read()().join(',')!=='3,4')throw Error('outer private environment
 class Negative {#x;read(){return function(){for(const source of ['super.x','super()','return 1','#missing in {}']){let name;try{eval(source)}catch(error){name=error.name}if(name!=='SyntaxError')throw Error('accepted '+source)}}}}
 new Negative().read()();
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "private-lexical-bindings.js").unwrap();
-        Vm::new(TestHost::default()).execute(&program).unwrap();
-        let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
-        program.write_binary(&path).unwrap();
-        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
-        Vm::new(TestHost::default()).execute(&decoded).unwrap();
-        std::fs::remove_file(path).unwrap();
-    }
+    let compile = Engine::specialize;
+    let program = compile(source, "private-lexical-bindings.js").unwrap();
+    Vm::new(TestHost::default()).execute(&program).unwrap();
+    let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
+    program.write_binary(&path).unwrap();
+    let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+    Vm::new(TestHost::default()).execute(&decoded).unwrap();
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -17948,15 +17573,14 @@ if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
 new Stamp(Stamp.prototype);
 if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "private-brand-initialization.js").unwrap();
-        Vm::new(TestHost::default()).execute(&program).unwrap();
-        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
-        program.write_binary(&path).unwrap();
-        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
-        Vm::new(TestHost::default()).execute(&decoded).unwrap();
-        std::fs::remove_file(path).unwrap();
-    }
+    let compile = Engine::specialize;
+    let program = compile(source, "private-brand-initialization.js").unwrap();
+    Vm::new(TestHost::default()).execute(&program).unwrap();
+    let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
+    program.write_binary(&path).unwrap();
+    let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+    Vm::new(TestHost::default()).execute(&decoded).unwrap();
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -17983,15 +17607,14 @@ class Derived extends Base {
  static {if(typeof local!=='undefined')throw Error('static scopes merged')}
 }
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "static-block-context.js").unwrap();
-        Vm::new(TestHost::default()).execute(&program).unwrap();
-        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
-        program.write_binary(&path).unwrap();
-        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
-        Vm::new(TestHost::default()).execute(&decoded).unwrap();
-        std::fs::remove_file(path).unwrap();
-    }
+    let compile = Engine::specialize;
+    let program = compile(source, "static-block-context.js").unwrap();
+    Vm::new(TestHost::default()).execute(&program).unwrap();
+    let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
+    program.write_binary(&path).unwrap();
+    let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+    Vm::new(TestHost::default()).execute(&decoded).unwrap();
+    std::fs::remove_file(path).unwrap();
 }
 #[test]
 fn spread_of_a_branch_built_array_survives_collection() {
@@ -20513,10 +20136,9 @@ for (let i = 0; i < 2000; i++) kept.push({ i });
 const mapped = kept.map((o) => ({ o, pad: new Array(8).fill(o.i) }));
 if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values stored across collections');
 "#;
-    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let program = compile(source, "array-create-species.js").unwrap();
-        Vm::new(TestHost::default()).execute(&program).unwrap();
-    }
+    let compile = Engine::specialize;
+    let program = compile(source, "array-create-species.js").unwrap();
+    Vm::new(TestHost::default()).execute(&program).unwrap();
 }
 
 #[test]
@@ -20702,7 +20324,7 @@ result = [total, early].join(' ');
 
 #[test]
 fn global_declarations_survive_abrupt_script_evaluation() {
-    let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();
+    let program = Engine::specialize("", "initial-script.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();
     let error = vm.eval_script_source(&program, "throw 1; let laterBinding;", "later-script.js").unwrap_err();
@@ -23164,26 +22786,18 @@ var result = out.join(",");
 "#;
     // A callback recursing through `forEach` reaches the guest stack limit, which the worker
     // stack the native stack guard budgets for holds.
-    let run = move || for specialized in [false, true] {
-        let mut vm = Vm::new(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(source, "prepared-callbacks.js")
-        } else {
-            Engine::compile(crate::ExecutionRequest {
-                source,
-                name: "prepared-callbacks.js",
-                kind: crate::SourceKind::Script,
-            })
-        }
+    let run = move || {
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = Engine::specialize(source, "prepared-callbacks.js")
         .unwrap();
-        vm.execute(&program).unwrap();
-        let name = vm.intern_atom("result");
-        let value = vm.own_property(vm.realm.globals, name).unwrap();
-        assert_eq!(
-            vm.to_string(&program, value).unwrap(),
-            "object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500,object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500"
-        );
-    };
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(
+        vm.to_string(&program, value).unwrap(),
+        "object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500,object,true,3,true,object,true,3,true,object,true,3,true,true,3,true,3,true,3,10,11,12,number,number,number,object,object,object,10,true,21,true,32,true,n21,n22,n11,n22,n23,n12,n01,n22,n23,n12,n23,n24,n13,n02,t1,t2,stop2,m1,m2,m3,h0,h1,h2,g1,g2,g3,0.5.10.15.20.25.30.35.40.45,5.6.7,true,false,2,-1,2,1,12345,cmp,54321,12345,TypeError,2,4,6,p1,p2,p3,a1,a2,a3,RangeError,o1,o2,replaced,52,r321,1atruetrue,3ctruetrue,true,object,true,object,true,object,4498500"
+    );
+};
     crate::test_host::on_worker_stack(run);
 }
 
@@ -23836,26 +23450,18 @@ function run(round) {
 for (var round = 0; round < 3; round++) run(round);
 var result = out.join("|");
 "#;
-    let run = move || for specialized in [false, true] {
-        let mut vm = Vm::new(TestHost::default().with_test262());
-        let program = if specialized {
-            Engine::specialize(source, "lane-array-iterations.js")
-        } else {
-            Engine::compile(crate::ExecutionRequest {
-                source,
-                name: "lane-array-iterations.js",
-                kind: crate::SourceKind::Script,
-            })
-        }
+    let run = move || {
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    let program = Engine::specialize(source, "lane-array-iterations.js")
         .unwrap();
-        vm.execute(&program).unwrap();
-        let name = vm.intern_atom("result");
-        let value = vm.own_property(vm.realm.globals, name).unwrap();
-        assert_eq!(
-            vm.to_string(&program, value).unwrap(),
-            r#"4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|1|1|true|true|3|false|[1,2,"s",{"k":1},[1,[1]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|2|2|true|true|3|false|[2,3,"s",{"k":2},[2,[2]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|3|3|true|true|3|false|[3,4,"s",{"k":3},[3,[3]],null,null]"#
-        );
-    };
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(
+        vm.to_string(&program, value).unwrap(),
+        r#"4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|1|1|true|true|3|false|[1,2,"s",{"k":1},[1,[1]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|2|2|true|true|3|false|[2,3,"s",{"k":2},[2,[2]],null,null]|4:0:3:t:3,5:1:3:t:3,6:2:3:t:3,number,true|0,2,4,0,2,p,4|1,2,3,g1,g2,g30|TypeError:at3:3|plain|0.3.6.9.12.15.18.21.24.27.30.33.36.39|2.4.6|2.4.6.8|2.4|true|true|true|4|2|true|2.3.4|true|true|3|6|false|3|false|10..30|true|false|6|-1|6|0||1,2,e1,e2,l7,l6,f01,f1undefined,f23|10,20,-1,20,40,-2|49|a1|a2|103|true|o1|o2|replaced|60300|2000|667|2,4,6,object,object,t1,c2,t3,get,2.3.31|7|3|3|true|true|3|false|[3,4,"s",{"k":3},[3,[3]],null,null]"#
+    );
+};
     crate::test_host::on_worker_stack(run);
 }
 

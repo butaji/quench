@@ -275,7 +275,7 @@ mod tests {
         let bit = RegisterSet::bit;
         // A loop that reads a register before writing it: the live sets need a second sweep.
         let transfers = [(bit(0), bit(1)), (bit(1), bit(2)), (RegisterSet::default(), RegisterSet::default())];
-        let mut program = crate::Engine::specialize_unspecialized("", "wide-solve.js").unwrap();
+        let mut program = crate::Engine::specialize("", "wide-solve.js").unwrap();
         let function = &mut program.functions[0];
         function.code = vec![
             Instr::new(Op::Move, 1, 0, 0, 0),

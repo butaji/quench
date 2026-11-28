@@ -1254,29 +1254,23 @@ mod tests {
             "#),
         ];
         for (name, source) in cases {
-            for generic in [false, true] {
-                let program = if generic {
-                    crate::Engine::specialize_unspecialized(source, "local-field-copy.js")
-                } else {
-                    crate::Engine::specialize(source, "local-field-copy.js")
-                }.unwrap();
-                assert!(program.validate().is_ok(), "{:?}", program.field_sites);
-                let path = std::env::temp_dir().join(format!("quench-local-field-copy-{}-{name}-{generic}", std::process::id()));
-                program.write_binary(&path).unwrap();
-                let program = crate::ResidualProgram::read_binary(&path).unwrap();
-                std::fs::remove_file(path).unwrap();
-                for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                    let mut runtime = crate::Runtime::new(crate::SystemHost);
-                    runtime.set_execution_mode(mode);
-                    runtime.execute(&program).unwrap();
-                }
-                {
-                    let native = crate::NativeJsProgram::publish(program).unwrap();
-                    let mut runtime = crate::Runtime::new(crate::SystemHost);
-                    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-                    runtime.execute_native(&native).unwrap();
-                    assert_eq!(runtime.native_execution_rejections(), 0);
-                }
+            let program = crate::Engine::specialize(source, "local-field-copy.js").unwrap();
+            assert!(program.validate().is_ok(), "{:?}", program.field_sites);
+            let path = std::env::temp_dir().join(format!("quench-local-field-copy-{}-{name}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let program = crate::ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                let mut runtime = crate::Runtime::new(crate::SystemHost);
+                runtime.set_execution_mode(mode);
+                runtime.execute(&program).unwrap();
+            }
+            {
+                let native = crate::NativeJsProgram::publish(program).unwrap();
+                let mut runtime = crate::Runtime::new(crate::SystemHost);
+                runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+                runtime.execute_native(&native).unwrap();
+                assert_eq!(runtime.native_execution_rejections(), 0);
             }
         }
     }
@@ -1330,7 +1324,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn wide_control_flow_keeps_producer_moves_inside_their_basic_block() {
-        let mut program = Engine::specialize_unspecialized("", "wide-control-flow.js").unwrap();
+        let mut program = Engine::specialize("", "wide-control-flow.js").unwrap();
         let function = &mut program.functions[0];
         function.registers = 6;
         function.wide = vec![WideInstruction::new(Op::JumpTrue, 0, 0, 0, 3)];
@@ -1404,7 +1398,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
                 .map(|instruction| (instruction.op(), instruction.a(), instruction.imm()))
                 .collect::<Vec<_>>()
         };
-        let mut program = Engine::specialize_unspecialized("", "invert-branch.js").unwrap();
+        let mut program = Engine::specialize("", "invert-branch.js").unwrap();
         let function = &mut program.functions[0];
         let move_ = Instr::new(Op::Move, 1, 0, 0, 0);
         function.code = vec![
@@ -1446,7 +1440,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         registers: u16,
         storage: &[Register],
     ) -> Vec<(Op, Register)> {
-        let mut program = Engine::specialize_unspecialized("", "rewrite-coalesce.js").unwrap();
+        let mut program = Engine::specialize("", "rewrite-coalesce.js").unwrap();
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
@@ -1547,7 +1541,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             ),
             Instr::new(Op::Return, 3, 0, 0, 0),
         ];
-        let mut program = Engine::specialize_unspecialized("", "rewrite-return.js").unwrap();
+        let mut program = Engine::specialize("", "rewrite-return.js").unwrap();
         let function = &mut program.functions[0];
         function.code = code.clone();
         return_through_shared_returns(function);
@@ -1560,7 +1554,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
     }
 
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
-        let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
+        let mut program = Engine::specialize("", "rewrite-liveness.js").unwrap();
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;

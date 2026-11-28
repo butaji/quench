@@ -69,77 +69,67 @@ fn collect(
 }
 #[test]
 fn host_default_stack_policy_roots_callbacks_and_preserves_override_cache_and_throw() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        let host = StackHost::default();
-        let output = host.output.clone();
-        let mut runtime = Runtime::new(host);
-        let create = r#"
-            function capture() { return new Error('one'); }
-            globalThis.saved = capture();
-            globalThis.reason = {};
-            globalThis.bad = new Error('bad');
-            bad.fail = true; bad.reason = reason;
-        "#;
-        let read = r#"
-            const first = saved.stack;
-            print([first.sameGlobal, first.error === saved, first.message,
-                   first.caller, first === saved.stack, stackCalls].join(':'));
-            try { bad.stack; } catch (error) { print(error === reason); }
-            bad.fail = false;
-            print([bad.stack.error === bad, stackCalls].join(':'));
-            Error.prepareStackTrace = () => 42;
-            print([new Error().stack, stackCalls].join(':'));
-            Error.prepareStackTrace = false;
-            print([new Error('last').stack.message, stackCalls].join(':'));
-        "#;
-        let program = compile(&format!("{create}\ncollect();\n{read}"), "stack-policy.js").unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(
-            &*output.borrow(),
-            &[
-                "true:true:one:capture:true:1",
-                "true",
-                "true:3",
-                "42:3",
-                "last:4"
-            ]
-        );
-    }
+    let host = StackHost::default();
+    let output = host.output.clone();
+    let mut runtime = Runtime::new(host);
+    let create = r#"
+        function capture() { return new Error('one'); }
+        globalThis.saved = capture();
+        globalThis.reason = {};
+        globalThis.bad = new Error('bad');
+        bad.fail = true; bad.reason = reason;
+    "#;
+    let read = r#"
+        const first = saved.stack;
+        print([first.sameGlobal, first.error === saved, first.message,
+               first.caller, first === saved.stack, stackCalls].join(':'));
+        try { bad.stack; } catch (error) { print(error === reason); }
+        bad.fail = false;
+        print([bad.stack.error === bad, stackCalls].join(':'));
+        Error.prepareStackTrace = () => 42;
+        print([new Error().stack, stackCalls].join(':'));
+        Error.prepareStackTrace = false;
+        print([new Error('last').stack.message, stackCalls].join(':'));
+    "#;
+    let program = Engine::specialize(&format!("{create}\ncollect();\n{read}"), "stack-policy.js").unwrap();
+    runtime.execute(&program).unwrap();
+    assert_eq!(
+        &*output.borrow(),
+        &[
+            "true:true:one:capture:true:1",
+            "true",
+            "true:3",
+            "42:3",
+            "last:4"
+        ]
+    );
 }
 
 #[test]
 fn per_realm_host_stack_policy_is_rooted_and_keeps_shadow_hooks_isolated() {
-    for compile in [
-        Engine::specialize as fn(&str, &str) -> _,
-        Engine::specialize_unspecialized,
-    ] {
-        let host = StackHost::default();
-        let output = host.output.clone();
-        let mut runtime = Runtime::new(host);
-        let program = compile(r#"
-            let calls = 0;
-            Error.prepareStackTrace = () => { calls++; return 'principal'; };
-            const target = new Proxy(function Target() {}, {
-                get(target, key, receiver) {
-                    return key === 'prototype' ? {tag: 42} : Reflect.get(target, key, receiver);
-                }
-            });
-            print(Reflect.construct(ShadowRealm, [], target).tag);
-            const realm = new ShadowRealm();
-            collect();
-            const ordinary = realm.evaluate("function inner() { return new Error('inside').stack; } inner();");
-            print([ordinary, calls].join('|'));
-            const custom = realm.evaluate("Error.prepareStackTrace = () => 29; new Error().stack;");
-            print([custom, calls].join('|'));
-            print([new Error().stack, calls].join('|'));
-        "#, "shadow-stack-policy.js").unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(
-            &*output.borrow(),
-            &["42", "true:inside:inner|0", "29|0", "principal|1"]
-        );
-    }
+    let host = StackHost::default();
+    let output = host.output.clone();
+    let mut runtime = Runtime::new(host);
+    let program = Engine::specialize(r#"
+        let calls = 0;
+        Error.prepareStackTrace = () => { calls++; return 'principal'; };
+        const target = new Proxy(function Target() {}, {
+            get(target, key, receiver) {
+                return key === 'prototype' ? {tag: 42} : Reflect.get(target, key, receiver);
+            }
+        });
+        print(Reflect.construct(ShadowRealm, [], target).tag);
+        const realm = new ShadowRealm();
+        collect();
+        const ordinary = realm.evaluate("function inner() { return new Error('inside').stack; } inner();");
+        print([ordinary, calls].join('|'));
+        const custom = realm.evaluate("Error.prepareStackTrace = () => 29; new Error().stack;");
+        print([custom, calls].join('|'));
+        print([new Error().stack, calls].join('|'));
+    "#, "shadow-stack-policy.js").unwrap();
+    runtime.execute(&program).unwrap();
+    assert_eq!(
+        &*output.borrow(),
+        &["42", "true:inside:inner|0", "29|0", "principal|1"]
+    );
 }

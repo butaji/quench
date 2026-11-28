@@ -206,7 +206,7 @@ mod tests {
 
         #[test]
     fn instruction_sites_fold_operands_and_continuations_once() {
-        let program = crate::Engine::specialize_unspecialized(
+        let program = crate::Engine::specialize(
             "function f(x) { if (x) return 1; return x + 2; } f(3);",
             "sites.js",
         )
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn forward_jumps_are_computed_and_backward_jumps_keep_their_entry() {
-        let program = crate::Engine::specialize_unspecialized(
+        let program = crate::Engine::specialize(
             "let s = 0; for (let i = 0; i < 4; i++) { s += i ? 1 : 2; } s;",
             "jumps.js",
         )

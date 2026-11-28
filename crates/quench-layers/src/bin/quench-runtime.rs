@@ -71,7 +71,7 @@ fn run() -> Result<(), String> {
     let name = args.next().unwrap_or_else(|| "<eval>".into());
     let mut runtime = Runtime::new(SystemHost);
     let program = if generic {
-        Engine::specialize_unspecialized(&source, &name)
+        Engine::specialize(&source, &name)
     } else {
         Engine::specialize(&source, &name)
     }

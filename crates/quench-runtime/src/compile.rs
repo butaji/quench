@@ -22,7 +22,7 @@ pub struct HostScriptOptions {
 
 impl HostScriptOptions {
     /// Middle component of the host compile-cache/native-image key; source text
-    /// and the specialization mode remain separate components.
+    /// remains a separate component.
     pub fn cache_goal(self) -> String {
         let (line, column) = self.origin.unwrap_or_default();
         format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
@@ -858,9 +858,9 @@ impl Engine {
     /// replay. They do not establish runtime representation invariants.
     pub fn specialize_typescript(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         source_routes::enable();
-        Self::specialize_with_mode(
-            source, name, SpecializationMode::Enabled, &NoAtomPrefix,
-            SourceType::script().with_typescript(true), false, false, false,
+        Self::specialize_with_program_shape(
+            source, name, &NoAtomPrefix,
+            SourceType::script().with_typescript(true), false, false, false, ParsedProgramShape::Any,
         )
     }
 
@@ -898,15 +898,15 @@ impl Engine {
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         source_routes::enable();
-        Self::specialize_with_mode(
+        Self::specialize_with_program_shape(
             source,
             name,
-            SpecializationMode::Enabled,
             &NoAtomPrefix,
             SourceType::script(),
             false,
             false,
             false,
+            ParsedProgramShape::Any,
         )
     }
     /// Compile a host Script against the VM's atom prefix.
@@ -928,10 +928,9 @@ impl Engine {
         source_type: SourceType,
         provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode_and_private_names(
+        Self::specialize_with_private_names(
             source,
             name,
-            SpecializationMode::of(atom_prefix),
             atom_prefix,
             source_type,
             false,
@@ -942,22 +941,6 @@ impl Engine {
             shape,
             released,
             provided_text,
-        )
-    }
-    pub fn specialize_unspecialized(
-        source: &str,
-        name: &str,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        source_routes::enable();
-        Self::specialize_with_mode(
-            source,
-            name,
-            SpecializationMode::Disabled,
-            &NoAtomPrefix,
-            SourceType::script(),
-            false,
-            false,
-            false,
         )
     }
     pub(crate) fn specialize_eval_with_context(
@@ -1010,10 +993,9 @@ impl Engine {
             let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
             Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
         } else { None };
-        Self::specialize_with_mode_and_private_names(
+        Self::specialize_with_private_names(
             source,
             name,
-            SpecializationMode::of(atom_prefix),
             atom_prefix,
             source_type,
             false,
@@ -1027,13 +1009,6 @@ impl Engine {
         )
     }
 
-    pub fn specialize_module_unspecialized(
-        source: &str,
-        name: &str,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        source_routes::enable();
-        Self::specialize_module_with_mode(source, name, SpecializationMode::Disabled)
-    }
     /// Compile a module against an existing program's canonical atom prefix, specializing
     /// exactly when the VM it extends does, as a run-time script does.
     pub(crate) fn specialize_module_with_atom_prefix(
@@ -1043,10 +1018,9 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode_and_private_names(
+        Self::specialize_with_private_names(
             source,
             name,
-            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::mjs().with_typescript(typescript),
             true,
@@ -1066,7 +1040,9 @@ impl Engine {
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         source_routes::enable();
-        Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
+        Self::specialize_with_program_shape(
+            source, name, &NoAtomPrefix, SourceType::mjs(), true, false, false, ParsedProgramShape::Any,
+        )
     }
     /// Compile a Function-constructor program's source through the same OXC script pipeline
     /// used by ordinary source.
@@ -1083,7 +1059,6 @@ impl Engine {
         Self::specialize_with_program_shape(
             &source.text,
             name,
-            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -1092,48 +1067,9 @@ impl Engine {
             expected_shape,
         )
     }
-    fn specialize_module_with_mode(
-        source: &str,
-        name: &str,
-        mode: SpecializationMode,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(
-            source,
-            name,
-            mode,
-            &NoAtomPrefix,
-            SourceType::mjs(),
-            true,
-            false,
-            false,
-        )
-    }
-    fn specialize_with_mode(
-        source: &str,
-        name: &str,
-        mode: SpecializationMode,
-        atom_prefix: &dyn AtomPrefix,
-        source_type: SourceType,
-        module_goal: bool,
-        capture_script_completion: bool,
-        inherited_strict: bool,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_program_shape(
-            source,
-            name,
-            mode,
-            atom_prefix,
-            source_type,
-            module_goal,
-            capture_script_completion,
-            inherited_strict,
-            ParsedProgramShape::Any,
-        )
-    }
     fn specialize_with_program_shape(
         source: &str,
         name: &str,
-        mode: SpecializationMode,
         atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
@@ -1141,10 +1077,9 @@ impl Engine {
         inherited_strict: bool,
         expected_shape: ParsedProgramShape<'_>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode_and_private_names(
+        Self::specialize_with_private_names(
             source,
             name,
-            mode,
             atom_prefix,
             source_type,
             module_goal,
@@ -1160,10 +1095,9 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     /// Without the source routes (`source_routes`) nothing compiles: the callers refused it first
     /// (`Vm::require_source_compilation`).
-    fn specialize_with_mode_and_private_names(
+    fn specialize_with_private_names(
         source: &str,
         name: &str,
-        mode: SpecializationMode,
         atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
@@ -1176,7 +1110,7 @@ impl Engine {
         provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         match source_routes::routes() {
-            Some(routes) => (routes.specialize)(source, name, mode, atom_prefix, source_type, module_goal, capture_script_completion,
+            Some(routes) => (routes.specialize)(source, name, atom_prefix, source_type, module_goal, capture_script_completion,
                 inherited_strict, private_name_overrides, annex_b_forbidden_names, expected_shape, released, provided_text),
             None => Err(vec![Diagnostic::unsupported(name, "native guest code required: source compilation is unavailable")]),
         }
@@ -1185,7 +1119,6 @@ impl Engine {
     pub(crate) fn specialize_source(
         source: &str,
         name: &str,
-        mode: SpecializationMode,
         atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
@@ -1200,7 +1133,7 @@ impl Engine {
         // Without the front end (a static image's support) no source compiles: nothing links the parser.
         #[cfg(not(feature = "source"))]
         {
-            let _ = (source, mode, atom_prefix, source_type, module_goal, capture_script_completion, inherited_strict,
+            let _ = (source, atom_prefix, source_type, module_goal, capture_script_completion, inherited_strict,
                 private_name_overrides, annex_b_forbidden_names, expected_shape, released, provided_text);
             return Err(vec![Diagnostic::unsupported(name, "native guest code required: source compilation is unavailable")]);
         }
@@ -1209,7 +1142,6 @@ impl Engine {
             Self::specialize_parsing(
                 source,
                 name,
-                mode,
                 atom_prefix,
                 source_type,
                 module_goal,
@@ -1244,13 +1176,12 @@ impl Engine {
         }
     }
 
-    /// `specialize_with_mode_and_private_names`, with the function bodies parsed lazily when
+    /// `specialize_with_private_names`, with the function bodies parsed lazily when
     /// `lazy` (`lazy_bodies`).
     #[allow(clippy::too_many_arguments)]
     fn specialize_parsing(
         source: &str,
         name: &str,
-        mode: SpecializationMode,
         atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
@@ -1317,7 +1248,6 @@ impl Engine {
                 return Self::specialize_parsing(
                     source,
                     name,
-                    mode,
                     atom_prefix,
                     source_type,
                     module_goal,
@@ -1530,8 +1460,8 @@ impl Engine {
             None
         };
         let mut compiler = match expected_shape {
-            ParsedProgramShape::FirstCallChunk(window) => window.compiler(name, mode, atom_prefix, &mut parsed.program, private_name_ids, &mut private_name_labels, &mut prototype_unobservable),
-            _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
+            ParsedProgramShape::FirstCallChunk(window) => window.compiler(name, atom_prefix, &mut parsed.program, private_name_ids, &mut private_name_labels, &mut prototype_unobservable),
+            _ => Compiler::new(name, &normalized, atom_prefix, private_name_ids),
         };
         compiler.data_literal = data_literal;
         compiler.provided_text = provided_text;
@@ -1989,24 +1919,6 @@ fn is_immutable_binding_declaration(kind: VariableDeclarationKind) -> bool {
     )
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SpecializationMode {
-    Enabled,
-    Disabled,
-}
-
-impl SpecializationMode {
-    /// A program compiled at run time specializes exactly when the VM it extends does, so
-    /// eval, Function and host-script code keep the inline caches of the code that made it.
-    fn of(host: &dyn AtomPrefix) -> Self {
-        if host.specialized() {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
 /// A named property access, by which past its unique sites a program shares cache sites
 /// (`Compiler::name_shared_cache_site`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -2039,7 +1951,6 @@ struct Compiler<'a> {
     type_names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>,
     /// A TypeScript checker's parameter types for this text (`typescript::checked`).
     checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
-    mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
     capture_script_completion: bool,
@@ -2370,7 +2281,6 @@ pub(crate) struct LoweringTables<'t> {
     pub(crate) methods: &'t dyn liveness::MethodArguments,
     pub(crate) field_sites: &'t [FieldSite],
     pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
-    pub(crate) specialized: bool,
     pub(crate) undefined_constant: u32,
 }
 
@@ -2402,7 +2312,7 @@ pub(crate) fn lower_settled<'a>(
     atom_name: impl Fn(usize) -> Option<&'a str>,
     scratch: &mut CompileScratch,
 ) -> Option<Vec<liveness::RegisterSet>> {
-    let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
+    let LoweringTables { methods, field_sites, superinstructions, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
         let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         numeric::apply(function, live.as_deref());
@@ -2415,13 +2325,11 @@ pub(crate) fn lower_settled<'a>(
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
     frame_registers::promote(function, plain_slots.clone(), superinstructions, undefined_constant, &atom_name, &flow, scratch);
-    if specialized {
-        if coalescing_repays(function) {
-            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
-        }
-        object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
-        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
+    if coalescing_repays(function) {
+        rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
     }
+    object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
+    rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
     rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     let mut solved = None;
     if function
@@ -2585,7 +2493,6 @@ impl<'a> Compiler<'a> {
     fn new(
         source: &'a str,
         text: &'a str,
-        mode: SpecializationMode,
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
@@ -2597,7 +2504,6 @@ impl<'a> Compiler<'a> {
             declared_types: crate::bytecode::DeclaredTypes::default(),
             type_names: None,
             checked_parameters: typescript::checked_parameters(text),
-            mode,
             root_strict: false,
             module_goal: false,
             capture_script_completion: false,
@@ -3700,7 +3606,6 @@ impl<'a> Compiler<'a> {
                                 methods: self.method_arguments(),
                                 field_sites: self.field_sites.as_slice(),
                                 superinstructions: self.superinstructions.as_slice(),
-                                specialized: self.mode == SpecializationMode::Enabled,
                                 undefined_constant,
                             },
                             |atom| self.atoms.get(atom),
@@ -3737,7 +3642,7 @@ impl<'a> Compiler<'a> {
         declared_types.declared.shrink_to_fit();
         declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
-            specialized: self.mode == SpecializationMode::Enabled,
+            specialized: true,
             // Eval code is code compiled for an eval; a host script that only captures its
             // completion value keeps Script declaration semantics.
             kind: if self.module_goal {
@@ -3795,7 +3700,7 @@ impl<'a> Compiler<'a> {
                     module_goal: self.module_goal,
                     lazy_bodies: lazy_bodies::sorted(std::mem::take(&mut self.lazy_compiled)),
                     checked_bodies: lazy_bodies::sorted(std::mem::take(&mut self.checked_bodies)),
-                    specialized: self.mode == SpecializationMode::Enabled,
+                    specialized: true,
                     template_sites: self.template_sites,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_vec().into_boxed_slice(),
@@ -4689,19 +4594,17 @@ impl<'a> Compiler<'a> {
 
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {
-        if self.mode == SpecializationMode::Enabled {
-            let methods: &dyn liveness::MethodArguments = match self.replay_program {
-                Some(program) => program,
-                None => &self.method_sites,
-            };
-            rewrite::apply(
-                function,
-                methods,
-                &mut self.field_sites,
-                &mut self.superinstructions,
-                &mut self.scratch,
-            );
-        }
+        let methods: &dyn liveness::MethodArguments = match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        };
+        rewrite::apply(
+            function,
+            methods,
+            &mut self.field_sites,
+            &mut self.superinstructions,
+            &mut self.scratch,
+        );
     }
 
     /// The finishing passes of one function after every function's rewrites: its dispatch
@@ -4720,7 +4623,6 @@ impl<'a> Compiler<'a> {
                 methods,
                 field_sites: self.field_sites.as_slice(),
                 superinstructions: self.superinstructions.as_slice(),
-                specialized: self.mode == SpecializationMode::Enabled,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
@@ -4733,11 +4635,7 @@ impl<'a> Compiler<'a> {
     fn settle_dispatch(&self, function: &mut BcFunction) {
         rewrite::return_through_shared_returns(function);
         rewrite::express_strict_sets(function);
-        function.dispatch = if self.mode == SpecializationMode::Enabled {
-            Self::dispatch_class(&function.code, &function.wide)
-        } else {
-            DispatchClass::General
-        };
+        function.dispatch = Self::dispatch_class(&function.code, &function.wide);
     }
 
     /// `settle_dispatch` for a function whose lowering ends there, which therefore drops the

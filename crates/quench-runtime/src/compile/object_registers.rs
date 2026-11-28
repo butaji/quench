@@ -175,34 +175,26 @@ mod tests {
     use crate::bytecode::Op;
 
     fn check(source: &str, promoted: bool) {
-        for generic in [false, true] {
-            let program = if generic {
-                crate::Engine::specialize_unspecialized(source, "object-registers.js")
-            } else {
-                crate::Engine::specialize(source, "object-registers.js")
-            }.unwrap();
-            let id = program.functions.iter().position(|f| f.header().name
-                .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
-            let body = program.function(id);
-            if !generic {
-                assert_eq!(body.instructions().any(|i| matches!(i.op(), Op::MakeObject2 | Op::MakeObjectLiteral)), !promoted,
-                    "{}", program.disassemble());
-            }
-            program.validate().unwrap();
-            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                let mut runtime = crate::Runtime::new(crate::SystemHost);
-                runtime.set_execution_mode(mode);
-                runtime.execute(&program).unwrap();
-            }
-            {
-                let dynamic = (0..program.functions.len())
-                    .any(|id| program.function(id).has_dynamic_scope_access());
-                let native = crate::NativeJsProgram::publish(program).unwrap();
-                let mut runtime = crate::Runtime::new(crate::SystemHost);
-                runtime.set_execution_mode(if dynamic { crate::ExecutionMode::Compiled }
-                    else { crate::ExecutionMode::NativeOnly });
-                runtime.execute_native(&native).unwrap();
-            }
+        let program = crate::Engine::specialize(source, "object-registers.js").unwrap();
+        let id = program.functions.iter().position(|f| f.header().name
+            .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
+        let body = program.function(id);
+        assert_eq!(body.instructions().any(|i| matches!(i.op(), Op::MakeObject2 | Op::MakeObjectLiteral)), !promoted,
+            "{}", program.disassemble());
+        program.validate().unwrap();
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut runtime = crate::Runtime::new(crate::SystemHost);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+        }
+        {
+            let dynamic = (0..program.functions.len())
+                .any(|id| program.function(id).has_dynamic_scope_access());
+            let native = crate::NativeJsProgram::publish(program).unwrap();
+            let mut runtime = crate::Runtime::new(crate::SystemHost);
+            runtime.set_execution_mode(if dynamic { crate::ExecutionMode::Compiled }
+                else { crate::ExecutionMode::NativeOnly });
+            runtime.execute_native(&native).unwrap();
         }
     }
 

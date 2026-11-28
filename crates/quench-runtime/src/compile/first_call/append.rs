@@ -62,7 +62,7 @@ impl Engine {
             return None;
         }
         let declared = window.declared();
-        let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
+        let mut compiler = window.compiler(name, atom_prefix,&mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
         compiler.declared_types = declared;
         compiler.type_names = admitted.type_names.clone();
         compiler.prototype_unobservable = prototype_unobservable;
