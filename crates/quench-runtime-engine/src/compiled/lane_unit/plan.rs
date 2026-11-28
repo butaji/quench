@@ -123,7 +123,7 @@ pub(super) fn lowerable(code: &[WideInstruction]) -> bool {
 /// constant `undefined`), then a jump to `SELF_TAIL_HEADER`. None where the call is not a self tail call:
 /// a plain call of the function itself whose activation nothing observes past the call, in a body that
 /// reads neither `this` nor `arguments` and captures no environment.
-pub(super) fn self_tail(function_id: u32, function: &Function, plans: &dyn Fn(u32, u32) -> Option<CallPlan>,
+pub(super) fn self_tail(program: &quench_runtime::ResidualProgram, function_id: u32, function: &Function, plans: &dyn Fn(u32, u32) -> Option<CallPlan>,
     code: &[WideInstruction], pc: usize, temps: u32, undefined: u32) -> Option<Vec<WideInstruction>> {
     let instruction = *code.get(pc)?;
     let call = pc as u32;
@@ -138,8 +138,9 @@ pub(super) fn self_tail(function_id: u32, function: &Function, plans: &dyn Fn(u3
     }
     let plan = plans(function_id, call)?;
     let self_arm = matches!(&*plan.arms, [arm] if arm.class.is_none() && arm.function == function_id);
-    if !self_arm || !plan.registers_only || plan.addresses_locals || plan.legacy_reflection
-        || plan.admits_direct_eval || plan.forwards_arguments || plan.keeps_arguments {
+    let activation = function.call_plan(program);
+    if !self_arm || !activation.registers_only || activation.addresses_locals || activation.legacy_reflection
+        || activation.admits_direct_eval || activation.forwards_arguments || activation.keeps_arguments {
         return None;
     }
     if code.iter().any(|other| other.op().captures_environment() || other.op().reads_arguments()
