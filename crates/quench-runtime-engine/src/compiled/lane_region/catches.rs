@@ -92,7 +92,7 @@ impl Admission<'_> {
     /// runs: a loop region runs in the innermost frame or activation, which the helper settles
     /// (`dispatch_fast::handler_edge`), a window's included, and so does a body of any
     /// function but a registers-only one, whose calls may be native frames no activation names
-    /// (`general_frameless_admit`, `DirectCallee`); a window's body is its own activation.
+    /// (`general_frameless_admit`, `DirectArm`); a window's body is its own activation.
     fn settles_where_it_runs(&self) -> bool {
         self.region || !self.function.call_plan(self.program).registers_only
     }

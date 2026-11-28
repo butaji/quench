@@ -209,7 +209,7 @@ impl Vm {
         // is a direct call of its own body once one exists, as `function`'s self calls are.
         let others: Vec<u32> = graph.cycle_of(function).iter().copied().filter(|member| *member != function).collect();
         let stopped: std::cell::RefCell<Option<Unstarted>> = std::cell::RefCell::new(None);
-        let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
+        let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectArm]| {
             let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), entry));
             if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
             true
@@ -229,7 +229,7 @@ impl Vm {
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
         // The functions the lowering reads: its own, its inlined callees' and its direct callees'.
         let functions: Vec<u32> = std::iter::once(function).chain(unit.frames.iter().map(|frame| frame.target.function))
-            .chain(direct.iter().map(|callee| callee.target.function)).collect();
+            .chain(direct.iter().map(|callee| callee.body.target.function)).collect();
         let job = self.lowering_job(LoweringProgram::Detached(program.detached(&functions)), function, &unit, &fields,
             global_reads.clone(), direct_sites, captures, invalidation.address(), entry_at);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
@@ -298,7 +298,7 @@ impl Vm {
     /// What a pending body's compile came to.
     fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<dyn std::any::Any>) -> LaneBodyOutcome {
         let pending = crate::compiled::pending_lane(pending);
-        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
+        if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.body.method.as_ref().is_some_and(|method| !method.is_published())) {
             return LaneBodyOutcome::Stale;
         }
         let key = pending.key;

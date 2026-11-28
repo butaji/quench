@@ -183,7 +183,7 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::code_heap::views::ViewsOps1 as _;
     #[cfg(target_os = "linux")] pub use crate::compiled::code_heap::views::ViewsOps2 as _;
     #[cfg(target_vendor = "apple")] pub use crate::compiled::code_heap::views::ViewsOps3 as _;
-    pub use crate::compiled::direct_callee::DirectCalleeOps1 as _;
+    pub use crate::compiled::direct_callee::DirectArmOps1 as _;
     pub use crate::compiled::entry_cell::EntryCellOps1 as _;
     pub use crate::compiled::exit_protocol::ExitKindOps1 as _;
     pub use crate::compiled::exit_protocol::LaneExitOps2 as _;

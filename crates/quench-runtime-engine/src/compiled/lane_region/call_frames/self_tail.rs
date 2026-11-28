@@ -7,11 +7,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// ordinary body's (`CallPlan::tail_callee`) and names this body as its one function-bound arm (`own_body_miss`). It passes
     /// a register-held closure, no more arguments than the parameters, and its receiver is the body's `this` or `undefined`.
     /// Anything else keeps the call's own lowering, as does a call whose identity no closed world proves.
-    pub(crate) fn self_tail_callee(&self, pc: usize, record: u32, site: &Invocation) -> Option<(&'a DirectCallee, quench_runtime::compile::call_plan::Miss)> {
+    pub(crate) fn self_tail_callee(&self, pc: usize, record: u32, site: &Invocation) -> Option<(&'a DirectArm, quench_runtime::compile::call_plan::Miss)> {
         let function = self.program.function_get(self.function_id as usize)?;
         let [callee] = self.direct.get(&pc)?.as_slice() else { return None };
         // SAFETY: the body owns its callees for as long as its code runs (`Lowering::call`).
-        let callee: &'a DirectCallee = unsafe { &**callee };
+        let callee: &'a DirectArm = unsafe { &**callee };
         let miss = self.own_body_miss(record)?;
         let admitted = self.completion == Completion::Body
             && matches!(self.coverage, Coverage::Prefix | Coverage::Full)
@@ -20,9 +20,9 @@ impl<'a, 'f> Lowering<'a, 'f> {
             && matches!(site.receiver, quench_runtime::staged::forms::Receiver::Undefined
                 | quench_runtime::staged::forms::Receiver::This { path: None })
             && matches!(site.arguments, Arguments::Window { count, .. } if usize::from(count) <= self.params)
-            && callee.target.function == self.function_id
+            && callee.body.target.function == self.function_id
             && function.tail_site_permitted(record)
-            && self.program.function_get(callee.target.function as usize).is_some_and(|body| body.call_plan(self.program).tail_callee)
+            && self.program.function_get(callee.body.target.function as usize).is_some_and(|body| body.call_plan(self.program).tail_callee)
             && self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc)).is_none_or(Vec::is_empty);
         admitted.then_some((callee, miss))
     }
@@ -46,7 +46,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// the receiver are the body's own only where the entry's words say so, so the jump is taken only then; otherwise the
     /// guards leave at the call (`missed`), which makes the call.
     pub(crate) fn self_tail_call(&mut self, state: &mut State, pc: usize, missed: ir::Block, site: &Invocation,
-        callee: &DirectCallee, miss: quench_runtime::compile::call_plan::Miss) -> bool {
+        callee: &DirectArm, miss: quench_runtime::compile::call_plan::Miss) -> bool {
         let Arguments::Window { first, count } = site.arguments else {
             return false;
         };
@@ -58,7 +58,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         // The callee's captures are the entry's where the closed world proves the self call runs in the entry's environment
         // (`FunctionFacts::self_callee_env`): no compare of them.
         if !self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).self_callee_env()) {
-            let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, callee.capture_word());
+            let captures = self.reloc(RelocKind::CaptureWords, callee.body.target.function, callee.captures);
             let entry_captures = self.entry_words.1;
             let same_captures = self.raw_compare(Relation::Equal, entry_captures, captures);
             crate::compiled::emit_js_guard(&mut self.builder, same_captures, missed);

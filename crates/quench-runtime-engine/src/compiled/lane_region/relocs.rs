@@ -13,7 +13,7 @@ use quench_runtime::staged::machine::{Lane, MachineScalar};
 pub(crate) enum RelocKind {
     /// The entry cell of function `key`.
     EntryCell,
-    /// The `DirectCallee` descriptor of the call to function `key`.
+    /// The `DirectArm` descriptor of the call to function `key`.
     Descriptor,
     /// The dense capture words of function `key`.
     CaptureWords,

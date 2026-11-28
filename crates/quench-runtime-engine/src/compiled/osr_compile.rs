@@ -15,7 +15,7 @@ pub(crate) mod calls;
 pub(crate) use calls::CallCode;
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::vm::global_facts::GlobalTable;
-use super::DirectCallee;
+use super::DirectArm;
 use std::rc::Rc;
 
 pub(crate) use quench_runtime::vm::engine_types::OsrFacts;
@@ -41,7 +41,7 @@ pub(crate) struct PendingOsrRegion {
     /// from the plan the lowering took (`directs`) for a Cranelift one.
     pub calls: Option<CallCode>,
     /// Per plan the lowering may take, its direct callees, which its code names.
-    pub directs: Vec<Box<[DirectCallee]>>,
+    pub directs: Vec<Box<[DirectArm]>>,
     /// The caller's registers and invalidation word, which a Cranelift region's `CallCode` takes.
     pub call_frame: (u16, Invalidation),
     /// Per plan, where its lowering folded Stable facts: its unit, global reads and

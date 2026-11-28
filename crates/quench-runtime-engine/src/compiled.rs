@@ -257,7 +257,7 @@ pub(crate) use code_heap::CodeMemory;
 #[path = "compiled/direct_call.rs"]
 pub(crate) mod direct_call;
 pub(crate) mod direct_callee;
-pub(crate) use direct_callee::{frames_window, window_width, DirectCallee, DirectCandidates};
+pub(crate) use direct_callee::{frames_window, window_width, DirectArm, DirectBody, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 pub(crate) mod lane_storage;
 pub(crate) mod lane_body_run;
@@ -2622,9 +2622,6 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
-        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
-        // SAFETY: `lane_context` is the running lane's.
-        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -2676,8 +2673,6 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
-        // SAFETY: as above.
-        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome

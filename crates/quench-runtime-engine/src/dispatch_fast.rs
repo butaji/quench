@@ -535,7 +535,7 @@ impl LaneView {
         }
     }
 
-    /// The published closed body a direct caller pins (`compiled::DirectCallee::method`, `body`), which a
+    /// The published closed body a direct caller pins (`compiled::DirectBody::method`, `body`), which a
     /// caller of the function itself, or of one with none, leaves to the entry cell it calls through
     /// (the stub enters nothing).
     fn pinned_callee(&self, own: bool) -> (Option<std::rc::Rc<crate::compiled::PublishedLaneMethod>>, Option<std::rc::Rc<crate::compiled::LaneMethod>>) {
@@ -592,11 +592,11 @@ impl LaneView {
         self.entry.body.get() != 0
     }
 
-    /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
+    /// The address of its entry cell, which native callers name (`compiled::DirectBody::cell`).
     pub(crate) fn entry_cell(&self) -> usize { std::ptr::from_ref(&self.entry).addr() }
 
     /// The publication of the specialized body, which a direct caller holds
-    /// (`compiled::DirectCallee::method`).
+    /// (`compiled::DirectBody::method`).
     fn published_lane_body(&self) -> Option<std::rc::Rc<crate::compiled::PublishedLaneMethod>> {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier().tier_lane.get() } {
@@ -1238,7 +1238,7 @@ impl Admission {
     }
 
     /// Whether `self` was made in the lane's current generation and program, whatever the lane's
-    /// conditions and diagnostics: what a plan built now may rely on (`direct_callee_in_lane`).
+    /// conditions and diagnostics: what a plan built now may rely on (`direct_arm_in_lane`).
     /// Diagnostics only observe; `UNPROVEN` only gates the plain call, never a direct one (via the cell).
     #[inline(always)]
     fn current(self, lane: Admission) -> bool {
@@ -4204,7 +4204,7 @@ impl Vm {
         self.may_run_in_lane(id, code)
     }
 
-    /// The words a lane run's direct calls push onto (`compiled::DirectCallee`), bound together: the
+    /// The words a lane run's direct calls push onto (`compiled::DirectArm`), bound together: the
     /// per-entry words (`stack_entry_in_lane`) and the storage's addresses (`stack_storage_in_lane`).
     pub(crate) fn stack_words_in_lane(&mut self, frames: usize) -> LaneStackWords {
         let entry = self.stack_entry_in_lane(frames);
@@ -5648,7 +5648,7 @@ impl Vm {
     }
 }
 
-pub(crate) use crate::compiled::direct_callee::{direct_callee_in_lane, direct_callees_in_lane};
+pub(crate) use crate::compiled::direct_callee::{direct_arm_in_lane, direct_callees_in_lane};
 
 
 

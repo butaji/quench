@@ -91,7 +91,7 @@ pub(super) struct LanePrepared {
     pub(super) unit: lane_unit::Unit,
     pub(super) fields: Vec<Option<Vec<NativeFieldLoad>>>,
     pub(super) global_reads: quench_runtime::vm::global_facts::GlobalReads,
-    pub(super) direct: Box<[DirectCallee]>,
+    pub(super) direct: Box<[DirectArm]>,
     pub(super) direct_sites: lane_region::DirectSites,
     pub(super) closed: bool,
     pub(super) entry: Option<usize>,
@@ -104,7 +104,7 @@ pub(super) struct TakenFacts {
     pub(super) tables: FactTables,
     pub(super) global_reads: quench_runtime::vm::global_facts::GlobalReads,
     pub(super) frame_captures: Vec<(usize, usize)>,
-    /// Which direct callees had a summary to type their calls' results by (`DirectCallee::summary`), in `LanePlan::direct`'s order.
+    /// Which direct callees had a summary to type their calls' results by (`DirectArm::summary`), in `LanePlan::direct`'s order.
     pub(super) callee_summaries: Vec<bool>,
 }
 
@@ -142,7 +142,7 @@ pub(super) enum Unstarted {
 
 /// Whether a plan goes on to its lowering, from its unit, field proofs and direct callees
 /// alone; one that does not records why where the gate's owner reads it.
-pub(super) type PlanGate<'a> = dyn Fn(&Vm, &lane_unit::Unit, &dyn std::fmt::Debug, &[DirectCallee]) -> bool + 'a;
+pub(super) type PlanGate<'a> = dyn Fn(&Vm, &lane_unit::Unit, &dyn std::fmt::Debug, &[DirectArm]) -> bool + 'a;
 
 /// What the VM did for it.
 pub(crate) enum LaneBodyOutcome {

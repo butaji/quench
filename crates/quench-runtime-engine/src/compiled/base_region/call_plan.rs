@@ -54,7 +54,7 @@ use builtin::BuiltinCall;
 pub(crate) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
-use super::super::direct_callee::DirectCallee;
+use super::super::direct_callee::DirectArm;
 use super::super::{LaneHelper, LaneHelpers};
 use quench_runtime::bytecode::{ImmediateLayout, Register, WideInstruction};
 use quench_runtime::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
