@@ -450,6 +450,12 @@ impl Stage for Emit<'_, '_> {
                 Some(payload) => super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.class_base)),
                 None => panic!("an operation addressing the class space has its dispatch payload"),
             },
+            // The spill arena's base (departure-free S2c) moves when the arena grows; the dispatch head holds it,
+            // refreshed with the other object bases.
+            Table::SpillBase => match self.payload {
+                Some(payload) => super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.spill_base)),
+                None => panic!("an operation addressing a spill run has its dispatch payload"),
+            },
             // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a Cranelift row stores through the VM"),
         }
