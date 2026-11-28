@@ -225,6 +225,15 @@ impl Vm {
         Some((shape, u32::try_from(slot).ok()?))
     }
 
+    /// Makes the active realm's global object's table of value cells, where the realm is set up (made, entered or read
+    /// back): `global_slot`'s load-time choice then depends on the name's fact alone, never on whether a compiled body
+    /// asked first (`stable_global_slot`). Idempotent.
+    pub(crate) fn make_global_values_table(&mut self) {
+        let globals = self.realm.globals;
+        self.heap.ensure_cell_extras(globals);
+        if let Some(mut object) = self.heap.object_mut(globals) { object.global_values_table(); }
+    }
+
     /// The global object's own data property `atom` as a slot a lane body holds, for its `store` or its `typeof`; `None`
     /// where a lexical binding may shadow the name, the property is no (writable) data property, or a store would be
     /// seen by code that holds the cell's value or by an inheritor of the global object (`GlobalSlot`).
