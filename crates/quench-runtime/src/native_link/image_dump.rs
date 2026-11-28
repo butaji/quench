@@ -193,6 +193,18 @@ impl Dump {
         self.runs.iter().map(|run| run.1.len()).sum()
     }
 
+    /// The bytes of the runs a start maps from the image (the dump arena's, `from_file`), which stay lazy and file-backed.
+    pub fn arena_bytes(&self) -> usize {
+        self.runs.iter().filter(|run| run.2).map(|run| run.1.len()).sum()
+    }
+
+    /// The bytes of the runs a start copies into anonymous reservations, plus the statics and TLS patches: the start's
+    /// copy work (C5 D4's cost model, `c5-d4-heap-as-linker-data.md` A3).
+    pub fn copied_bytes(&self) -> usize {
+        let runs: usize = self.runs.iter().filter(|run| !run.2).map(|run| run.1.len()).sum();
+        runs + self.statics.iter().chain(&self.tls).map(|patch| patch.1.len()).sum::<usize>()
+    }
+
     /// Reads `encode`'s bytes back.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let header = Header::parse(bytes)?;
@@ -603,6 +615,11 @@ pub fn append(path: &std::path::Path, dumps: &[Dump]) -> Result<(), String> {
 /// The root the dump of state `wait` holds, mapped from the dump this image carries; none
 /// where it carries none, or any of its addresses is taken, which leaves the process as it was.
 pub fn adopt(wait: usize) -> Option<*mut u8> {
+    // The dump's TLS patch is the fixed-stack worker's (`write` refuses any other thread); a start that fell back to an
+    // ordinary thread (`run_on_fixed_stack`) builds its state instead of copying TLS to the wrong place.
+    if !(quench_alloc::FIXED_STACK_BASE as u64..ARENA_BASE).contains(&thread_pointer()) {
+        return None;
+    }
     let image = File::open("/proc/self/exe").ok()?;
     let length = image.metadata().ok()?.len();
     let mut tail = [0u8; 16];

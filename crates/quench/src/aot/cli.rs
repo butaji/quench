@@ -320,7 +320,7 @@ fn compile(options: Options) -> Result<(), String> {
         let reach = super::core_rest::probe(&native_entry, tables)?;
         report["core_probe"] = match &reach {
             super::core_rest::Reach::Folds => json!({"status": "folds"}),
-            super::core_rest::Reach::Captured(_) => json!({"status": "captured", "save_point": "input_chain"}),
+            super::core_rest::Reach::Captured => json!({"status": "captured", "save_point": "input_chain"}),
             super::core_rest::Reach::Unfinished(diagnostic) => json!({"status": "unfinished", "diagnostic": diagnostic, "save_point": "realm_and_program"}),
         };
         if matches!(reach, super::core_rest::Reach::Folds) {

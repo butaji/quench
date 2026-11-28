@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
 /// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
 /// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
-pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
+pub(crate) type DirectSites = BTreeMap<usize, Vec<*const DirectArm>>;
 use quench_runtime::dataflow::BitSet;
 pub(crate) use quench_runtime::bytecode::instruction_leaders as leaders;
 use cranelift_codegen::entity::EntityRef;

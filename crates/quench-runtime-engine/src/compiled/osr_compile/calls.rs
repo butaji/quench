@@ -56,11 +56,11 @@ impl CallCode {
 
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
-    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<crate::compiled::OwnedCallRecord>), caller_registers: u16, invalidation: Invalidation) -> Self {
+    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectArm]>, Vec<crate::compiled::OwnedCallRecord>), caller_registers: u16, invalidation: Invalidation) -> Self {
         // The windows start past the function's environment window (`base_region::function::inline_base`):
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
-        Self { inlined, direct, records, rebound: Default::default(), held: Box::default(), caller_registers, recovery, invalidation }
+        Self { inlined, direct, records, caller_registers, recovery, invalidation }
     }
 
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a

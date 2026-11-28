@@ -184,7 +184,7 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_in_place
 fn quench_engine_fn_retire_running_lane_context() -> () { crate::dispatch_fast::retire_running_lane_context() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_retire_running_lane_context = quench_engine_fn_retire_running_lane_context;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
+fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_names_dead_callee = quench_engine_fn_names_dead_callee;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_lane_miss_report(events: &quench_runtime::vm::tier_events::TierEvents) -> String { crate::dispatch_fast::lane_body_stats::miss_report(events) }

@@ -87,7 +87,7 @@ pub struct LaneStack {
     pub body_top: Box<std::cell::Cell<usize>>,
     /// The running body (`LaneMethod`) of each native header, by its total frame index (`body_table`).
     pub body_table: ZeroedWords,
-    /// The descriptor (`DirectCallee`) of each native header, by its total frame index (`native_table`).
+    /// The descriptor (`DirectBody`) of each native header, by its total frame index (`native_table`).
     pub native_table: ZeroedWords,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
@@ -659,7 +659,7 @@ pub struct EntryCell {
     /// and the body it belongs to is the one the call pinned (`proven_body`). Zero where the body has none or retired.
     pub proven_entry: std::cell::Cell<usize>,
     /// The address of the body `proven_entry` belongs to (`Rc::as_ptr`), so a call takes it only for the body whose
-    /// parameter types its caller proved (`DirectCallee::body`).
+    /// parameter types its caller proved (`DirectBody::body`).
     pub proven_body: std::cell::Cell<usize>,
     /// The address of the entry stub the engine built for unpublished cells (a body-convention function that enters
     /// nothing): `entry` takes it wherever no body is published, and `unpublish` restores it. Stored once per cell at
@@ -924,7 +924,7 @@ pub struct LaneMethod {
     /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
     pub frame_reach: usize,
     /// The callees it calls by their compiled entries, which its code names.
-    pub direct: Box<[DirectCallee]>,
+    pub direct: Box<[DirectArm]>,
     /// Whether its code calls callees by their entries through an AOT image's call records
     /// (`DirectSite::Proven`, `AotImage::calls`), which name no `direct` callee: its runs bind the
     /// shadow frames those calls push, as a body with `direct` callees does (`Vm::stack_words_in_lane`).
@@ -943,7 +943,7 @@ pub struct LaneMethod {
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub realm_bound: bool,
     /// A marker that its lowering made a summary, where it is a whole function's body: a direct caller's plan
-    /// reads the callee's result from the solve (`TypeSummary`, `DirectCallee::summary`).
+    /// reads the callee's result from the solve (`TypeSummary`, `DirectArm::summary`).
     /// Read through `summary()`, which a withdrawal ends.
     pub summary: Option<TypeSummary>,
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
@@ -1341,16 +1341,14 @@ pub struct Case {
     pub record: u32,
 }
 
-/// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
-/// target the lane would activate, fixed by the callee's identity, which the call guards,
-/// and its specialized body. The caller's body owns it.
+/// The body a lane body's direct call enters (`lane_region`'s direct call): what the closed world fixes per body
+/// (`FunctionFacts::call_targets`), never a closure. A native header names it (`native_table`); the closure the call
+/// entered is the header's callee word (`staged::frame::CONTEXT_CALLEE`), which the call wrote from its callee register.
+/// The caller's code owns it.
 #[derive(Clone)]
-pub struct DirectCallee {
+pub struct DirectBody {
     /// What the callee's body fixes about the call.
     pub target: FunctionTarget,
-    /// The closure the descriptor was made for (its identity, environment and captures), which the
-    /// call guards; another closure of the function rebinds the call's run-time words (`bound`).
-    pub closure: ClosureOperands,
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
@@ -1362,43 +1360,20 @@ pub struct DirectCallee {
     pub call: usize,
     /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
     pub caller_base: usize,
+    /// The callee function's entry cell (`target.view`'s).
     pub cell: usize,
-    pub registers: u16,
-    /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
-    /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
-    /// takes any receiver as it is.
-    pub sloppy: Option<Value>,
-    /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
-    pub capture_values: *const Value,
-    pub capture_len: usize,
-    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
-    pub capture_stores: bool,
-    /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
-    pub bound: BoundClosure,
 }
 
-/// A direct call's closure and capture word (`DirectCallee::bound`): its own `callee` and captures, until the site's
-/// helper call resolves another closure of the same function and rebinds them (`direct_callee::rebind_closure`), so a
-/// closure made per call of the caller misses once, not per call. `read` says the code reads them (a Cranelift call
-/// guarded by them, `call_frames::EmitFrame::rebinds`). A collection unbinds a dead closure (`unbind_dead`): the words
-/// then name none, never a reused locator, and the next call misses once and rebinds.
-#[derive(Clone, Default, Debug)]
-#[repr(C)]
-pub struct BoundClosure {
-    pub callee: std::cell::Cell<u64>,
-    pub captures: std::cell::Cell<u64>,
-    pub read: std::cell::Cell<bool>,
-}
-
-impl BoundClosure {
-    pub fn new(callee: u64, captures: u64) -> Self {
-        Self { callee: std::cell::Cell::new(callee), captures: std::cell::Cell::new(captures), read: std::cell::Cell::new(false) }
-    }
-
-    /// Unbinds the closure if `live` says it died (`Value::DELETED` names no closure).
-    pub fn unbind_dead(&self, live: &impl Fn(Value) -> bool) {
-        if self.callee.get() != Value::DELETED.to_bits() && !live(Value::from_bits(self.callee.get())) { self.callee.set(Value::DELETED.to_bits()); }
-    }
+/// One arm of a direct call: the body it enters, and the closure of that body the arm calls, the one its creation edge
+/// bound (`ProgramStore::closure_cell` of an `Identity::Closure` body, or the closure a class header bound to a closed-set
+/// arm). That closure is its body's only one, so the arm's one compare of the callee register with it is the body's test;
+/// the call folds its operands (environment, captures pointer, an arrow's lexical `this` or a sloppy body's global) and
+/// its dense capture word (`entry_cell::capture_word`).
+#[derive(Clone)]
+pub struct DirectArm {
+    pub body: DirectBody,
+    pub closure: ClosureOperands,
+    pub captures: u64,
 }
 
 pub use super::fact_edge::ExitFact;
@@ -1881,15 +1856,8 @@ pub struct ResumeTable {
 #[derive(Default)]
 pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
-    pub direct: Box<[DirectCallee]>,
+    pub direct: Box<[DirectArm]>,
     pub records: Vec<OwnedCallRecord>,
-    /// The callees its records were rebound to after their planned closure's guard missed
-    /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
-    /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
-    pub rebound: std::cell::RefCell<Vec<Box<DirectCallee>>>,
-    /// The callee identities its entry checks once (`Held::Captured`): code that names one by a constant, so its
-    /// death retires the code. Any other callee a record names is guarded at each call (`names_dead`).
-    pub held: Box<[u64]>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     pub caller_registers: u16,
     pub recovery: LaneRecoverySpace,
@@ -2540,7 +2508,7 @@ pub struct BaseImage {
 /// binding made (`CallRecord::callee_record` names one; a closed-set class's vector names one too).
 pub struct Held {
     pub callees: RefCell<FoldedRoots>,
-    pub descriptors: Box<[RefCell<Vec<Box<DirectCallee>>>]>,
+    pub descriptors: Box<[RefCell<Vec<Box<DirectArm>>>]>,
     pub records: RefCell<Vec<Box<UnsafeCell<CalleeRecord>>>>,
 }
 
@@ -2644,7 +2612,7 @@ pub struct Activation {
     /// descriptor, receiver, body and window, which emitted code writes for a direct call's frame
     /// (`ActivationKind::Native`) and which stays through its link (`NativeFrames`); only
     /// `window` for an activation the lane made. The callee is null for a frame the lane made.
-    pub callee: *const DirectCallee,
+    pub callee: *const DirectBody,
     pub this: u64,
     pub body: usize,
     /// The address of its window of registers.
@@ -3161,9 +3129,6 @@ pub struct LaneContext {
     /// (`region_payload_in_lane`): the heap bases a call it makes may move are reloaded there too
     /// (`region_call_in_lane`).
     pub region_payload: usize,
-    /// The `CallCode` of the native loop region running on this activation, zero for none: a call its
-    /// direct row missed rebinds the row's record there (`rebind_region_call`).
-    pub region_calls: usize,
 }
 
 /// The activation of a native's callback for calls passing `argc` values (`push_callback_in_lane`),
@@ -3787,33 +3752,11 @@ impl CallCode {
         self.records.shrink_to_fit();
     }
 
-    /// Whether the code names a callee `live` says died.
+    /// Whether the code names a callee `live` says died: an inlined callee, or an arm's closure, which its code names by
+    /// constants (a guard, a header's callee word, a record's words), or an arm's body that retired.
     #[inline]
     pub fn names_dead(&self, live: impl Fn(Value) -> bool) -> bool {
-        if names_dead_callee(&self.inlined, &[], &live) || self.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
-            return true;
-        }
-        // A dead callee a record's guard compares at each call only unbinds that record: its row misses from then on
-        // (`Value::DELETED` names no closure) and the helper rebinds it to the next closure it calls
-        // (`dispatch_fast::rebind_region_call`). One an entry check holds by a constant retires the code.
-        let unbind = |word: u64| for (_, callee) in self.records.iter().filter(|(_, callee)| callee.callee == word) {
-            // SAFETY: the records are read in place by the code on this thread, which no collection runs inside.
-            unsafe { (*std::ptr::from_ref(&**callee).cast_mut()).callee = Value::DELETED.to_bits() };
-        };
-        // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
-        // words), as is one an entry check holds: its death retires the code.
-        // One whose code reads its closure from its bound words (`BoundClosure::read`) was unbound instead (`unbind_dead`).
-        let constant = self.direct.iter().filter(|callee| !live(callee.closure.callee)).any(|callee| {
-            let word = callee.closure.callee.to_bits();
-            if self.held.contains(&word) { return true; }
-            if callee.bound.read.get() { return false; }
-            if !self.records.iter().any(|(record, _)| record.call == callee.call as u64) { return true; }
-            unbind(word);
-            false
-        });
-        if constant { return true; }
-        self.rebound.borrow().iter().filter(|callee| !live(callee.closure.callee)).for_each(|callee| unbind(callee.closure.callee.to_bits()));
-        false
+        names_dead_callee(&self.inlined, &self.direct, &live)
     }
 }
 
@@ -4691,7 +4634,7 @@ impl ScriptTargets {
 #[derive(Clone, Copy)]
 pub struct ActivationView {
     /// Its frame prefix: a record's own, a header's with no callee or body but its window.
-    pub callee: *const DirectCallee,
+    pub callee: *const DirectBody,
     pub this: u64,
     pub body: usize,
     pub window: usize,
@@ -5478,7 +5421,7 @@ impl LaneStack {
         let (forwards, kept, environment, record) =
             side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
         let (callee_at, body) = match side {
-            Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const DirectCallee, self.body_table[side.native]),
+            Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const DirectBody, self.body_table[side.native]),
             _ => (std::ptr::null(), 0),
         };
         ActivationView {
@@ -5602,7 +5545,7 @@ impl CallbackTrampoline {
 
 impl LaneMethod {
 
-    /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
+    /// The address of its compiled entry, which a direct caller calls (`DirectBody`).
     #[inline]
     pub fn entry_address(&self) -> usize {
         self.entry as usize

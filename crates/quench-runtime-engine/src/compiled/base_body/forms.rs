@@ -2,7 +2,7 @@
 //! that holds it runs as the interpreter does, with the interpreter's step behind a fast arm.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::tests::{run_after, run_both, run_in};
+use super::tests::{run_after, run_both};
 use quench_runtime::bytecode::Op as Opcode;
 use crate::compiled::base_region::fast_rows;
 use crate::test_oracle::{assert_tier_agrees, Expect, Tier};

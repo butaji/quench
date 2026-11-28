@@ -10,15 +10,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// The arguments window of the sibling tail call at `pc` (`CallSite::tail`): a returning call of a body the running
     /// body owns (`callee`), whose plan is an ordinary body's (`CallPlan::tail_callee`), which the caller's site permits
     /// (`Function::tail_site_permitted`), passed no more arguments than the callee's parameters from a register window.
-    pub(crate) fn sibling_tail_arguments(&self, pc: usize, record: u32, site: &Invocation, callee: &DirectCallee) -> Option<(Register, u16)> {
+    pub(crate) fn sibling_tail_arguments(&self, pc: usize, record: u32, site: &Invocation, callee: &DirectArm) -> Option<(Register, u16)> {
         let Arguments::Window { first, count } = site.arguments else { return None };
         let function = self.program.function_get(self.function_id as usize)?;
-        let body = self.program.function_get(callee.target.function as usize)?;
+        let body = self.program.function_get(callee.body.target.function as usize)?;
         let admitted = self.completion == Completion::Body
             && matches!(self.coverage, Coverage::Prefix | Coverage::Full)
             && site.returns && !site.constructs() && !site.forwards
             && matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_))
-            && callee.method.is_some()
+            && callee.body.method.is_some()
             && usize::from(count) <= usize::from(body.params)
             && function.tail_site_permitted(record)
             && body.call_plan(self.program).tail_callee
@@ -31,7 +31,7 @@ impl EmitFrame<'_> {
     /// Branches a sibling tail call to `tail_jump` where the callee's entry is a body (not the stub, which enters nothing
     /// and would restart the call) and the running frame's header is native (not one Rust observed, which `pop_native`
     /// reads as the cold path); the block continues where the call pushes its own frame.
-    pub(super) fn tail_branch(&self, stage: &mut Emit<'_, '_>, owned: &DirectCallee, this: ir::Value, room: Room<ir::Value>, captures: ir::Value,
+    pub(super) fn tail_branch(&self, stage: &mut Emit<'_, '_>, owned: &DirectArm, this: ir::Value, room: Room<ir::Value>, captures: ir::Value,
         entry: quench_runtime::staged::machine::CallTarget<ir::Value>, arguments: (Register, u16)) -> Option<()> {
         let call = self.call_site()?;
         let stub = stage.constant(crate::compiled::lane_body_abi::entry_stub() as u64);
@@ -55,7 +55,7 @@ impl EmitFrame<'_> {
     /// body and descriptor take the callee's; its call record, caller registers and caller base stay. The window is the
     /// callee's, so the values' top is the window's end for the callee's registers, and the parameters take the arguments
     /// (the ones the call does not pass are undefined). The callee's entry takes the body convention, as the shim calls it.
-    fn tail_jump(&self, stage: &mut Emit<'_, '_>, owned: &DirectCallee, this: ir::Value, room: Room<ir::Value>, captures: ir::Value,
+    fn tail_jump(&self, stage: &mut Emit<'_, '_>, owned: &DirectArm, this: ir::Value, room: Room<ir::Value>, captures: ir::Value,
         entry: quench_runtime::staged::machine::CallTarget<ir::Value>, (first, count): (Register, u16)) -> Option<()> {
         use quench_runtime::staged::frame::{CONTEXT_CALLEE, CONTEXT_PACKED, CONTEXT_THIS};
         let call = self.call_site()?;
@@ -79,10 +79,10 @@ impl EmitFrame<'_> {
         stage.store_u64(frame, descriptor_at, 0, descriptor);
         let word = std::mem::size_of::<Value>() as u64;
         let context = quench_runtime::vm::register_file::FRAME_CONTEXT as u64;
-        let next = stage.add_imm(call.registers, (u64::from(owned.registers) + context) * word);
+        let next = stage.add_imm(call.registers, (u64::from(owned.body.target.registers) + context) * word);
         self.set_values_top(stage, next);
         let undefined = stage.constant(Value::UNDEFINED.to_bits());
-        for index in 0..usize::from(owned.target.params) {
+        for index in 0..usize::from(owned.body.target.params) {
             let value = arguments.get(index).copied().unwrap_or(undefined);
             stage.store_u64(FRAME, call.registers, register_offset(index as Register), value);
         }

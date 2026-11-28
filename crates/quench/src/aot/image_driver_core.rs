@@ -56,7 +56,9 @@ fn fresh_state() -> Result<Box<Rest>, String> {
 fn start_state() -> Result<Box<Rest>, String> {
     if let Some(root) = image_dump::adopt(0) {
         // SAFETY: the dump's root is the `Rest` its build leaked, mapped back at its address.
-        return Ok(unsafe { Box::from_raw(root.cast::<Rest>()) });
+        let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };
+        rest.runtime.note_adopted();
+        return Ok(rest);
     }
     fresh_state()
 }

@@ -31,7 +31,6 @@ use super::prefix::{self, Residual};
 use quench_layers::engine::ExecutionTableSpec;
 use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED, DUMP_ARGUMENT};
 use quench_runtime::tier_surface::Native;
-use quench_runtime::vm::activation::FrameRecord;
 use quench_runtime::{BuiltinFamilies, BuiltinTable, ExecutionTable, ReachableRealm, ResidualProgram, Runtime};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -40,7 +39,7 @@ use std::process::Command;
 
 /// The closed world of a core image, as values: the same tables its catalog names.
 #[derive(Clone, Copy)]
-pub(super) struct ClosedTables {
+pub struct ClosedTables {
     pub(super) builtins: &'static BuiltinTable,
     pub(super) execution: &'static ExecutionTable,
 }
@@ -49,8 +48,8 @@ pub(super) struct ClosedTables {
 pub(super) enum Reach {
     /// The entry ends with no input and nothing pending: its image replays no effect.
     Folds,
-    /// The entry reached an input native before it ended: the frames that called it, parked there.
-    Captured(Box<FrameRecord>),
+    /// The entry reached an input native before it ended, with the frames that called it parked there.
+    Captured,
     /// The entry fails or leaves a top-level await pending with no input read. The build saves the
     /// realm and program, and the image runs into the same failure.
     Unfinished(String),
@@ -150,7 +149,7 @@ pub(super) fn probe(program: &Path, tables: ClosedTables) -> Result<Reach, Strin
     // before anything allocates, since the chain is not rooted in flight.
     let run = match runtime.execute_deferred_jobs(&program).and_then(|()| runtime.run_host_jobs(&program)) {
         Err(error) => match quench_runtime::vm::exit::Exit::of(error) {
-            quench_runtime::vm::exit::Exit::Captured(chain) => return Ok(Reach::Captured(chain)),
+            quench_runtime::vm::exit::Exit::Captured(_) => return Ok(Reach::Captured),
             quench_runtime::vm::exit::Exit::Threw(error) => Err(error),
         },
         ok => ok,

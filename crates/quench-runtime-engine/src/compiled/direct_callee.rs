@@ -4,79 +4,54 @@
 use crate::ext_traits::*;
 use super::*;
 
-pub(crate) use quench_runtime::vm::engine_types::DirectCallee;
-use crate::dispatch_fast::{body_tier_in_lane, capture_reads, capture_stores, this_binding::ThisBinding, LaneView, ScriptCallTarget};
+pub(crate) use quench_runtime::vm::engine_types::{DirectArm, DirectBody};
+use crate::dispatch_fast::{capture_reads, capture_stores, this_binding::ThisBinding, LaneView, ScriptCallTarget};
 use quench_runtime::bytecode::ImmediateLayout;
 
-#[quench_macros::ext(DirectCalleeOps1)]
-impl DirectCallee {
-    /// The type summary of the callee's published body (`lane_region::TypeSummary`): its entry
+#[quench_macros::ext(DirectArmOps1)]
+impl DirectArm {
+    /// The type summary of the arm's published body (`lane_region::TypeSummary`): its entry
     /// parameter types, which the call's arguments must hold for its proven entry, and its result,
-    /// which types the call's result. `None` where the callee has no published body or its body has none.
+    /// which types the call's result. `None` where the body is not published or has none.
     pub(crate) fn summary(&self) -> Option<lane_region::TypeSummary> {
-        self.method.as_ref()?.lease()?.summary().cloned()
+        self.body.method.as_ref()?.lease()?.summary().cloned()
     }
 
-    /// The callee's dense capture slots, in the one word a body's entry takes them in.
-    pub(crate) fn capture_word(&self) -> u64 {
-        super::entry_cell::capture_word(self.capture_values, self.capture_len, self.capture_stores)
+    /// The global object a sloppy body binds for an `undefined` or `null` receiver, which binds a direct object
+    /// itself (`receiver_this_in_lane`): the realm's, folded in the arm's operands; `None` for a strict body or an
+    /// arrow that never reads `this`, which take any receiver as it is.
+    pub(crate) fn sloppy(&self) -> Option<Value> {
+        matches!(self.body.target.this_binding, ThisBinding::Sloppy).then_some(self.closure.lexical_this)
     }
 }
 
-/// The environment and captures of the closure the native header at `window` entered (`CONTEXT_CALLEE`): its
-/// descriptor's, or those of the closure its site rebound to (`DirectCallee::bound`), another of the same function.
-pub(crate) fn header_closure(vm: &mut Vm, code: &ResidualProgram, callee: &DirectCallee, window: *mut Value) -> (Value, *const usize) {
+/// The closure the native header at `window` entered, the callee word its call wrote from the callee register
+/// (`CONTEXT_CALLEE`; a spilled header's words stay below its window), with the environment read from that closure and
+/// the captures pointer of that environment (`Vm::target_capture`, as the call's own resolution reads it). A direct callee
+/// runs in its caller's program, `code`.
+pub(crate) fn entered_closure(vm: &mut Vm, code: &ResidualProgram, window: *mut Value) -> (Value, Value, *const usize) {
     // SAFETY: the header's words lie below its window.
     let entered = unsafe { *window.sub(quench_runtime::staged::frame::CONTEXT_CALLEE) };
-    // A site that reads its bound words may have entered a closure at its own closure's reused locator: resolve it.
-    if entered == callee.closure.callee && !callee.bound.read.get() { return (callee.closure.env, callee.closure.capture); }
-    let target = vm.resolve_script_call_target(code, entered).expect("a rebound closure resolves to its function's target");
-    (target.closure.env, target.closure.capture)
+    let (program, _, env) = vm.same_realm_user_target(entered).expect("a direct call enters a closure of the running realm");
+    (entered, env, vm.target_capture(code, program, env))
 }
 
-/// The environment a running native frame's captures resolve in: its descriptor's, or where it entered another closure
-/// (a linked header of a rebound site), its window's, which the link wrote (`header_closure`).
+/// The environment a running native frame's captures resolve in: its window's, which its link wrote from the closure
+/// its call entered (`entered_closure`); `top_native` names linked frames alone.
 pub(crate) fn frame_env(frame: quench_runtime::vm::engine_types::ActivationView) -> Value {
-    // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run; a header's window is linked.
-    let callee = unsafe { &*frame.callee };
-    match frame.kind {
-        quench_runtime::vm::engine_types::ActivationKind::Script(script) if script.callee != callee.closure.callee || callee.bound.read.get() => unsafe { *(frame.window as *const Value).sub(quench_runtime::staged::frame::CONTEXT_ENV) },
-        _ => callee.closure.env,
-    }
+    // SAFETY: a linked frame's window holds its context words.
+    unsafe { *(frame.window as *const Value).sub(quench_runtime::staged::frame::CONTEXT_ENV) }
 }
 
-/// Rebinds the running region's direct calls at `ip` (`LaneContext::region_calls`) to `target`, another closure of the
-/// function they call (`DirectCallee::bound`): the guard of a closure made per call of the caller misses once, not on
-/// every call. Only a closure the lane would call the same way rebinds: the same cell, receiver binding, window and
-/// capture slots, and only where the code reads the bound words (a b-jit record rebinds itself, `rebind_region_call`).
-pub(crate) fn rebind_closure(cx: *mut quench_runtime::vm::engine_types::LaneContext, ip: quench_runtime::vm::engine_types::Ip, target: &crate::dispatch_fast::ScriptCallTarget, argc: u16) {
-    // SAFETY: the running region's code (and its `CallCode`) outlives its run, which named it.
-    let Some(calls) = (unsafe { ((*cx).region_calls as *const quench_runtime::vm::engine_types::CallCode).as_ref() }).filter(|_| unsafe { (*cx).region_payload } != 0) else { return };
-    let (call, word) = (ip.addr(), target.closure.callee.to_bits());
-    let mut sites = calls.direct.iter().filter(|direct| direct.call == call && direct.bound.read.get() && direct.target.function == target.body.function).peekable();
-    if sites.peek().is_none() { return; }
-    // SAFETY: the running lane's context; its decoded site is the call being made.
-    let (vm, Some((_, function, pc, _))) = (unsafe { &*(*cx).vm }, unsafe { (*cx).body_site }) else { return };
-    let Some(caller) = (unsafe { &*(*cx).views }).get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return };
-    let mut fresh = None;
-    for direct in sites {
-        if direct.bound.callee.get() == word { continue; }
-        let Some(fresh) = fresh.get_or_insert_with(|| crate::dispatch_fast::direct_callee_in_lane(vm, caller, function, pc as usize, argc, *target)).as_ref() else { return };
-        if fresh.call != call || (fresh.cell, fresh.sloppy, fresh.registers, fresh.capture_len, fresh.capture_stores) != (direct.cell, direct.sloppy, direct.registers, direct.capture_len, direct.capture_stores) { continue; }
-        direct.bound.callee.set(word);
-        direct.bound.captures.set(fresh.capture_word());
-    }
-}
-
-/// The callees a call site reached that a body may call by their entries, the latest first.
-pub(crate) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
+/// The arms of a direct call site, one per body, ascending body id (`direct_callees_in_lane`).
+pub(crate) type DirectCandidates = smallvec::SmallVec<[DirectArm; tier_policy::POLYMORPHISM]>;
 
 /// Whether code that runs `inlined` as their callees' rows and calls `direct` by their entries
-/// names a callee that `live` says died, or a callee body that retired: a collection that frees one
+/// names a callee that `live` says died (an arm's folded closure), or a callee body that retired: a collection that frees one
 /// retires the code (`ProgramStore::retire_dead_native_calls`).
-pub(crate) fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: impl Fn(Value) -> bool) -> bool {
+pub(crate) fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: impl Fn(Value) -> bool) -> bool {
     inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-        || direct.iter().any(|callee| !live(callee.closure.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()))
+        || direct.iter().any(|arm| !live(arm.closure.callee) || arm.body.method.as_ref().is_some_and(|method| !method.is_published()))
 }
 
 /// The registers past the caller's `caller_registers` that `inlined` occupy: the scratch window a
@@ -92,46 +67,35 @@ pub(crate) fn frames_window(frames: impl Iterator<Item = (quench_runtime::byteco
     frames.map(|(base, registers)| usize::from(base - caller_registers) + usize::from(registers)).max().unwrap_or(0)
 }
 
-/// Per PC of `body`, the callees its call site reached where the callee's own lane body
-/// specialized and the lane would activate it in place, with an ordinary `this`, from a
-/// plain call of at most its parameters: what a lane body calls by its compiled entry
-/// (`compiled::DirectCallee`), the latest first. A site the closed world fixes to one body whose
-/// closure is one object takes that closure (`closure_callee_in_lane`); the rest keep the recorded
-/// candidates until direct-callees-from-facts.md D2 (the type split) lands.
+/// Per PC of `body`, the arms of its call site: one per body the closed world says the call may reach
+/// (`FunctionFacts::call_targets`), ascending body id, at most `POLYMORPHISM` (an open, empty or wider set calls
+/// generically), each where the lane would activate the body in place, with an ordinary `this`, from a plain call of at
+/// most its parameters, and the body's one closure is created (`ProgramStore::closure_cell`): the arm calls that closure,
+/// whose operands it folds (`DirectArm`). Every tier builds its direct calls from these (b-jit plans, u-jit lane units, OSR).
 pub(crate) fn direct_callees_in_lane(vm: &mut Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
-    body.code.iter().enumerate().map(|(pc, packed)| {
+    let Some(facts) = vm.programs.aot_facts(vm.active_program) else { return vec![DirectCandidates::new(); body.code.len()] };
+    let facts = facts.function_facts(function);
+    let sites: Vec<(usize, u16, Vec<u32>)> = body.code.iter().enumerate().filter_map(|(pc, packed)| {
         let instruction = body.widened(*packed);
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
-            && !quench_runtime::compile::call_plan::tail_site(instruction.returns_from_frame(), body.permits_js_tail_call_at(pc as u32));
-        let mut callees = crate::compiled::DirectCandidates::new();
-        // A construction through a forwarding constructor names no direct callee: its forwarding resolution is no plan's.
-        if quench_runtime::staged::construction_family(instruction.op()) {
-            return callees;
-        }
-        let Some(argc) = direct_argc(program, instruction) else { return callees };
-        if direct && let Some(closure) = closure_callee_in_lane(vm, view, function, program, pc, argc) {
-            callees.push(closure);
-            return callees;
-        }
-        let vm: &Vm = vm;
-        callees.extend(body_tier_in_lane::site_targets(vm, view, function, pc).filter(|_| direct)
-            .filter_map(|target| direct_callee_in_lane(vm, view, function, pc, argc, target)));
-        // A site that made a closure of one function per run calls the latest, and rebinds to the next (`BoundClosure`).
-        if callees.len() == crate::compiled::tier_policy::POLYMORPHISM && callees.iter().all(|callee| callee.target.function == callees[0].target.function) { callees.truncate(1); }
-        callees
-    }).collect()
-}
-
-/// The direct callee of the call at `pc` the closed world fixes (`FunctionFacts::call_targets`): where the set names exactly
-/// one body and the program's closure cell holds that body's one closure (`ProgramStore::closure_cell`, written at its
-/// creation), the closure's direct callee where the lane would activate it. `None` for an open or multi-body set, and for a
-/// body whose closure is not created yet.
-fn closure_callee_in_lane(vm: &mut Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, pc: usize, argc: u16) -> Option<crate::compiled::DirectCallee> {
-    let facts = vm.programs.aot_facts(vm.active_program)?;
-    let &[body] = facts.function_facts(function).call_targets(pc as u32).as_slice() else { return None };
-    let closure = vm.programs.closure_cell(vm.active_program, body)?;
-    let target = vm.resolve_call_target_in_lane(program, closure)?;
-    direct_callee_in_lane(vm, view, function, pc, argc, target)
+            && !quench_runtime::compile::call_plan::tail_site(instruction.returns_from_frame(), body.permits_js_tail_call_at(pc as u32))
+            // A construction through a forwarding constructor names no direct callee: its forwarding resolution is no plan's.
+            && !quench_runtime::staged::construction_family(instruction.op());
+        let argc = direct.then(|| direct_argc(program, instruction)).flatten()?;
+        let mut bodies = facts.call_targets(pc as u32);
+        bodies.sort_unstable();
+        bodies.dedup();
+        (bodies.len() <= crate::compiled::tier_policy::POLYMORPHISM).then_some((pc, argc, bodies))
+    }).collect();
+    let mut candidates = vec![DirectCandidates::new(); body.code.len()];
+    for (pc, argc, bodies) in sites {
+        candidates[pc] = bodies.into_iter().filter_map(|callee| {
+            let closure = vm.programs.closure_cell(vm.active_program, callee)?;
+            let target = vm.resolve_call_target_in_lane(program, closure)?;
+            direct_arm_in_lane(vm, view, function, pc, argc, target)
+        }).collect();
+    }
+    candidates
 }
 
 /// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
@@ -144,17 +108,17 @@ pub(crate) fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, i
     }
 }
 
-/// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
-/// `argc` arguments, where the lane would activate it in place.
-pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
+/// The arm that calls `target`, the closure the call at `pc` of `view` passes `argc` arguments, where the lane would
+/// activate its body in place: the body (`DirectBody`) and the closure's operands, folded.
+pub(crate) fn direct_arm_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<DirectArm> {
     // No tier's direct row binds an arrow's lexical `this` (Cranelift cannot), so an arrow calls direct only where it
     // never reads `this`, and as strict.
-    let sloppy = match target.body.this_binding {
-        ThisBinding::Sloppy => Some(vm.realm.globals),
-        ThisBinding::Strict => None,
+    let lexical_this = match target.body.this_binding {
+        ThisBinding::Sloppy => vm.realm.globals,
+        ThisBinding::Strict => Value::UNDEFINED,
         ThisBinding::Lexical => {
             vm.programs.residual(target.body.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.body.function as usize)))?;
-            None
+            Value::UNDEFINED
         }
         _ => return None,
     };
@@ -164,54 +128,11 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
     let view_of = unsafe { &*target.body.view };
     let (method, body) = view_of.pinned_callee(target.body.function == function);
     // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.closure.capture)) }
+    let (values, len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.closure.capture)) }
         .unwrap_or((std::ptr::null(), 0));
-    Some(crate::compiled::DirectCallee {
-        target: target.body, closure: target.closure, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
-        registers: target.body.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.closure.capture).is_some(),
-        bound: quench_runtime::vm::engine_types::BoundClosure::new(target.closure.callee.to_bits(), crate::compiled::entry_cell::capture_word(capture_values, capture_len, capture_stores(target.closure.capture).is_some())),
+    Some(DirectArm {
+        body: DirectBody { target: target.body, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell() },
+        closure: crate::dispatch_fast::ClosureOperands { lexical_this, ..target.closure },
+        captures: crate::compiled::entry_cell::capture_word(values, len, capture_stores(target.closure.capture).is_some()),
     })
-}
-
-/// The most closures one region's records rebind to (`rebind_region_call`): past it the site's calls keep the
-/// helper, so code calling a fresh closure each time does not grow its descriptors without end.
-const REGION_REBINDS: usize = 64;
-
-/// Rebinds the running loop region's record of `call` (`LaneContext::region_calls`) to `target`, a closure of the
-/// function the record was planned for whose identity guard missed: the record's run-time words become the new
-/// closure's (its identity, captures, receiver binding, context words and descriptor), as `BoundCalls::bind` makes
-/// an image's, so its row calls this closure by its entry from now on instead of this helper. A closure made per
-/// call of the region's function (`const f = (x) => ..` above the loop) is the common case.
-///
-/// # Safety
-/// `target` is the resolved script target of the call at `ip`, a call of the running region's activation.
-pub(crate) unsafe fn rebind_region_call(cx: *mut quench_runtime::vm::engine_types::LaneContext, vm: &Vm, ip: quench_runtime::vm::engine_types::Ip, argc: u16, target: &ScriptCallTarget) {
-    let calls = unsafe { (*cx).region_calls } as *const quench_runtime::vm::engine_types::CallCode;
-    // SAFETY: the region's code (and its `CallCode`) outlives its run, which named it.
-    let Some(calls) = (unsafe { calls.as_ref() }) else { return };
-    let site = ip.addr() as u64;
-    let Some((_, record)) = calls.records.iter().find(|(call, callee)| call.call == site && callee.callee != 0) else { return };
-    if record.callee == target.closure.callee.to_bits() || record.function != u64::from(target.body.function) { return; }
-    let mut rebound = calls.rebound.borrow_mut();
-    if rebound.len() >= REGION_REBINDS { return; }
-    // SAFETY: the context's decoded site is the call being made.
-    let Some((_, function, pc, _)) = (unsafe { (*cx).body_site }) else { return };
-    let Some(view) = (unsafe { &*(*cx).views }).get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return };
-    let Some(mut direct) = direct_callee_in_lane(vm, view, function, pc as usize, argc, *target) else { return };
-    if direct.call as u64 != site || direct.cell as u64 != record.cell { return; }
-    (direct.method, direct.body) = (None, None);
-    rebound.push(Box::new(direct));
-    let Some(direct) = rebound.last() else { return };
-    let (env, capture) = direct.closure.context_words();
-    let words = std::ptr::from_ref(&**record).cast_mut();
-    // SAFETY: the record is the region's, read in place by its code on this thread, none of which runs while
-    // its helper does; the descriptor is boxed in `rebound`, which keeps it for the code's life.
-    unsafe {
-        (*words).captures = direct.capture_word();
-        (*words).global_this = direct.sloppy.map_or(0, Value::to_bits);
-        (*words).descriptor = std::ptr::from_ref(&**direct) as u64;
-        (*words).env = env;
-        (*words).capture = capture;
-        (*words).callee = direct.closure.callee.to_bits();
-    }
 }

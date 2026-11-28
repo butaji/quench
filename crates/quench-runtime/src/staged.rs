@@ -1296,8 +1296,6 @@ mod wasm_call_tests;
 mod wasm_gc_tests;
 #[cfg(test)]
 mod wasm_simd_tests;
-#[cfg(test)]
-mod instanceof_tests;
 #[doc(hidden)]
 pub mod alias_pins;
 

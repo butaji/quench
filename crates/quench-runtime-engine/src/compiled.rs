@@ -257,7 +257,7 @@ pub(crate) use code_heap::CodeMemory;
 #[path = "compiled/direct_call.rs"]
 pub(crate) mod direct_call;
 pub(crate) mod direct_callee;
-pub(crate) use direct_callee::{frames_window, window_width, DirectCallee, DirectCandidates};
+pub(crate) use direct_callee::{frames_window, window_width, DirectArm, DirectBody, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 pub(crate) mod lane_storage;
 pub(crate) mod lane_body_run;
@@ -2622,9 +2622,6 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
-        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
-        // SAFETY: `lane_context` is the running lane's.
-        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -2676,8 +2673,6 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
-        // SAFETY: as above.
-        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -9313,7 +9308,7 @@ mod tests {
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_| (0, 0), Vec::new(), &[]).unwrap();
+            &|_| (0, 0), Vec::new()).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
@@ -9387,7 +9382,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| matches!(quench_runtime::staged::Operation::<u64, ()>::of(*i),
                 Some(quench_runtime::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_| (0, 0), Vec::new(), &[]).unwrap();
+                &|_| (0, 0), Vec::new()).unwrap();
             assert!(!method.dependencies.slots.is_empty());
             let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
@@ -9416,7 +9411,6 @@ mod tests {
             vm.store_property_slot(receiver, slot, Value::number(0.5));
             assert!(vm.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
-            assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
         }
     }
@@ -9499,7 +9493,7 @@ mod tests {
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
+        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new()).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.

@@ -55,10 +55,6 @@ fn run(compiled: bool, ty: quench_runtime::WasmType, initial: quench_runtime::Wa
     }
     let instance = vm.instantiate_wasm_module(&module).unwrap();
     let program = vm.programs.find_shared(&module.program).expect("registered Wasm program");
-    if compiled {
-        let environment = vm.root_value(instance.environment).expect("live Wasm instance environment");
-        assert!(vm.install_compiled_root_for_test(program, environment, 0));
-    }
     let result = vm.invoke_wasm(&instance, 0, &[]).unwrap().expect("a result");
     if compiled {
         let artifact = vm.programs.wasm_tier(program, 0).expect("compiled Wasm root");

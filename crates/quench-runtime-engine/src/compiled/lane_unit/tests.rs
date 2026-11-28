@@ -2,6 +2,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Class, Op};
+use quench_runtime::Value;
 
 #[test]
 fn static_hints_keep_numeric_local_indices_out_of_register_rows() {
