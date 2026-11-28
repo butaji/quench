@@ -202,10 +202,11 @@ pub(crate) fn class_flags(id: u32) -> u64 {
     word(id) & CLASS_FLAG_MASK
 }
 
-/// The method vectors of the classes, dense by class id (R4: layout key == class id while `intern_class` is 1:1 for all-tagged
-/// classes). Entry `class` is the address of that class's vector, whose slot `k` is the `CalleeRecord` address of the method at
-/// prototype slot `k` (`AotFacts::prototype_layout`). Filled by the loader (`set_class_methods`), read by compiled code at
-/// `class_methods_base()` as the closed-set indirect call's chain: header class id, then `[class]`, then `[slot]`.
+/// The method vectors of the classes, dense by layout id: the key is the header a class's instances carry (`word`), not the
+/// class id, so a synthetic class (`AotFacts::classes`) takes the vector of its layout like any other class. Entry `layout` is
+/// the address of that layout's vector, whose slot `k` is the `CalleeRecord` address of the method at prototype slot `k`
+/// (`AotFacts::prototype_layout`). Filled by the loader (`set_class_methods`), read by compiled code at
+/// `class_methods_base()` as the closed-set indirect call's chain: header layout id, then `[layout]`, then `[slot]`.
 static CLASS_METHODS: [AtomicUsize; LAYOUT_CAPACITY] = [const { AtomicUsize::new(0) }; LAYOUT_CAPACITY];
 
 /// The base of the class method table: entry `class` at `class * size_of::<usize>()` past it.
