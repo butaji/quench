@@ -31,9 +31,6 @@ fn native_array_layout_is_derived_from_the_current_storage_types() {
 
 #[test]
 fn native_object_layout_is_derived_from_the_current_storage_types() {
-    assert_eq!(NATIVE_OBJECT_RECORD_SIZE, std::mem::size_of::<OrdinaryRecord>());
-    assert_eq!(NATIVE_OBJECT_RECORD_SIZE, crate::staged::layout_offsets::OBJECT_RECORD_BYTES);
-    assert_eq!(NATIVE_OBJECT_RECORD_ALIGN, std::mem::align_of::<Object>());
     assert_eq!(
         NATIVE_OBJECT_LAYOUT_OFFSET,
         std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, layout)
@@ -52,8 +49,6 @@ fn native_object_layout_is_derived_from_the_current_storage_types() {
         std::mem::offset_of!(ObjectExtras, head)
             + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, inline_properties)
             + std::mem::offset_of!(DisplacedInline, 0));
-    assert_eq!(layout.record_size, std::mem::size_of::<OrdinaryRecord>());
-    assert_eq!(layout.record_align, std::mem::align_of::<Object>());
     assert_eq!(layout.meta_offset, NATIVE_OBJECT_META_OFFSET);
     assert_eq!(layout.auxiliary_offset, NATIVE_OBJECT_AUXILIARY_OFFSET);
     assert_eq!(layout.payload_offset, NATIVE_OBJECT_PAYLOAD_OFFSET);

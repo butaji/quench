@@ -20,7 +20,6 @@ macro_rules! for_each_record_space {
     ($m:ident, $($pre:tt)*) => {
         $m! {
             $($pre)* ;
-            Object = object_records: ObjectRecordSpace [OrdinaryRecord] objects,
             Array = array_records: ArrayRecordSpace [ArrayObject] arrays,
             Function = function_records: FunctionRecordSpace [FunctionRecord] functions,
             Promise = promise_records: PromiseRecordSpace [PromiseCell] promises,
@@ -47,7 +46,7 @@ macro_rules! record_reference_test {
             // granule, and its record is the stub header's hop.
             Some(HeapReference::ObjectRecord(granule)) => match $s.class_space.live_class(granule) {
                 Some(_) => $s.class_space.$method(granule),
-                None => $s.object_records.$method($s.stub_record(granule)),
+                None => $otherwise,
             },
             Some(HeapReference::ArrayRecord(id)) => $s.array_records.$method(id),
             Some(HeapReference::FunctionRecord(id)) => $s.function_records.$method(id),
@@ -72,8 +71,6 @@ macro_rules! mark_bits_struct {
         pub(super) struct MarkBits<'a> {
             $($field: &'a $space,)*
             marks: &'a [AtomicU64],
-            /// The class space's base, which reads a direct object's stub (`stub_record_at`).
-            class_base: usize,
         }
     };
 }
@@ -84,7 +81,6 @@ macro_rules! mark_bits_literal {
         MarkBits {
             $($field: &$heap.$field,)*
             marks: &$heap.marks,
-            class_base: $heap.class_space.base,
         }
     };
 }
@@ -131,14 +127,6 @@ record_values_by_id! {
     EnvironmentRecord => Value::direct_environment,
     SymbolData => Value::direct_symbol,
     WasmGcRecord => Value::direct_wasm_gc,
-}
-
-impl RecordValue for OrdinaryRecord {
-    /// An ordinary object's `Value` is its stub granule, which its record holds (`publish_object_record`).
-    fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value {
-        // SAFETY: `RecordFamily::value_of` names a live record of `space`.
-        Value::direct_object(unsafe { space.get_live(id) }.stub)
-    }
 }
 
 /// `RecordSpaceId`, the family numbering every record-space lookup shares (`locate`, `with_space!`,
@@ -276,7 +264,7 @@ pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries,
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, CollectionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace, WasmGcRecordSpace,
-    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, RecordSpace, RecordValue, StringRecordSpace, RecordId, RecordSweep,
+    PromiseRecordSpace, RecordFamily, RecordSpace, RecordValue, StringRecordSpace, RecordId, RecordSweep,
 };
 pub use root::RootId;
 pub use root::{RootTable, WeakHandle};
@@ -575,12 +563,6 @@ for_each_record_space!(record_space_ids,);
 for_each_record_space!(mark_bits_struct,);
 
 impl MarkBits<'_> {
-    /// The record id of the object whose stub is `granule`.
-    #[inline(always)]
-    pub(super) fn stub_record(self, granule: u32) -> u32 {
-        class_space::stub_record_at(self.class_base, granule)
-    }
-
     /// Whether `value` is a heap value marked so far.
     pub(super) fn is_marked(self, value: Value) -> bool {
         match value.heap_reference() {
@@ -624,11 +606,6 @@ pub(crate) const ASCII_UNITS: usize = 0x80;
 /// that a byte decode (`String.fromCharCode(byte)`) makes.
 pub(crate) const UNIT_STRINGS: usize = 0x100;
 
-/// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
-/// before it advances `prototype_layout_epoch` and retires its chain cells once and frees them
-/// all. A withheld id costs one record's space; each advance retires every cache and proof the
-/// VM holds.
-const WITHHELD_PROTOTYPE_IDS: usize = 4096;
 /// A full collection that frees more payload than this returns the allocator's free memory to
 /// the kernel (`release_freed_allocator_memory`).
 const FREED_TRIM_BYTES: usize = 16 << 20;
@@ -658,7 +635,6 @@ pub struct Heap {
     class_space: class_space::ClassSpace,
     /// The extras of live class cells, by the id their header's high half names (`extras_space`).
     extras: extras_space::ExtrasSpace,
-    object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
     promise_records: PromiseRecordSpace,
@@ -813,11 +789,6 @@ pub struct Heap {
     /// (`finished_run_object`): only then does a minor sweep visit live functions to list
     /// their young survivors (`YoungOwner::Function`).
     young_function_runs: bool,
-    /// The least arena length since the last narrowing pass and the fulls since it: the pass
-    /// reads every live run, so it reruns only once the arena grew an eighth over that low or
-    /// eight fulls went by. The low, not the pass's own length, so that an arena that shrank
-    /// and grows again narrows on the way back up.
-    narrow_pass: (usize, u32),
     /// Whether any store gate input is on: a concurrent cycle's snapshot barrier, reference
     /// counts, or the arena's slot observation (`Heap::refresh_store_watch`). Off, a store of a
     /// value naming no heap record passes the gate on this byte and the value's tag alone.
@@ -1303,24 +1274,13 @@ impl Heap {
     }
 
     /// The view `mark_prototype` marks and watches: a live class cell's (its extras are made first,
-    /// `ensure_cell_extras`), or a record's. A prototype record takes extras, which hold wide runs.
+    /// `ensure_cell_extras`), or an array, function or builtin record's.
     #[inline]
     fn prototype_object_mut(&mut self, prototype: Value) -> Option<ObjectMut<'_>> {
         if let Some(granule) = self.live_class_cell(prototype) {
             return Some(self.live_cell_mut(granule));
         }
-        match prototype.direct_object_index() {
-            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            Some(object_ref) => {
-                let record_id = self.record_id(object_ref)?;
-                // A flag, not an edge: no write barrier for record prototypes.
-                let object: &mut Object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
-                // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
-                access::widen_narrow_run(object, &mut self.properties);
-                Some(ObjectMut::Record(object))
-            }
-            None => self.object_mut(prototype),
-        }
+        self.object_mut(prototype)
     }
 
     /// The proofs that rely on prototypes' layouts (`dependencies`).
@@ -1683,32 +1643,11 @@ impl Heap {
         Some(Object::from_run_header(header, start))
     }
 
-    /// `property_set` of slot `slot` of `object`, an object record allocated with inline
-    /// storage since the last allocation that could collect, whose slot holds `undefined`:
-    /// the barrier and the slot's recorded representation as for any store, and the narrow
-    /// store into the payload word without the general path's tests.
+    /// `property_set` of slot `slot` of `object`, whose slot holds `undefined` since its allocation.
+    /// An ordinary object is a class cell, which has no inline record to fill: the generic store takes it.
     #[inline(always)]
     pub(crate) fn fill_new_object_slot(&mut self, object: Value, slot: usize, value: Value) {
-        let Some(object_ref) = object.direct_object_index() else {
-            return self.property_set(object, slot, value);
-        };
-        // A live class cell has no inline record to fill: the generic store takes it.
-        let Some(record_id) = self.record_id(object_ref) else {
-            return self.property_set(object, slot, value);
-        };
-        let Self { object_records, properties, .. } = &mut *self;
-        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
-        if !data.properties().has_inline_property_storage() || !data.store_inline_narrow(slot, value) {
-            return self.property_set(object, slot, value);
-        }
-        if properties.tracks() {
-            let shape = data.exact_shape();
-            if shape == data.shape() {
-                properties.note_slot_value(shape, slot, value);
-            }
-        }
-        self.rewrite_widened_numbers();
+        self.property_set(object, slot, value);
     }
 
     /// Whether `prototype` names no object or one flagged as a prototype, as
@@ -1726,13 +1665,11 @@ impl Heap {
     }
 
     /// `insert_object_record` where the object's cell holds at least `capacity` fields: the learned
-    /// storage of its constructor, or the closed world's union layout of its class. An array is the one
-    /// object kind with no cell; it keeps its record (`insert_object_as_record`).
+    /// storage of its constructor, or the closed world's union layout of its class. Arrays never reach
+    /// this (they are `ArrayObject`s in `array_records`).
     #[inline(always)]
     pub(crate) fn insert_object_with_capacity(&mut self, object: Object, capacity: usize) -> Value {
-        if object.is_array() {
-            return self.insert_object_as_record(object);
-        }
+        debug_assert!(!object.is_array(), "an array keeps its array record, not an object cell");
         self.insert_object_as_cell(object, capacity)
     }
 
@@ -1742,7 +1679,6 @@ impl Heap {
     /// into `ExtrasSpace` by id, and its arena storage is released. A region with no cell left panics, as record
     /// exhaustion does: an ordinary object never falls back to a record.
     fn insert_object_as_cell(&mut self, mut object: Object, capacity: usize) -> Value {
-        debug_assert!(!object.is_array(), "an array keeps its record");
         let shape = object.shape();
         let length = self.properties.shape_length(shape);
         let region = cell_region_for(length.max(capacity));
@@ -1762,50 +1698,6 @@ impl Heap {
             self.class_space.set_extras_id(granule, id);
         }
         Value::direct_object(granule)
-    }
-
-    /// The record of an array-kinded `object` (`insert_object_with_capacity`), charged as one allocation
-    /// with no payload or external bytes (`allocated += 1` only). The object record space holds
-    /// `OBJECT_RECORD_CAPACITY` (2^30) records, so a full space is a panic; no legacy slot takes
-    /// an object. An ordinary object never reaches this form (`insert_object_as_cell`).
-    #[inline(always)]
-    fn insert_object_as_record(&mut self, object: Object) -> Value {
-        // An object owns no payload or external bytes: its record is the whole charge, made
-        // with its cursor run (`RecordSpace::bump_id`), with no `charge_allocation` on the hot path.
-        #[cfg(feature = "profile-aggregate")]
-        self.profile_record_allocation(CellKind::Object, "object", 0);
-        let Some(record_id) = self.object_records.bump_id(&mut self.allocated) else {
-            panic!("object records exhausted: the object space holds 2^30 records");
-        };
-        // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
-        unsafe { self.object_records.record_ptr(record_id).write(OrdinaryRecord { object, stub: 0 }) };
-        let value = self.publish_object_record(record_id);
-        #[cfg(feature = "profile-memory")]
-        self.profile_allocation(value);
-        value
-    }
-
-    /// Publishes object record `record_id`, whose record is written: claims its stub in region 0,
-    /// writes the stub's header (the record id, `stub_header`), stores the granule in the record,
-    /// and returns the direct object `Value` the granule names. A record claimed but not yet written
-    /// may be published first: only its stub field is written here.
-    #[inline(always)]
-    pub(crate) fn publish_object_record(&mut self, record_id: u32) -> Value {
-        let granule = self
-            .class_space
-            .claim_stub(record_id, &mut self.allocated)
-            .expect("class space stubs exhausted: region 0 holds the stubs of every ordinary object");
-        let record = self.object_records.record_ptr(record_id);
-        // SAFETY: `record_id` is a claimed record in the object space; only its stub field is written.
-        unsafe { std::ptr::addr_of_mut!((*record).stub).write(granule) };
-        Value::direct_object(granule)
-    }
-
-    /// The direct object `Value` of the live object record `record_id`: its stub granule.
-    #[inline(always)]
-    pub(crate) fn object_value(&self, record_id: u32) -> Value {
-        // SAFETY: the caller names a live object record, whose stub is set by `publish_object_record`.
-        Value::direct_object(unsafe { self.object_records.get_live(record_id) }.stub)
     }
 
     /// Admit initial named properties before any object-bearing cell or record
@@ -2246,10 +2138,6 @@ impl Heap {
     /// their representations joined anew from the values live objects hold.
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
         self.dependencies_mut().retire_all(); // renumbered ids; shape readers reset below
-        self.object_records.for_each_live_mut(|_, object| {
-            let old_shape = object.shape() as usize;
-            object.renumber_shape(mapping[old_shape]);
-        });
         self.array_records.for_each_live_mut(|_, array| {
             let old_shape = array.shape() as usize;
             array.renumber_shape(mapping[old_shape]);
@@ -2306,7 +2194,6 @@ impl Heap {
     /// Visits every live object-bearing record and legacy cell with the property arena.
     fn visit_live_objects(&mut self, mut visit: impl FnMut(&Object, &mut ValueArena)) {
         let properties = &mut self.properties;
-        self.object_records.for_each_live(|_, record| visit(&record.object, properties));
         self.array_records.for_each_live(|_, array| visit(array, properties));
         self.function_records.for_each_live(|_, function| visit(&function.object, properties));
         self.promise_records.for_each_live(|_, promise| visit(&promise.object, properties));
@@ -2333,7 +2220,6 @@ impl Heap {
         for (_, owner) in owners {
             // SAFETY: the owners were listed from records the sweep kept.
             let object = match owner {
-                YoungOwner::Object(record_id) => &mut unsafe { self.object_records.get_live_mut_unbarriered(record_id) }.object,
                 YoungOwner::Function(record_id) => &mut unsafe { self.function_records.get_live_mut_unbarriered(record_id) }.object,
             };
             let mut vector = object.properties();
@@ -2343,30 +2229,6 @@ impl Heap {
             object.set_properties(vector, &mut self.properties);
         }
         self.properties.finish_young_cycle();
-    }
-
-    /// The property arena words from which a full collection that does not compact narrows
-    /// live runs (`narrow_live_runs`).
-    const NARROW_PASS_MIN_ARENA_WORDS: usize = 1 << 20;
-
-    /// Moves each live plain object's ordinary run whose values all have a narrow form into a
-    /// released range of the narrow class (`ValueArena::narrow_into_released`), at a full
-    /// collection that does not compact: objects that grew after promotion.
-    fn narrow_live_runs(&mut self) {
-        let Self { object_records, properties, .. } = self;
-        object_records.for_each_live_mut(|_, record| {
-            let object = &mut record.object;
-            if object.has_extras() {
-                return;
-            }
-            let vector = object.properties();
-            if vector.is_narrow() || vector.is_dictionary() || vector.has_inline_property_storage() || properties.holds_young_run(vector) {
-                return;
-            }
-            if let Some(narrow) = properties.narrow_into_released(vector) {
-                object.set_properties(narrow, properties);
-            }
-        });
     }
 
     /// The property-arena owners of the live objects, as the sweep lists them for a compacting
@@ -2385,11 +2247,6 @@ impl Heap {
                 slot_owners.push(pack_offset_owner(object.properties().start_offset(), index));
             }
         }
-        self.object_records.for_each_live(|_, record| {
-            if record.object.properties().has_compact_range() {
-                direct_owners.push((record.object.properties().start_offset(), Value::direct_object(record.stub)));
-            }
-        });
         self.function_records.for_each_live(|record_id, function| {
             if function.object.properties().has_compact_range() {
                 direct_owners.push((function.object.properties().start_offset(), Value::direct_function(record_id)));
@@ -2440,8 +2297,6 @@ impl Heap {
         owners.sort_unstable_by_key(|(offset, _)| *offset);
         let mut target = 0;
         let Self {
-            class_space,
-            object_records,
             array_records,
             function_records,
             promise_records,
@@ -2453,11 +2308,7 @@ impl Heap {
             ..
         } = self;
         for (_, owner) in owners {
-            let object = if let Some(object_ref) = owner.direct_object_index() {
-                let record_id = class_space.record_of(object_ref.granule());
-                // SAFETY: direct owners were collected from live marked records.
-                Some(&mut unsafe { object_records.get_live_mut_unbarriered(record_id) }.object)
-            } else if let Some(record_id) = owner.direct_array_index() {
+            let object = if let Some(record_id) = owner.direct_array_index() {
                 // SAFETY: array owners were collected from live array records.
                 Some(&mut **unsafe { array_records.get_live_mut_unbarriered(record_id) })
             } else if let Some(record_id) = owner.direct_function_index() {
@@ -2741,33 +2592,19 @@ impl Heap {
             self.live_after_full >= trimmed.saturating_add(ENVIRONMENT_TRIM_GROWTH.of(trimmed))
         })
     }
-    /// After a sweep: a prototype it freed may have its record reused by an object no proof
-    /// names, so the proofs made under the current `prototype_layout_epoch` retire. A dead
-    /// object record's id is withheld from reuse instead, until `WITHHELD_PROTOTYPE_IDS` are;
-    /// a sweep that freed no other prototype keeps the proofs.
+    /// After a sweep: a prototype it freed may have its stub reused by an object no proof names, so the
+    /// proofs made under the current `prototype_layout_epoch` retire. A prototype that is a class cell has no
+    /// stub to withhold: its granule is reused by the class space's sweep, so its proofs retire with the epoch
+    /// (`died_unrecorded`). A sweep that freed no prototype keeps the proofs.
     fn retire_dead_prototypes(&mut self) {
         let mut died_subjects = Vec::new();
         let mut died_unrecorded = false;
-        let mut withheld = 0;
         let mut prototypes = std::mem::take(&mut self.prototypes);
         prototypes.retain(|&(prototype, subject)| {
             let live = self.is_live(prototype);
             if !live {
                 died_subjects.push(subject);
-                // A dead object record's id is withheld instead: no object takes its
-                // Value, so no proof can name another object by it, as a class
-                // declared in a hot function leaves one dead prototype per call.
-                // A prototype that is a class cell has no stub or record to withhold: its granule is reused by the
-                // class space's sweep, so its proofs retire with the epoch (`died_unrecorded`).
-                match prototype.direct_object_index() {
-                    Some(object_ref) if !class_space::is_cell_granule(object_ref.granule()) => {
-                        // Its stub names its record, which is withheld with the stub: the granule names no other object.
-                        let record_id = self.stub_record(object_ref.granule());
-                        self.class_space.withhold_stub(object_ref.granule());
-                        withheld = self.object_records.withhold(record_id);
-                    }
-                    _ => died_unrecorded = true,
-                }
+                died_unrecorded = true;
             }
             live
         });
@@ -2775,15 +2612,10 @@ impl Heap {
             self.dependencies.release(subject);
         }
         self.prototypes = prototypes;
-        let retire = died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS;
-        if retire {
-            // Every proof made under the old epoch, and every chain cell, retires, so the
-            // withheld ids are free again: a proof may name a record (a receiver's prototype
-            // link, a holder) its cell's subjects do not.
+        if died_unrecorded {
+            // Every proof made under the old epoch, and every chain cell, retires.
             advance_prototype_layout_epoch();
             self.dependencies.retire_cells();
-            self.object_records.release_withheld();
-            self.class_space.release_withheld_stubs();
         }
     }
 
@@ -2806,8 +2638,7 @@ impl Heap {
     /// Frees the unallocated rest of each hot space's cursor run and refunds its charge
     /// (`RecordSpace::retire_cursor`), before a collection reads occupancy or `allocated`.
     fn retire_record_cursors(&mut self) {
-        let unspent = self.object_records.retire_cursor()
-            + self.array_records.retire_cursor()
+        let unspent = self.array_records.retire_cursor()
             + self.function_records.retire_cursor()
             + self.environment_records.retire_cursor()
             + self.class_space.retire_cursors();
@@ -3125,29 +2956,8 @@ impl Heap {
                 // A dead object's storage is released in place, and its stub with it; one without
                 // extras, which its drop would free, is then forgotten.
                 let young_runs = properties.young_runs();
-                let dispose = |_record_id: RecordId, record: &OrdinaryRecord| {
-                    #[cfg(feature = "profile-memory")]
-                    memory_profile.freed_record_cell(Value::direct_object(record.stub), properties.len(record.object.properties()));
-                    class_space.release_stub(record.stub);
-                    record.object.release_storage(properties)
-                };
-                let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
-                    RecordSweep::Keep(record_id, record) => {
-                        let object = &record.object;
-                        if compacts && object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                object.properties().start_offset(),
-                                Value::direct_object(record.stub),
-                            ));
-                        } else if young_runs.hold(object.properties()) {
-                            note_young_owner(&mut young_owners, object.properties().start_offset(), YoungOwner::Object(record_id));
-                        }
-                    }
-                    // Released in place: dropping it frees its extras.
-                    RecordSweep::Dead(..) => {}
-                });
-                // After the records: a stub dies with its record (released in `dispose`), so
-                // the cell regions sweep only the cells whose Value is dead and not released yet.
+                let young_runs = properties.young_runs();
+                // The cell regions sweep only the cells whose Value is dead and not released yet.
                 class_space.sweep_cells(&mut *properties, &mut *extras, full, age, |values, class| {
                     layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))
                 });
@@ -3290,7 +3100,6 @@ impl Heap {
                     }
                 }
                 (
-                    (object_live, object_freed),
                     (function_live, function_freed),
                     (promise_live, promise_freed),
                     (await_live, await_freed),
@@ -3300,7 +3109,6 @@ impl Heap {
                 )
             };
             let (
-                (object_live, object_freed),
                 (function_live, function_freed),
                 (promise_live, promise_freed),
                 (await_live, await_freed),
@@ -3348,7 +3156,6 @@ impl Heap {
             });
             self.external_bytes = self.external_bytes.saturating_sub(dead_wasm_gc_bytes);
             live += symbol_live + environment_live + wasm_gc_live
-                + object_live
                 + array_live
                 + function_live
                 + promise_live
@@ -3360,7 +3167,6 @@ impl Heap {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.freed += (symbol_freed + environment_freed + wasm_gc_freed
-                    + object_freed
                     + array_freed
                     + function_freed
                     + promise_freed
@@ -3375,7 +3181,6 @@ impl Heap {
                 symbol_freed,
                 environment_freed,
                 wasm_gc_freed,
-                object_freed,
                 array_freed,
                 function_freed,
                 promise_freed,
@@ -3450,18 +3255,6 @@ impl Heap {
             self.compact_property_arena(property_owners, direct_property_owners);
         } else {
             self.evacuate_young_runs(young_owners);
-            // The pass visits every object record: it pays where property storage is large
-            // (8 MB and up), and is a cost of its own for a small arena of many objects.
-            if full && self.narrow_runs && self.properties.resident_words() >= Self::NARROW_PASS_MIN_ARENA_WORDS {
-                let resident = self.properties.resident_words();
-                let (last, fulls) = self.narrow_pass;
-                if resident > last + last / 8 || fulls >= 8 {
-                    self.narrow_live_runs();
-                    self.narrow_pass = (resident, 0);
-                } else {
-                    self.narrow_pass = (last.min(resident), fulls + 1);
-                }
-            }
         }
         if full {
             self.properties.settle_after_full();
@@ -3983,12 +3776,6 @@ impl Heap {
         }
     }
 
-    /// The record id of the ordinary object whose stub is `granule` (`class_space::stub_record_at`).
-    #[inline(always)]
-    pub(super) fn stub_record(&self, granule: u32) -> u32 {
-        self.class_space.record_of(granule)
-    }
-
     /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
     /// alive onto `work`: the serial mark's visit of one value. Objects, arrays, functions and
     /// strings are visited here; the rarer kinds are visited by `mark_rare_value`.
@@ -4003,30 +3790,7 @@ impl Heap {
                 self.mark_class_cell(value, object_ref.granule(), class, ctx);
                 return;
             }
-            // Marking a direct object marks its record: the stub has no mark bit of its own, and marking the
-            // granule (`ClassSpace::mark_cell`) is a no-op for a stub.
-            self.class_space.mark_cell(object_ref.granule());
-            let record_id = self.stub_record(object_ref.granule());
-            if !self.object_records.mark(record_id) {
-                return;
-            }
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.marked += 1;
-                self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
-            }
-            // SAFETY: the direct handle is live and its mark bit was newly set.
-            let record = unsafe { self.object_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                &record.object,
-                &self.properties,
-                ctx.work,
-                ctx.object_roots,
-                ctx.trace_kind,
-                &mut ctx.last_proto,
-            );
-            self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
+            // A direct object that is no live class cell names no granule: there is nothing to trace.
         } else if let Some(record_id) = value.direct_array_index() {
             if !self.array_records.mark(record_id) {
                 return;
@@ -4371,13 +4135,7 @@ impl Heap {
     /// owner-attached VM tables): `owner` is logged as if it had been written.
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(granule)) => match self.class_space.live_class(granule) {
-                Some(_) => self.class_space.barrier(granule),
-                None => {
-                    let record_id = self.stub_record(granule);
-                    self.object_records.barrier(record_id)
-                }
-            },
+            Some(HeapReference::ObjectRecord(granule)) => self.class_space.barrier(granule),
             Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id),
             Some(HeapReference::FunctionRecord(record_id)) => {
                 self.function_records.barrier(record_id)
@@ -4782,131 +4540,6 @@ impl Heap {
             None => self.widen_inline_property(object, slot, value),
         }
     }
-    /// `property_set_unchecked` for the direct object `record_id` names, decoded once: its
-    /// values are inline or a flat arena run. Without `LOGS`, `false` leaves a store the
-    /// write barrier logs to the caller.
-    ///
-    /// # Safety
-    /// `record_id` names a live object record outside dictionary storage (its exact shape
-    /// matched a recorded one) holding a property at `slot`.
-    #[inline(always)]
-    pub(crate) unsafe fn record_property_set_flat<const LOGS: bool>(
-        &mut self,
-        record_id: u32,
-        slot: usize,
-        value: Value,
-        layout: PropertyStoreLayout,
-    ) -> bool {
-        // Without `LOGS`, a store the barrier would log is left to the caller, so this one
-        // makes no call; the barrier does nothing for any other.
-        if !LOGS {
-            if self.object_records.store_logs(record_id, value) {
-                return false;
-            }
-            // SAFETY: the caller proves the record live; the barrier admitted the store.
-            return unsafe { self.record_property_set_unlogged(record_id, slot, value, layout) };
-        }
-        // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
-        let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
-        self.rewrite_widened_numbers();
-        stored
-    }
-
-    /// Whether the write barrier logs a store of `value` into the object record `record_id`
-    /// (`RecordSpace::store_logs`). A caller runs this once per store and passes the verdict
-    /// on: `record_property_set_unlogged` for a store it did not log.
-    #[inline(always)]
-    pub(crate) fn object_store_logs(&self, record_id: u32, value: Value) -> bool {
-        self.object_records.store_logs(record_id, value)
-    }
-
-    /// The store of `value` at `slot` of the object record `record_id` with the barrier already
-    /// run: `record_property_set_flat::<false>` without a second barrier test, for a store
-    /// `object_store_logs` did not log. Changes nothing a barrier would log.
-    ///
-    /// # Safety
-    /// `record_id` names a live object record; `object_store_logs(record_id, value)` is false.
-    #[inline(always)]
-    pub(crate) unsafe fn record_property_set_unlogged(&mut self, record_id: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
-        // SAFETY: the caller's contract; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
-        let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
-        self.rewrite_widened_numbers();
-        stored
-    }
-
-    /// A tracked arena's store through a lane record's hint, the layout id `hint`
-    /// (`Object::hint_shape`) at `slot`: where the record's layout is the hint, its form the
-    /// arena's (the payload is the run's start), the barrier logs nothing and the slot's owner
-    /// already holds `value`'s class (`ValueArena::held_slot_admits`), one owner lookup and one
-    /// class test, no join and no settling. Otherwise the unbarriered store, as before; false
-    /// leaves the logged or widening store to the caller. The barrier is tested once, here.
-    ///
-    /// # Safety
-    /// `record_id` names a live object record; the hint's slot is one its shape holds.
-    #[inline(always)]
-    pub(crate) unsafe fn hinted_tracked_store(&mut self, record_id: u32, hint: u32, slot: u16, value: Value) -> bool {
-        // SAFETY: the caller's contract.
-        let record = unsafe { &*self.unlogged_object_record(record_id) };
-        if record.layout_id() != hint {
-            return false;
-        }
-        // The barrier's one test for this store: a logged store is the caller's.
-        if self.object_store_logs(record_id, value) {
-            return false;
-        }
-        let form = crate::staged::ic::layout_form(hint);
-        if form == 0
-            // SAFETY: the matched layout's shape holds `slot`, in the arena form; the barrier admitted the store.
-            && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
-            return true;
-        }
-        // Packed inline values: where the slot's owner already holds the value's class, the store
-        // widens nothing, so it is the value's narrow form into its half of the payload word
-        // (`store_exact_slot`'s packed arm, without the join). A widening or
-        // unnarrowable store, or a marked object, takes the joining store below.
-        if form == NATIVE_OBJECT_LAYOUT.inline_form && !record.holds_constant_mark()
-            // SAFETY: the matched layout's shape holds `slot`.
-            && unsafe { self.properties.held_slot_admits(crate::staged::ic::layout_shape(hint), usize::from(slot), value) } {
-            if let Some(narrow) = value.to_narrow() {
-                // SAFETY: the caller's contract; the layout's form is packed inline storage; the barrier admitted the store.
-                let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
-                return data.store_packed_narrow(usize::from(slot), Some(narrow));
-            }
-        }
-        // SAFETY: as above; the barrier admitted the store.
-        unsafe { self.record_property_set_unlogged(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
-    }
-
-    /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
-    /// where the slot's owner holds `value`'s class: one owner lookup, one class test, the
-    /// write. False changes nothing, for the joining store. The barrier is not tested
-    /// here: the caller runs `object_store_logs` and calls this only for a store it did not log.
-    ///
-    /// # Safety
-    /// `record_id` names a live object record of exact `shape` whose values are a plain arena
-    /// run (`Object::plain_arena_start`), `shape` holds `slot`, and `object_store_logs(record_id,
-    /// value)` is false.
-    #[inline(always)]
-    pub(crate) unsafe fn held_arena_store(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
-        // SAFETY: the caller's contract.
-        if !unsafe { self.properties.held_slot_admits(shape, usize::from(slot), value) } {
-            return false;
-        }
-        // A Number-typed slot admits an int32 and holds its raw double (`ValueArena::stored_word`).
-        let value = self.properties.stored_word(shape, usize::from(slot), value);
-        // SAFETY: as above; the barrier admitted the write.
-        let record = unsafe { &*self.unlogged_object_record(record_id) };
-        // A marked object's store retires its readers first (`store_exact_slot`).
-        if record.holds_constant_mark() {
-            return false;
-        }
-        let start = record.proved_arena_start();
-        // SAFETY: the run holds the shape's slots.
-        unsafe { self.properties.set_flat_at(start, usize::from(slot), value) };
-        true
-    }
 
     /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub fn tracks_slot_representations(&self) -> bool {
@@ -4985,20 +4618,7 @@ impl Heap {
         if let Some(granule) = self.live_class_cell(object) {
             return self.class_cell_append(granule, value, shape);
         }
-        let _slot = if let Some(object_ref) = object.direct_object_index() {
-            // An add appends to a record's arena run; a class cell takes its add in place (`class_cell_append`).
-            let record_id = self.stub_record(object_ref.granule());
-            let Self {
-                object_records,
-                properties,
-                ..
-            } = &mut *self;
-            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
-            let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape, 0);
-            slot
-        } else {
+        let _slot = {
             let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
@@ -5022,22 +4642,11 @@ impl Heap {
     /// (`ValueArena::grow`); zero takes the next class.
     #[inline(always)]
     fn record_property_add_wanting(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
-        let Some(object_ref) = object.direct_object_index() else {
-            return self.property_add(object, value, shape);
-        };
-        if self.live_class_cell(object).is_some() {
-            return self.property_add(object, value, shape);
-        }
-        // An add appends to the record's arena run; a class cell takes its add in place, above.
-        let record_id = self.stub_record(object_ref.granule());
-        let Self { object_records, properties, .. } = &mut *self;
-        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
-        debug_assert_eq!(slot, properties.len(data.properties()));
-        append_property(data, properties, slot, value, shape, want);
-        self.rewrite_widened_numbers();
-        #[cfg(feature = "profile-memory")]
-        self.note_object_slots(object, slot + 1);
+        // An ordinary object is a class cell, whose add is in place (`property_add`): `slot` and `want` are
+        // the record's, which no ordinary object has. Arrays and functions take their own adds.
+        debug_assert!(self.live_class_cell(object).is_some() || object.direct_object_index().is_none());
+        let _ = (slot, want);
+        self.property_add(object, value, shape);
     }
 
     /// `record_property_add_at` out of line, for an add whose storage moves or whose store
@@ -5048,27 +4657,6 @@ impl Heap {
     #[inline(never)]
     pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
         self.record_property_add_wanting(object, slot, value, shape, want);
-    }
-
-    /// `record_property_add_at` of an add the record admits as a plain append
-    /// (`Object::admits_plain_append`): the store into storage that does not move. A store
-    /// the write barrier would log is left to the caller (`false`, nothing changed), as for
-    /// `record_property_set_flat`, so this one makes no call.
-    #[inline(always)]
-    pub(crate) fn record_property_append_plain(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
-        if self.object_records.store_logs(record_id, value) {
-            return false;
-        }
-        let Self { object_records, properties, .. } = &mut *self;
-        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
-        // exclusive, and the barrier logs nothing for this store.
-        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
-        data.append_plain(properties, slot, value, shape);
-        self.rewrite_widened_numbers();
-        #[cfg(feature = "profile-memory")]
-        let value = self.object_value(record_id);
-        self.memory_profile.object_slots_changed(value, slot + 1);
-        true
     }
 
     #[cfg(feature = "profile-memory")]
@@ -5083,9 +4671,7 @@ impl Heap {
 
     #[cfg(feature = "profile-memory")]
     fn profile_allocation(&mut self, identity: Value) {
-        let object_id = identity.direct_object_index().and_then(|object| self.record_id(object));
         let Self {
-            object_records,
             array_records,
             function_records,
             promise_records,
@@ -5098,12 +4684,6 @@ impl Heap {
             memory_profile,
             ..
         } = self;
-        if let Some(record_id) = object_id {
-            // SAFETY: called immediately after insertion into the direct space.
-            let object = unsafe { object_records.get_live(record_id) };
-            memory_profile.allocated_object(identity, object, properties.len(object.properties()));
-            return;
-        }
         if let Some(record_id) = identity.direct_array_index() {
             // SAFETY: profile runs immediately after inserting this array.
             let array = unsafe { array_records.get_live(record_id) };
@@ -6003,8 +5583,7 @@ impl Heap {
             reasons[idx].0 += 1; reasons[idx].1 += len;
             own.take((0..len).filter_map(|slot| properties.get(vector, slot)));
         };
-        let (mut objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
-        self.object_records.for_each_live(|_, record| { objects += 1; take_object(&record.object, &mut own); });
+        let (objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
         self.array_records.for_each_live(|_, array| {
             arrays += 1;
             take_object(array, &mut own);

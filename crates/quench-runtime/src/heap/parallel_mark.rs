@@ -22,11 +22,11 @@
 use super::records::{ParallelRecordMarks, RecordId};
 use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
-    CollectionRecord, IteratorRecord, MarkBits, OrdinaryRecord, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
+    CollectionRecord, IteratorRecord, MarkBits, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
-use super::class_space::{ClassCellMarks, cell_fields_at, extras_id_at, live_class_at, stub_record_at};
+use super::class_space::{ClassCellMarks, cell_fields_at, extras_id_at, live_class_at};
 use super::extras_space::SharedExtras;
 use super::layouts;
 use super::dictionary_cell::dictionary_id_of;
@@ -315,15 +315,8 @@ impl<'heap> ParallelMarkView<'heap> {
                     let extras = self.extras.0.get(extras_id_at(self.class_base, granule));
                     Heap::cell_children_marking(value, class, fields, run, table, extras, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
                 } else {
-                    // A stub's granule keeps its mark while its Value lives (`ClassSpace::mark_cell`), and its record is marked.
-                    self.cells.mark_if_new(granule);
-                    let id = stub_record_at(self.class_base, granule);
-                    if !self.objects.mark_if_new(id) {
-                        return;
-                    }
-                    // SAFETY: this view just marked the occupied record.
-                    let record = unsafe { self.objects.get(id) };
-                    Heap::object_children_marking(value, &record.object, properties, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
+                    // No live class cell: a dead granule, which holds nothing to trace.
+                    return;
                 }
                 self.note_marked_key(value, batch);
                 CellKind::Object

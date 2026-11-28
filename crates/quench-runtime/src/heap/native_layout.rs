@@ -19,7 +19,7 @@ impl Heap {
     #[inline]
     pub fn native_layout_epoch(&self) -> u64 {
         self.collections + (self.layout_id << Self::LAYOUT_ID_SHIFT)
-            + (self.object_records.block_count() + self.function_records.block_count() + self.array_records.block_count()
+            + (self.function_records.block_count() + self.array_records.block_count()
                 + self.string_records.block_count() + self.class_space.block_count()) as u64
             + self.class_space.spill_moves()
     }

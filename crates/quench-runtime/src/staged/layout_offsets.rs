@@ -20,16 +20,13 @@ use super::object_encoding::{
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
-    OBJECT_RECORD_CAPACITY, ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
+    ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
     VALUE_VEC_INTEGRITY_BITS, WASM_GC_RECORD_CAPACITY,
 };
 use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeObjectLayout {
-    pub record_capacity: usize,
-    pub record_size: usize,
-    pub record_align: usize,
     pub layout_offset: usize,
     pub meta_offset: usize,
     pub auxiliary_offset: usize,
@@ -59,18 +56,7 @@ pub struct NativeObjectLayout {
     pub property_value_align: usize,
 }
 
-/// The stride of an ordinary object's record in the record table (R4-B2b): an `OrdinaryRecord` of an `Object`
-/// (its `ObjectHead`, 12 bytes) and the record's stub granule, padded to 16. A record's address is
-/// `records + id * OBJECT_RECORD_BYTES`, and `id` is the high half of the stub's class-cell header.
-pub const OBJECT_RECORD_BYTES: usize = 16;
-const _: () = assert!(size_of::<super::record_heads::ObjectHead>() <= OBJECT_RECORD_BYTES);
-/// Where an ordinary object's record keeps its stub granule (`OrdinaryRecord::stub`).
-pub const OBJECT_RECORD_STUB: usize = core::mem::offset_of!(super::record_heads::OrdinaryRecordHead, stub);
-
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: OBJECT_RECORD_CAPACITY,
-    record_size: OBJECT_RECORD_BYTES,
-    record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
     meta_offset: META_OFFSET,
     auxiliary_offset: 0,

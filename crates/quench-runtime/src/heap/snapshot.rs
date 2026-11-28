@@ -4,7 +4,7 @@
 //! remembered, and pacing planned from the live count.
 
 use super::*;
-use super::class_space::{ClassCell0, ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace};
+use super::class_space::{ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace};
 use super::extras_space::ExtrasSpace;
 use super::cell::{ObjectExtras, read_extras, write_extras};
 use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
@@ -26,10 +26,6 @@ impl Heap {
                 }
             }
         }
-        write_records(writer, &self.object_records, |writer, record| record.write_snapshot(writer))?;
-        // The object stubs (region 0 of the class space) are written verbatim, so every direct
-        // object `Value` restores to the granule it named.
-        write_records(writer, &self.class_space.regions.0, |writer, cell: &ClassCell0| Ok(writer.u64(cell.header)))?;
         // The class cells (regions 1..) follow, each with its header and fields, so a Value naming one restores unchanged.
         write_class_cells(writer, &self.class_space)?;
         write_extras_space(writer, &self.extras)?;
@@ -109,8 +105,6 @@ impl Heap {
                 heap.free_slots += 1;
             }
         }
-        read_records(reader, &mut heap.object_records, OrdinaryRecord::read_snapshot)?;
-        read_stubs(reader, &mut heap)?;
         read_class_cells(reader, &mut heap)?;
         read_extras_space(reader, &mut heap)?;
         read_records(reader, &mut heap.array_records, ArrayObject::read_snapshot)?;
@@ -142,9 +136,6 @@ impl Heap {
     /// prototype proofs only when a prototype dies, instead of at every collection.
     fn register_restored_prototypes(&mut self) {
         let mut prototypes = Vec::new();
-        self.object_records.for_each_live(|_, record| {
-            if record.object.was_used_as_prototype() { prototypes.push(Value::direct_object(record.stub)); }
-        });
         self.array_records.for_each_live(|id, array| {
             if array.was_used_as_prototype() { prototypes.push(Value::direct_array(id)); }
         });
@@ -185,7 +176,6 @@ impl Heap {
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live
-            + self.object_records.live_count()
             + self.array_records.live_count()
             + self.function_records.live_count()
             + self.promise_records.live_count()
@@ -213,25 +203,6 @@ impl Heap {
     pub(crate) fn restored_root(&self, slot: u32, generation: u32) -> Option<RootId> {
         self.roots.restored_root(slot, generation)
     }
-}
-
-/// Reads the object stubs `write_snapshot` wrote into region 0 of the class space. The space is
-/// mapped only when a stub is present, as its first claim maps it.
-fn read_stubs(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
-    let live = reader.len()?;
-    if live != 0 && !heap.class_space.ensure_reserved() {
-        return Err(SnapshotError("snapshot object stubs without a class space".into()));
-    }
-    for _ in 0..live {
-        let id = reader.u32()?;
-        let cell = ClassCell0 { header: reader.u64()?, fields: [] };
-        if !heap.class_space.regions.0.insert_snapshot(id, cell) {
-            return Err(SnapshotError("snapshot stub out of order".into()));
-        }
-    }
-    let _high_water = reader.u32()?;
-    heap.class_space.regions.0.finish_snapshot_inserts();
-    Ok(())
 }
 
 /// Writes the class cells of regions `1..` (`read_class_cells`), each record with its granule's local id.

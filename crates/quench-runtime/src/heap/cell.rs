@@ -938,31 +938,6 @@ impl std::ops::DerefMut for Object {
     }
 }
 
-/// An ordinary object's record: the object, and the granule of its stub cell in the class space's
-/// region 0 (`Heap::publish_object_record`). A direct object `Value` names the stub, so the record
-/// is reached by the stub header's hop (`ClassSpace::record_of`). Sixteen bytes: an address is
-/// `base + id << 4`.
-#[repr(C)]
-pub struct OrdinaryRecord {
-    pub(crate) object: Object,
-    pub(crate) stub: u32,
-}
-
-impl std::ops::Deref for OrdinaryRecord {
-    type Target = Object;
-    #[inline(always)]
-    fn deref(&self) -> &Object {
-        &self.object
-    }
-}
-
-impl std::ops::DerefMut for OrdinaryRecord {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Object {
-        &mut self.object
-    }
-}
-
 /// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
 /// by reference family: legacy slot indices, then one range per direct record space, then
 /// the null and undefined sentinels at the top.
@@ -1132,8 +1107,6 @@ pub enum PlainPropertyStorage {
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
 /// from the authoritative storage declarations; native code checks the object and extras
 /// representation bits before using any offset below.
-pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = crate::staged::layout_offsets::OBJECT_RECORD_BYTES;
-pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
 /// Where a record keeps its layout id; the header words are in the layout's table entry
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
 /// `NATIVE_OBJECT_AUXILIARY_OFFSET` within it.
@@ -1166,12 +1139,12 @@ pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
 
 const _: () =
-    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
+    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= std::mem::size_of::<Object>());
 const _: () = assert!(
-    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE
+    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= std::mem::size_of::<Object>()
 );
 const _: () =
-    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= NATIVE_OBJECT_RECORD_SIZE);
+    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= std::mem::size_of::<Object>());
 const _: () = assert!(
     NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET + std::mem::size_of::<u32>()
         <= std::mem::size_of::<ObjectExtras>()
@@ -1459,10 +1432,6 @@ impl std::ops::DerefMut for FinalizationEntries {
 }
 /// An object is its header word and one payload word.
 const _: () = assert!(std::mem::size_of::<Object>() == 12);
-/// An ordinary object's record is its object and its stub granule: sixteen bytes.
-const _: () = assert!(std::mem::size_of::<OrdinaryRecord>() == 16);
-/// The stub granule sits where the stencils' record head says (`OrdinaryRecordHead::stub`).
-const _: () = assert!(std::mem::offset_of!(OrdinaryRecord, stub) == crate::staged::layout_offsets::OBJECT_RECORD_STUB);
 /// The payload word holds every inline slot as a narrow value.
 const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as usize);
 

@@ -146,9 +146,6 @@ pub enum PropertyStoreLayout {
 /// to one synchronous no-safepoint execution because growth and compaction can move the arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeObjectLayout {
-    pub record_capacity: usize,
-    pub record_size: usize,
-    pub record_align: usize,
     /// Where a record keeps its layout id (`heap::layouts`).
     pub layout_offset: usize,
     /// Where a layout's table entry keeps the `meta` and auxiliary words.
@@ -186,9 +183,6 @@ pub struct NativeObjectLayout {
 
 /// Layout facts for code generators which emit read-only ordinary-object field accesses.
 pub const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: records::OBJECT_RECORD_CAPACITY,
-    record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
-    record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
     layout_offset: cell::NATIVE_OBJECT_LAYOUT_OFFSET,
     meta_offset: cell::NATIVE_OBJECT_META_OFFSET,
     auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
