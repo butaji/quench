@@ -1466,8 +1466,10 @@ impl Vm {
         {
             return Some(Value::length(length));
         }
+        // A class cell's own field reads as a record's does (R4-F): `Value::DELETED` there is absent, so the caller
+        // falls through to the prototype.
         let object = self.heap.object(object)?;
-        self.slot_data_value(object.record_only()?, slot?) // record: slot_data_value takes the record
+        self.slot_data_value(object, slot?)
     }
     /// The target and handler of a Proxy, copied out so callers need not clone its cell.
     pub fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
@@ -4587,6 +4589,21 @@ impl Vm {
             .ok_or_else(|| JsError("property write on non-object".into()))?
             .shape();
         self.check_property_key_write(object, key, false)?;
+        // A fixed cell's union shape already names the key, holding `Value::DELETED` as absent (R4-F): the add is
+        // an in-place store into that slot, with no transition and no class change.
+        if let Some(slot) = self.property_shape_slot(shape, key)
+            && self.heap.live_class_cell(object).is_some()
+            && attributes == DEFAULT_DATA_ATTRIBUTES
+            && self.heap.object(object).is_some_and(|data| self.heap.property_get_ref(data, slot).is_none())
+        {
+            self.heap.property_set(object, slot, value);
+            if let PropertyKey::String(atom) = key
+                && self.method_caches_may_name(atom)
+            {
+                self.invalidate_method_caches_for_prototype_add(object, atom);
+            }
+            return Ok(());
+        }
         let next_shape = self.transition_data_property_shape(shape, key, attributes);
         self.heap.property_add(object, value, next_shape);
         if let PropertyKey::String(atom) = key

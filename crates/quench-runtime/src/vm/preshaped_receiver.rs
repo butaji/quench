@@ -87,10 +87,20 @@ pub(super) struct PreshapedReceiver {
     /// The field count of the constructor's class's union layout (`AotFacts::class_union_layout`), saturated;
     /// 0 where none is proven. Derived with the entry, so each construction reads it.
     union: u8,
+    /// The union shape of a fixed class (R4-F): the shape `start` reaches by its union layout's names in slot order,
+    /// every receiver of the class allocated as a class cell of it (`alloc_fixed_construct_receiver`). `NOT_FIXED`
+    /// where the class is not fixed.
+    fixed: u32,
+    /// How many leading constant-layout values hold their union slot (the layout's names match the union's leading
+    /// names); the rest of the fixed cell's fields are `Value::DELETED`.
+    fixed_prefix: u8,
     atoms: [Atom; PRESHAPED_FIELDS],
     shapes: [u32; PRESHAPED_FIELDS],
     values: [Value; PRESHAPED_FIELDS],
 }
+
+/// `PreshapedReceiver::fixed` of a class that is not fixed.
+const NOT_FIXED: u32 = u32::MAX;
 
 impl PreshapedReceiver {
     /// An entry no construction matches: no constructor is `undefined`.
@@ -100,6 +110,8 @@ impl PreshapedReceiver {
         shape: u32::MAX,
         len: 0,
         union: 0,
+        fixed: NOT_FIXED,
+        fixed_prefix: 0,
         atoms: [0; PRESHAPED_FIELDS],
         shapes: [u32::MAX; PRESHAPED_FIELDS],
         values: [Value::UNDEFINED; PRESHAPED_FIELDS],
@@ -161,12 +173,78 @@ impl Vm {
     /// with its learned storage (`preshape_receiver`).
     #[inline]
     pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value) -> Value {
-        let start = object.shape();
-        let capacity = self.construct_receiver_capacity(constructor, start);
-        let this = self.heap.alloc_object_with_capacity(object, capacity);
-        self.preshape_receiver(this, start, constructor, constructor);
+        let this = self.alloc_preshaped_receiver(object, constructor, constructor);
         self.record_class_header(constructor, this);
         this
+    }
+
+    /// Allocates the receiver of a construction by `constructor` from the template `object`, whose shape is the
+    /// `Constructed{constructor}` root (`capture_constructed_name`), for `new_target`. A fixed class (R4-F) is
+    /// allocated as its union-shaped class cell, with no record; any other receiver takes its constant layout and
+    /// learned storage (`preshape_receiver`).
+    pub(super) fn alloc_preshaped_receiver(&mut self, object: Object, constructor: Value, new_target: Value) -> Value {
+        let start = object.shape();
+        let index = self.preshaped_entry(constructor, start);
+        if self.preshaped_receivers[index].fixed != NOT_FIXED {
+            let this = self.alloc_fixed_construct_receiver(object, index);
+            self.learn_receiver(this, new_target);
+            let len = usize::from(self.preshaped_receivers[index].len);
+            for slot in 0..len {
+                let atom = self.preshaped_receivers[index].atoms[slot];
+                if self.method_caches_may_name(atom) {
+                    self.invalidate_method_caches_for_prototype_add(this, atom);
+                }
+            }
+            return this;
+        }
+        let capacity = self.construct_receiver_capacity(constructor, start);
+        let this = self.heap.alloc_object_with_capacity(object, capacity);
+        self.preshape_receiver(this, start, constructor, new_target);
+        this
+    }
+
+    /// The fixed class's cell (R4-F) for entry `index`: its union shape's fields are the leading constant-layout
+    /// values that hold their slots (`fixed_prefix`), `Value::DELETED` for every other absent union field. Its
+    /// class is `intern_class(union shape, object's link, 0)`, claimed through `claim_fixed_cell`, so no record is made.
+    fn alloc_fixed_construct_receiver(&mut self, object: Object, index: usize) -> Value {
+        let entry = self.preshaped_receivers[index];
+        let shape = entry.fixed;
+        let length = self.shapes[shape as usize].storage_len();
+        let prefix = usize::from(entry.fixed_prefix);
+        let mut values = [Value::DELETED; crate::heap::MAX_CELL_FIELDS];
+        values[..prefix].copy_from_slice(&entry.values[..prefix]);
+        self.heap.claim_fixed_cell(shape, object.proto_link().bits(), &values[..length])
+    }
+
+    /// The union shape of a fixed class (R4-F): the shape `start` reaches by the names of `constructor`'s class's union
+    /// layout (`AotFacts::class_union_layout`) in slot order, and how many leading constant-layout names of `entry`
+    /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, the union holds more than a
+    /// class cell, a name is private, or `start` is not an empty ordinary shape.
+    fn derive_fixed_union(&mut self, constructor: Value, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return (NOT_FIXED, 0) };
+        let Some(layout) = self.programs.aot_facts(program).and_then(|facts| facts.class_union_layout(class)) else {
+            return (NOT_FIXED, 0);
+        };
+        if layout.fields.len() > crate::heap::MAX_CELL_FIELDS || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
+            return (NOT_FIXED, 0);
+        }
+        let mut shape = start;
+        for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
+            if self.is_private_name(atom) {
+                return (NOT_FIXED, 0);
+            }
+            shape = self.transition_shape(shape, atom);
+            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 {
+                return (NOT_FIXED, 0);
+            }
+        }
+        let prefix = layout
+            .fields
+            .iter()
+            .zip(&entry.atoms[..usize::from(entry.len)])
+            .take_while(|&(&(atom, _), &entry_atom)| atom == entry_atom)
+            .count();
+        (shape, prefix as u8)
     }
 
     /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
@@ -251,6 +329,7 @@ impl Vm {
         if entry.constructor != constructor || entry.start != start {
             let mut derived = self.derive_preshaped_receiver(constructor, start);
             derived.union = u8::try_from(self.union_capacity(constructor)).unwrap_or(u8::MAX);
+            (derived.fixed, derived.fixed_prefix) = self.derive_fixed_union(constructor, start, &derived);
             self.preshaped_receivers[index] = derived;
         }
         index
