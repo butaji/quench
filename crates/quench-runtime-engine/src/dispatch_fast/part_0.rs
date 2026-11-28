@@ -612,6 +612,7 @@ pub(super) fn window_closure_value_in_lane(
                 None => window(vm),
             };
             let value = vm.closure_of_template(template, env);
+            vm.note_closure_created(vm.active_program, function, value);
             // SAFETY: the context's program outlives the lane run.
             vm.record_lane_closure(code, unsafe { (*cx).program }, function, value);
             Some(value)
@@ -1583,6 +1584,7 @@ pub(super) fn closure_in_lane(vm: &mut Vm, code: &ResidualProgram, function: u32
         && code.functions.get(function as usize).is_some_and(|slot| slot.header().prototype_unobservable)
         && let Some(known) = Value::known_closure(function, env)
     {
+        vm.note_closure_created(vm.active_program, function, known);
         return Some(known);
     }
     vm.closure(code, function, env).ok()

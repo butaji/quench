@@ -449,6 +449,10 @@ struct ProgramEntry {
     /// Per function, per construct pc: the class of that construct site (`AotFacts::construct_classes`), dense by pc and
     /// `NO_CONSTRUCT_CLASS` where the site has no fact. Derived once from the facts (`construct_site_table`).
     construct_sites: std::cell::OnceCell<Box<[Box<[u32]>]>>,
+    /// Per body: `Some` where the closed world makes the body's closure one object (`AotFacts::closure_identity`), holding
+    /// that object once its creation edge has run (`ProgramStore::write_closure_cell`), else `None`. Derived from the facts on
+    /// first use (`closure_cells_of`). A program root while the program lives (`extend_roots`).
+    closure_cells: std::cell::OnceCell<Box<[Option<std::cell::OnceCell<Value>>]>>,
     /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
     /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
     class_prototypes: std::cell::RefCell<std::collections::BTreeMap<u32, Value>>,
@@ -574,6 +578,9 @@ pub struct ProgramStore {
     /// The classes a restored snapshot recorded (program, class, header, prototype), which `Vm::install_restored_main`
     /// records again at the class-header edge once the main program is installed; empty otherwise.
     restored_classes: Vec<(ProgramId, u32, u32, Value)>,
+    /// The closure cells a restored snapshot recorded (program, body, closure), which `Vm::install_restored_main` takes at
+    /// the creation edge again once the main program is installed; empty otherwise.
+    restored_closures: Vec<(ProgramId, u32, Value)>,
     /// The id of each program `insert_shared` holds, by its code's address: `find_shared` is one
     /// probe, not a scan of every program (the Wasm boundary asks it per call).
     shared_ids: FxHashMap<usize, ProgramId>,
@@ -631,6 +638,8 @@ impl Default for ProgramStore {
             lane_installed: Default::default(),
             ahead: Default::default(),
             programs: Vec::new(),
+            restored_classes: Vec::new(),
+            restored_closures: Vec::new(),
             shared_ids: FxHashMap::default(),
             // Each store's epochs start apart from every other's, so a context derived from
             // a store a snapshot or reset replaced never matches its successor's.
@@ -776,6 +785,47 @@ impl ProgramStore {
         rows.into_iter().map(Vec::into_boxed_slice).collect()
     }
 
+    /// The closure cell of body `body` in program `id`: the one closure object of the body, `None` for a body whose closure is
+    /// not one object (`AotFacts::closure_identity`). An edge fact, written once at the body's one creation
+    /// (`Vm::note_closure_created`), which dominates every call of the closure, since a call needs the value. Code that folds
+    /// the closure subscribes to `closure_cell_key` and is not entered before that write; the write retires what subscribed.
+    pub fn closure_cell(&self, id: ProgramId, body: u32) -> Option<Value> {
+        let entry = self.entry(id)?;
+        Self::closure_cells_of(entry).get(body as usize)?.as_ref()?.get().copied()
+    }
+
+    /// The key of body `body`'s closure cell in program `id` (`FactKey::ClosureCell`): what code that folds the closure
+    /// subscribes to (`FactWatch::subscribe_cell`), and the key the creation edge's write retires.
+    pub fn closure_cell_key(id: ProgramId, body: u32) -> crate::typed_ir::FactKey {
+        crate::typed_ir::FactKey::ClosureCell { program: id.raw(), body }
+    }
+
+    /// Writes `closure`, the closure object of body `body` that its creation made, into program `id`'s closure cell, where the
+    /// body qualifies. `true` when it wrote: the cell was empty. A body with no qualifying closure, or a second creation of it,
+    /// writes nothing. The write marks the program's roots pending, as `planned_target_set` does.
+    pub(crate) fn write_closure_cell(&mut self, id: ProgramId, body: u32, closure: Value) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        let wrote = match Self::closure_cells_of(entry).get(body as usize) {
+            Some(Some(cell)) => cell.set(closure).is_ok(),
+            _ => false,
+        };
+        if wrote {
+            self.entry_mut(id);
+        }
+        wrote
+    }
+
+    /// The closure cells of `entry`, one per body, `None` for a body whose closure is not one object. The table is sized and
+    /// marked on first use, from the facts (`facts_of`), as `construct_site_table` is.
+    fn closure_cells_of(entry: &ProgramEntry) -> &[Option<std::cell::OnceCell<Value>>] {
+        entry.closure_cells.get_or_init(|| {
+            let facts = Self::facts_of(entry);
+            (0..entry.residual.functions.len() as u32)
+                .map(|body| facts.closure_identity(body).then(std::cell::OnceCell::new))
+                .collect()
+        })
+    }
+
     /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
     /// method call (`CallForm::Framed`) over a closed union of classes and misses on nothing (`Miss::None`), and which
     /// the facts admit. A site is admitted when every arm's class has a prototype that names the method (`prototype_layout`:
@@ -851,6 +901,27 @@ impl ProgramStore {
     /// The classes a restored snapshot recorded, taken once the main program is installed (`Vm::install_restored_main`).
     pub(crate) fn take_restored_classes(&mut self) -> Vec<(ProgramId, u32, u32, Value)> {
         std::mem::take(&mut self.restored_classes)
+    }
+
+    /// Every written closure cell of every program, as (program, body, closure), for the snapshot (`write_snapshot`).
+    fn recorded_closures(&self) -> Vec<(ProgramId, u32, Value)> {
+        let mut recorded = Vec::new();
+        for (index, entry) in self.programs.iter().enumerate() {
+            let Some(entry) = entry else { continue };
+            let Some(table) = entry.closure_cells.get() else { continue };
+            let id = ProgramId::from_raw(index as u32);
+            for (body, cell) in table.iter().enumerate() {
+                if let Some(closure) = cell.as_ref().and_then(|cell| cell.get()) {
+                    recorded.push((id, body as u32, *closure));
+                }
+            }
+        }
+        recorded
+    }
+
+    /// The closure cells a restored snapshot recorded, taken once the main program is installed (`Vm::install_restored_main`).
+    pub(crate) fn take_restored_closures(&mut self) -> Vec<(ProgramId, u32, Value)> {
+        std::mem::take(&mut self.restored_closures)
     }
 
     /// Marks program `id`'s roots pending after one of its planned arms' targets is set, so the next collection traces
@@ -1280,6 +1351,7 @@ impl ProgramStore {
             class_method_vectors: Default::default(),
             class_headers: std::cell::OnceCell::new(),
             construct_sites: std::cell::OnceCell::new(),
+            closure_cells: std::cell::OnceCell::new(),
             class_prototypes: Default::default(),
             planned_targets: Default::default(),
             planned_registered: std::cell::Cell::new(false),
@@ -2636,6 +2708,10 @@ impl ProgramStore {
                 roots.extend([target.callee, target.env, target.lexical_this]);
             }
             roots.extend(entry.class_prototypes.borrow().values().copied());
+            // A written closure cell is its body's one closure, which the body's calls enter while the program lives.
+            if let Some(table) = entry.closure_cells.get() {
+                roots.extend(table.iter().flatten().filter_map(|cell| cell.get().copied()));
+            }
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,
