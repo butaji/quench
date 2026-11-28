@@ -345,7 +345,8 @@ impl Vm {
             _ => None,
         }).filter(|atom| self.shape_slot(shape, *atom).is_none())
             .filter_map(|atom| Some((atom, self.own_data_bits(prototype, atom)?))).collect();
-        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members })
+        let class = self.heap_reads().live_class_key(instance).map(|key| key & !quench_runtime::staged::field_cache_layout::CLASS_KEY);
+        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members, class })
     }
 
     /// The bits of `object`'s own data property `atom`: `None` for an absent name, or where the shape may hold accessors

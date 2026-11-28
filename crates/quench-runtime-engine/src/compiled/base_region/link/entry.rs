@@ -81,7 +81,7 @@ fn number_guard(kind: Kind, dst: Place, offset: u64, register: Register) -> Resu
 /// values are no Numbers is never entered. The guards come first so a body's proven-arguments entry starts past them
 /// (`EntryRow::number`); the rest only test or write slots no Number guard reads, so their order does not change what
 /// they check. Then each declared parameter's entry test (`layout.guards`), and each class-typed parameter's receiver
-/// test (`layout.prototypes`: exact shape and prototype link).
+/// test (`layout.prototypes`: its live class, else its exact shape and prototype link).
 /// `at` is the row the entry enters at (0 for the body's entry, a stub's PC for a resume stub): a Mem
 /// slot's Number guard is emitted only where `layout.entry_reads` says a row reads its entry value.
 pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Result<Vec<EntryRow>, String> {
@@ -112,9 +112,18 @@ pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Resul
         rows.push(EntryRow { stencil: base_rows::stencil(test)?, holes: padded_holes([u64::from(*register) * SLOT, u64::from(*languages), 0]), declared: true, number: None, int32: None, unbox: None });
     }
     let prototype = HeapRow { heap: Heap::Prototype, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    let class = HeapRow { heap: Heap::Class, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for proto in &layout.prototypes {
-        let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::site_bits::HELD_LINK_AT);
-        rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true, number: None, int32: None, unbox: None });
+        // A live class cell's receiver is tested by its class alone (`Heap::Class`): the class id names the shape and the
+        // prototype link, so no prototype row follows it. Any other receiver takes the exact shape and link (`Heap::Prototype`).
+        let (test, holes) = match proto.class {
+            Some(id) => (class, [u64::from(proto.register) * SLOT, u64::from(id), 0]),
+            None => {
+                let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::site_bits::HELD_LINK_AT);
+                (prototype, [u64::from(proto.register) * SLOT, receiver, 0])
+            }
+        };
+        rows.push(EntryRow { stencil: base_rows::stencil(test)?, holes: padded_holes(holes), declared: true, number: None, int32: None, unbox: None });
     }
     for proto in &layout.shapes {
         let heap = if proto.flat { Heap::ShapeFlat } else { Heap::Shape };
