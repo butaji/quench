@@ -68,10 +68,9 @@ fn resize_of<'a, 'b>(ctx: &Ctx<'_>, facts: &'a FunctionFacts<'b>, pc: usize, ins
     }
 }
 
-/// Whether `instruction` is an element access: a `GetIndex`, or an element read or write.
+/// Whether `instruction` is an element access: an element read (a `GetIndex` decodes as one) or write.
 fn element_op(instruction: WideInstruction) -> bool {
-    instruction.op() == crate::bytecode::Op::GetIndex
-        || matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementWrite { .. }))
+    matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementWrite { .. }))
 }
 
 /// Whether the element access `instruction` runs guest code on `words`, the facts before it: through an index accessor, which the
@@ -81,12 +80,12 @@ fn element_runs_guest_code(facts: &FunctionFacts<'_>, instruction: WideInstructi
     !(facts.index_accessors_absent() && plain_key)
 }
 
-/// The register an element access reads its key from: a `GetIndex`'s third operand, or an element operation's key.
+/// The register an element access reads its key from, where the key is a register.
 fn element_key(instruction: WideInstruction) -> Option<Register> {
     match Operation::<u64, ()>::of(instruction) {
         Some(Operation::ElementRead { key, .. }) => key.register_index(),
         Some(Operation::ElementWrite { key, .. }) => Some(key),
-        _ => (instruction.op() == crate::bytecode::Op::GetIndex).then(|| instruction.register_c()),
+        _ => None,
     }
 }
 

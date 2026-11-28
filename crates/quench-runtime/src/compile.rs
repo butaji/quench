@@ -3727,6 +3727,7 @@ impl<'a> Compiler<'a> {
             closure_reads,
             wasm_lazy: None,
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
+            host_calls_result_once: false,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
