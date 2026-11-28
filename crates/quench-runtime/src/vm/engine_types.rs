@@ -1380,11 +1380,9 @@ pub struct CallbackHeader {
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
 /// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery. A forwarded binding is a closure the site called through a native that
-/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
-/// the call guards the native's identity too.
+/// recovery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
+pub enum CalleeBinding { Identity(Value), Function }
 
 #[derive(Clone, Copy)]
 pub struct Case {
@@ -1421,11 +1419,6 @@ pub struct DirectCallee {
     pub capture_len: usize,
     /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
     pub capture_stores: bool,
-    /// For a construction site, the forwarding constructor whose activation the call skips:
-    /// `callee` is that constructor, which the call guards, and `target` its forwarded
-    /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
-    pub forwarder: Option<SkippedForwarder>,
     /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
     pub bound: BoundClosure,
 }
@@ -4465,7 +4458,7 @@ impl CallTarget {
     #[inline]
 
     pub fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
+        match self.callee { CalleeBinding::Identity(value) => Some(value), _ => None }
     }
 }
 

@@ -13,7 +13,7 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
     target: &ScriptCallTarget,
     callee_registers: Registers,
     argc: u16,
-    this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
+    this: Value, constructs: bool,
     // The register of the first value a keeping activation kept past its registers
     // (`ScriptActivation::kept`), which marks it forwarding; `None` for any other.
     kept: Option<u16>,
@@ -30,7 +30,7 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
         ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: record.argc,
-            completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
+            completion: Completion::of(constructs, cross, SETTLES),
             forwards: record.forwards,
             kept: record.kept,
             environment: false,
@@ -39,7 +39,6 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
     );
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation, callee_registers.0) };
-    if let Some(skipped) = skipped { stack.attach_payload(SidePayload::Forwarder(skipped)); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {

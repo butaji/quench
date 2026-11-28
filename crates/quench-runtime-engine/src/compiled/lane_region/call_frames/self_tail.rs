@@ -20,7 +20,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             && matches!(site.receiver, quench_runtime::staged::forms::Receiver::Undefined
                 | quench_runtime::staged::forms::Receiver::This { path: None })
             && matches!(site.arguments, Arguments::Window { count, .. } if usize::from(count) <= self.params)
-            && callee.target.function == self.function_id && callee.forwarder.is_none()
+            && callee.target.function == self.function_id
             && function.tail_site_permitted(record)
             && self.program.function_get(callee.target.function as usize).is_some_and(|body| body.call_plan(self.program).tail_callee)
             && self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc)).is_none_or(Vec::is_empty);

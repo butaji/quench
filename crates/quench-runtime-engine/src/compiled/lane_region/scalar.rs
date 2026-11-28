@@ -222,7 +222,7 @@ impl Lowering<'_, '_> {
     fn scalar_target(&self, pc: usize) -> Option<&DirectCallee> {
         // SAFETY: the body owns its direct callees for as long as its code runs.
         let callee = self.direct.get(&pc).and_then(|sites| sites.first()).map(|callee| unsafe { &**callee })?;
-        (callee.target.function == self.function_id && callee.forwarder.is_none()).then_some(callee)
+        (callee.target.function == self.function_id).then_some(callee)
     }
 
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register

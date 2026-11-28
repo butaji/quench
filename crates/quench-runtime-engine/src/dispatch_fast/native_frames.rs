@@ -132,7 +132,6 @@ fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
     // SAFETY: the table entry was written by the push that made the header; its descriptor outlives the run.
     let callee = unsafe { &*(stack.native_table[index] as *const crate::compiled::DirectCallee) };
     let argc = ImmediateLayout::argument_count(unsafe { (*(callee.call as Ip)).imm() });
-    let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
     let program = unsafe { (*cx).program };
     let packed = header_packed(window);
     // SAFETY: the header's words lie below its window.
@@ -146,9 +145,8 @@ fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
     let (env, capture) = crate::compiled::direct_callee::header_closure(unsafe { super::vm(cx) }, unsafe { &*(*cx).code }, callee, window.0);
     window.set_env(env);
     window.set_capture(capture);
-    let mut side = super::lane_frames::Side::plain(completion, program);
+    let mut side = super::lane_frames::Side::plain(Completion::Plain, program);
     side.native = index;
-    if let Some(skipped) = callee.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
     // SAFETY: the sides are written through `&mut self`'s stack, and no walk runs during a link.
     unsafe { (*stack.sides.get()).push(side) };
     vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
@@ -167,7 +165,6 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     let (callee_at, this, body, window_at) = unsafe { let prefix = &*slot; (prefix.callee, prefix.this, prefix.body, prefix.window) };
     let callee = unsafe { &*callee_at };
     let argc = ImmediateLayout::argument_count(unsafe { (*(callee.call as Ip)).imm() });
-    let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
     // SAFETY: the slot lies within the activations' capacity, below the top.
     unsafe {
         slot.write(Activation {
@@ -180,7 +177,7 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
             kind: ActivationKind::Script(ScriptActivation {
                 callee: callee.target.callee,
                 argc,
-                completion,
+                completion: Completion::Plain,
                 forwards: false,
                 kept: 0,
                 environment: false,
@@ -266,11 +263,6 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
         // SAFETY: a linked frame holds its prefix; its callee outlives the run.
         let (callee, body, window) = unsafe { let prefix = &*slot; (prefix.callee, prefix.body, prefix.window) };
         unsafe { (*slot).callee = std::ptr::null() };
-        // Its skipped constructor, its descriptor's until now, rides in its side record from
-        // here on (`LaneStack::record_sided`); the frames are the innermost, outermost first.
-        if let Some(skipped) = unsafe { &*callee }.forwarder {
-            vm.lane_stack.push_record_side(depth, SidePayload::Forwarder(skipped));
-        }
         innermost = Some((callee, body, window));
     }
     // The plain headers that are native, innermost first: each is advanced into and its side names no
@@ -286,7 +278,6 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
             let side = unsafe { &mut (&mut *stack.sides.get())[side_at] };
             let desc = unsafe { &*(stack.native_table[index] as *const crate::compiled::DirectCallee) };
             let frame = (desc as *const DirectCallee, stack.body_table[index], window.0.addr());
-            if let Some(skipped) = desc.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
             side.native = super::lane_frames::NO_NATIVE;
             if above == 0 { innermost = Some(frame); }
             window = window.plain_caller().1;

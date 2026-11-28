@@ -84,7 +84,7 @@ pub(in super::super) fn push_passed_in_lane<const GENERAL: bool, const SETTLES: 
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
+    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -236,8 +236,8 @@ pub(in super::super) fn enter_window_in_lane<const GENERAL: bool, const SETTLES:
     target: &ScriptCallTarget,
     callee_registers: Registers,
     argc: u16,
-    this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
+    this: Value, constructs: bool,
     kept: Option<u16>,
 ) -> (Registers, Ip) {
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
+    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, kept)
 }

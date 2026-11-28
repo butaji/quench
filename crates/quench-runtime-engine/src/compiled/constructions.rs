@@ -87,14 +87,3 @@ pub(crate) unsafe extern "C" fn construct_plan_holds_in_lane(vm: u64, _residual:
     };
     u64::from(constructs && super::dispatch_fast::construct_plan_holds(vm, callee, class))
 }
-
-/// The receiver a body's non-initializing construction under class `class` of `callee` takes from its plan. No plan
-/// finishes a receiver without its forwarded initializer (the forwarding resolution no plan records), so this
-/// answers `Value::DELETED` before any effect, which takes the construction's helper path.
-/// TODO: drop this helper and its emission (`call_receiver`) once a region build can decline the call instead.
-pub(crate) unsafe extern "C" fn construct_receiver_in_lane(vm: u64, _residual: u64, payload: u64, _callee: Value, _class: u32) -> u64 {
-    // SAFETY: the body passes its own VM and dispatch.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
-    dispatch.refresh_object_bases(vm);
-    Value::DELETED.to_bits()
-}

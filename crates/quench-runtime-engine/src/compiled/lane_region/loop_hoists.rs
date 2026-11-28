@@ -86,13 +86,13 @@ impl Lowering<'_, '_> {
                     if !proven {
                         let matched = match target.callee {
                             CalleeBinding::Function => self.function_binding(value, target.function),
-                            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(value, identity),
+                            CalleeBinding::Identity(identity) => self.is_identity(value, identity),
                         };
                         emit_js_guard(&mut self.builder, matched, exit);
                     }
                     ty = match target.callee {
                         CalleeBinding::Function => Type::function_body(target.function),
-                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } =>
+                        CalleeBinding::Identity(identity) =>
                             Type::function(identity).expect("admitted callee locator"),
                     };
                 }

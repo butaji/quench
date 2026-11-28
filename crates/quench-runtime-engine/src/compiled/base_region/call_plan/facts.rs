@@ -26,8 +26,6 @@ pub(crate) struct DirectFacts {
     /// An arrow, which binds no receiver (only an AOT image's proven row names one).
     pub(crate) lexical: bool,
     pub(crate) registers: u16,
-    /// A construction site's forwarding record: not a plain call.
-    pub(crate) construction: bool,
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
     pub(crate) held: bool,
@@ -64,7 +62,6 @@ impl DirectFacts {
             // A live callee is never an arrow: no direct row binds a lexical `this` (only an AOT image's proven row does).
             lexical: false,
             registers: callee.registers,
-            construction: callee.forwarder.is_some(),
             held,
             closed: false,
             descriptor: std::ptr::from_ref(callee).addr() as u64,
@@ -86,9 +83,6 @@ pub(crate) enum Declined {
     NoTarget,
     /// More arguments than the direct rows pass (`MAX_DIRECT_ARGC`).
     Arguments,
-    /// A construction, which the helper row's `body_call_helper` does not make either: the
-    /// planner for `Construct` chooses.
-    Construction,
     /// The call is not a plain `Call`: no direct row makes it (`CallForm`).
     Form,
     /// A callee with no registers has no window the room check can refuse.
@@ -116,7 +110,6 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
     let declined = [
         (usize::from(shape.argc) > MAX_DIRECT_ARGC, Declined::Arguments),
-        (facts.construction, Declined::Construction),
         (facts.registers == 0, Declined::Window),
         (!facts.describes(shape.argc), Declined::Facts),
     ];

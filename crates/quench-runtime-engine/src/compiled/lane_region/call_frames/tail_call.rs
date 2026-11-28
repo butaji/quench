@@ -18,7 +18,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             && matches!(self.coverage, Coverage::Prefix | Coverage::Full)
             && site.returns && !site.constructs() && !site.forwards
             && matches!(site.callee, quench_runtime::staged::forms::Callee::Register(_))
-            && callee.forwarder.is_none() && callee.method.is_some()
+            && callee.method.is_some()
             && usize::from(count) <= usize::from(body.params)
             && function.tail_site_permitted(record)
             && body.call_plan(self.program).tail_callee

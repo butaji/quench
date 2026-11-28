@@ -184,7 +184,7 @@ impl<'a> BodyCall<'a> {
             stack.values.set_top(top.add(usize::from(target.registers) + quench_runtime::vm::lane_values::CONTEXT));
             Registers(top)
         };
-        enter_window_in_lane::<false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
+        enter_window_in_lane::<false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
     }
 }
 

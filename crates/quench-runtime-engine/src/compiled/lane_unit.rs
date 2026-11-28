@@ -18,7 +18,6 @@ use quench_runtime::bytecode::Function;
 use quench_runtime::compile::call_graph::CallGraph;
 use quench_runtime::compile::call_plan::{tail_site, CallPlan};
 use quench_runtime::staged::Operation;
-use quench_runtime::value::Value;
 #[path = "lane_unit/admission.rs"] pub(crate) mod admission;
 pub(crate) use admission::{inlinable, InlineScope};
 use admission::{restartable, returns_or_keeps};
@@ -31,14 +30,6 @@ pub(crate) use quench_runtime::vm::engine_types::CalleeBinding;
 pub(crate) use quench_runtime::vm::engine_types::CallRecovery;
 
 pub(crate) use quench_runtime::vm::engine_types::CallTarget;
-
-#[quench_macros::ext(CallTargetOps1)]
-impl CallTarget {
-    /// The forwarding native this site called the target through.
-    pub(crate) fn through(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Forwarded { through, .. } => Some(through), _ => None }
-    }
-}
 
 /// The unit PC a self tail call jumps to: the root's first instruction, which the unit reaches
 /// through a jump at PC 0, so the entry is entered once and PC 1 is the loop header.
