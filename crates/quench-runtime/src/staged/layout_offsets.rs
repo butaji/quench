@@ -365,8 +365,8 @@ pub(crate) const JS_STEP_ARRAY_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(s
 pub(crate) const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
 /// The `store_watch` bit set while the property arena records its slots' value classes.
 pub(crate) const STORE_WATCH_TRACKS: u64 = 1;
-/// The `store_watch` bit set while old records keep reference counts (`Heap::rc_active`): every
-/// store into a marked record logs then, an immediate one too (`RecordSpace::store_logs`).
+/// The `store_watch` counts bit, reserved in the gate word's layout: no heap keeps reference counts,
+/// so it is never set. Stencils and native guards still test it.
 pub const STORE_WATCH_COUNTS: u64 = 2;
 /// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
 /// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).

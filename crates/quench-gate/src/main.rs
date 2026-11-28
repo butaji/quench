@@ -17,7 +17,6 @@ mod config;
 mod conformance;
 mod cparity;
 mod debug;
-mod fallbacks;
 mod image;
 mod ir_budget;
 mod ir_floor;
@@ -51,13 +50,12 @@ const USAGE_ERROR: u8 = 2;
 /// Steps that run only when named with `--only`: a full or `--quick` run never includes them.
 const ON_REQUEST: [&str; 1] = ["image"];
 
-const STEPS: [Step; 19] = [
+const STEPS: [Step; 18] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "link-order", quick: true, blocking: false, run: link_order::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
-    Step { name: "fallbacks", quick: false, blocking: false, run: fallbacks::run },
     Step { name: "library", quick: false, blocking: false, run: oracle::run },
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },

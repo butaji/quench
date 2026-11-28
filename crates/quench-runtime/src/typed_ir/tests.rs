@@ -377,28 +377,30 @@ fn a_types_representation_is_the_narrowest_view_that_accepts_it() {
 
 #[test]
 fn string_atoms_join_to_a_bounded_set_then_any_string_of_the_hull() {
-    let a = Type::string_atoms(&[5], 3, 3);
-    let b = Type::string_atoms(&[2], 1, 4);
+    let a = Type::string_atoms(&[5], 3, 3, true);
+    let b = Type::string_atoms(&[2], 1, 4, true);
     let joined = a.join(b);
     assert_eq!(joined.string_fact().unwrap().atoms(), &[2, 5]);
     assert_eq!(joined.string_fact().unwrap().length(), StringLength { min: 1, max: 4 });
     assert!(a.is_subtype(joined) && !joined.is_subtype(a));
     assert!(a.is_subtype(Type::language(ValueType::String)));
-    let many = (0..=MAX_STRING_ATOMS as u32).fold(Type::NEVER, |ty, atom| ty.join(Type::string_atoms(&[atom], 1, 1)));
+    let many = (0..=MAX_STRING_ATOMS as u32).fold(Type::NEVER, |ty, atom| ty.join(Type::string_atoms(&[atom], 1, 1, true)));
     assert_eq!(many.string_fact().unwrap().atoms(), &[] as &[u32]);
     assert_eq!(many.string_fact().unwrap().length(), StringLength { min: 1, max: 1 });
+    // Flatness joins by AND: a string flat on one side only is not flat in the hull.
+    assert!(a.string_fact().unwrap().flat() && !a.join(Type::string_length(3, 3, false)).string_fact().unwrap().flat());
 }
 
 #[test]
 fn full_length_string_without_atoms_is_the_plain_string_type() {
-    assert_eq!(Type::string_length(0, u32::MAX), Type::language(ValueType::String));
+    assert_eq!(Type::string_length(0, u32::MAX, false), Type::language(ValueType::String));
     assert_eq!(Type::language(ValueType::String).string_fact(), Some(StringFact::ANY));
-    assert_eq!(Type::string_length(1, 1).join(Type::language(ValueType::String)), Type::language(ValueType::String));
-    assert_eq!(Type::string_length(1, 1).join(Type::NUMBER).string_fact(), None);
+    assert_eq!(Type::string_length(1, 1, true).join(Type::language(ValueType::String)), Type::language(ValueType::String));
+    assert_eq!(Type::string_length(1, 1, true).join(Type::NUMBER).string_fact(), None);
 }
 
 #[test]
 fn string_widening_reaches_a_fixed_length_range() {
-    let grown = Type::string_length(1, 1).widen(Type::string_length(1, 2));
+    let grown = Type::string_length(1, 1, true).widen(Type::string_length(1, 2, true));
     assert_eq!(grown.string_fact().unwrap().length(), StringLength { min: 1, max: u32::MAX });
 }

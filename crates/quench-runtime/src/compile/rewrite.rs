@@ -1271,7 +1271,7 @@ mod tests {
                     runtime.execute(&program).unwrap();
                 }
                 {
-                    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+                    let native = crate::NativeJsProgram::publish(program).unwrap();
                     let mut runtime = crate::Runtime::new(crate::SystemHost);
                     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
                     runtime.execute_native(&native).unwrap();

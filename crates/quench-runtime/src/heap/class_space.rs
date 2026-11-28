@@ -21,7 +21,6 @@ use crate::staged::object_encoding::{
     region_field_capacity,
 };
 use crate::value::Value;
-use crate::value_vec::ValueArena;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr::NonNull;
 
@@ -416,7 +415,7 @@ impl ClassSpace {
         with_region_mut!(self.regions, region, |space| space.mark(local))
     }
 
-    /// Whether cell `g` is marked, live, or aged in its region (`RecordSpace::is_marked`, `is_live`, `is_aged`).
+    /// Whether cell `g` is marked in its region (`RecordSpace::is_marked`).
     pub(super) fn is_marked(&self, g: u32) -> bool {
         let (region, local) = locate(g);
         with_region!(self.regions, region, |space| space.is_marked(local))
@@ -427,54 +426,22 @@ impl ClassSpace {
         with_region!(self.regions, region, |space| space.is_live(local))
     }
 
-    pub(super) fn is_aged(&self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.is_aged(local))
-    }
-
     /// Whether a store of `stored` into cell `g` needs its region's barrier log (`RecordSpace::store_logs`).
     pub(super) fn store_logs(&self, g: u32, stored: Value) -> bool {
         let (region, local) = locate(g);
         with_region!(self.regions, region, |space| space.store_logs(local, stored))
     }
 
-    /// The reference-count primitives of cell `g` (`RecordSpace::rc_*`), for a cell region.
-    pub(super) fn rc_pin(&self, g: u32) {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.rc_pin(local))
-    }
-
-    pub(super) fn rc_increment(&self, g: u32) {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.rc_increment(local))
-    }
-
-    pub(super) fn rc_decrement(&self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.rc_decrement(local))
-    }
-
-    pub(super) fn rc_count(&self, g: u32) -> u8 {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.rc_count(local))
-    }
-
-    #[cfg(test)]
-    pub(super) fn rc_exact_count(&self, g: u32) -> u32 {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.rc_exact_count(local))
-    }
-
     /// The write barrier for a write into live cell `g` (`RecordSpace::barrier`). Only cell regions hold live cells.
-    pub(super) fn barrier(&mut self, g: u32, properties: &ValueArena) {
+    pub(super) fn barrier(&mut self, g: u32) {
         let (region, local) = locate(g);
         let regions = &mut self.regions;
         match region {
-            1 => regions.1.barrier(local, properties),
-            2 => regions.2.barrier(local, properties),
-            3 => regions.3.barrier(local, properties),
-            4 => regions.4.barrier(local, properties),
-            5 => regions.5.barrier(local, properties),
+            1 => regions.1.barrier(local),
+            2 => regions.2.barrier(local),
+            3 => regions.3.barrier(local),
+            4 => regions.4.barrier(local),
+            5 => regions.5.barrier(local),
             _ => unreachable!("a live class cell lies in a cell region"),
         }
     }

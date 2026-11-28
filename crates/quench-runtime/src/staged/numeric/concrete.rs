@@ -97,6 +97,11 @@ impl NumericStage for super::super::Concrete {
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    fn float_power(&mut self, base: u64, exponent: u64) -> u64 {
+        super::super::power::power(f64::from_bits(base), f64::from_bits(exponent)).to_bits()
+    }
     #[inline(always)]
     fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_primitive(operation, f64::from_bits(value)).to_bits()

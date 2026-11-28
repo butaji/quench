@@ -18,13 +18,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::escapes::Escapes;
 use super::flow::{Call, FunctionFlow, Target};
+use super::gate;
 use super::scope::Scope;
+use super::shape::Change;
 use super::value::{Key, Origin};
 use super::AotFacts;
-use crate::bytecode::{used_registers, Class, FieldLookup, Function, Op, ResidualProgram, Traits, WideInstruction};
+use crate::bytecode::{used_registers, Class, FieldLookup, Function, Op, PropertyDefinitionMode, ResidualProgram, Traits, WideInstruction};
 use crate::compile::liveness::{register_dead, RegisterMasks};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, FactKey, Type};
+
+/// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
+const PROTOCOL_NAMES: [&str; 33] = [
+    "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "length", "next", "done", "value", "return",
+    "throw", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll",
+    "hasIndices", "exec", "join", "message", "name", "cause", "index", "input", "groups", "get", "set",
+];
+
 
 /// The global object whose methods read none of their receiver's properties (their arguments are still sinks).
 const MATH: &str = "Math";
@@ -50,6 +60,10 @@ pub(super) struct Readers {
     reflective: Classes,
     /// `(function, pc)` of each call whose result register no read follows.
     dead_results: BTreeSet<(u32, u32)>,
+    /// Whether a builtin may make a field non-writable or the object non-extensible under a name the program does not name
+    /// (a `defineProperty` with an unknown key, `freeze`, `Proxy`, ...): a store of any field then may fail instead of writing,
+    /// so every field's stores are observed (`observes`).
+    descriptors_unknown: bool,
 }
 
 /// A method call `receiver.atom(arguments)`, which escapes its operands unless `resolves` names its callees.
@@ -61,12 +75,15 @@ struct MethodCall {
 
 /// The flow and facts one function's scan reads.
 struct Scan<'a> {
+    program: &'a ResidualProgram,
     function: u32,
     flow: &'a FunctionFlow,
     facts: &'a AotFacts,
     scope: &'a Scope,
     masks: Option<&'a RegisterMasks>,
     calls: BTreeMap<u32, &'a Call>,
+    /// Whether the program names `defineProperty` (`gate::names_property_definer`): a callee read through no name may be it.
+    definer: bool,
 }
 
 impl Scan<'_> {
@@ -89,12 +106,15 @@ impl Readers {
             methods: Vec::new(),
             reflective: Classes::Never,
             dead_results: BTreeSet::new(),
+            descriptors_unknown: false,
         }
     }
 
     /// Notes what function `function` reads, hands on and discards, from its flow and its instructions.
     pub(super) fn scan(&mut self, program: &ResidualProgram, function: u32, flow: &FunctionFlow, facts: &AotFacts, scope: &Scope) {
         let cx = Scan {
+            program,
+            definer: gate::names_property_definer(program),
             function,
             flow,
             facts,
@@ -134,10 +154,26 @@ impl Readers {
         }
     }
 
+    /// Notes that each protocol name the program names (`PROTOCOL_NAMES`) is read off any class: a builtin reads it with no
+    /// read instruction the flows record (a conversion's `toString`/`valueOf`, `await`'s `then`, `JSON.stringify`'s `toJSON`,
+    /// the iterator protocol, a species `constructor`, a regexp's `lastIndex`, an error's `message`), so a store of it is
+    /// observed. Called before `finish`.
+    pub(super) fn protocol_names(&mut self, program: &ResidualProgram) {
+        for (atom, name) in program.atoms.iter().enumerate() {
+            let name: &str = name.as_ref();
+            if PROTOCOL_NAMES.contains(&name) {
+                self.named(atom as u32, Classes::Many);
+            }
+        }
+    }
+
     /// Whether a read the program makes, or code it cannot follow makes, may observe the value stored under `key`.
-    /// Only a field key is decided here; any other key is observed (`true`).
+    /// Only a field key is decided here; any other key is observed (`true`). Where `descriptors_unknown` holds, every field
+    /// key is observed: a store of a field some builtin may have made non-writable, or may fail on a non-extensible object,
+    /// must not be dropped, since dropping it would turn a failing store into a silent one.
     pub(super) fn observes(&self, key: FactKey) -> bool {
         match key {
+            FactKey::Field { .. } | FactKey::AnyField(_) if self.descriptors_unknown => true,
             FactKey::Field { class, atom, .. } => self.reflective.may_hold(class)
                 || self.named.get(&atom).is_some_and(|classes| classes.may_hold(class))
                 || (self.index_atoms.contains(&atom) && self.index_reads.may_hold(class)),
@@ -168,6 +204,7 @@ impl Readers {
             self.named(instruction.atom_index(), Classes::Many);
         }
         if let Some(call) = cx.calls.get(&at) {
+            self.descriptors(cx, call);
             self.call(cx, call);
             if discards_result(cx.masks, instruction, at) {
                 self.dead_results.insert((cx.function, at));
@@ -202,13 +239,43 @@ impl Readers {
     /// definition converts its computed key, and every other instruction hands its operands on.
     fn plain(&mut self, cx: &Scan<'_>, at: u32, instruction: WideInstruction) {
         match instruction.op().class() {
-            Class::DefinePropertyRecord => self.sinks.push(cx.cell(at, u16::from(instruction.register_c()))),
+            Class::DefinePropertyRecord => {
+                if matches!(instruction.property_definition_mode(), Some(PropertyDefinitionMode::ReadonlyMethod)) {
+                    self.readonly_definition(cx, at);
+                }
+                self.sinks.push(cx.cell(at, u16::from(instruction.register_c())));
+            }
             class if moves_only(class) => {}
             _ => {
                 for register in used_registers(instruction) {
                     self.sinks.push(cx.cell(at, register));
                 }
             }
+        }
+    }
+
+    /// Notes a definition of a non-writable method (`PropertyDefinitionMode::ReadonlyMethod`, a class's private method) at `at`:
+    /// a store of the name it defines fails instead of writing, so the name is observed off any class. A key the shape does
+    /// not name is any name (`descriptors_unknown`).
+    fn readonly_definition(&mut self, cx: &Scan<'_>, at: u32) {
+        match cx.flow.shapes.iter().find(|shape| shape.pc == at).map(|shape| &shape.change) {
+            Some(Change::Field(atom)) => self.named(*atom, Classes::Many),
+            _ => self.descriptors_unknown = true,
+        }
+    }
+
+    /// Notes what a call does to the descriptors of the objects it is given. A `defineProperty` with a known key may make that
+    /// name non-writable or an accessor, so the name is observed off any class; with an unknown key it may make any name one,
+    /// and any other builtin that defines properties or makes an object non-writable or non-extensible (`Scope::changes_descriptors`)
+    /// makes every field observed (`descriptors_unknown`).
+    fn descriptors(&mut self, cx: &Scan<'_>, call: &Call) {
+        if gate::is_property_definer(cx.program, call, cx.definer) {
+            match call.arguments.get(1).and_then(|key| key.atom_key()) {
+                Some(atom) => self.named(atom, Classes::Many),
+                None => self.descriptors_unknown = true,
+            }
+        } else if callee_atom(call).is_some_and(|atom| cx.scope.changes_descriptors(atom, call.arguments.len())) {
+            self.descriptors_unknown = true;
         }
     }
 
@@ -324,6 +391,15 @@ impl Readers {
             FactKey::AnyField(_) => self.reflective != Classes::Never,
             _ => false,
         }
+    }
+}
+
+/// The atom of the name `call` is read by: its method's, or the name of its callee read off a named property or a global.
+pub(super) fn callee_atom(call: &Call) -> Option<u32> {
+    match (call.target, call.callee.origin) {
+        (Target::Method(atom), _) => Some(atom),
+        (_, Some(Origin::Member(atom) | Origin::MemberOn { atom, .. } | Origin::Binding(Key::Global(atom)))) => Some(atom),
+        _ => None,
     }
 }
 

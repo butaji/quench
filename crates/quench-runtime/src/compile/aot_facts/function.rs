@@ -2,6 +2,7 @@
 //! facts (`AotFacts`) at the function's own pcs, registers and keys.
 
 use super::accessors;
+use super::lengths::IndexRange;
 use super::record::ElementStore;
 use super::registers::Source;
 use super::AotFacts;
@@ -91,6 +92,20 @@ impl<'a> FunctionFacts<'a> {
         self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).map(|fact| fact.length())
     }
 
+    /// Whether the string register `register` holds just before `pc` is flat (`typed_ir::StringFact::flat`): one run of units,
+    /// never the halves of a rope. False where the solve names no string or no flat one.
+    pub fn string_flat(&self, pc: u32, register: u16) -> bool {
+        self.cell_at(pc, register).and_then(|cell| cell.ty.string_fact()).is_some_and(|fact| fact.flat())
+    }
+
+    /// Whether the array register `register` holds just before `pc` is a plain int32 backing: no hole, every element an int32,
+    /// a plain array (`Elements::int32_backing`). Such a backing's count of other values (`Header::others`) is zero, so a loop
+    /// that reads and stores its elements as int32s need not check the backing's count at entry. False where the solve does
+    /// not settle the register or names no plain array.
+    pub fn backing_plain(&self, pc: u32, register: u16) -> bool {
+        self.cell_at(pc, register).is_some_and(|cell| cell.elements.int32_backing())
+    }
+
     /// Whether `===` between the registers `left` and `right` just before `pc` is a pointer compare: both hold interned
     /// atoms (`staged::typing::both_interned`).
     pub fn interned_compare(&self, pc: u32, left: u16, right: u16) -> bool {
@@ -157,9 +172,10 @@ impl<'a> FunctionFacts<'a> {
         self.facts.access_classes.get(&(self.function, pc)).copied().unwrap_or(crate::typed_ir::Classes::Many)
     }
 
-    /// The class of every `this` the function's recorded calls pass (`AotFacts::this_classes`): a guess.
-    pub fn this_class(&self) -> Option<u32> {
-        self.facts.cell(crate::typed_ir::FactKey::Receiver(self.function)).and_then(|cell| cell.classes.single()).map(|(class, _)| class)
+    /// The classes of `this` in the function, settled in a closed world (`AotFacts::this_classes`): the join of the receivers
+    /// of the calls that reach it (`FactKey::Receiver`), so a method only ever called on its class's instances reads that class.
+    pub fn this_classes(&self) -> crate::typed_ir::Classes {
+        self.facts.this_classes(self.function)
     }
 
     /// The slot of named field `atom` in instances of `class` (its index in `AotFacts::class_layout`), where the layout is
@@ -199,6 +215,14 @@ impl<'a> FunctionFacts<'a> {
         self.facts.lengths.get(&self.function)?.bound_below(pc, index)
     }
 
+    /// The range of the index the element access at `pc` reads, where its floor and ceiling are forms over registers that no write in
+    /// a loop breaks: `header` is that loop's header pc. The lane evaluates `floor` and `ceiling` once on the loop's entering edge and
+    /// compares them with 0 and the array's length; `nan` says the index may be NaN, which the lane takes separately. The analysis
+    /// never checks the range in execution, and a read with no such loop has none.
+    pub fn index_ceiling(&self, pc: u32) -> Option<IndexRange> {
+        self.facts.lengths.get(&self.function)?.index_range(pc)
+    }
+
     /// Whether the step at `pc` may resize an array of element class `array` (a call that may write its elements, a mutator, guest
     /// code, or an element store the relations do not prove within its array), for the arrays the function's registers hold.
     /// Where the solve recorded no lengths, the step may resize.
@@ -214,6 +238,30 @@ impl<'a> FunctionFacts<'a> {
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).
     pub(super) fn index_accessors_absent(&self) -> bool {
         self.facts.index_accessors_absent
+    }
+
+    /// Whether no builtin prototype object has an index property (`AotFacts::prototype_indices_empty`).
+    pub fn prototype_indices_empty(&self) -> bool {
+        self.facts.prototype_indices_empty()
+    }
+
+    /// Whether every call of this function passes an undefined receiver (`identity::this_undefined`), so its raw `this` is
+    /// `undefined` at entry. A self-tail call then drops its receiver compare. Kept apart from `Cell::global`: a sloppy
+    /// function's `this` becomes the global object only after this raw receiver.
+    pub fn this_undefined_at_entry(&self) -> bool {
+        self.facts.this_undefined.contains(&self.function)
+    }
+
+    /// Whether every value of this function's closure is one object (`AotFacts::closure_identity`). A construct, scalar or
+    /// self-tail callee compare on it drops.
+    pub fn closure_identity(&self) -> bool {
+        self.facts.closure_identity(self.function)
+    }
+
+    /// Whether a self-recursive call of this function runs in the entry's environment (`AotFacts::self_callee_env`). A
+    /// self-tail call then drops its capture compares.
+    pub fn self_callee_env(&self) -> bool {
+        self.facts.self_callee_env(self.function)
     }
 
     /// The call `pc` makes, as its callee sees its arguments (`AotFacts::call_sites`); None where the solve read no such call.

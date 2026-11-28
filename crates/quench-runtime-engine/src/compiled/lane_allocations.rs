@@ -1,6 +1,8 @@
 //! The lane helpers that allocate (`LaneHelper::NewArray`, `NewRegExp`, `Binary`, the staged claim's
 //! finish and cold paths): each
-//! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
+//! leaves for a due collection first, and the dispatch then reads the moved arena bases again. The
+//! materializations of kept values (`LaneHelper::MaterializeArray`) are the exception: they allocate
+//! whatever is due, since their code has no leave to take (DESIGN 4.7).
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -110,16 +112,40 @@ pub(crate) unsafe extern "C" fn new_const_array_in_lane(vm: u64, _residual: u64,
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions
 /// write, as the lane's own (the `MakeArray` row and its `DefineElement` rows);
 /// `DELETED` where a collection is due, as `compiled_new_object`.
-pub(crate) unsafe extern "C" fn new_array_in_lane(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+pub(crate) unsafe extern "C" fn new_array_in_lane(vm: u64, residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+    // SAFETY: as `compiled_new_object`.
+    if unsafe { (*(vm as *const Vm)).collection_due() } { return Value::DELETED.to_bits(); }
+    // SAFETY: as `materialize_array_in_lane`, whose arguments these are.
+    unsafe { materialize_array_in_lane(vm, residual, payload, length, elements) }
+}
+
+/// The array `new_array_in_lane` makes, made whatever is due: a materialization of a kept array
+/// (`lane_region::virtual_objects::arrays`) allocates here and never refuses. The allocation only
+/// sets a collection due (DESIGN 4.7); the next safepoint collects, the lane's leave or the next
+/// allocating helper's refusal or poll, so nothing is collected between the materialized arrays.
+///
+/// # Safety
+/// As `compiled_new_object`; nonzero `elements` addresses `length` values the code wrote.
+pub(crate) unsafe extern "C" fn materialize_array_in_lane(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; nonzero `elements` addresses `length` values the code wrote.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.collection_due() { return Value::DELETED.to_bits(); }
     let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     // The empty array (no elements, so `hole_array`'s static empty header) is the inline template's source.
     if length == 0 && elements == 0 { dispatch.capture_empty_array(vm, array); }
     array.to_bits()
+}
+
+/// The element `index` of `array`, a hole array a materialization of a kept array made (`new_array_in_lane`
+/// with no elements), defined as its literal's `DefineArrayElement` would (`Vm::define_literal_element`); `0`
+/// where the define refuses, which the code traps on.
+pub(crate) unsafe extern "C" fn define_kept_element_in_lane(vm: u64, _residual: u64, payload: u64, array: u64, index: u64, value: u64) -> u64 {
+    // SAFETY: as `compiled_new_object`; `array` is the hole array the materialization just made, held by no other.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch)) };
+    let defined = vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value));
+    dispatch.refresh_object_bases(vm);
+    u64::from(defined)
 }
 
 /// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::regexp_literal_value_in_lane`):

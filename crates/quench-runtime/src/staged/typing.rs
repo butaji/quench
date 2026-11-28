@@ -368,10 +368,19 @@ fn negated(relation: NumberRelation) -> NumberRelation {
 /// The type `left + right` defines where one operand is a string: a fresh string, never an atom (a concatenation is built
 /// at run time), its length the sum of the operands' length ranges. An operand that is not a string converts to one whose
 /// length no rule here bounds, so its length is the full range.
+///
+/// Flat exactly where `JsString::push_js_string` returns the joined text as one run, which the runtime takes for two flat
+/// operands when the left is at most `APPEND_BUFFER_MIN_UNITS` units (a longer flat slice of text is joined as a rope, the
+/// runtime's rule for a slice) and the right is at most `ROPE_LEAF_MAX_UNITS` units (a longer one is a rope node). The
+/// runtime returns a flat run in other cases too (an append buffer, an empty operand, an atom memoized from a concatenation);
+/// this rule claims only the cases it decides from the operands' facts, so any other concatenation is not flat.
 pub fn concatenation(left: Type, right: Type) -> Type {
-    let length = |ty: Type| ty.string_fact().map_or(StringLength::FULL, |fact| fact.length());
-    let (left, right) = (length(left), length(right));
-    Type::string_length(left.min.saturating_add(right.min), left.max.saturating_add(right.max))
+    let fact = |ty: Type| ty.string_fact().map_or((StringLength::FULL, false), |fact| (fact.length(), fact.flat()));
+    let ((left, left_flat), (right, right_flat)) = (fact(left), fact(right));
+    let flat = left_flat && right_flat
+        && left.max <= crate::vm::wtf16::APPEND_BUFFER_MIN_UNITS as u32
+        && right.max <= crate::vm::wtf16::ROPE_LEAF_MAX_UNITS as u32;
+    Type::string_length(left.min.saturating_add(right.min), left.max.saturating_add(right.max), flat)
 }
 
 /// The type `String(value)` defines over a value of type `ty`: the value itself where it is a string (the conversion
@@ -386,7 +395,8 @@ pub fn to_string(ty: Type) -> Type {
 /// the empty string or one unit. The result is never longer than one unit whatever the receiver.
 pub fn char_at(receiver: Type, index: Type) -> Type {
     let length = receiver.string_fact().map_or(StringLength::FULL, |fact| fact.length());
-    if within_length(Length::Fixed(length.min), index) { Type::string_length(1, 1) } else { Type::string_length(0, 1) }
+    // A one-unit or empty result is made from units (`JsString::from_units`, or an ASCII unit's shared string): flat.
+    if within_length(Length::Fixed(length.min), index) { Type::string_length(1, 1, true) } else { Type::string_length(0, 1, true) }
 }
 
 /// The largest UTF-16 code unit: the upper bound of a `charCodeAt` result.
@@ -419,8 +429,9 @@ fn position_hull(index: IntRange, top: i64, relative: bool) -> IntRange {
 /// an integer range.
 pub fn substring_length(receiver: Type, start: Type, end: Type, relative: bool) -> Type {
     let length = receiver.string_fact().map_or(StringLength::FULL, |fact| fact.length());
+    // Every result is flat: `JsString::substring` builds a flat run whatever the receiver's form (`JsString::flat`).
     let (Some(start), Some(end)) = (start.int_range(), end.int_range()) else {
-        return Type::string_length(0, length.max);
+        return Type::string_length(0, length.max, true);
     };
     let top = i64::from(length.max);
     let (position_start, position_end) = (position_hull(start, top, relative), position_hull(end, top, relative));
@@ -428,10 +439,10 @@ pub fn substring_length(receiver: Type, start: Type, end: Type, relative: bool) 
     if length.min == length.max && start.min == start.max && end.min == end.max {
         let (from, to) = (position_hull(start, i64::from(length.min), relative).min, position_hull(end, i64::from(length.min), relative).min);
         let exact = if relative { (to - from).max(0) } else { (to - from).abs() };
-        return Type::string_length(clamp(exact), clamp(exact));
+        return Type::string_length(clamp(exact), clamp(exact), true);
     }
     let max = if relative { position_end.max.max(0) } else { position_end.max.max(position_start.max) };
-    Type::string_length(0, clamp(max))
+    Type::string_length(0, clamp(max), true)
 }
 
 /// Whether `left === right` between two strings is decided by their facts: `Some(true)` where both are one same atom,

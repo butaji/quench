@@ -3,9 +3,11 @@
 //! A call resizes an array only where the settled effects say its class may be written (`FunctionFacts::may_write_elements_of`).
 
 use super::blocks::Blocks;
+use super::gate::World;
+use super::class_ids::ClassIds;
 use super::effects::{Ctx, step};
 use super::flow::{FunctionFlow, conditional_target, loop_headers, whole_literals};
-use super::lengths::{Lengths, Relation, advance, proves_below, refine, store_span};
+use super::lengths::{IndexRange, Interval, Lengths, Relation, advance, index_ranges, loops_of, parameter_registers, proves_below, refine, store_span};
 use super::scope::Scope;
 use super::types::Types;
 use super::value::{Key, Origin, Word};
@@ -60,13 +62,18 @@ pub(crate) struct Settled {
     resizing: BTreeSet<(u32, ElementClass)>,
     /// The element stores (pcs) that cover a span of parameters, as (start, len) (`store_span`).
     spans: BTreeMap<u32, (u16, u16)>,
+    /// The interval of the index each element read takes, by pc, before the read (`Interval`).
+    index_intervals: BTreeMap<u32, Interval>,
+    /// The index ranges of the element reads whose forms are invariant in a loop (`ceilings::index_ranges`), by pc.
+    index_ranges: BTreeMap<u32, IndexRange>,
 }
 
 impl Settled {
     /// Records the relations and the facts the instruction at `pc` finds before it, from the words before it. An allocation
     /// is filled when every use of it other than a hole-free store, a length read or a compare finds the array complete
     /// (`Relation::Complete`): the array is then read, escaped, stored and returned only once its elements are all written.
-    fn record(&mut self, ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction, words: &[Word], relations: &[Relation]) {
+    fn record(&mut self, ctx: &Ctx<'_>, pc: u32, instruction: WideInstruction, words: &[Word], lengths: &Lengths) {
+        let relations = lengths.relations();
         if !relations.is_empty() {
             self.points.push((pc, relations.into()));
         }
@@ -88,6 +95,9 @@ impl Settled {
         };
         if read.is_some_and(|(base, key)| proves_below(relations, key, base, 0)) {
             self.in_bounds_reads.insert(pc);
+        }
+        if let Some((_, key)) = read && words.get(usize::from(key)).is_some_and(|word| word.is_number()) {
+            self.index_intervals.insert(pc, lengths.typed_interval(words, key));
         }
         let length_read = matches!(instruction.op().class(), Class::GetField)
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if ctx.scope.length == Some(atom));
@@ -133,6 +143,11 @@ impl Settled {
             Relation::Less { index: held, bound } if held == index => Some(bound),
             _ => None,
         })
+    }
+
+    /// The index range of the element read at `pc`, where its forms are invariant in a loop (`ceilings::index_ranges`).
+    pub(crate) fn index_range(&self, pc: u32) -> Option<IndexRange> {
+        self.index_ranges.get(&pc).copied()
     }
 
     /// Whether the step at `pc` may resize an array of `class`, as the settled solve reads it.
@@ -185,12 +200,19 @@ pub(super) fn settle(ctx: &Ctx<'_>, function: &Function, entries: &[Option<Vec<W
     }
     settled.sort();
     settled.finish();
+    // A parameter is a `Base::Parameter` only where nothing can write it but this function's own instructions: not through a
+    // closure's environment slot (a closure captures one of this function's slots), not through code added at run time (an open
+    // world, or a function with direct eval or a `with` scope), which reaches its parameters by name.
+    let captured = facts.facts.captures.values().any(|slots| slots.iter().any(|&(owner, _)| owner == ctx.id));
+    let open = facts.facts.world == World::Open || function.has_dynamic_scope_access();
+    let parameters = if captured || open { Vec::new() } else { parameter_registers(function) };
+    settled.index_ranges = index_ranges(&settled.index_intervals, &loops_of(function, &blocks), &parameters);
     settled
 }
 
 /// The length relations of function `id` (`settle`), from its settled solve `flow` and the settled facts of the program.
 pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow, (scope, decode, records): (&Scope, DecodeContext<'_>, &[Register]),
-    resolved: &BTreeMap<Key, u32>, accessors: &BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>, feedback: &Feedback) -> Settled {
+    resolved: &BTreeMap<Key, u32>, classes: &ClassIds, accessors: &BTreeSet<u32>, types: &Types, facts: &FunctionFacts<'_>, feedback: &Feedback) -> Settled {
     let whole = whole_literals(function);
     let ctx = Ctx {
         id,
@@ -198,6 +220,7 @@ pub(crate) fn settle_function(id: u32, function: &Function, flow: &FunctionFlow,
         is_root: function.parent.is_none(),
         scope,
         resolved,
+        classes,
         registers: usize::from(function.registers),
         whole_literals: &whole[..],
         types: Some(types),
@@ -219,7 +242,7 @@ fn replay(ctx: &Ctx<'_>, function: &Function, facts: &FunctionFacts<'_>, range: 
     for pc in range {
         let instruction = function.instruction_at(pc);
         if let Some(settled) = record.as_mut() {
-            settled.record(ctx, pc as u32, instruction, &words, lengths.relations());
+            settled.record(ctx, pc as u32, instruction, &words, &lengths);
         }
         let (_, resized) = advance(ctx, facts, pc, instruction, &mut lengths, &mut words, |words| step(ctx, pc, instruction, words));
         if let Some(settled) = record.as_mut() {

@@ -388,6 +388,8 @@ macro_rules! catalog {
     IMUL twin: kernel(math_imul),
     /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
     CLZ32 twin: kernel(math_clz32),
+    /// `Math.pow` of two Numbers (`NumberOperation::Power`): a product for a constant exponent `SmallPower` names.
+    POW twin: none("Math.pow of a constant exponent: no benchmark op isolates it"),
     /// `switch`'s case slot (`NumberOperation::IntCase`): the slot of the first operand among the labels from the
     /// second's immediate to the maximum at hole 3, an int32 into the destination. Never leaves.
     INT_CASE twin: kernel(c_switch_dense),

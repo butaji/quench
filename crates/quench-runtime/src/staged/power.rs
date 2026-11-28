@@ -79,6 +79,14 @@ pub(crate) fn power(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
+/// `power` as a leaf compiled code calls (`EngineSlowPath::NumberPower`, `LaneHelper::NumberPower`): no VM state,
+/// allocation or guest effects. Never inlined, so it is one symbol, whose address an image names by its helper.
+#[cfg(not(stencil_build))]
+#[inline(never)]
+pub extern "C" fn number_power(base: f64, exponent: f64) -> f64 {
+    power(base, exponent)
+}
+
 /// The power of an infinite base: infinity for a positive exponent, zero otherwise, signed by the base.
 #[cfg(not(stencil_build))]
 fn infinite_power(base: f64, exponent: f64) -> f64 {

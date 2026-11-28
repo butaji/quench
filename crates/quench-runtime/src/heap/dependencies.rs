@@ -20,7 +20,6 @@
 //! global `prototype_layout_epoch`. A dependency object, or compiled code that took a fact read
 //! through a chain, may hold the same subjects (`Dependencies::hold_layouts`).
 
-use crate::fact_stats::{self, FactKind};
 use crate::typed_ir::FactKey;
 use crate::value::Value;
 use std::cell::UnsafeCell;
@@ -342,9 +341,6 @@ impl Table {
     /// Retires what read `subject`; what held its layout is given back to retire (`Retired`).
     fn retire(&mut self, subject: u32) -> Retired {
         let held = Retired(self.layout_readers.take(subject));
-        if !held.0.is_empty() {
-            fact_stats::retired(FactKind::Layout, u64::from(subject));
-        }
         self.retire_proofs(subject);
         held
     }
@@ -352,9 +348,8 @@ impl Table {
     fn retire_proofs(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
         if let Some(cells) = self.cell_readers.get_mut(subject as usize) {
-            let held = std::mem::take(cells).into_iter().fold(false, |any, cell| cell.retire() | any);
-            if held {
-                fact_stats::retired(FactKind::Chain, u64::from(subject));
+            for cell in std::mem::take(cells) {
+                cell.retire();
             }
         }
         if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {

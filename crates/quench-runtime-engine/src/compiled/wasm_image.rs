@@ -30,7 +30,7 @@ pub(crate) struct WasmImageRows {
 /// The memory slot the rows' entry reads, and the rows of every function of Wasm program `id`, under the
 /// binding types `declared`: `None` for a
 /// function with no plan or no rows. The callable set shrinks until every callable function stitches, as
-/// the b-jit's does (`compile_program_with_diagnostics_and_root_mode`).
+/// the b-jit's does (`compile_program_with_diagnostics_and_root`).
 pub(crate) fn rows(vm: &Vm, id: ProgramId, code: &ResidualProgram, declared: &[quench_runtime::WasmBindingType])
     -> (Option<u32>, Vec<Option<WasmImageRows>>) {
     let count = code.function_count();

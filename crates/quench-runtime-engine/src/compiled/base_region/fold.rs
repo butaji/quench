@@ -133,6 +133,7 @@ pub(crate) fn math_kind(native: quench_runtime::tier_surface::Native) -> Option<
         MathCall::Extreme(false) => Kind::Min,
         MathCall::Imul => Kind::Imul,
         MathCall::LeadingZeros => Kind::Clz32,
+        MathCall::Power => Kind::Pow,
         MathCall::Libm(_) | MathCall::Binary(_) => return None,
     })
 }
@@ -149,7 +150,7 @@ fn row_of(native: quench_runtime::tier_surface::Native, shape: &CallShape) -> Op
 /// The Number operation `kind` on a call's arguments: the window's first, and the second window register where the operation
 /// takes two (`Math.min`, `Math.max`, `Math.imul`). The call must pass exactly those arguments.
 pub(crate) fn number_row(kind: Kind, shape: &CallShape) -> Option<Decoded> {
-    let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
+    let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul | Kind::Pow);
     (u16::from(binary) + 1 == shape.argc).then_some(())?;
     let second = binary.then(|| Source::Register(shape.window + 1));
     Some(Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), second, None))

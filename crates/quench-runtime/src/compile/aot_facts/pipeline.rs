@@ -7,15 +7,20 @@ use std::collections::BTreeMap;
 
 use super::accessors;
 use super::census::{self, Census};
+use super::class_ids::ClassIds;
 use super::class_layout;
 use super::copies;
 use super::escapes;
 use super::phase;
 use super::flow::{self, FunctionFlow};
+use super::frozen;
 use super::gate::{self, World};
+use super::identity;
+use super::globals;
 use super::length_settle;
 use super::readers::Readers;
 use super::scope::Scope;
+use super::shapes;
 use super::super::signatures::{self, Argument, CallSite};
 use super::types;
 use super::value;
@@ -104,16 +109,26 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
 }
 
 /// The solve of `program` in `world`, and whether the world's assumption holds for it: a closed solve with `openers` is
-/// verified once settled (`gate::verify`); any other solve, or one that does not settle, is not.
+/// verified once settled (`gate::verify`); any other solve, or one that does not settle, is not. The class ids are the
+/// solve's own (`ClassIds::build`): a solve that splits no body runs once, and one that does runs again with the split
+/// classes, which change no construct site, body or key, so the table of the first run holds in the second.
 fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (AotFacts, bool) {
+    let (facts, verified) = solve_with(program, world, openers, &ClassIds::default());
+    if facts.classes.is_empty() { return (facts, verified); }
+    let classes = facts.classes.clone();
+    solve_with(program, world, openers, &classes)
+}
+
+/// `solve` with the class ids `classes` the constructions and prototypes resolve to (`ClassIds::of`).
+fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, classes: &ClassIds) -> (AotFacts, bool) {
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<value::Key, u32>, names: &std::collections::BTreeSet<u32>,
         types: Option<&types::Types>, feedback: &length_settle::Feedback| -> Vec<FunctionFlow> {
         let mut flows: Vec<FunctionFlow> = (0..program.function_count())
             .map(|id| program.with_record(id, |function| flow::analyze_function(id as u32, function,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, names, types, feedback)))
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), resolved, classes, names, types, feedback)))
             .collect();
-        copies::expand(&mut flows, scope.assign);
+        copies::expand(&mut flows, scope.assign, scope.prototype);
         flows
     };
     // The first pass finds the bindings that hold one closure; the second reads their loads as
@@ -123,9 +138,9 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     let none = length_settle::Feedback::default();
     let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None, &none);
     let accessor_names = accessors::names_of(&first);
-    let resolved = Census::of(&first, world).singles();
+    let resolved = Census::of(&first, world, classes.clone()).singles();
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
-    let mut census = Census::of(&flows, world);
+    let mut census = Census::of(&flows, world, classes.clone());
     census.phases = phase::folds(program, &flows, &census);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
@@ -137,7 +152,11 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
             let Some(target) = census.target_from(call.callee, id, call.pc) else { continue };
             let guessed = census.guessed(call.callee);
             if call.construct {
-                if !guessed { facts.construct_targets.insert((id, call.pc), target); }
+                if !guessed {
+                    facts.construct_targets.insert((id, call.pc), target);
+                    let class = call.callee.origin.and_then(value::Origin::key).map_or(target, |key| classes.of(target, key));
+                    facts.construct_classes.insert((id, call.pc), class);
+                }
             } else {
                 facts.call_targets.insert((id, call.pc), target);
                 if guessed { facts.guessed_calls.insert((id, call.pc)); }
@@ -159,6 +178,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     // cell's holes are the stores' and the allocations', so the types the solve reads must see them. A round whose feedback is
     // the one it solved with is final, so the facts of the last round are the ones its solve read.
     let mut feedback = length_settle::Feedback::default();
+    let mut built = ClassIds::default();
     for round in 0..LENGTH_ROUNDS {
         let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
         let mut settled = false;
@@ -188,6 +208,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         facts.element_views.clear();
         facts.access_classes.clear();
         let mut settled_flows = analyze_typed(&resolved, &accessor_names, Some(&found), &feedback);
+        built = ClassIds::build(&settled_flows, program.function_count() as u32);
         for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
             reads.insert(id, std::mem::take(&mut flow.reads));
@@ -231,7 +252,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         }
         let open_escapes = escapes::escapes(&settled_flows, &facts, &census, &scope);
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
-        facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_functions());
+        facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_classes());
         if let Some(openers) = openers {
             verified = gate::verify(program, openers, &settled_flows, &facts, &census, &open_escapes);
         }
@@ -240,15 +261,31 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
         facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
         field_readers.accessor_names(&accessor_names);
+        field_readers.protocol_names(program);
         field_readers.finish(&facts.cells, &open_escapes);
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
+        // The departure fact needs the union layout, which holds only in a closed world: no class of an open world keeps one.
+        let never_departs = facts.constructed_classes().into_iter()
+            .filter(|&class| facts.unions.contains_key(&class) && shapes::never_departs(&settled_flows, &census, &scope, class))
+            .collect::<std::collections::BTreeSet<u32>>();
+        facts.never_departs = never_departs;
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
+        facts.prototype_indices_absent = facts.index_accessors_absent && gate::prototype_writes_absent(&settled_flows);
         facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
+        // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
+        facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
+        // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
+        facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
+        facts.closures_once = identity::closures_once(program, world);
+        let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
+        facts.this_undefined = this_undefined;
+        facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
+        facts.uncached = globals::uncached_atoms(program, world);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
@@ -256,7 +293,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         // the arrays its settled effects may write (`FunctionFacts::may_write_elements_of`).
         let settled_lengths: BTreeMap<u32, length_settle::Settled> = settled_flows.iter().enumerate().map(|(id, flow)| {
             let settled = program.with_record(id, |function| length_settle::settle_function(id as u32, function, flow,
-                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, &accessor_names, &found, &facts.function_facts(id as u32), &feedback));
+                (&scope, crate::staged::DecodeContext::of(program), &program.method_arguments), &resolved, classes, &accessor_names, &found, &facts.function_facts(id as u32), &feedback));
             (id as u32, settled)
         }).collect();
         facts.lengths = settled_lengths;
@@ -264,6 +301,7 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
         if round + 1 == LENGTH_ROUNDS || next == feedback { break; }
         feedback = next;
     }
+    facts.classes = built;
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
         eprintln!("aot-lanes: field types {:?}", facts.field_types.iter().map(|(atom, ty)| (named(atom), *ty)).collect::<Vec<_>>());

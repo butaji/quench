@@ -36,7 +36,7 @@ mod tests {
                 if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
             }
         "#, "native-field-permission.js").unwrap();
-        let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+        let native = crate::NativeJsProgram::publish(program).unwrap();
         let program = native.residual();
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(crate::ExecutionMode::NativeOnly);

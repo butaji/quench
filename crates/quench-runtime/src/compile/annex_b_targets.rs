@@ -44,7 +44,7 @@ pub(super) fn parse_program_with<'a>(
     declared: Option<&mut crate::bytecode::DeclaredTypes>,
 ) -> ParserReturn<'a> {
     let flat = recognize == Recognize::Flat;
-    let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
+    let recognize = recognize != Recognize::No && lazy_body_check.is_some();
     // A parse that skims without checking (a direct eval's, `BodyFacts::parse_collecting`) also
     // skims its arrows and class methods: their bodies compile on first call, and a body the
     // skim declines is parsed whole. A parse that checks its bodies keeps both whole.
@@ -60,7 +60,6 @@ pub(super) fn parse_program_with<'a>(
             lazy_body_skim,
             inherited_strict,
             lazy_recognize: recognize,
-            lazy_recognize_verify: recognize && crate::trace::Dev::Recognize.value() == Some("verify"),
             lazy_recognize_flat: flat,
             lazy_body_skip,
             ..ParseOptions::default()

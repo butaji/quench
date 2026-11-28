@@ -119,6 +119,6 @@ fn may_be_legacy_nullish(ty: Type) -> bool {
 fn refine_cell(cell: Cell, fact: Refinement) -> Cell {
     match fact {
         Refinement::NotNullish => Cell { ty: cell.ty.not_nullish(), ..cell },
-        Refinement::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false },
+        Refinement::Nullish => Cell { ty: cell.ty.nullish_part(), classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false, prototype: cell.prototype },
     }
 }

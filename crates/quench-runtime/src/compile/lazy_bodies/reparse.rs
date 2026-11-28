@@ -148,7 +148,7 @@ pub(in crate::compile) fn reparse<'a>(
     // A direct eval's chunk skims the bodies inside it and checks none (`FreeNameCheck::checks`);
     // any other parse checks them, recognized where it can be, and skips the known ones unread.
     let checks = names.borrow().as_ref().is_none_or(FreeNameCheck::checks);
-    let skips = (checks && lazy_from.is_some() && !known.is_empty() && crate::trace::Dev::Recognize.value() != Some("noskip"))
+    let skips = (checks && lazy_from.is_some() && !known.is_empty())
         // SAFETY: `skip` lives through the parse, which alone calls it.
         .then(|| unsafe { oxc_parser::LazyBodySkip::new(&skip) });
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.

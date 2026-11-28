@@ -156,6 +156,8 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             // constructor) reads its own record here, a store of it leaves.
             let receiver = &entry.receiver;
             let (object, shape, inline) = (stage.builder.use_var(receiver.object), stage.builder.use_var(receiver.shape), stage.builder.use_var(receiver.inline));
+            // A live receiver (a class-id cell) has no record here (`emit_lane_receiver`), so presence is a run-time
+            // representation test that no class or family type decides.
             let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
             if !readable {
                 emit_js_guard(stage.builder, present, miss);

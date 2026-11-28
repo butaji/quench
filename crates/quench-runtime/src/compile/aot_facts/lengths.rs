@@ -18,6 +18,7 @@
 //! join intersects them (`Lengths::meet`), so a relation holds at a point only if every path proves it. The
 //! set is finite (its relations name registers and the program's constants), so the solve settles without
 //! widening.
+mod ceilings;
 mod relations;
 mod transfer;
 
@@ -29,6 +30,7 @@ use crate::typed_ir::Length;
 use relations::{delta, holds_array, is_string, way};
 use transfer::{Resize, moves_bits, shift_kind, step_of_constant, sum_of_registers};
 
+pub(super) use ceilings::{IndexRange, Interval, index_ranges, loops_of, parameter_registers};
 pub(super) use relations::{Relation, proves_below, store_span};
 pub(super) use transfer::{advance, refine};
 
@@ -39,6 +41,8 @@ const CAPACITY: usize = 32;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Lengths {
     relations: Vec<Relation>,
+    /// The intervals of Number registers whose value is known to lie in some bounds (`ceilings`); a register without one holds its own value.
+    bounds: Vec<(Register, Interval)>,
 }
 
 impl Lengths {
@@ -77,7 +81,8 @@ impl Lengths {
             }).collect();
         self.relations = kept;
         self.prune_deltas();
-        self.relations.len() != before
+        let bounds_changed = self.meet_bounds(other);
+        self.relations.len() != before || bounds_changed
     }
 
     /// Retires every relation that names `register`, and the pending changes no sum is left to hold.
@@ -279,6 +284,11 @@ impl Lengths {
     /// Advances the relations over an instruction that writes `words` as `events` report: a step that may resize an array
     /// retires the relations to it (but a string's), then the registers it writes are defined or retired.
     fn write(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, words: &[Word], events: &Events, resize: Resize<'_, '_>, stored_below: bool) {
+        // The destination's interval comes from the state before the write; the write then retires every interval it breaks.
+        let bound = self.result_interval(ctx, instruction, words);
+        for register in instruction.written_registers() {
+            self.retire_bounds(register);
+        }
         // An element store past the length changes it; a store the relations prove within it does not, and a wild one may
         // change any array's.
         let every = events.wild_elements
@@ -297,6 +307,9 @@ impl Lengths {
                 self.kill(register);
             }
         }
+        if let Some((register, interval)) = bound {
+            self.set_interval(register, interval);
+        }
         self.read_length(ctx, instruction, words);
     }
 
@@ -305,7 +318,7 @@ impl Lengths {
     /// a step that may run guest code (`calls_js`: a call or an accessor may write any field). `Equal` names registers, not
     /// fields, so a store leaves it.
     fn clobber_loads(&mut self, events: &Events, calls_js: bool) {
-        let wild = calls_js || events.wild_member || events.wild_owner || events.shape.is_some();
+        let wild = calls_js || !events.wild.is_none() || events.wild_owner || events.shape.is_some();
         let names = |written: &Key, key: u32| matches!(*written, Key::Member(atom) | Key::MemberAny(atom) | Key::MemberOn { atom, .. } if atom == key);
         self.relations.retain(|relation| match *relation {
             Relation::Loaded { key, .. } => !wild && !events.writes.iter().any(|(written, _)| names(written, key)),

@@ -129,7 +129,9 @@ fn add_chain_stores(
         };
         // SAFETY: the program store keeps a residual for as long as the VM runs it.
         let code = unsafe { &*code };
-        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_, _| None, &mut *each);
+        // Each class's atoms name its own program's fields, which the running program's facts do not
+        // settle, so every chain store is kept.
+        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_| true, |_, _| None, &mut *each);
         if !added {
             break;
         }

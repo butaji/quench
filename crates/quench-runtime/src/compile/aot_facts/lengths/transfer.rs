@@ -158,6 +158,7 @@ pub(in crate::compile::aot_facts) fn refine(ctx: &Ctx<'_>, instruction: WideInst
     // The comparison holds on this edge when the jump's edge is not the one `negate` takes it on. A failing `<` proves
     // `left >= right`, and a holding `>=` does too: the loop's exit edge of `index < bound` reaches the bound.
     let holds = to_target != negate;
+    refined.refine_interval(ctx, left, right, relation, holds, words);
     if let (Some(index), Some(bound)) = (left.register_index(), right.register_index()) {
         let at_least = match relation {
             NumberRelation::LessThan => !holds,
@@ -225,7 +226,7 @@ fn constant_of(ctx: &Ctx<'_>, operand: Operand) -> Option<i64> {
 }
 
 /// Whether `instruction` is a Number binary operation of `operation` with no flags.
-fn is_number_binary(instruction: WideInstruction, operation: NumberArithmetic) -> bool {
+pub(super) fn is_number_binary(instruction: WideInstruction, operation: NumberArithmetic) -> bool {
     instruction.op() == crate::bytecode::Op::Binary
         && instruction.result_flags() == 0
         && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) == Some(operation)

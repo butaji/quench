@@ -17,13 +17,17 @@
 mod accessors;
 mod blocks;
 mod census;
+mod class_ids;
 mod class_layout;
 mod copies;
 mod effects;
 mod escapes;
 mod flow;
+mod frozen;
 mod function;
 mod gate;
+mod identity;
+mod globals;
 mod length_settle;
 mod lengths;
 mod phase;
@@ -34,6 +38,7 @@ mod record;
 mod registers;
 mod scope;
 mod shape;
+mod shapes;
 mod types;
 mod value;
 #[cfg(test)]
@@ -41,16 +46,23 @@ mod tests;
 
 use std::collections::BTreeMap;
 
+/// The linear forms an index range's ends are made of (`FunctionFacts::index_ceiling`), for the lane to read their bases.
+pub use crate::staged::effects::{Affine, Base};
+
 use crate::bytecode::ResidualProgram;
 use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
 use super::signatures::{CallSite, Signatures};
 use class_layout::ClassLayouts;
+use quiet::{Proofs, Quiet};
 use readers::Readers;
 use record::ElementStore;
-pub use class_layout::{FieldDefault, UnionField, UnionLayout};
+pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
+pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
+pub use identity::BuiltinPath;
+pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
 pub use scope::constant_type;
@@ -80,6 +92,13 @@ pub struct AotFacts {
     pub(crate) call_candidates: BTreeMap<(u32, u32), Box<[u32]>>,
     /// `(function, pc)` of a construction (`new`) → the function it always constructs.
     pub(crate) construct_targets: BTreeMap<(u32, u32), u32>,
+    /// `(function, pc)` of a construction (`new`) → the class id of the instance it allocates (`class_ids::ClassIds`): the
+    /// function's own class, or the synthetic class of its body and the key the constructor was read from. The class is a
+    /// fact of the site, so a runtime that records a class's header records it under this id.
+    pub(crate) construct_classes: BTreeMap<(u32, u32), u32>,
+    /// The class ids of the program's constructors (`class_ids::ClassIds`): the functions, and a synthetic class for each body
+    /// that several binding keys construct. Every class id of this table names a body through `ClassIds::body`.
+    pub(crate) classes: class_ids::ClassIds,
     /// Function id → register → the Number representation it always holds.
     pub(crate) numbers: BTreeMap<u32, Box<[Option<Representation>]>>,
     /// Per field name, the type of the values every store of it writes, into an object of any class: the
@@ -105,6 +124,9 @@ pub struct AotFacts {
     /// Whether no index accessor can run for an element access (`gate::index_accessors_absent`): an element access then runs
     /// no guest code for a key that converts to none (`lengths::transfer::element_runs_guest_code`).
     pub(crate) index_accessors_absent: bool,
+    /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the closed
+    /// world (`AotFacts::prototype_indices_empty`): `index_accessors_absent` and no store writes an index of one.
+    pub(crate) prototype_indices_absent: bool,
     /// Whether the property `apply` of every function is `Function.prototype.apply` (`gate::apply_is_builtin`): the callee
     /// register of a `f.apply(this, arguments)` forwarding call then holds the builtin, which calls `f` with the caller's arguments.
     pub(crate) apply_builtin: bool,
@@ -135,9 +157,27 @@ pub struct AotFacts {
     /// The union layouts of the constructed classes the closed world proves one for (`class_layout::unions_of`), read by
     /// `AotFacts::class_union_layout`.
     unions: BTreeMap<u32, UnionLayout>,
+    /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
+    /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
+    root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
+    /// The constructed classes whose instances never depart their union layout (`shapes::never_departs`), read by
+    /// `AotFacts::class_never_departs`. Only where the closed world proves the union layout.
+    never_departs: std::collections::BTreeSet<u32>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
+    /// The builtins the closed world proves are the realm's initial ones (`identity::builtin_proofs`), read by
+    /// `AotFacts::builtin_identity`. None where the solve is not closed or a reflective writer may change a builtin.
+    builtins: Option<Proofs>,
+    /// The bodies whose closure is created at most once per run (`identity::closures_once`), read by `AotFacts::closure_identity`.
+    closures_once: std::collections::BTreeSet<u32>,
+    /// The functions every call of which passes an undefined receiver (`identity::this_undefined`), read by
+    /// `FunctionFacts::this_undefined_at_entry`.
+    this_undefined: std::collections::BTreeSet<u32>,
+    /// The atoms no method cache can name (`globals::uncached_atoms`): empty unless the program is closed.
+    uncached: std::collections::BTreeSet<u32>,
+    /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
+    global_shape: Option<GlobalShape>,
 }
 
 impl AotFacts {
@@ -150,6 +190,8 @@ impl AotFacts {
             guessed_calls: std::collections::BTreeSet::new(),
             call_candidates: BTreeMap::new(),
             construct_targets: BTreeMap::new(),
+            construct_classes: BTreeMap::new(),
+            classes: class_ids::ClassIds::default(),
             numbers: BTreeMap::new(),
             field_types: BTreeMap::new(),
             cells: BTreeMap::new(),
@@ -158,6 +200,7 @@ impl AotFacts {
             registers: BTreeMap::new(),
             lengths: BTreeMap::new(),
             index_accessors_absent: false,
+            prototype_indices_absent: false,
             apply_builtin: false,
             dependencies: BTreeMap::new(),
             element_views: BTreeMap::new(),
@@ -168,8 +211,42 @@ impl AotFacts {
             signatures: None,
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
+            root_stores: BTreeMap::new(),
+            never_departs: std::collections::BTreeSet::new(),
             readers: None,
+            builtins: None,
+            closures_once: std::collections::BTreeSet::new(),
+            this_undefined: std::collections::BTreeSet::new(),
+            uncached: std::collections::BTreeSet::new(),
+            global_shape: None,
         }
+    }
+
+    /// Whether the builtin `binding` is the realm's initial one in every run of the closed program: a global binding the program
+    /// never writes (`Math`), or a member of one (`Math.sqrt`) that no store, deletion or definition of the program may change.
+    /// An edge fact: the settled solve proves it once (`identity::builtin_proofs`), so a lane body need not compare the callee
+    /// with the builtin in execution. False in an open world.
+    pub fn builtin_identity(&self, binding: BuiltinPath) -> bool {
+        let Some(proofs) = self.builtins.as_ref() else { return false };
+        proofs.proves(match binding.member {
+            None => Quiet::Intrinsic { object: None, name: binding.global },
+            Some(member) => Quiet::Intrinsic { object: Some(binding.global), name: member },
+        })
+    }
+
+    /// Whether every value of the closure of `function` is one object in every run (`identity::closures_once`): its closure is
+    /// made by one site, which the root's code runs at most once, outside every loop. An edge fact: a lane body compares no
+    /// closure identity of `function` in execution. False in an open world.
+    pub fn closure_identity(&self, function: u32) -> bool {
+        self.closures_once.contains(&function)
+    }
+
+    /// Whether a self-recursive call of `function`, whose callee is its own closure, runs in the environment of the entry: the
+    /// closure is one object (`closure_identity`, so the callee is the entry's closure), or the function captures nothing, so
+    /// no environment is read. The callee being the function's own closure read from its own binding is implied by a proven
+    /// target. False where the solve does not settle the captures.
+    pub fn self_callee_env(&self, function: u32) -> bool {
+        self.closure_identity(function) || self.captures.get(&function).is_some_and(|captures| captures.is_empty())
     }
 
     /// The composed effect signatures the solve settled (`signatures`), none where the type solve did not settle.
@@ -200,6 +277,27 @@ impl AotFacts {
     /// fact that a forwarding `f.apply(this, arguments)` call's callee is the builtin.
     pub fn apply_is_builtin(&self) -> bool {
         self.apply_builtin
+    }
+
+    /// The atoms of the program that no method cache can name (`globals::uncached_atoms`): a store of one of them, folded
+    /// as unnamed, needs no per-run check that a method cache names it, and the caches' readers retire the fold if one
+    /// later does. Empty in any world but `World::Closed`, so a consumer that takes nothing from an empty set keeps its check.
+    pub fn uncached_atoms(&self) -> &std::collections::BTreeSet<u32> {
+        &self.uncached
+    }
+
+    /// The global object's own properties the closed world fixes (`globals::GlobalShape`): the names the program declares
+    /// and the builtins it reads and never changes. None unless the program is closed, or where a store, define or delete
+    /// may reach the global object by a name the analysis cannot follow.
+    pub fn global_shape(&self) -> Option<&GlobalShape> {
+        self.global_shape.as_ref()
+    }
+
+    /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the
+    /// closed world (`gate::prototype_writes_absent`, with `index_accessors_absent`). The JIT lane reads an unwritten element of
+    /// an array allocated in the frame as `undefined` only where this holds: an edge fact, never checked in execution.
+    pub fn prototype_indices_empty(&self) -> bool {
+        self.prototype_indices_absent
     }
 
     /// Whether no code can be added to the program (`World::Closed`): no key is live, so a unit that
@@ -279,6 +377,30 @@ impl AotFacts {
         self.unions.get(&class).cloned()
     }
 
+    /// The settled cell of the values stored into field `atom` of class `class`'s instances: the union layout's field of that
+    /// name (`class_union_layout`). None where the class has no union layout or the layout names no such field. A store of
+    /// the field writes a value of this cell's type in a closed world.
+    pub fn slot_domain(&self, class: u32, atom: u32) -> Option<crate::typed_ir::Cell> {
+        self.unions.get(&class)?.fields.iter().find(|(name, _)| *name == atom).map(|(_, field)| field.cell)
+    }
+
+    /// Whether instances of class `class` never depart their union layout (`shapes`): in a closed world, no delete, no store
+    /// under a name the analysis cannot list, no builtin that defines or re-describes properties reaches one of them.
+    /// Its shape is then the one its union layout names for good, so an instance's slots are the union's slots.
+    pub fn class_never_departs(&self, class: u32) -> bool {
+        self.never_departs.contains(&class)
+    }
+
+    /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in
+    /// `cells`). `Classes::Many` where new code may call the function (`live`), or where the solve kept no cell.
+    pub fn this_classes(&self, function: u32) -> crate::typed_ir::Classes {
+        let key = crate::typed_ir::FactKey::Receiver(function);
+        match self.cell(key) {
+            Some(cell) if !self.live(key) => cell.classes,
+            _ => crate::typed_ir::Classes::Many,
+        }
+    }
+
     /// Whether two element classes are apart: no link of the program joins them, so an array of one class is never an array
     /// of the other (`element_classes`, each class's listed members). A class no link names is apart from every other.
     /// False where the solve did not settle, so no two classes are taken apart from nothing.
@@ -287,9 +409,15 @@ impl AotFacts {
             && !self.element_classes.get(&crate::typed_ir::FactKey::Elements(first)).is_some_and(|members| members.contains(&crate::typed_ir::FactKey::Elements(second)))
     }
 
-    /// The functions some construction (`new`) always constructs.
-    pub fn constructed_functions(&self) -> std::collections::BTreeSet<u32> {
-        self.construct_targets.values().copied().collect()
+    /// The classes some construction (`new`) always constructs (`construct_classes`).
+    pub fn constructed_classes(&self) -> std::collections::BTreeSet<u32> {
+        self.construct_classes.values().copied().collect()
+    }
+
+    /// The function body class `class` runs (`ClassIds::body`): `class` itself for a constructor's own class, the shared body
+    /// of a synthetic class. Code, frame sizes, callee bodies and function facts are keyed by this function id.
+    pub fn class_body(&self, class: u32) -> u32 {
+        self.classes.body(class)
     }
 
     /// The facts of function `function`, for its lowering.

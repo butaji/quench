@@ -11,7 +11,7 @@ use super::shape::{self, Shape};
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::staged::effects::{Affine, Indices};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representation, Type, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Representation, Type, View};
 
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).
@@ -19,6 +19,8 @@ use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Length, Representat
 pub(crate) struct ElementStore {
     pub(crate) class: ElementClass,
     pub(crate) indices: Indices,
+    /// Whether the array the store writes may be a builtin's prototype object (`Cell::prototype`).
+    pub(crate) prototype: bool,
 }
 
 /// The indices an element store through `index` at `pc` touches in `function`. A Number that is parameter `p` on entry
@@ -47,7 +49,10 @@ pub(super) struct Record {
     global_source: bool,
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
-    wild_member: bool,
+    wild: Holders,
+    member_bases: Vec<(u32, Holders)>,
+    /// Whether a builtin stores an index into an object that may be a builtin's prototype (`FunctionFlow::prototype_writes`).
+    prototype_writes: bool,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Word>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -59,6 +64,8 @@ pub(super) struct Record {
     captures: std::collections::BTreeSet<(u32, u16)>,
     pub(super) registers: RegisterCells,
     reads: std::collections::BTreeSet<Key>,
+    /// The keys each instruction reads, by PC (`FunctionFlow::key_reads`).
+    key_reads: Vec<(u32, Key)>,
     links: Vec<(ElementClass, ElementClass)>,
     wild_elements: bool,
     shapes: Vec<Shape>,
@@ -122,7 +129,9 @@ impl Record {
             global_source: false,
             plain_calls: Vec::new(),
             reads_this: false,
-            wild_member: false,
+            wild: Holders::NONE,
+            member_bases: Vec::new(),
+            prototype_writes: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
             field_owners: std::collections::BTreeMap::new(),
@@ -130,6 +139,7 @@ impl Record {
             captures: std::collections::BTreeSet::new(),
             registers: RegisterCells::default(),
             reads: std::collections::BTreeSet::new(),
+            key_reads: Vec::new(),
             links: Vec::new(),
             wild_elements: false,
             shapes: Vec::new(),
@@ -169,7 +179,7 @@ impl Record {
         // An element store writes the elements of its array's class, at the indices its index register holds.
         if let Some(crate::staged::Operation::ElementWrite { base, key, .. }) = decoded(instruction) {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
-            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index) });
+            self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index), prototype: array.cell.prototype });
         }
         // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
         if instruction.op() == crate::bytecode::Op::GetIndex {
@@ -187,12 +197,17 @@ impl Record {
             let joined = self.element_views.entry(pc as u32).or_insert(View::None);
             *joined = joined.join(view);
         }
+        // A by-name load reads the global of its name, whatever the scope it resolves in (`frozen`).
+        if instruction.op().loads_name() {
+            self.key_reads.push((pc as u32, Key::Global(instruction.atom_index())));
+        }
         // A capture of the parent's environment reads the parent's slot: its cell is the slot's settled cell, which the
         // function depends on as a `Key::Slot` (`AotFacts::captured_slot_cell`).
         if let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = decoded(instruction)
             && let Some(owner) = ctx.scope.owner(ctx.id, depth)
         {
             self.reads.insert(Key::Slot { owner, slot });
+            self.key_reads.push((pc as u32, Key::Slot { owner, slot }));
             if depth == 0 {
                 self.captures.insert((owner, slot));
             }
@@ -229,7 +244,7 @@ impl Record {
                     None => Word::UNKNOWN,
                 },
                 // A construction's receiver is the object it allocates: an instance of the class it constructs.
-                crate::staged::Receiver::Allocated => match callee.cell.ty.body_index() {
+                crate::staged::Receiver::Allocated => match ctx.classes.of_word(callee) {
                     Some(class) if construct => Word::instance(class),
                     _ => Word::of(Type::DIRECT_OBJECT_FAMILY),
                 },
@@ -243,10 +258,14 @@ impl Record {
             let method = method_atom(&call);
             // An array mutator (`push`, `splice`, ...) makes the arrays its receiver names hold its arguments, and an unknown
             // length (`Scope::is_array_mutator`).
+            // A mutator on a builtin prototype, or a property adder handed one (`Object.assign(Array.prototype, ...)`), stores
+            // a property of it that no element store records (`FunctionFlow::prototype_writes`).
+            if call.receiver.cell.prototype && method.is_some_and(|atom| ctx.scope.is_array_mutator(atom)) { self.prototype_writes = true; }
+            if method.is_some_and(|atom| ctx.scope.adds_properties(atom)) && call.arguments.iter().any(|argument| argument.cell.prototype) { self.prototype_writes = true; }
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global, prototype: stored.prototype };
                 self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).
@@ -289,7 +308,8 @@ impl Record {
         self.computed_global |= events.computed_store;
         self.global_keyed |= events.global_keyed;
         self.global_source |= events.global_source;
-        self.wild_member |= events.wild_member;
+        self.wild = self.wild.join(events.wild);
+        self.member_bases.extend(events.member_bases);
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
@@ -304,11 +324,13 @@ impl Record {
         // The key a defined value was read from, where its word names one (`Origin`).
         if let Some(defined) = instruction.defined_register() {
             match state[usize::from(defined)].origin {
-                Some(Origin::Binding(key)) => { self.reads.insert(key); }
-                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); }
+                Some(Origin::Binding(key)) => { self.reads.insert(key); self.key_reads.push((pc as u32, key)); }
+                Some(Origin::Member(atom)) => { self.reads.insert(Key::Member(atom)); self.key_reads.push((pc as u32, Key::Member(atom))); }
                 Some(Origin::MemberOn { class, instance, atom, .. }) => {
                     self.reads.insert(Key::MemberOn { class, instance, atom });
                     self.reads.insert(Key::MemberAny(atom));
+                    self.key_reads.push((pc as u32, Key::MemberOn { class, instance, atom }));
+                    self.key_reads.push((pc as u32, Key::MemberAny(atom)));
                 }
                 _ => {}
             }
@@ -399,7 +421,9 @@ impl Record {
             global_source: self.global_source,
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,
-            member_wild: self.wild_member,
+            wild: self.wild,
+            member_bases: self.member_bases,
+            prototype_writes: self.prototype_writes,
             wild_elements: self.wild_elements,
             numbers,
             field_owners: self.field_owners,
@@ -407,6 +431,7 @@ impl Record {
             captures: self.captures,
             registers: self.registers,
             reads: self.reads,
+            key_reads: self.key_reads,
             links: self.links,
             shapes: self.shapes,
             guest_runs: self.guest_runs,

@@ -21,7 +21,8 @@ mod conversions;
 mod host_text;
 use host_text::utf16_lossy;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
-use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
+use append_buffer::AppendBuffer;
+pub(crate) use append_buffer::APPEND_BUFFER_MIN_UNITS;
 
 /// Bytes of text made on demand since the collector last took them. A string is charged its
 /// flat bytes when allocated; text made later is charged here, so collections follow the
@@ -918,7 +919,7 @@ const ROPE_GATHER_READS: u8 = 32;
 /// Concatenation copies a piece at most this long into its flat neighbor instead of making a
 /// rope node: a node and the separate halves it keeps alive cost more than copying a short
 /// piece, and a rope's leaves then hold at least this many units each.
-const ROPE_LEAF_MAX_UNITS: usize = 512;
+pub(crate) const ROPE_LEAF_MAX_UNITS: usize = 512;
 /// A flat string at most this long prepended to a rope joins the rope's flat left leaf by
 /// copy (`JsString::push_js_string`). Each copy takes the whole prefix, so the bound is the
 /// most a prepend copies: from 8192,

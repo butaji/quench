@@ -103,4 +103,4 @@ impl<T> Drop for AppendBuffer<T> {
 /// append copied the whole prefix: `r += "ab"` to 20000 units charged 2.7 allocations per
 /// append, 65 -> 47 ns per append and 6501 -> 2700 collections for 10^7 appends (experiment
 /// build, x86_64 4 vCPU, 2026-11-07). A copy this short is about one cache line.
-pub(super) const APPEND_BUFFER_MIN_UNITS: usize = 64;
+pub(crate) const APPEND_BUFFER_MIN_UNITS: usize = 64;
