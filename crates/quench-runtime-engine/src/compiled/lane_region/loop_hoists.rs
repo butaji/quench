@@ -80,15 +80,21 @@ impl Lowering<'_, '_> {
                     supplies.then_some(call.target)
                 });
                 if let Some(target) = target {
-                    let (matched, admitted) = match target.callee {
-                        CalleeBinding::Function => (self.function_binding(value, target.function),
-                            Type::function_body(target.function)),
-                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
-                            self.is_identity(value, identity),
-                            Type::function(identity).expect("admitted callee locator")),
+                    // The loaded value is the one closure of the body where the solve proves it (`Identity::Closure`): no binding check.
+                    let proven = matches!(target.callee, CalleeBinding::Function)
+                        && self.is_body_closure_identity(pc, instruction.result_register(), target.function);
+                    if !proven {
+                        let matched = match target.callee {
+                            CalleeBinding::Function => self.function_binding(value, target.function),
+                            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(value, identity),
+                        };
+                        emit_js_guard(&mut self.builder, matched, exit);
+                    }
+                    ty = match target.callee {
+                        CalleeBinding::Function => Type::function_body(target.function),
+                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } =>
+                            Type::function(identity).expect("admitted callee locator"),
                     };
-                    emit_js_guard(&mut self.builder, matched, exit);
-                    ty = admitted;
                 }
             }
             let representation = repr(ty);

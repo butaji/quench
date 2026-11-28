@@ -39,11 +39,26 @@ pub(crate) fn decides_flat_strings(operator: u32) -> bool {
 }
 
 impl Lowering<'_, '_> {
-    /// Whether the call at unit PC `pc` calls a builtin through its callee register `callee`: the cell the solve proves for
-    /// the register before the call names one (`Identity::Builtin`, proven in every run by the closed world). The call's
-    /// identity guard is then not emitted.
-    pub(crate) fn callee_is_builtin(&self, pc: usize, callee: Register) -> bool {
-        matches!(self.cell_before(pc, callee).identity, quench_runtime::typed_ir::Identity::Builtin(_))
+    /// Whether unit register `register` holds a builtin just before the unit instruction at `pc`: the cell the solve proves for
+    /// the register names one (`Identity::Builtin`, proven in every run by the closed world). A site that would compare the
+    /// register's identity with that builtin emits no compare.
+    pub(crate) fn is_builtin_identity(&self, pc: usize, register: Register) -> bool {
+        matches!(self.cell_before(pc, register).identity, quench_runtime::typed_ir::Identity::Builtin(_))
+    }
+
+    /// Whether the solve proves unit register `register` holds a direct object's record just before the unit instruction at
+    /// `pc`, by its solver type (the known-types law): a family or presence test on it is redundant.
+    pub(crate) fn solver_object(&self, pc: usize, register: Register) -> bool {
+        proves_object(self.cell_before(pc, register).ty)
+    }
+
+    /// The settled type of field `atom` of the fixed class `owner` holds (`AotFacts::slot_domain`), where the class holds the
+    /// field before any read (`field_always_stored`): every read of that slot yields a value of the type. None otherwise.
+    pub(crate) fn fixed_slot_domain(&self, pc: usize, owner: Option<Register>, atom: u32) -> Option<Type> {
+        let facts = self.vm.facts?;
+        let class = self.fixed_class(pc, owner)?;
+        if !facts.field_always_stored(class, atom) { return None; }
+        facts.slot_domain(class, atom).map(|cell| cell.ty)
     }
 
     /// Whether the value `register` holds after the unit instruction at `pc` is the one closure of body `body`

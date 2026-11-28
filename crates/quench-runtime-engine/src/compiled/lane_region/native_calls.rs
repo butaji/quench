@@ -236,8 +236,8 @@ impl Lowering<'_, '_> {
         // An in-place native's or lookup's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
-            // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity here.
-            if !self.callee_is_builtin(pc, instruction.register_b()) {
+            // A builtin the closed world proves is the callee (`is_builtin_identity`) is no compare of its identity here.
+            if !self.is_builtin_identity(pc, instruction.register_b()) {
                 let same = self.is_identity(held, callee);
                 emit_js_guard(&mut self.builder, same, exit);
             }
@@ -375,8 +375,8 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
-        // A fixed callee the closed world proves is a builtin at the call (`callee_is_builtin`) is no compare of its identity.
-        if !(fixed && self.callee_is_builtin(pc, callee)) {
+        // A fixed callee the closed world proves is a builtin at the call (`is_builtin_identity`) is no compare of its identity.
+        if !(fixed && self.is_builtin_identity(pc, callee)) {
             let same = self.is_identity(entry, identity);
             emit_js_guard(&mut self.builder, same, exit);
         }

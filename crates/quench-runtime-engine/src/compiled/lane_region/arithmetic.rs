@@ -108,8 +108,8 @@ impl Lowering<'_, '_> {
         let Some(result) = quench_runtime::staged::call_native::concrete_math_call(call, &args) else { return false };
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
-        // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity.
-        if !self.callee_is_builtin(pc, callee) {
+        // A builtin the closed world proves is the callee (`is_builtin_identity`) is no compare of its identity.
+        if !self.is_builtin_identity(pc, callee) {
             let held = self.tagged(state, callee);
             let same = self.is_identity(held, value);
             emit_js_guard(&mut self.builder, same, exit);
