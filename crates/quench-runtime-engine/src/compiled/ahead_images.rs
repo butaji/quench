@@ -97,7 +97,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     fields: &lane_region::FieldSites, target: &quench_runtime::vm::jit_backend::NativeTarget) -> Result<(RelocatableCode, bool, ExitTable), &'static str> {
     // An image body is the lane projection's first body: it lowers from the leave set a JIT body starts
     // with (none), so every fact holds where it is proved, and a miss leaves as the JIT body's does.
-    let admitted = super::admission::ahead_unit(function).ok_or("the image lowering is declined")?;
+    let admitted = super::admission::ahead_unit();
     // An image has no run to learn from, so it lowers as a JIT body that already left at its entry
     // (`lane_region::entry_leave` in its leave set): no requirement a run may skip (an inlined call's
     // receiver under `packet != null`, a field read under a branch) is checked at its entry. Each is
@@ -130,27 +130,28 @@ fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'stati
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
-/// return their exit words as a JIT lane's do (`AheadLeaves`). The whole-program values of `frozen` fold at their reads, each read checked where it is made
-/// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
-/// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
-/// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
+/// return their exit words as a JIT lane's do (`AheadLeaves`). The whole-program values the closed
+/// world fixes (`AotFacts::dominated_root_store`) fold at their reads with no check
+/// (`GlobalRead::Frozen`). A construction the closed world proves keeps its receiver as its fields
+/// (`constructions`). A call the closed world proves reads its callee's words from the base body's
+/// record (`proven_calls`).
 /// `None` where it gives no native record.
 #[cfg(feature = "jit")]
-pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
+pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, graph): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
     let unit = match unit_or_refusal(program, function, facts, graph) { Ok(unit) => unit, Err(why) => return (Err(why), Vec::new()) };
     // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
     // The symbols name them as the lowering goes, so the image keeps them whether or not the lane lowers.
     let own = lane_call_sites(&unit, function, facts, calls);
-    let lane = lower_closed_lane(program, function, (facts, graph, frozen), calls, &unit, &own, symbols, target);
+    let lane = lower_closed_lane(program, function, (facts, graph), calls, &unit, &own, symbols, target);
     (lane, own)
 }
 
 /// `closed_lane_image`'s lowering of `unit` with its own records `own`.
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen), calls: &[aot_image::CallSite],
+fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph), calls: &[aot_image::CallSite],
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
@@ -159,9 +160,9 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, fr
     let strings = string_constants(program, unit, symbols);
     let fields = fields::class_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
-    let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
+    let global_reads = super::frozen::frozen_unit_reads(program, unit, function, facts);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), facts: Some(facts),
-        frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of),
+        construct_plans: Some(&plan_of),
         // An image runs only in a VM whose host makes no IsHTMLDDA object (`install_ahead_body`), so `== null`
         // decides by the word: an object of any record family is not nullish.
         html_dda: false, ..VmFacts::STATIC };
@@ -206,7 +207,7 @@ fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, call
 }
 
 #[cfg(not(feature = "jit"))]
-pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
+pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &quench_runtime::compile::call_graph::CallGraph),
     _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable, _: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
     (Err("ahead image lowering requires the jit feature"), Vec::new())
@@ -447,7 +448,7 @@ impl Vm {
     /// linked to this VM at the address it runs. An image's base body installs nothing (`fbits9`):
     /// a function whose lane body this VM cannot take runs its records in the general loop.
     pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
-        // The unit is the gate's proof that the trace range admits `function` (`admission::ahead_unit`).
+        // The unit is the gate's proof that the specializer cleared `function` (`admission::ahead_unit`).
         let _ = unit;
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         let traced = quench_runtime::trace::Channel::AotLanes.on();
@@ -465,12 +466,11 @@ impl Vm {
             refuse_lane(function, "the host makes IsHTMLDDA objects, which the image's nullish tests assume absent");
             return None;
         }
-        let lanes_allowed = super::admission::within_trace_range(quench_runtime::trace::Dev::AotLanes, function);
         // An image's base body does not run a lane activation (`fbits9`), so it installs nothing:
         // a function without a usable lane body runs its records in the general loop, which
         // resumes the lane at the next record it can take (`ExecutionMode::NativeOnly` admits
         // that one step, `Vm::may_run_in_lane`).
-        let Some(method) = lanes_allowed.then(|| self.ahead_lane_method(program, &images, function)).flatten() else {
+        let Some(method) = self.ahead_lane_method(program, &images, function) else {
             if traced { eprintln!("aot-lanes: install function {function}: no lane body, its records step"); }
             return None;
         };
@@ -535,8 +535,8 @@ impl Vm {
         let facts = lane_compile::LaneMethodFacts {
             unit, stable: lane_region::StableFacts { roots, slots, holders, ..Default::default() }, fields: Vec::new(),
             direct: Box::new([]), closed, function, invalidation: linked_live.invalidation.clone(),
-            // An AOT program's predicted tier is Ultra for every function (`lane_facts::body_pick`).
-            tiers: self.programs.tiers(), tier: quench_runtime::vm::tier_policy::Tier::Ultra, fault_poll, exits, summary: None,
+            // An AOT program's lane tier is the AOT mode's, for every function (`tier_policy::AOT_LANE_TIER`).
+            tiers: self.programs.tiers(), tier: quench_runtime::vm::tier_policy::AOT_LANE_TIER, fault_poll, exits, summary: None,
             // An image body dumps its linked code like a JIT body (`jit-dump`), for instruction-level profiles.
             clif: super::native_dump_directory().map(|_| String::new()),
             proven_calls: images.image.calls.iter().any(|site| site.function == function),

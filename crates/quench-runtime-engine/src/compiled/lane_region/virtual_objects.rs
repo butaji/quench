@@ -37,14 +37,18 @@ pub(crate) struct VirtualObject {
     arguments: smallvec::SmallVec<[Variable; 4]>,
 }
 
-/// An array literal kept as its element values (`virtual_array_construct`): its register, and per
-/// element in index order the variable holding its tagged bits and the type the value had. Its length
-/// is the literal's, since nothing kept grows.
+/// An array kept as its element values: a literal (`virtual_array_construct`) or `new Array(k)`
+/// (`kept_array_new`), grown by `push` (`kept_push`). Its register, and per element in index order the
+/// variable holding its tagged bits and the type the value had. The length is the element count: a kept
+/// array never crosses a block end (`keeps_virtuals`), so each access sees that count as a constant.
 #[derive(Clone, PartialEq)]
 pub(crate) struct VirtualArray {
-    /// The register the literal defined.
+    /// The register the array's construction defined.
     pub(crate) register: Register,
     elements: smallvec::SmallVec<[(Variable, Type); ARRAY_LITERAL_WINDOW]>,
+    /// Bit `i` set where element `i` is certainly written: a literal's, a push's, or a write at a constant
+    /// index. An element not set is a hole, which reads `undefined` (its variable holds that until written).
+    written: u16,
 }
 
 /// The most arguments a kept construction passes.
@@ -362,7 +366,9 @@ impl Lowering<'_, '_> {
 
     /// Allocates each kept receiver live at `pc` by its plan, from the arguments it kept, into
     /// its register, and drops the rest: what the instruction at `pc`, or the interpreter
-    /// resuming there, reads as the object.
+    /// resuming there, reads as the object. Each is made by `MaterializeConstruct`, which never
+    /// refuses for a due collection (DESIGN 4.7): the allocation sets one due and the next safepoint
+    /// collects, so the kept arrays (`materialize_arrays`) and receivers made here may all allocate.
     pub(crate) fn materialize_virtuals(&mut self, state: &mut State, pc: usize) {
         self.materialize_arrays(state, pc);
         for kept in std::mem::take(&mut state.virtuals) {
@@ -378,10 +384,12 @@ impl Lowering<'_, '_> {
             let callee = self.plan_callee_word(kept.callee);
             let argc = self.raw_const(Lane::I64, count as i64);
             let payload = self.payload;
-            let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
-            // The plan held at the construction and nothing since could retire it or make a
-            // collection due: the allocation cannot refuse. Were it to, the code stops rather
-            // than resume with a register that names no object.
+            // The plan held at the construction and nothing since could retire it: the allocation
+            // cannot refuse for the plan, and a due collection is no refusal (DESIGN 4.7). Were the
+            // plan refused anyway, the answer is `DELETED`, which the code does not resume with: it
+            // is a violated invariant, so the trap stops the code rather than resume with a register
+            // that names no object.
+            let this = self.helper_call(LaneHelper::MaterializeConstruct, &[payload, callee, arguments, argc]);
             let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
             self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
             self.bind_allocated(state, &kept.aliases, this);

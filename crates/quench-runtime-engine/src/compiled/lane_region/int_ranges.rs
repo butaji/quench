@@ -14,7 +14,8 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
-use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Reach, Resolved, Shape, Version};
+use super::loop_versions::affine_reach::Ends;
 
 /// The facts one analysis proves, by unit PC.
 pub(crate) struct IntRanges {
@@ -26,6 +27,9 @@ pub(crate) struct IntRanges {
     /// (`Lowering::version_loops`), by PC (ascending). Every loop whose body may resize an array
     /// keeps none of its own, and the body of a loop keeps only the versions its own entries check.
     versioned: Vec<Version>,
+    /// The accesses whose index is an integer wherever it is not NaN, and whose affine version keeps its
+    /// entry check (`Ends::integral`): inside that version the index is an int32 with no representation test.
+    integral: quench_runtime::dataflow::BitSet,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
     /// The relations of registers holding no Number that a loop's entry decides once
@@ -42,6 +46,8 @@ pub(crate) struct IntRanges {
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
     zero_free: quench_runtime::dataflow::BitSet,
+    /// The arithmetic whose exact result lies within `IntRange::PRODUCT_EXACT` (`Point::product_exact`), by PC.
+    product_exact: quench_runtime::dataflow::BitSet,
     /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
     non_negative_dividend: quench_runtime::dataflow::BitSet,
     /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
@@ -54,7 +60,8 @@ impl IntRanges {
     pub(crate) fn new(instructions: usize) -> Self {
         Self { overflow_free: quench_runtime::dataflow::BitSet::with_capacity(instructions), in_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             string_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            versioned: Vec::new(), integral: quench_runtime::dataflow::BitSet::with_capacity(instructions), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            product_exact: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             non_negative_dividend: quench_runtime::dataflow::BitSet::with_capacity(instructions), nonzero_divisor: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             numeric_stores: quench_runtime::dataflow::BitSet::with_capacity(instructions) }
     }
@@ -85,6 +92,10 @@ impl IntRanges {
     /// result, whatever int32 operands reach it.
     pub(crate) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
 
+    /// Whether the arithmetic at `pc` has an exact result within `IntRange::PRODUCT_EXACT`, so the
+    /// ToInt32 of its product needs no exactness test (`Lowering::truncated_product`).
+    pub(crate) fn product_exact(&self, pc: usize) -> bool { self.product_exact.contains(pc) }
+
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
     pub(crate) fn in_bounds(&self, pc: usize) -> bool {
@@ -97,6 +108,10 @@ impl IntRanges {
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
     pub(crate) fn versioned(&self) -> &[Version] { &self.versioned }
+
+    /// Whether the index of the element access at `pc` is an int32 inside its affine version, which its loop's entry
+    /// proved in range and integral wherever it is not NaN: its representation takes no test (`Lowering::integral_index`).
+    pub(crate) fn integral_index(&self, pc: usize) -> bool { self.integral.contains(pc) }
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(crate) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
@@ -175,11 +190,15 @@ impl Lowering<'_, '_> {
         pc: usize, point: &Point) {
         let instruction = instructions[pc];
         if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
+        if point.product_exact(&self.program.constants, instruction) { proved.product_exact.insert(pc); } else { proved.product_exact.remove(pc); }
         let below = |index: Register, array: Register| self.proven_below_length(pc, index, array);
         let bound_of = |index: Register| self.bound_below(pc, index);
         match point.index_proof(model, pc, instruction, &below, &bound_of) {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
-            proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
+            proof => {
+                seen.shapes.extend(self.shape(instructions, pc, point, proof));
+                seen.ends.extend(self.index_ends(pc).map(|ends| (pc, ends)));
+            }
         }
         if let Some((receiver, index)) = self.string_read(pc, instruction)
             && self.proven_below_length(pc, index, receiver) {
@@ -261,11 +280,18 @@ impl Lowering<'_, '_> {
         proved.bounds = self.plan_bounds(nest, &seen.bounds);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
-        let resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        let mut resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        // An access its shape proves keeps that proof; the index range proves the rest.
+        let affine: Vec<Resolved> = seen.ends.iter().filter(|(pc, _)| resolved.iter().all(|found| found.version.pc != *pc))
+            .filter_map(|(pc, ends)| self.affine_resolve(nest, *pc, ends)).collect();
+        resolved.extend(affine);
         let candidates: Vec<Version> = resolved.iter().map(|resolved| resolved.version).collect();
         let settled = self.settled_versions(nest.loops, candidates);
         for resolved in resolved {
             if settled.iter().any(|version| version.pc == resolved.version.pc && version.header == resolved.version.header) { proved.keep(resolved); }
+        }
+        for (pc, _) in seen.ends.iter().filter(|(pc, ends)| ends.integral && settled.iter().any(|version| version.pc == *pc && matches!(version.reach, Reach::Affine { .. }))) {
+            proved.integral.insert(*pc);
         }
         proved.versioned.sort_by_key(|version| version.pc);
     }
@@ -301,4 +327,6 @@ struct Seen {
     decisions: Vec<usize>,
     /// The relation jumps' PCs with the register each orders against an int32 counter (`int_bound`).
     bounds: Vec<(usize, Register)>,
+    /// The accesses the point leaves to their index range (`Lowering::index_ends`), by PC.
+    ends: Vec<(usize, Ends)>,
 }

@@ -122,6 +122,8 @@ impl Lowering<'_, '_> {
         if held.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for string in held {
+            // The solver's type of the register before any rope is flattened into it: its length range proves the fit.
+            let length_fits = super::tag_proofs::length_fits_int32(state.values[usize::from(string.register)].value.ty);
             let bits = self.tagged(state, string.register);
             let ready = self.builder.create_block();
             let parts = [(); 3].map(|()| self.builder.append_block_param(ready, types::I64));
@@ -150,8 +152,10 @@ impl Lowering<'_, '_> {
                 let short = stage.ne_imm(short, 0u32);
                 strings::record_length(&mut stage, record, short)
             };
-            let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, length, i64::from(i32::MAX));
-            emit_js_guard(&mut self.builder, fits, exit);
+            if !length_fits {
+                let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, length, i64::from(i32::MAX));
+                emit_js_guard(&mut self.builder, fits, exit);
+            }
             let variables = self.string_variables(string.register);
             self.builder.def_var(variables.record, record);
             self.builder.def_var(variables.short, short);

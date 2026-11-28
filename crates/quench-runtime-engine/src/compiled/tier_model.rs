@@ -4,7 +4,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::tier_policy::{Priors, PER_MILLE};
+use super::tier_policy::PER_MILLE;
 
 /// What a body of `ir` instructions costs the running program before it runs: its plan
 /// (`plan_ns`, all on the program's thread; 0 once the plan is made) and the wall share of its compile.
@@ -19,13 +19,3 @@ pub(crate) fn interpreted_ns(interpreter_ns: u64, work: u64, share: u64) -> u64 
     work * interpreter_ns * (PER_MILLE - share) / PER_MILLE
 }
 
-/// The future uses of a loop region after `count` past ones (Lindy): `count / remaining_divisor`.
-pub(crate) fn future_count(priors: &Priors, count: u64) -> u64 {
-    count / priors.remaining_divisor
-}
-
-/// The net gain in ns of a compile: `future` uses to come, each saving `saved` ns, less the
-/// `outlay` the compile and its entry cost the program. Exact: no product saturates.
-pub(crate) fn net_gain_ns(future: u64, saved: u64, outlay: u64) -> i128 {
-    i128::from(future) * i128::from(saved) - i128::from(outlay)
-}

@@ -22,17 +22,22 @@ pub use quench_runtime::vm::engine_types::NativeJsProgram;
 
 #[quench_macros::ext(NativeJsProgramOps1)]
 impl NativeJsProgram {
-    /// Compile every function before execution as one AOT image. No hotness or fallback tier.
-    pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        let unit = crate::compiled::admission::ahead_unit(0).ok_or_else(|| "eager publication was declined".to_string())?;
-        crate::compiled::compile_eager_native(program, unit)
-    }
-
-    /// Adopt an image compiled into this process (`AheadImages::compile`): its file, which each VM
-    /// that attaches it links (`aot_image::live::install`).
-    pub fn compile_eager_at(program: ResidualProgram, images: quench_runtime::vm::engine_types::AheadImages) -> Result<Self, String> {
-        let counts = NativeJsPublicationCounts { functions: program.function_count(), ..Default::default() };
-        Self::bind(program, NativeJsCode::Eager(images.to_bytes()), counts, None)
+    /// Publish `program` as one AOT image of the functions the tier policy runs in AOT mode
+    /// (`tier_policy::body_tier`, u-jit over every function). The one publication entry point.
+    pub fn publish(program: ResidualProgram) -> Result<Self, String> {
+        let _admitted = crate::compiled::admission::ahead_unit();
+        #[cfg(feature = "jit")]
+        {
+            let images = quench_runtime::vm::engine_types::AheadImages::compile(&program)?;
+            if images.is_empty() { return Err("publication compiled no image".into()); }
+            let counts = NativeJsPublicationCounts { functions: program.function_count(), ..Default::default() };
+            Self::bind(program, NativeJsCode::Image(images.to_bytes()), counts, None)
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = program;
+            Err("native publication requires the jit feature".into())
+        }
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
@@ -114,7 +119,7 @@ impl Vm {
         let program = self.programs.get(id).ok_or("native JS program is missing")?;
         match code {
             NativeJsCode::Placed(table) => self.load_linked_image(&program, table),
-            NativeJsCode::Eager(file) => {
+            NativeJsCode::Image(file) => {
                 self.load_ahead_images(quench_runtime::vm::engine_types::AheadImages::from_bytes(file)?);
                 Ok(())
             }

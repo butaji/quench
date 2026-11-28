@@ -6,6 +6,7 @@
 
 use super::machine::{Binary, Lane, MachineAccess, MachineScalar, Relation, Unary};
 use super::{Domain, NumericStage};
+use crate::typed_ir::IntRange;
 use crate::vm::operations::{
     number_truthiness, NumberArithmetic, NumberBitwise, NumberRelation, NumberTruthinessStage,
     WORD32_SHIFT_MASK,
@@ -170,18 +171,21 @@ pub fn within_word<M: MachineScalar>(machine: &mut M, word: M::Word, min: i64, m
     machine.raw_compare_imm(Relation::UnsignedLessEqual, biased, max - min)
 }
 
-/// The bias that makes a product exact: `|product| < 2^52`, so the biased product is an unsigned
-/// prefix of 2^53 (`truncated_int32_product`).
-const PRODUCT_EXACT_BIAS: i64 = 1 << 52;
-
-/// `left * right` of two int32 words: the low 32 bits of their exact 64-bit product, and whether
-/// the product lies within `PRODUCT_EXACT_BIAS`, where its binary64 is exact, so its ToInt32 is
-/// those low bits. Where it is not, the caller leaves.
-pub fn truncated_int32_product<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> (M::Word, M::Word) {
+/// `left * right` of two int32 words, as their exact 64-bit product.
+pub fn int32_product<M: MachineScalar>(machine: &mut M, left: M::Word, right: M::Word) -> M::Word {
     let left = machine.raw_unary(Unary::SignExtend(Lane::I64), left);
     let right = machine.raw_unary(Unary::SignExtend(Lane::I64), right);
-    let product = machine.raw_binary(Binary::Mul, left, right);
-    let exact = within_word(machine, product, -PRODUCT_EXACT_BIAS, PRODUCT_EXACT_BIAS - 1);
-    (machine.raw_unary(Unary::Narrow(Lane::I32), product), exact)
+    machine.raw_binary(Binary::Mul, left, right)
+}
+
+/// Whether the 64-bit `product` lies within `IntRange::PRODUCT_EXACT`, where its binary64 is exact, so its ToInt32 is
+/// its low 32 bits (`int32_product`). Where it does not, the caller leaves.
+pub fn product_exact<M: MachineScalar>(machine: &mut M, product: M::Word) -> M::Word {
+    within_word(machine, product, IntRange::PRODUCT_EXACT.min, IntRange::PRODUCT_EXACT.max)
+}
+
+/// The ToInt32 of the 64-bit `product`: its low 32 bits.
+pub fn product_low_int32<M: MachineScalar>(machine: &mut M, product: M::Word) -> M::Word {
+    machine.raw_unary(Unary::Narrow(Lane::I32), product)
 }
 

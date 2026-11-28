@@ -55,7 +55,7 @@ fn run(subject: Subject, program: &ResidualProgram, samples: &mut Samples) -> Re
     }
     let mapped_before = executable_anonymous_bytes();
     let started = Instant::now();
-    let native = NativeJsProgram::compile_eager(program.clone())?;
+    let native = NativeJsProgram::publish(program.clone())?;
     samples.compile.push(started.elapsed());
     samples.mapped.push(executable_anonymous_bytes().saturating_sub(mapped_before));
     runtime.set_execution_mode(ExecutionMode::NativeOnly);

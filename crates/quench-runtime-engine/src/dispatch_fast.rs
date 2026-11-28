@@ -312,23 +312,9 @@ impl LaneInstruction {
     }
 }
 
-pub(crate) use quench_runtime::vm::engine_types::RegionDecline;
 
 
 
-#[quench_macros::ext(LoopSiteOps1)]
-impl LoopSite {
-    /// Counts an attempt that entered nothing for `reason`. Under `QUENCH_TRACE=js-jit` the first
-    /// of each reason on the site is printed.
-    fn count_decline(&self, reason: RegionDecline) {
-        let count = &self.declines[reason.index()];
-        if count.get() == 0 && self.diagnostics {
-            eprintln!("QUENCH_JS_JIT_REGION_DECLINE function={} header={} reason={}", self.function, self.header, reason.name());
-        }
-        count.set(count.get().saturating_add(1));
-    }
-
-}
 
 pub(crate) use quench_runtime::vm::engine_types::LoopSite;
 
@@ -461,8 +447,8 @@ pub(crate) mod this_binding;
 use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
-pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, planned_inline_quick_in_lane, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
 pub(crate) mod loop_runs;
@@ -3978,9 +3964,6 @@ script_handler! {
         }
         // A refused compile (`LoopSite::refuse_warming`) is one epoch compare and a countdown: the back edge is a plain jump.
         if site.refused_now() {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         // The header rule (`enter_loop_body`): a ready body first.

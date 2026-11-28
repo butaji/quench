@@ -40,8 +40,10 @@ pub(super) fn of_program(program: &ResidualProgram, flows: &[FunctionFlow], cens
     let proofs = Proofs::of(flows);
     let mut layouts = ClassLayouts::default();
     for &class in classes {
-        let flow = &flows[class as usize];
-        let body = program.with_record(class as usize, |function| body_fields(function, flow, class, &proofs, &census.accessors));
+        // A class's constructor body is its function's (`ClassIds::body`), which a synthetic class shares with its siblings.
+        let body = census.classes.body(class);
+        let flow = &flows[body as usize];
+        let body = program.with_record(body as usize, |function| body_fields(function, flow, class, &proofs, &census.accessors));
         if let Some(fields) = body.filter(|fields| !shapes().any(|shape| reshapes_instance(shape, class, fields, &census.accessors))) {
             layouts.instances.insert(class, fields.into_boxed_slice());
         }
@@ -264,6 +266,25 @@ pub struct UnionLayout {
     /// The fields in slot order: the constructor's own fields first (`AotFacts::class_layout`), then every other field a store
     /// puts on an instance, in first-store program order.
     pub fields: Box<[(u32, UnionField)]>,
+    /// The storage form every instance takes, decided by the field count (`Storage::of_fields`).
+    pub storage: Storage,
+}
+
+/// Where an instance of a class keeps its fields: the record holds the first `value_vec::INLINE_PROPERTY_COUNT`, and a longer
+/// layout takes a flat run for all of them. A class's union layout fixes its count, so its form is fixed for every instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Storage {
+    /// Every field of the layout is held in the instance's record.
+    Inline,
+    /// The layout has more fields than the record holds: the instance keeps its fields in a flat run.
+    Flat,
+}
+
+impl Storage {
+    /// The storage form of a layout of `fields` fields.
+    pub fn of_fields(fields: usize) -> Self {
+        if fields <= crate::value_vec::INLINE_PROPERTY_COUNT { Self::Inline } else { Self::Flat }
+    }
 }
 
 /// One field of a union layout.
@@ -298,7 +319,7 @@ pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], censu
     if !facts.closed() {
         return BTreeMap::new();
     }
-    facts.constructed_functions().into_iter()
+    facts.constructed_classes().into_iter()
         .filter_map(|class| union_of(program, flows, census, facts, readers, class).map(|union| (class, union)))
         .collect()
 }
@@ -307,28 +328,30 @@ pub(super) fn unions_of(program: &ResidualProgram, flows: &[FunctionFlow], censu
 /// fields (`AotFacts::class_layout`), then every field a store puts on an instance (`Shape::Field` of an owner that may hold
 /// the class, but a this-store an accessor claims, which is a setter call). It is None where the program may enumerate the
 /// instances (`Readers::reflects_class`: a for-in, a spread, `Object.keys` and the like reach them), where a computed-key
-/// store or a delete may reach them (`Change::Any`, `member_wild`), where a builtin defines properties on them
+/// store or a delete may reach them (`Change::Any`, `wild`), where a builtin defines properties on them
 /// (`Change::Define`), where a `prototype` or `__proto__` may be replaced, or where the class is derived (its prototype chain
 /// runs through a parent's stores, `binds_this`). Any store that may hit a prototype object makes its name a default for the
 /// class's instances (`FieldDefault::Prototype`), which is a guess the holder watch checks; a name `Object.prototype` defines
 /// has no such holder, so it has no union.
 fn union_of(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, facts: &AotFacts, readers: &Readers, class: u32) -> Option<UnionLayout> {
-    if census.member_wild() || readers.reflects_class(class) || program.with_record(class as usize, binds_this) {
+    if census.wild_reaches_instances(class) || readers.reflects_class(class) || program.with_record(census.classes.body(class) as usize, binds_this) {
         return None;
     }
     let mut fields: Vec<u32> = facts.class_layout(class).map_or_else(Vec::new, <[u32]>::to_vec);
     let on_prototype = instance_stores(program, flows, census, class, &mut fields)?;
     // A field no reachable read observes takes no slot (4.13 dead payload): its stores are skipped
     // (`field_has_reader`), so the layout is the observed fields alone.
+    // An `Object.prototype` name is checked before the dead fields are dropped, so a dropped one still gives no union.
+    if fields.iter().any(|&atom| text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name))) { return None; }
     fields.retain(|&atom| facts.field_has_reader(FactKey::Field { class, instance: true, atom }));
     let mut entries = Vec::with_capacity(fields.len());
     for atom in fields {
-        if text(program, atom).is_some_and(|name| OBJECT_PROTOTYPE_NAMES.contains(&name)) { return None; }
         let default = if on_prototype.contains(&atom) || census.accessors.defines(atom) { FieldDefault::Prototype(class) } else { FieldDefault::Absent };
         let cell = facts.cell(FactKey::Field { class, instance: true, atom }).unwrap_or(Cell::ANY);
         entries.push((atom, UnionField { cell, default }));
     }
-    Some(UnionLayout { fields: entries.into_boxed_slice() })
+    let storage = Storage::of_fields(entries.len());
+    Some(UnionLayout { fields: entries.into_boxed_slice(), storage })
 }
 
 /// Adds to `fields` the names the stores of `flows` put on instances of `class`, in first-store order, and returns the names

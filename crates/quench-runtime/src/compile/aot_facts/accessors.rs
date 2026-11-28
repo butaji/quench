@@ -15,7 +15,7 @@ use super::shape::{Change, Owner, Shape};
 use super::value::{Accessor, Key, Origin, PrototypeBase, Word};
 use crate::bytecode::{PropertyDefinitionMode, WideInstruction};
 use crate::staged::Operation;
-use crate::typed_ir::{Classes, FactKey};
+use crate::typed_ir::{Classes, FactKey, Holders};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The stores that may write a named property, as the census sees them: the names some store writes on an object of no
@@ -138,7 +138,7 @@ impl Accessors {
         let mut base = Shadows::default();
         let mut own: Vec<(Classes, u32)> = Vec::new();
         for (id, flow) in flows.iter().enumerate() {
-            base.wild |= flow.member_wild;
+            base.wild |= !flow.wild.is_none();
             base.names.extend(flow.writes.iter().filter_map(|(_, key, _)| match key {
                 Key::MemberAny(atom) => Some(*atom),
                 _ => None,
@@ -239,10 +239,11 @@ pub(super) fn accessor_mode(mode: PropertyDefinitionMode) -> Option<bool> {
 /// key takes the cell too, so a read off an object of no one class is any value. A computed key may name any property.
 pub(super) fn accessor_definition(pc: usize, setter: bool, target: Word, key: Word, stored: Word, events: &mut Events) {
     let Some(atom) = key.atom_key() else {
-        events.wild_member = true;
+        events.wild = events.wild.join(Holders::of(target.cell));
         return;
     };
     events.writes.push((Key::Member(atom), Word::UNKNOWN));
+    events.member_bases.push((atom, Holders::of(target.cell)));
     let site = match target.class_site() {
         Some((class, instance, false)) => Some((class, instance)),
         _ => None,

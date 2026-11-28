@@ -715,7 +715,7 @@ fn decode_program(
         WASM_V128_TAG => Ok(Constant::WasmV128(
             input.take(crate::wasm::V128_BYTES)?.try_into().unwrap(),
         )),
-        0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
+        0 => Ok(Constant::Number(f64::from_bits(crate::Value::from_f64_raw(f64::from_bits(input.u64()?)).to_bits()))),
         1 => Ok(Constant::String(input.string()?.into())),
         7 => Ok(Constant::StringUnits(input.u16s()?.into())),
         6 => Ok(Constant::BigInt(Box::new(input
@@ -1111,7 +1111,7 @@ fn read_constant_fields(input: &mut BinaryReader<'_>) -> Result<Vec<super::Const
             CONSTANT_FIELD_NULL => super::FieldConstant::Null,
             CONSTANT_FIELD_FALSE => super::FieldConstant::Boolean(false),
             CONSTANT_FIELD_TRUE => super::FieldConstant::Boolean(true),
-            CONSTANT_FIELD_NUMBER => super::FieldConstant::Number(f64::from_bits(input.u64()?)),
+            CONSTANT_FIELD_NUMBER => super::FieldConstant::Number(f64::from_bits(crate::Value::from_f64_raw(f64::from_bits(input.u64()?)).to_bits())),
             CONSTANT_FIELD_STRING => super::FieldConstant::String(input.atom()?),
             _ => return Err("invalid constant field tag".to_string()),
         };
@@ -2093,7 +2093,7 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         let enumeration = input.string()?.into_boxed_str();
         let member = input.string()?.into_boxed_str();
         let value = match input.u8()? {
-            0 => super::EnumConstant::Number(f64::from_bits(input.u64()?)),
+            0 => super::EnumConstant::Number(f64::from_bits(crate::Value::from_f64_raw(f64::from_bits(input.u64()?)).to_bits())),
             1 => super::EnumConstant::String(input.string()?.into_boxed_str()),
             _ => return Err("invalid enum constant tag".to_string()),
         };

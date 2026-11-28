@@ -281,6 +281,16 @@ impl Elements {
         }
     }
 
+    /// Whether every array these elements describe is a plain backing whose count of other values (`Header::others`) is zero:
+    /// no hole (`holes` false), every element an int32 (`ty` within `INT32`, so no stored Number or other value), and a plain
+    /// array (`View::Plain`). Each store of the class joins its type into `ty` and each hole-making op sets `holes`, so the
+    /// backing holds no value `others` counts. `others` is exact only while no native path stores an uncounted value
+    /// (`OTHERS_UNKNOWN`); the analysis does not see such stores, so the closed world's gate (`compile/aot_facts/gate.rs`)
+    /// is what keeps this fact true for a program.
+    pub fn int32_backing(self) -> bool {
+        !self.holes && self.view == View::Plain && self.ty.is_subtype(Type::INT32)
+    }
+
     /// The cell an element read takes (γ): the elements' type and classes, the type of a typed array's kind where its
     /// view is one kind, and `undefined` where the read may find a hole: the array has holes, or the index is not within
     /// its length (`in_bounds`, `typing::within_length`).
@@ -290,7 +300,7 @@ impl Elements {
             _ => self.ty,
         };
         let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
-        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true }
     }
 }
 
@@ -306,18 +316,22 @@ pub struct Cell {
     /// Whether the value may be the global object. Not a lattice point of `ty` or `classes` (`Classes::Many` absorbs
     /// objects, so the global object cannot ride in them): a flag the closed world's verification reads (`aot_facts::gate`).
     pub global: bool,
+    /// Whether the value may be a builtin's prototype object (`Array.prototype`, `Object.prototype`, ...): a `.prototype` or
+    /// `__proto__` read off a value that is no program closure, a `getPrototypeOf` result, or a value from nowhere the solve
+    /// follows (`ANY`). A flag like `global`, joined by OR; the closed world's index-property fact reads it (`aot_facts::gate`).
+    pub prototype: bool,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false, prototype: false };
     /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false };
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true };
 
     /// A value of type `ty` from nowhere the solve follows: its classes and sites from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false }
+        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false, prototype: false }
     }
 
     /// The cell with the global object among the values it may hold.
@@ -325,14 +339,19 @@ impl Cell {
         Self { global: true, ..self }
     }
 
+    /// The cell with a builtin's prototype object among the values it may hold (`prototype`).
+    pub const fn maybe_prototype(self) -> Self {
+        Self { prototype: true, ..self }
+    }
+
     /// A value of type `ty` holding objects of `classes`.
     pub fn with_classes(ty: Type, classes: Classes) -> Self {
         Self { classes, ..Self::of(ty) }
     }
 
-    /// A fresh instance of class `class`, a construction's own result.
+    /// A fresh instance of class `class`, a construction's own result. It is no literal's object, so it has no literal site.
     pub fn instance(class: u32) -> Self {
-        Self::with_classes(Type::DIRECT_OBJECT_FAMILY, Classes::one(class, true))
+        Self { sites: Sites::Never, ..Self::with_classes(Type::DIRECT_OBJECT_FAMILY, Classes::one(class, true)) }
     }
 
     pub fn join(self, other: Self) -> Self {
@@ -342,6 +361,7 @@ impl Cell {
             elements: self.elements.join(other.elements),
             sites: self.sites.join(other.sites),
             global: self.global || other.global,
+            prototype: self.prototype || other.prototype,
         }
     }
 
@@ -363,6 +383,64 @@ impl Cell {
     /// The representation a value of this cell has at every point: derived from the type, never stored.
     pub fn representation(self) -> Option<Representation> {
         [Representation::Int32, Representation::Float64].into_iter().find(|representation| representation.accepts(self.ty))
+    }
+}
+
+/// The objects a store under an unknown name may reach: the constructed classes and the literal sites those objects come from,
+/// joined like the components of a `Cell`. `NONE` holds no object; `ANY` may be any object. A store whose name is unknown
+/// (a computed key, a copy from an object whose names the solve cannot list) writes into the holders of its destination,
+/// and a read of a name is wild only where its object may be one of those holders (`Holders::overlaps`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Holders {
+    pub classes: Classes,
+    pub sites: Sites,
+}
+
+impl Default for Holders {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+impl Holders {
+    /// No object: a program with no store under an unknown name.
+    pub const NONE: Self = Self { classes: Classes::Never, sites: Sites::Never };
+    /// Any object: a store under an unknown name whose destination is unknown.
+    pub const ANY: Self = Self { classes: Classes::Many, sites: Sites::Many };
+
+    /// The holders of the objects of `cell`. A cell that names literal sites holds literals, which are no class's instances,
+    /// so its classes are none; any other cell holds its classes.
+    pub fn of(cell: Cell) -> Self {
+        match cell.sites {
+            Sites::Set { .. } => Self { classes: Classes::Never, sites: cell.sites },
+            _ => Self { classes: cell.classes, sites: cell.sites },
+        }
+    }
+
+    /// The holders either may name.
+    pub fn join(self, other: Self) -> Self {
+        Self { classes: self.classes.join(other.classes), sites: self.sites.join(other.sites) }
+    }
+
+    /// Whether no object is a holder.
+    pub fn is_none(self) -> bool {
+        self == Self::NONE
+    }
+
+    /// Whether an object both may be a holder of `self` and may be one of `other`: a class or a literal site they share, or
+    /// either side's unknown (`Many`) with the other side holding anything.
+    pub fn overlaps(self, other: Self) -> bool {
+        let classes = match (self.classes, other.classes) {
+            (Classes::Never, _) | (_, Classes::Never) => false,
+            (Classes::Many, _) | (_, Classes::Many) => true,
+            (mine, theirs) => mine.ids().iter().any(|&class| theirs.may_hold(class)),
+        };
+        let sites = match (self.sites, other.sites) {
+            (Sites::Never, _) | (_, Sites::Never) => false,
+            (Sites::Many, _) | (_, Sites::Many) => true,
+            (mine, theirs) => mine.set().is_some_and(|sites| sites.iter().any(|site| theirs.set().is_some_and(|others| others.contains(site)))),
+        };
+        classes || sites
     }
 }
 
@@ -458,7 +536,7 @@ mod tests {
         assert_eq!(full.set().map(<[Site]>::len), Some(MAX_SITES));
         assert_eq!(full.join(Sites::one(site(9, 0))), Sites::Many);
         assert_eq!(Cell::of(Type::INT32).sites, Sites::Never);
-        assert_eq!(Cell::instance(14).sites, Sites::Many);
+        assert_eq!(Cell::instance(14).sites, Sites::Never);
         assert_eq!(Cell::NEVER.join(Cell::of(Type::INT32)).sites, Sites::Never);
     }
 

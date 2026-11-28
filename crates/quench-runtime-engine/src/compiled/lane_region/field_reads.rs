@@ -77,10 +77,6 @@ impl Lowering<'_, '_> {
         receiver
     }
 
-    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when
-    /// the closed program gives the field one value: the field is read once here as data and
-    /// required to hold it, so a changed prototype fails the guard and leaves to the shared
-    /// body. False, emitting nothing, otherwise.
     /// The read at `pc` of a native member of a Stable global (`GlobalRead::NativeMember`), folded
     /// to the function it held: the holder's values are a dependency (`hold_holder`), so a write
     /// to one retires this code rather than each run re-reading the member.
@@ -151,15 +147,17 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
+    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when the closed world gives the
+    /// field one value (`AotFacts::dominated_root_store`, keyed by the name): the field's holder is still guarded, since
+    /// the value does not say which object holds it, but the value is the fact's, with no compare. False, emitting nothing,
+    /// otherwise.
     pub(crate) fn fold_frozen_field(&mut self, state: &mut State, read: (quench_runtime::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(quench_runtime::staged::division::FROZEN_FIELD) { return false; }
-        let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
-        let Some(actual) = self.field_value(state, read, &[first], HeldRead::default(), exit) else { return false };
-        let same = self.is_identity(actual, expected);
-        emit_js_guard(&mut self.builder, same, exit);
-        let value = self.identity_constant(expected);
-        self.define(state, destination, value, RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
+        let Some(frozen) = self.vm.facts.and_then(|facts| facts.dominated_root_store(quench_runtime::typed_ir::FactKey::AnyField(first.0))) else { return false };
+        if self.field_value(state, read, &[first], HeldRead::default(), exit).is_none() { return false; }
+        let value = self.identity_constant(frozen.value);
+        self.define(state, destination, value, RegisterFact::definition(Type::immediate(frozen.value), Representation::Tagged));
         true
     }
 

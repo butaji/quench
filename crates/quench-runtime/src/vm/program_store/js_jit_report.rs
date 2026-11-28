@@ -3,7 +3,7 @@
 //! store's totals.
 use super::*;
 use crate::vm::engine_types::RegionRejection;
-use crate::vm::engine_types::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus, RegionDecline};
+use crate::vm::engine_types::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus};
 use std::fmt::Display;
 use std::io::{self, Write};
 
@@ -147,23 +147,10 @@ fn write_osr(out: &mut impl Write, osr: &OsrDiagnostics) -> io::Result<()> {
         ("tier_ups", &osr.tier_ups), ("body_runs", &osr.body_runs),
         ("entry_guard_misses", &osr.entry_guard_misses), ("exits", &osr.exits), ("widenings", &osr.widenings),
     ], false)?;
-    write_declines(out, &osr.declines)?;
     write_list(out, "sites", &osr.sites, write_osr_site)?;
     write!(out, "}}")
 }
 
-/// Why loop regions were not entered at their headers, by reason (`RegionDecline`): only the
-/// reasons that occurred.
-fn write_declines(out: &mut impl Write, declines: &[u64; RegionDecline::COUNT]) -> io::Result<()> {
-    write!(out, ",\"declines\":{{")?;
-    let mut first = true;
-    for (reason, count) in RegionDecline::ALL.iter().zip(declines) {
-        if *count == 0 { continue; }
-        write!(out, "{}\"{}\":{count}", if first { "" } else { "," }, reason.name())?;
-        first = false;
-    }
-    write!(out, "}}")
-}
 
 fn write_osr_site(out: &mut impl Write, site: &OsrSiteDiagnostics) -> io::Result<()> {
     let status = format!("\"{}\"", site_status_name(site.status));
@@ -173,7 +160,6 @@ fn write_osr_site(out: &mut impl Write, site: &OsrSiteDiagnostics) -> io::Result
         ("admitted", &site.admitted), ("deferred_call", &site.deferred_call),
         ("tier_threshold_reached", &site.tier_threshold_reached), ("lane_backedge_count", &site.lane_backedge_count),
     ], false)?;
-    write_declines(out, &site.declines)?;
     write_list(out, "call_boundary_pcs", &site.call_boundary_pcs, |out, pc| write!(out, "{pc}"))?;
     write!(out, ",\"failure_pc\":")?;
     match site.failure {

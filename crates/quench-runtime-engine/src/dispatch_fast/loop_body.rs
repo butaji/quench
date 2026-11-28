@@ -74,10 +74,9 @@ impl LoopBody {
 
 #[quench_macros::ext(LoopSiteOps3)]
 impl LoopSite {
-    /// The iterations the loop has taken, as far as the lane sees them: the interpreter's
-    /// warm-up, its regions' iterations, and the idle body's header dispatches since.
+    /// The header dispatches the idle body has seen: the iterations the loop takes as the lane sees them.
     pub(crate) fn body_iterations(&self) -> u64 {
-        u64::from(self.taken.get()) + self.tier.borrow().iterations() + self.body_seen.get()
+        self.body_seen.get()
     }
 }
 

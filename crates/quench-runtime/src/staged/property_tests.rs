@@ -392,28 +392,3 @@ fn a_layout_plan_stores_in_place_under_its_layout_id_and_leaves_any_other_receiv
     assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)));
 }
 
-/// Under reference counts every store into a record the last collection left marked logs, an
-/// immediate overwrite too (it deletes an edge): the gate and the typed store's immediate skip
-/// (`slot_store::gate_open`) both refuse it, while without counts an immediate store passes both
-/// unlogged.
-#[test]
-fn an_immediate_store_into_a_marked_record_logs_under_counts_and_passes_without() {
-    for counts in [false, true] {
-        let mut heap = heap_of(2);
-        let held = heap.alloc_object(Object::new(Value::NULL));
-        let (object, _) = object_of(&mut heap, &[held, Value::integer(1)]);
-        if counts {
-            heap.set_rc(true);
-        }
-        heap.collect([object]);
-        let record_id = object.to_bits() as u32;
-        let number = Value::integer(5).to_bits();
-        let watch = heap.store_watch_word() as u64;
-        assert_eq!(watch & crate::staged::layout_offsets::STORE_WATCH_COUNTS != 0, counts, "the gate word names counts");
-        let mut stage = Concrete::over(&heap);
-        assert_eq!(stage.immediate_store_open(), !counts, "counts: {counts}");
-        assert_eq!(stage.store_gate(StagedRecordSpace::Object, u64::from(record_id), number), !counts, "counts: {counts}");
-        let open = super::slot_store::gate_open(&mut stage, record_id as u64, (number, Type::INT32), ());
-        assert_eq!(open.is_some(), !counts, "a proved-immediate store skips the gate only without counts");
-    }
-}

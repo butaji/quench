@@ -34,6 +34,10 @@ impl IntRange {
     /// The integers a Number holds exactly.
     pub const EXACT: Self = Self { min: -(1 << EXACT_BITS), max: 1 << EXACT_BITS };
 
+    /// The products whose binary64 is exact: magnitude under 2^52, so a product's ToInt32 is the low 32 bits of
+    /// its exact 64-bit value (`staged::number_machine::product_exact`).
+    pub const PRODUCT_EXACT: Self = Self { min: -(1 << (EXACT_BITS - 1)), max: (1 << (EXACT_BITS - 1)) - 1 };
+
     pub fn singleton(value: impl Into<i64>) -> Self {
         let value = value.into();
         Self { min: value, max: value }

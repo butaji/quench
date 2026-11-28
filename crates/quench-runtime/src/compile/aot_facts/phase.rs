@@ -153,9 +153,9 @@ fn instants(census: &Census, flows: &[FunctionFlow], shapes: &[Shape], root: usi
 }
 
 /// The program's folds, keyed by holder key. Nothing folds when a write the solve cannot follow may name a property
-/// (`member_wild`), or when a store replaces a `prototype` with an object whose properties the solve never saw.
+/// (`wild`), or when a store replaces a `prototype` with an object whose properties the solve never saw.
 pub(super) fn folds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census) -> BTreeMap<(u32, bool, u32), Fold> {
-    if flows.iter().any(|flow| flow.member_wild) { return BTreeMap::new(); }
+    if flows.iter().any(|flow| !flow.wild.is_none()) { return BTreeMap::new(); }
     let shapes: Vec<Shape> = (0..flows.len()).map(|id| program.with_record(id, Shape::of)).collect();
     let Some(root) = shapes.iter().position(|shape| shape.root) else { return BTreeMap::new() };
     let prototype: BTreeSet<u32> = program.atoms.iter().enumerate().filter(|&(_, text)| text == "prototype").map(|(atom, _)| atom as u32).collect();

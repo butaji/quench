@@ -75,9 +75,6 @@ use std::rc::Rc;
 /// sequence. The state must not be zero, which xorshift never leaves.
 fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
-    if let Some(seed) = crate::clock::fixed_random_seed() {
-        return seed;
-    }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
 pub(super) use crate::units::MAX_SAFE_INTEGER;
@@ -230,7 +227,6 @@ pub mod private_site_home;
 pub mod private_slots;
 pub mod enumerable_key_memo;
 pub mod name_atom_memo;
-mod byte_census;
 pub mod object_assignment;
 pub mod object_array;
 pub mod object_builtins;
@@ -2427,10 +2423,6 @@ pub struct Vm {
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
     holder_hints: PrototypeHints,
-    /// Under reference counts: the shapes whose edges are pinned (`Heap::rc_pin`), and the
-    /// heap's pin epoch they were pinned in.
-    rc_pinned_shapes: usize,
-    rc_pin_epoch: u64,
     pub length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
@@ -3389,8 +3381,6 @@ impl Vm {
             if vm.programs.js_jit_diagnostics_enabled() {
                 eprintln!("{}", vm.field_site_report());
             }
-            crate::fact_stats::report();
-            vm.report_byte_census();
             if vm.programs.reports_on_drop() {
                 drop(std::ptr::read(&vm.programs));
             }

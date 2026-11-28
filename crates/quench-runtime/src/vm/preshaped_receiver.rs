@@ -335,6 +335,45 @@ impl Vm {
         index
     }
 
+    /// Starts slot-representation tracking (`Heap::track_slot_representations`) and seeds every `Constructed{C, true}` root
+    /// that exists already (`seed_union_domains`): a root made before tracking was on was not seeded, so the invariant
+    /// "a `Constructed{C, true}` root is seeded" holds whatever the order of tracking and root creation.
+    pub(super) fn track_slots(&mut self) {
+        let layouts = self.shape_layouts();
+        self.heap.track_slot_representations(&layouts);
+        for shape in 0..self.shapes.len() {
+            if let ShapeTransition::Constructed { constructor, new_target_is_base: true } = self.shapes[shape].transition {
+                self.seed_union_domains(constructor, shape as u32);
+            }
+        }
+    }
+
+    /// Seeds the observation of each union field's slot (`AotFacts::slot_domain`) along the chain from `start`: union field
+    /// `k` is the name the chain's `k`-th transition adds, and its slot takes the field's settled domain (`seed_slot_type`).
+    /// Called once per `Constructed{C, true}` root, where the root is made (`provenance::constructed_shape`), so every path that
+    /// gives an object that root gets the seed. Only that root is seeded: it is keyed by the class and reached only by `new C()`
+    /// with `new.target` C, so its slot owners hold no other class's stores. A derived constructor, a dictionary start, an
+    /// anonymous constructor (no named root) and a `new.target` other than the constructor get no such root, so no seed.
+    pub(super) fn seed_union_domains(&mut self, constructor: Value, start: u32) {
+        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
+        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) { return; }
+        if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 { return; }
+        let Some(facts) = self.programs.aot_facts(program) else { return };
+        let Some(layout) = facts.class_union_layout(class) else { return };
+        let domains: Vec<(u32, crate::typed_ir::Cell)> = layout.fields.iter()
+            .map_while(|(atom, _)| facts.slot_domain(class, *atom).map(|cell| (*atom, cell)))
+            .collect();
+        let mut shape = start;
+        for (slot, (atom, cell)) in domains.into_iter().enumerate() {
+            if self.is_private_name(atom) { return; }
+            shape = self.transition_shape(shape, atom);
+            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 { return; }
+            if crate::typed_ir::SlotType::from_type(cell.ty) != crate::typed_ir::SlotType::Tagged {
+                self.heap.seed_slot_type(shape, slot, cell.ty);
+            }
+        }
+    }
+
     /// The fields a receiver of `constructor` from template shape `start` gets a class cell for: the largest of
     /// its constant layout, what its learned storage reached (`LearnedReceiver::slots`, sampled from the
     /// receivers before it), and the field count of its class's union layout (`AotFacts::class_union_layout`).

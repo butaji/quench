@@ -30,7 +30,7 @@ pub fn ended(result: Result<(), crate::JsError>) -> String {
 }
 
 fn compile_image(program: &ResidualProgram) -> crate::NativeJsProgram {
-    crate::NativeJsProgram::compile_eager(program.clone()).unwrap()
+    crate::NativeJsProgram::publish(program.clone()).unwrap()
 }
 
 /// Runs `program` in `mode`, as an eager image where `image` is set.
