@@ -1797,8 +1797,3 @@ pub(super) fn single_base_handler(base: u16, this: Handler, register: Handler, n
     }
 }
 
-/// Whether a field record's base is one the single-base handlers read
-/// (`known_field_base_in_lane`): `this` or a register, not a nested chain or a local slot.
-pub(super) fn is_single_field_base(base: u16) -> bool {
-    base == quench_runtime::bytecode::FieldBase::THIS.0 || quench_runtime::bytecode::FieldBase(base).register_index().is_some()
-}

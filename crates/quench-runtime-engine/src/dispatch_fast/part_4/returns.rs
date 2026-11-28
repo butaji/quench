@@ -249,27 +249,6 @@ pub(in super::super) const fn returning_operator_miss_of<const LEAF: u8>(operato
     arithmetic_operators!(operator as u32, pick)
 }
 
-/// The kind a returning `GetField` takes on its first run (`row_returning_field_first`),
-/// which its record and site alone decide.
-pub(in super::super) fn returning_field_first_kind<const LEAF: u8>(
-    vm: &Vm,
-    code: &ResidualProgram,
-    i: &LaneInstruction,
-) -> Handler {
-    if i.b != quench_runtime::bytecode::FieldBase::NESTED && vm.is_private_name(i.imm()) {
-        return field_return_row::<LEAF>(RETURNING_FIELD_PRIVATE);
-    }
-    if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
-        by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, L)),
-            generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, L)),
-            returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler))
-    } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
-        field_return_row::<LEAF>(RETURNING_FIELD_NESTED)
-    } else {
-        field_return_row::<LEAF>(RETURNING_FIELD)
-    }
-}
-
 /// The protocol row of a returning `GetField` of `kind` (a `RETURNING_FIELD*` kind) at leaf form
 /// `LEAF`: its RETURN code (`returning_code`), which `returning_miss` completes.
 pub(in super::super) fn field_return_row<const LEAF: u8>(kind: u8) -> Handler {

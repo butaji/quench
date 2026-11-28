@@ -52,20 +52,15 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     #[inline(always)]
     fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
         let cx = self.cx;
-        if target.entry == CallEntry::frameless(Frameless::Reads) {
-            // A getter only the general path has called has not run its read in the lane yet: it
-            // takes the kind its first run would.
-            // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
-            let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-            if unsafe { (*entry).handler } == row_returning_field_first::<NOT_LEAF> as *const () {
-                requicken(entry, returning_field_first_kind::<NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
-            }
         // SAFETY: a cached target of the running program.
-        } else if let Some(value) = unsafe { constant_body_value(target) } {
-            // `return k`: no receiver to bind, nothing to read.
-            return Some(value);
-        } else if !target.entry.answered_by_read() {
-            return None;
+        if target.entry != CallEntry::frameless(Frameless::Reads) {
+            if let Some(value) = unsafe { constant_body_value(target) } {
+                // `return k`: no receiver to bind, nothing to read.
+                return Some(value);
+            }
+            if !target.entry.answered_by_read() {
+                return None;
+            }
         }
         let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, base)?;
         // SAFETY: the running lane's context, a frameless target of its program.
