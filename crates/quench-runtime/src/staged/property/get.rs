@@ -34,7 +34,7 @@ pub(in super::super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
     // A plan of ops over the receiver's own record, the one a lane record's hint holds, inline;
     // every other plan through `read_with`, which recurses through nested plans.
     if let FieldPlan::Ops(ops) = plan {
-        let at = frame.receiver_record(stage, owner, object, false, miss)?;
+        let at = super::read::plan_receiver(stage, frame, (owner, false), object, ops, miss)?;
         let records = frame.object_records(stage);
         return run_owned(stage, frame, (owner, true), object, ops, (at, records), miss);
     }

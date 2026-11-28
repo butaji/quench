@@ -38,6 +38,15 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
         receiver(stage, self, object, miss)
     }
 
+    /// The live class cell of `owner`'s `object` (`object::cell_of`), where a class-keyed plan reads it: a direct
+    /// object, else a leave at `miss`. The plan's class guard after it proves the cell live and of the key's class.
+    #[inline(always)]
+    fn receiver_cell(&mut self, stage: &mut S, object: S::Word, miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> where Self: Sized {
+        let direct = super::super::value::is_direct_object(stage, object);
+        stage.guard(direct, miss)?;
+        Some(Reached::bare(super::super::object::cell_of(stage, object)))
+    }
+
     /// The base object of a nested lookup `a.b.c`, which the frame's record names: the first
     /// link reads from it. A frame that names none leaves.
     #[inline(always)]

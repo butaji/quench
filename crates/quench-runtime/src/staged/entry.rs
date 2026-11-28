@@ -169,6 +169,37 @@ mod tests {
         }
     }
 
+    /// A class-keyed entry (its receiver word the live cell's class key) reads and stores the live cell's field,
+    /// and misses on an object of another class, whose key the entry does not hold.
+    #[test]
+    fn a_class_keyed_entry_reads_and_stores_the_live_cell_field_and_misses_on_another_class() {
+        let mut heap = Heap::new();
+        let count = crate::value_vec::INLINE_PROPERTY_COUNT;
+        let (object, _) = object_of(&mut heap, count);
+        let other = heap.alloc_object(Object::new(Value::NULL));
+        let Some(key) = heap.live_class_key(object) else { panic!("a live class cell names its key") };
+        assert_ne!(heap.live_class_key(other), Some(key), "another class");
+        let records = heap.object_record_base().expect("object records exist") as u64;
+        let read = |heap: &Heap, object: Value, entry: [u32; 4]| {
+            let mut stage = crate::staged::Concrete::over(heap);
+            site_read(&mut stage, (entry.as_ptr() as u64, records, 0), object.to_bits(), 0u64, ()).map(Value::from_bits)
+        };
+        for slot in 0..count as u32 {
+            let entry = stored(key, ENTRY.own_holder, slot);
+            assert_eq!(read(&heap, object, entry), Some(Value::integer(10 * (slot as i32 + 1))), "slot {slot}");
+            assert_eq!(read(&heap, other, entry), None, "another class, slot {slot}");
+        }
+        let entry = stored(key, ENTRY.own_holder, 0);
+        let store = |heap: &Heap, object: Value, value: Value| {
+            let mut stage = crate::staged::Concrete::over(heap);
+            site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, (value.to_bits(), true, None), ()).is_some()
+        };
+        assert!(store(&heap, object, Value::integer(-7)), "the class's own cell");
+        assert_eq!(read(&heap, object, entry), Some(Value::integer(-7)));
+        assert!(!store(&heap, other, Value::integer(1)), "another class leaves");
+        assert_eq!(read(&heap, object, entry), Some(Value::integer(-7)), "a leave writes nothing");
+    }
+
     /// The site read's only per-site operand is the entry's byte offset.
     #[test]
     fn the_site_read_has_one_per_site_hole() {
