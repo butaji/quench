@@ -123,32 +123,12 @@ pub struct LaneBody {
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub reoptimize_share: u8,
-    /// The runs after which a body that no more recompile may change, and that left more than
-    /// `retire_share` percent of them, stops being entered: it pays its entry and its exit for
-    /// work the lane does anyway.
-    pub retire_after_runs: u16,
-    pub retire_share: u8,
-    /// The leaves after which a body specializes again from the feedback its sites hold then:
-    /// a region compiled while its call graph warmed keeps leaving at sites whose targets came
-    /// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
-    /// threshold backs off, and `max_recompiles` bounds it.
-    pub reoptimize_exits: u16,
-    pub max_recompiles: u8,
     /// The most compiles of one function's body from its entry: a request of another plan past
     /// them is declined, so what each came to is the last that holds.
     pub(crate) max_compiles: u8,
     /// The same for each loop entry (OSR) of a function: its own budget, which the entry
     /// compiles of the function do not draw on and which they do not exhaust.
     pub(crate) max_osr_compiles: u8,
-    /// The most bodies of one function lifecycle edges may discard before it runs in the lane
-    /// for good: past them a compile costs more than its runs regain.
-    pub max_lifetimes: u8,
-    /// The times a function specializes again because a callee published its body
-    /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
-    /// ends the exchange between functions that call each other. One: a second and third
-    /// respecialization cost more compile than their direct calls regained (deltablue at 120
-    /// runs: total Ir -2%, richards unchanged; Nov 18).
-    pub max_callee_recompiles: u8,
     pub late_call_calls: u32,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
@@ -251,7 +231,7 @@ impl crate::vm::Vm {
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { site_executions: 2, reoptimize_exits: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -318,14 +298,8 @@ const MEASURED: Tiers = Tiers {
     lane_body: LaneBody {
         site_executions: 400,
         reoptimize_share: 1,
-        retire_after_runs: 1000,
-        retire_share: 10,
-        reoptimize_exits: 64,
-        max_recompiles: 1,
         max_compiles: 3,
         max_osr_compiles: 3,
-        max_lifetimes: 8,
-        max_callee_recompiles: 1,
         late_call_calls: 4096,
         compile_poll_interval: 64,
     },
@@ -583,10 +557,6 @@ pub(crate) const HOT_LOOP_BACK_EDGES: u16 = 16;
 /// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
 /// and source-map.
 pub(crate) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
-
-/// The completed handler runs of a body per credit to the callees it calls natively: a callee's
-/// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
-pub(crate) const NATIVE_CREDIT_RUNS: u64 = 64;
 
 /// The tier a function runs in under default mode (design decision 4.9): the interpreter, or a compiled body. `Tier`
 /// names the compiled tiers only, so the interpreter is this enum's own variant.
@@ -847,8 +817,6 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TierRows::PROCESS.table().lane_body;
         assert!(lane.site_executions > 0);
-        // The reoptimization threshold doubles per recompile and must not overflow its counter.
-        assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TierRows::PROCESS.table().js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));

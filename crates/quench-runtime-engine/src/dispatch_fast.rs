@@ -566,7 +566,7 @@ impl LaneView {
         // execution or recovery can reenter and change the view's publication.
         match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.lease(),
-            LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
     }
 
@@ -659,13 +659,6 @@ impl LaneView {
         }
     }
 
-
-    /// Whether its body specializes again at its next entry: it left too often (an ahead image's included).
-    #[inline]
-    pub(crate) fn respecializes(&self) -> bool {
-        // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
-    }
 
     /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
     /// of the receiver it last answered: what a specializer guards in one compare to read the
@@ -8629,7 +8622,7 @@ pub(crate) mod call_site_history_tests;
 #[cfg(test)]
 pub(crate) mod update_fusion_tests;
 pub(crate) mod on_demand_metadata;
-use on_demand_metadata::{lane_completes_return, record_late_call};
+use on_demand_metadata::lane_completes_return;
 
 #[cfg(test)]
 pub(crate) mod numeric_pair_tests;

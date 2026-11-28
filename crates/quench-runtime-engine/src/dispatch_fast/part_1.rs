@@ -1324,9 +1324,9 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // Where the body comes from is the specializer's decision (`admission::route_for_lane`): an ahead image (the
-    // ladder's first body, no warm-up; one that left too often `respecializes` on the JIT's route), the stencil
+    // ladder's first body, no warm-up), the stencil
     // tier at once, a wait for callees still compiling, or the lane body tier.
-    let ahead_image = !own.respecializes() && code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
+    let ahead_image = code.kind != quench_runtime::bytecode::ProgramKind::Wasm && vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some();
     let pick = vm.lane_pick(code, function, own.called_by_regions());
     if crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image, pick, callees_compiling: false })
         == crate::compiled::admission::LaneRoute::Ahead

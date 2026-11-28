@@ -782,13 +782,12 @@ pub(super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip,
         record_end_in_lane(cx, own, method, left);
         // SAFETY: as `leave_counts_in_lane`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
-        note_body_end_in_lane(cx, own, left);
         // SAFETY: the record that completes the activation is one of its function's.
         return returned_in_lane(cx, unsafe { base.add(pc) }, value);
     }
     let counts = leave_counts_in_lane(cx, left);
     let resumed = body_left_in_lane(cx, r, own, method, left);
-    if counts { note_body_end_in_lane(cx, own, left) } else { note_warming_leave_in_lane(cx, own) }
+    if !counts { note_warming_leave_in_lane(cx, own) }
     body_resumed_in_lane(cx, ip, resumed)
 }
 
@@ -1144,12 +1143,6 @@ pub(super) fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &
     }
 }
 
-/// `LaneView::note_lane_body_end`, counting the retirement it makes in the VM's tier events.
-#[inline(always)]
-pub(super) fn note_body_end_in_lane(cx: *mut LaneContext, own: &LaneView, exit: crate::compiled::LaneExit) {
-    own.note_lane_body_end(exit, false);
-}
-
 /// Counts an entry whose body the lane could not leave inside of (`body_admits_in_lane`): in the VM's
 /// tier events and, with diagnostics, the view's report.
 #[cold]
@@ -1493,7 +1486,6 @@ pub(super) fn cell_body_ended_in_lane(
             vm(cx).lane_stack.values.set_top(window.0);
         }
         record_end_in_lane(cx, own, method, exit);
-        note_body_end_in_lane(cx, own, exit);
         let (registers, next) = complete_leaf_in_lane(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }

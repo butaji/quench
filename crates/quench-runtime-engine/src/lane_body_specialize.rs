@@ -33,35 +33,30 @@ impl LaneView {
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         if awaits_look(body) { return true; }
-        let (outcome, recompiles, looks) = match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { recompiles } => {
-                if !self.affords_compile() {
-                    *body = LaneBody::Unspecialized { recompiles };
-                    return false;
-                }
+        let (outcome, looks) = match std::mem::replace(body, LaneBody::Declined) {
+            LaneBody::Unspecialized => {
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
-                (work(crate::compiled::LaneBodyWork::Start { called: self.called_by_bodies(), caller: self }), recompiles, 0)
+                (work(crate::compiled::LaneBodyWork::Start { called: self.called_by_bodies(), caller: self }), 0)
             }
-            LaneBody::Compiling { pending, recompiles, looks, .. } =>
-                (work(crate::compiled::LaneBodyWork::Poll(pending)), recompiles, looks.saturating_add(1)),
+            LaneBody::Compiling { pending, looks, .. } =>
+                (work(crate::compiled::LaneBodyWork::Poll(pending)), looks.saturating_add(1)),
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
-        *body = self.body_after(outcome, tier, entry, recompiles, looks);
+        *body = self.body_after(outcome, tier, entry, looks);
         !matches!(body, LaneBody::Declined)
     }
 
     /// The body of a function of a program with a loaded AOT image: `install` takes it from the
     /// image (`Vm::install_ahead_body`) at once, with no compile budget and no tier gate, since an image
-    /// has no profiling phase. It is the ladder's first body: its leaves
-    /// respecialize it on the JIT's route (`specialize_in_lane`). Whether it has a body.
+    /// has no profiling phase. It is the ladder's first body. Whether it has a body.
     pub(crate) fn install_ahead_lane_body(&self, entry: Handler, install: impl FnOnce() -> Option<std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>>) -> bool {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; installing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { recompiles } => {
+            LaneBody::Unspecialized => {
                 let outcome = install().map_or(crate::compiled::LaneBodyOutcome::Declined, crate::compiled::LaneBodyOutcome::Published);
-                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry, recompiles, 0);
+                *body = self.body_after(outcome, Some(quench_runtime::vm::tier_policy::Tier::Ahead), entry, 0);
             }
             settled => *body = settled,
         }
@@ -70,7 +65,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight is what it waits on.
-    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler, recompiles: u8, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler, looks: u8) -> LaneBody {
         {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
@@ -81,19 +76,15 @@ impl LaneView {
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
                 let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(self.tiers.lane_body.compile_poll_interval);
-                LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles }
+                LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks }
             }
             crate::compiled::LaneBodyOutcome::Published(published) => {
-                self.respecialize_callers();
                 // A body is published only on a route its pick admits, which names its tier (`lane_body_tier`).
-                self.specialized(entry, published, tier.expect("a published lane body has a compiled tier"), recompiles)
+                self.specialized(entry, published, tier.expect("a published lane body has a compiled tier"))
             }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
-            crate::compiled::LaneBodyOutcome::Stale => {
-                self.note_dropped_compile();
-                LaneBody::Unspecialized { recompiles }
-            }
-            crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { recompiles },
+            crate::compiled::LaneBodyOutcome::Stale => LaneBody::Unspecialized,
+            crate::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized,
             // Its predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs it.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
@@ -104,7 +95,6 @@ impl LaneView {
                 LaneBody::Declined
             }
             crate::compiled::LaneBodyOutcome::Declined => {
-                if self.tier().history.get().lifetimes > 0 { crate::dispatch_fast::lane_body_stats::decline("dropped bodies"); }
                 self.tier().body_stats.declined.set(crate::dispatch_fast::lane_body_stats::take_decline());
                 LaneBody::Declined
             }

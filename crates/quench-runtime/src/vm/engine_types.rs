@@ -671,9 +671,8 @@ pub struct EntryCell {
     pub validity: std::cell::Cell<u64>,
     /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
     pub recovery: std::cell::Cell<usize>,
-    /// Leaves (low half) and completions (high half) of this function's body since it
-    /// specialized (`EVIDENCE`): the one home of its run statistics, written only on paths that
-    /// already do work (a handler's run end, a leave's materialization), never by a call or a return.
+    /// The runs that ended by an exception through a native caller, in the high half (`RAISED_RUN`,
+    /// written by the native code only).
     pub counters: std::cell::Cell<u64>,
     /// The address of the published body's scalar entry (`LaneMethod::scalar_address`), which a native
     /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
@@ -1005,7 +1004,6 @@ pub struct LaneTier {
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
-    pub retired: std::cell::RefCell<Vec<std::rc::Rc<PublishedLaneMethod>>>,
     /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
     /// they specialize again when its body publishes, to call it by its entry.
     pub callers: std::cell::RefCell<Vec<*const LaneView>>,
@@ -1571,13 +1569,13 @@ pub const JS_IMPORT_ARGUMENTS: usize = 8;
 pub enum LaneBody {
     /// Waiting for its next entry to specialize (a function predicted to run in the interpreter stays here at its
     /// first entry, and runs in the interpreter).
-    Unspecialized { recompiles: u8 },
+    Unspecialized,
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
     /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
     /// one pays few looks. `wait` counts the entries left before the next.
-    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8 },
+    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8 },
     /// The body its prologue record enters directly (`body_entry_in_lane`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -1585,24 +1583,14 @@ pub enum LaneBody {
     Specialized {
         method: std::rc::Rc<PublishedLaneMethod>,
         tier_prologue: *const (),
-        /// Whether a run of it completed, natively called ones included.
-        completed: std::cell::Cell<bool>,
-        recompiles: u8,
     },
     Declined,
 }
 
-/// A view's lane-body record over the run, which a lifecycle edge keeps: the bodies such
-/// edges (a shape compaction, a dead native callee) dropped, and those of them no run of
-/// which completed (`LaneView::drop_body`). Each dropped body doubles the next one's warm-up,
-/// so a function whose bodies keep being discarded stops paying a compile for each;
-/// `self.tiers.lane_body.max_lifetimes` dropped bodies, decline it.
+/// A view's lane-body record over the run: what its compiles and its callers came to, which
+/// decides whether a declined body warms again (`LaneView::demand_body`).
 #[derive(Clone, Copy, Default)]
 pub struct LaneBodyHistory {
-    pub lifetimes: u8,
-    /// The bodies it specialized past because a callee published one (`respecialize_callers`).
-    pub callee_recompiles: u8,
-    pub late_calls: u32,
     /// Whether a compile of its body waited for its entries to pay for it (`LaneBodyOutcome::Unpaid`).
     pub unpaid: bool,
     /// Whether its body was declined for its length alone (`LaneBodyOutcome::Short`).
@@ -3324,9 +3312,6 @@ pub struct LaneContext {
     /// form, which the run's code fixes, so a loop's repeated call or construction decodes
     /// its instruction once per run.
     pub body_site: Option<(*const ResidualProgram, u32, u64, crate::staged::Invocation)>,
-    /// The call record whose caller's late calls last counted past the threshold
-    /// (`lane_note_late_call`), which counts nothing more for it in this run.
-    pub late_settled: Ip,
     /// What this run proved about the storage of the arrays its loops index
     /// (`ArrayStorageProofs`), which the proved element records read
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
@@ -4387,7 +4372,7 @@ impl LaneView {
     pub fn body_state_in_lane(&self) -> &'static str {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized { .. } => "unspecialized",
+            LaneBody::Unspecialized => "unspecialized",
             LaneBody::Compiling { .. } => "compiling",
             LaneBody::Specialized { .. } => "specialized",
             LaneBody::Declined => "declined",
@@ -4852,7 +4837,7 @@ impl LaneView {
     #[inline]
     pub fn warming(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized) || self.compiling()
     }
 
     #[inline]
@@ -5243,19 +5228,6 @@ impl LaneStack {
 
 impl LaneView {
 
-    /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
-    /// cell takes the stub, and its code waits for the callers that still name it.
-    pub fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
-        let body_state = body.tier_state();
-        let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
-        let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
-        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
-        unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
-        super::tier_machine::withdraw(&self.entry, body_state, event);
-        self.tier().retired.borrow_mut().push(method);
-    }
-
     /// Whether a loop region called it while it had no body (`note_native_caller`).
     #[inline]
     pub fn called_by_regions(&self) -> bool { self.tier().history.get().region_called }
@@ -5266,18 +5238,11 @@ impl LaneView {
     pub fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// A specialized body that went at a lifecycle edge warms again from the start: a call site's behavior
-    /// outlives the shape ids the edge renumbered. One no run of which completed counts as
-    /// wasted (`LaneBodyHistory`).
+    /// outlives the shape ids the edge renumbered.
     pub fn drop_body(&self, body: &mut LaneBody) {
-        let LaneBody::Specialized { recompiles, .. } = body else { return };
-        let recompiles = *recompiles;
-        let history = self.tier().history.get();
-        self.tier().history.set(LaneBodyHistory {
-            lifetimes: history.lifetimes.saturating_add(1),
-            ..history
-        });
+        let LaneBody::Specialized { .. } = body else { return };
         super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
-        *body = LaneBody::Unspecialized { recompiles };
+        *body = LaneBody::Unspecialized;
     }
 }
 
@@ -5310,11 +5275,10 @@ pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDE
 impl Default for LaneTier {
     fn default() -> Self {
         Self {
-            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { recompiles: 0 }),
+            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             body_stats: LaneBodyStats::default(),
-            retired: std::cell::RefCell::default(),
             callers: std::cell::RefCell::default(),
         }
     }
@@ -5327,7 +5291,7 @@ impl LaneBody {
     #[inline]
     pub fn tier_state(&self) -> TierState {
         match self {
-            Self::Unspecialized { .. } => TierState::Warming,
+            Self::Unspecialized => TierState::Warming,
             Self::Compiling { .. } => TierState::Compiling,
             Self::Specialized { .. } if crate::vm::tier_policy::quick_only() => TierState::QJit,
             Self::Specialized { .. } => TierState::UJit,
@@ -5339,19 +5303,6 @@ impl LaneBody {
 
 
 
-impl EntryCell {
-
-    /// The body's completions and leaves since it specialized: the tier model's one reader.
-    #[inline]
-    pub fn evidence(&self) -> (u64, u64) {
-        let word = self.counters.get();
-        (word >> EVIDENCE.half_bits, word & EVIDENCE.half_mask())
-    }
-}
-
-
-/// The halves of a cell's counters word.
-pub const EVIDENCE: Evidence = Evidence { half_bits: u32::BITS };
 
 impl LaneView {
 
@@ -5363,10 +5314,6 @@ impl LaneView {
     }
 }
 
-/// The layout of the counters word: `half_bits` wide leaves, then completions.
-pub struct Evidence {
-    pub half_bits: u32,
-}
 
 impl std::ops::Deref for Records {
     type Target = [std::cell::UnsafeCell<LaneInstruction>];
