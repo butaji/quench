@@ -19,8 +19,10 @@ pub(super) fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::
 #[inline(always)]
 pub fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     use crate::typed_ir::Type;
-    if let Some(known) = decided(stage, bits, Type::is_direct_object_family,
-        |fact| fact.may_be_languages(Type::language(crate::ValueType::Object))) { return known; }
+    // The fact decides it where it can (`decided`), written out so no closure is left for a stencil to call.
+    let fact = TagOps::fact_of(stage, bits);
+    if fact.is_direct_object_family() { return TagOps::flag_of(stage, true); }
+    if !fact.may_be_languages(Type::language(crate::ValueType::Object)) { return TagOps::flag_of(stage, false); }
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
@@ -127,7 +129,10 @@ impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
 #[inline(always)]
 pub fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
     use crate::typed_ir::Type;
-    if let Some(known) = decided(ops, bits, Type::is_int, |fact| fact.may_be_languages(Type::NUMBER)) { return known; }
+    // The fact decides it where it can (`decided`), written out so no closure is left for a stencil to call.
+    let fact = ops.fact_of(bits);
+    if fact.is_int() { return ops.flag_of(true); }
+    if !fact.may_be_languages(Type::NUMBER) { return ops.flag_of(false); }
     let tag = ops.and_imm(bits, ValueLayout::TAG_MASK);
     ops.eq_imm(tag, ValueLayout::INT_TAG)
 }

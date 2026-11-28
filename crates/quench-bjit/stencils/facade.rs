@@ -102,7 +102,7 @@ pub(crate) mod float_layout;
 pub(crate) mod typed_ir {
     pub(crate) use super::int_range::IntRange;
     pub(crate) use super::lattice::{Type, TypeKind, language_bit};
-    pub(crate) use super::representation::Representation;
+    pub(crate) use super::representation::{Representation, repr};
     pub(crate) use super::binding::{BindingTime, Division, Proof};
 }
 
