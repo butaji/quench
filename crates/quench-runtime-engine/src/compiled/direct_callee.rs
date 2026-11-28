@@ -95,8 +95,10 @@ pub(crate) fn frames_window(frames: impl Iterator<Item = (quench_runtime::byteco
 /// Per PC of `body`, the callees its call site reached where the callee's own lane body
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
-/// (`compiled::DirectCallee`), the latest first.
-pub(crate) fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
+/// (`compiled::DirectCallee`), the latest first. A site the closed world fixes to one body whose
+/// closure is one object takes that closure (`closure_callee_in_lane`); the rest keep the recorded
+/// candidates until direct-callees-from-facts.md D2 (the type split) lands.
+pub(crate) fn direct_callees_in_lane(vm: &mut Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, body: &quench_runtime::bytecode::Function) -> Vec<crate::compiled::DirectCandidates> {
     body.code.iter().enumerate().map(|(pc, packed)| {
         let instruction = body.widened(*packed);
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
@@ -107,12 +109,29 @@ pub(crate) fn direct_callees_in_lane(vm: &Vm, view: &LaneView, function: u32, pr
             return callees;
         }
         let Some(argc) = direct_argc(program, instruction) else { return callees };
+        if direct && let Some(closure) = closure_callee_in_lane(vm, view, function, program, pc, argc) {
+            callees.push(closure);
+            return callees;
+        }
+        let vm: &Vm = vm;
         callees.extend(body_tier_in_lane::site_targets(vm, view, pc).filter(|_| direct)
             .filter_map(|target| direct_callee_in_lane(vm, view, function, pc, argc, target)));
         // A site that made a closure of one function per run calls the latest, and rebinds to the next (`BoundClosure`).
         if callees.len() == crate::compiled::tier_policy::POLYMORPHISM && callees.iter().all(|callee| callee.target.function == callees[0].target.function) { callees.truncate(1); }
         callees
     }).collect()
+}
+
+/// The direct callee of the call at `pc` the closed world fixes (`FunctionFacts::call_targets`): where the set names exactly
+/// one body and the program's closure cell holds that body's one closure (`ProgramStore::closure_cell`, written at its
+/// creation), the closure's direct callee where the lane would activate it. `None` for an open or multi-body set, and for a
+/// body whose closure is not created yet.
+fn closure_callee_in_lane(vm: &mut Vm, view: &LaneView, function: u32, program: &quench_runtime::bytecode::ResidualProgram, pc: usize, argc: u16) -> Option<crate::compiled::DirectCallee> {
+    let facts = vm.programs.aot_facts(vm.active_program)?;
+    let &[body] = facts.function_facts(function).call_targets(pc as u32).as_slice() else { return None };
+    let closure = vm.programs.closure_cell(vm.active_program, body)?;
+    let target = vm.resolve_call_target_in_lane(program, closure)?;
+    direct_callee_in_lane(vm, view, function, pc, argc, target)
 }
 
 /// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the

@@ -185,7 +185,7 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph): (
 }
 
 /// The call sites of `function`'s `unit` that `facts` prove a callee for and no record of `calls` names: each a record
-/// the image's loader keeps (`AotImage::calls`), unbound until the VM's call of the site binds it (`rebind_ahead_call`),
+/// the image's loader keeps (`AotImage::calls`), unbound until its callee's closure cell is written and binds it (`ahead_callees`),
 /// from which the lane's direct call reads its callee's words (`ProvenCall`). A call the unit inlines takes none.
 #[cfg(feature = "jit")]
 fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, calls: &[aot_image::CallSite]) -> Vec<aot_image::CallSite> {
@@ -422,7 +422,7 @@ impl AheadImages {
 /// Whether `direct`, a closure of function `callee`, is what a proven site's row was planned for: it
 /// binds `this` as the row does (`ThisForm`), and its cell holds the facts of a plain activation of
 /// its window (as `DirectFacts::describes` admits a JIT plan's).
-fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
+pub(crate) fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
     let Some(body) = program.function_get(callee as usize) else { return false };
     let this = super::base_region::callees::ThisForm::of(body);
     direct.sloppy.is_some() == this.sloppy && !this.lexical && plain_cell(direct, body.registers)
@@ -487,7 +487,7 @@ impl Vm {
         }
         let published = { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
-        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); }
+        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, self); } self.refresh_entry_cell(&linked_live.calls, function);
         Some(published)
     }
 
@@ -546,41 +546,14 @@ impl Vm {
     }
 
     /// The callees of `function`'s proven call sites (`AotImage::calls`) that bind now, each by its
-    /// record's key: the closure each site resolved of the function the closed world proves it calls
-    /// (`Vm::proven_callee`), where the site's row admits it (`admits_proven`). A site that binds
-    /// nothing yet keeps refusing its calls to the VM's, whose call binds it (`rebind_ahead_call`).
-    fn ahead_callees(&self, program: &ResidualProgram, image: &AotImage, function: u32) -> Vec<(usize, DirectCallee)> {
+    /// record's key: the closure of the function the closed world proves each site calls, which its
+    /// program's closure cell holds (`Vm::proven_callee`), where the site's row admits it (`admits_proven`).
+    /// A site whose closure is not created yet stays unbound and refuses its calls to the VM's.
+    fn ahead_callees(&mut self, program: &ResidualProgram, image: &AotImage, function: u32) -> Vec<(usize, DirectCallee)> {
         image.calls.iter().enumerate().filter(|(_, site)| site.function == function).filter_map(|(key, site)| {
             let direct = self.proven_callee(program, (function, site.pc), site.callee)?;
             admits_proven(program, site.callee, &direct).then_some((key, direct))
         }).collect()
-    }
-
-    /// Binds the record of the proven call at `pc` of `function` to `target`,
-    /// the callee the VM's call of the site just resolved, where the record names another closure: the
-    /// record's guard missed because the program made a new closure of the proven function, and its
-    /// rows call this one by its entry from now on (`BoundCalls::bind`). Nothing where no loaded image
-    /// proves the call, or `target` is no closure of the proven function.
-    pub(crate) fn rebind_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, crate::dispatch_fast::ScriptCallTarget)) {
-        let why = self.rebound_ahead_call(program, (function, pc), (argc, target));
-        // The common answers (no proof of the site, the record already names the callee) are not traced: every helper call makes one.
-        if (!matches!(why, "unproven-site" | "already-named") || quench_runtime::trace::Channel::AotLanes.on()) && quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_REBIND function={function} pc={pc} callee={} {why}", target.function); }
-    }
-
-    /// `rebind_ahead_call`, answering what it did.
-    fn rebound_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, crate::dispatch_fast::ScriptCallTarget)) -> &'static str {
-        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
-        let Some(live) = images.linked.as_ref() else { return "unlinked" };
-        // A call of a closed set has a record per function of the set: the one of the callee's function binds.
-        let Some(key) = live.calls.key((function, pc, target.function)) else { return "unproven-site" };
-        let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
-        let Some(view) = views.get(function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view) else { return "no-view" };
-        let Some(mut direct) = crate::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return "no-direct" };
-        (direct.method, direct.body) = (None, None);
-        if live.calls.names(key, direct.callee) { return if live.calls.refresh(key) { "refreshed" } else { "already-named" } }
-        if !admits_proven(program, target.function, &direct) { return "not-admitted" }
-        live.calls.bind(key, direct, self);
-        "bound"
     }
 
 

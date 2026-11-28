@@ -1,11 +1,12 @@
 //! The records of an image's proven calls (`AotImage::calls`) in this process, and their binding to
 //! the closures the program makes. A record starts as the image's template, naming the unbound callee record
 //! (`unbound_callee_record`), so its rows refuse every call to the VM's. A binding makes a callee record for the
-//! closure (`CalleeRecord`) and names it from the site (`CallRecord::callee_record`). It binds to a closure of the proven
-//! function when a publication of its function's lane body resolves one (`Vm::install_ahead_body`),
-//! and binds again when the VM's call of the site resolves another (`Vm::rebind_ahead_call`): the
-//! guard's miss is the change, and the rows call the new closure by its entry from then on. A site
-//! binds at most `POLYMORPHISM` closures, a site's feedback width; past it, the VM's call keeps it.
+//! closure (`CalleeRecord`) and names it from the site (`CallRecord::callee_record`). It binds to the closure of the
+//! proven function that its program's closure cell holds: at the creation edge of that closure (`Vm::note_closure_created`,
+//! `bind_closure_records`), or at the install of its function's lane body (`Vm::install_ahead_body`), whichever is later.
+//! A site whose closure is not created yet stays unbound: its calls go to the VM's. A body's install moves its entry cell's
+//! validity, so the records that name the cell take it then (`refresh_cell`).
+//! A site binds at most `POLYMORPHISM` closures, a site's feedback width; past it, the VM's call keeps it.
 //!
 //! Every closure bound stays alive and every descriptor and callee record written stays allocated for the image's
 //! life: a record's identity is never a collected object's reused id, and a frame that names an
@@ -85,23 +86,18 @@ impl BoundCalls {
         (unsafe { (*(address as *const CalleeRecord)).callee }) == callee.to_bits()
     }
 
-    /// Takes the current validity of record `key`'s callee cell where the callee record holds an older one: a cell's
-    /// validity moves when its function's body changes (an image body installs at the first entry, after the
-    /// loader bound the record), and a record that still names the callee but not its validity sends every call
-    /// to the VM's. Whether it was stale.
-    pub(crate) fn refresh(&self, key: usize) -> bool {
-        let Some(address) = self.callee_record(key) else { return false };
-        let callee = address as *mut CalleeRecord;
-        // SAFETY: as `bind`: the callee record is the image's or a binding's, read by no code while the VM works on it;
-        // a bound record's cell is its callee's live entry cell.
-        unsafe {
-            if (*callee).cell == 0 { return false; }
-            let validity = ((*callee).cell as usize + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
-            let now = validity.read();
-            if (*callee).expected == now { return false; }
-            (*callee).expected = now;
+    /// Takes the current validity of entry cell `cell` into every bound callee record that names it (`expected`). Called at
+    /// the edge where the cell's validity moves (a body's install, `Vm::install_ahead_body`): a record that keeps an older
+    /// validity sends every call to the VM's, so each record is refreshed at the edge, not on a call's miss.
+    pub(crate) fn refresh_cell(&self, cell: usize) {
+        let validity = (cell + quench_runtime::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
+        // SAFETY: `cell` is a live entry cell of a view of the running program (`LaneView::entry_cell`), read on this thread.
+        let now = unsafe { validity.read() };
+        for record in self.held.records.borrow().iter() {
+            // SAFETY: a bound record is read in place on this thread, while no code that reads it runs (as `names`).
+            let callee = unsafe { &mut *record.get() };
+            if callee.cell == cell as u64 { callee.expected = now; }
         }
-        true
     }
 
     /// Binds record `key` to `direct`, the callee its site resolved. A new callee record holds the callee's words, as a

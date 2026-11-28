@@ -1344,7 +1344,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let diagnostics = crate::compiled::admission::diagnosing(vm);
-    let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+    let direct = |vm: &mut Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
     let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));

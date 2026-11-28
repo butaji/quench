@@ -252,7 +252,7 @@ impl Vm {
 
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
     pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         // An execution-only build (no `jit`) stitches no stencil body.
         #[cfg(not(feature = "jit"))]
         {
@@ -265,7 +265,7 @@ impl Vm {
 
     #[cfg(feature = "jit")]
     fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
@@ -273,7 +273,7 @@ impl Vm {
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
-        let callees = self.stitch_callees(program, function, region.instructions(), &direct(self));
+        let callees = self.stitch_callees(program, function, region.instructions(), &direct(&mut *self));
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
