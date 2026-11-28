@@ -154,6 +154,21 @@ pub(super) fn link_with_reached_operations(
         report["cached_closure_operations"] = json!(cached.len());
         operations.extend(cached);
     }
+    // Without a cached closure, the closure is derived from one unoptimized link of the code (`reference_graph`), and
+    // the rounds below confirm it with the image's own link: about a tenth of the cost of each fat-LTO round.
+    #[cfg(target_os = "linux")]
+    if let Some(operations) = kept.as_mut().filter(|_| report.get("cached_closure_operations").is_none_or(|cached| cached == 0)) {
+        let (table, _) = operation_table(graph, None);
+        fs::write(inputs.catalog(), format!("{catalog}{table}")).map_err(|error| error.to_string())?;
+        let mut graph_image = staged.as_os_str().to_owned();
+        graph_image.push(".references");
+        let graph_image = std::path::PathBuf::from(graph_image);
+        support.link_reference_graph(inputs, driver, &graph_image)?;
+        let reached = quench_runtime::native_link::reached_operations(&graph_image, "quench_native_image10OPERATIONS", quench_runtime::native_link::MARK_SECTIONS[0], operations)?;
+        let _ = fs::remove_file(&graph_image);
+        report["derived_closure_operations"] = json!(reached.len());
+        operations.extend(reached);
+    }
     let mut links = 0;
     // The operations each link's marks added, by name.
     let mut rounds: Vec<Vec<&'static str>> = Vec::new();

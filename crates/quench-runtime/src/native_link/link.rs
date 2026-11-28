@@ -250,13 +250,26 @@ impl NativeSupport {
         self.link_audited_with(inputs, driver, executable, false)
     }
 
+    /// Link a Node image's reference graph (`reference_graph`): the image as its code refers, unoptimized, ThinLTO in
+    /// parallel units, with its relocations kept (`--emit-relocs`) and nothing folded or discarded, so every reference
+    /// the code makes is an edge. Nothing runs it; it costs a fraction of the image's own fat-LTO link.
+    pub fn link_reference_graph(&self, inputs: &NativeImageInputs, driver: &Path, executable: &Path) -> Result<(), String> {
+        let mut command = self.base_command(driver)?;
+        self.add_externs(&mut command, true)?;
+        command.arg("-o").arg(executable).env("QUENCH_NATIVE_CATALOG", inputs.catalog());
+        self.apply_link_options(&mut command, inputs, executable, LinkKind::ReferenceGraph)?;
+        self.add_objects(&mut command, inputs, executable);
+        super::exports::configure(&mut command, inputs, executable)?;
+        checked_link(&mut command)
+    }
+
     fn link_audited_with(
         &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path, node_host: bool,
     ) -> Result<NativeLinkAudit, String> {
         let mut command = self.base_command(driver)?;
         self.add_externs(&mut command, node_host)?;
         command.arg("-o").arg(executable).env("QUENCH_NATIVE_CATALOG", inputs.catalog());
-        self.apply_link_options(&mut command, inputs, executable)?;
+        self.apply_link_options(&mut command, inputs, executable, LinkKind::Image)?;
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_link(&mut command)?;
@@ -309,17 +322,22 @@ impl NativeSupport {
 
     /// Dynamic-source, bootstrap, LTO and platform link flags, then the support's native paths
     /// and the host's own executable link arguments.
-    fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
+    fn apply_link_options(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path, kind: LinkKind) -> Result<(), String> {
         if self.support.allows_dynamic_source() {
             command.args(["--cfg", "quench_native_dynamic_source"]);
         }
         if let Some(bootstrap) = &inputs.bootstrap {
             command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
-        if self.rust_lto {
-            command.args(["-C", "lto=fat"]);
+        match kind {
+            LinkKind::Image if self.rust_lto => { command.args(["-C", "lto=fat"]); }
+            LinkKind::Image => {}
+            LinkKind::ReferenceGraph => {
+                if self.rust_lto { command.args(["-C", "lto=thin", "-C", "codegen-units=16"]); }
+                command.args(["-C", "opt-level=0", "-C", "link-arg=-Wl,--emit-relocs"]);
+            }
         }
-        self.apply_platform_flags(command, inputs, executable)?;
+        self.apply_platform_flags(command, inputs, executable, kind)?;
         for path in &self.native_paths {
             command.arg("-L").arg(path);
         }
@@ -330,10 +348,15 @@ impl NativeSupport {
     /// The platform's link flags: static C runtime and unwind hooks on Linux, chained fixups and
     /// dead dylib stripping on macOS.
     #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
-    fn apply_platform_flags(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
+    fn apply_platform_flags(&self, command: &mut Command, inputs: &NativeImageInputs, executable: &Path, kind: LinkKind) -> Result<(), String> {
         // A self-contained image links glibc statically and position-dependent.
+        // A reference graph keeps its unwind tables and folds nothing: lld cannot copy relocations into sections a
+        // script discards or a fold merges.
         #[cfg(target_os = "linux")]
-        if inputs.is_self_contained() {
+        if inputs.is_self_contained() && matches!(kind, LinkKind::ReferenceGraph) {
+            command.args(["-C", "target-feature=+crt-static", "-C", "relocation-model=static", "-C", "link-arg=-Wl,--gc-sections"]);
+            if lld_on_path() { command.args(["-C", "link-arg=-fuse-ld=lld"]); }
+        } else if inputs.is_self_contained() {
             command.args(["-C", "target-feature=+crt-static", "-C", "relocation-model=static"]);
             // The static C runtime's start code registers `.eh_frame` with the unwinder when
             // these weak hooks resolve, and the first unwind then classifies every FDE (8.6M
@@ -397,6 +420,10 @@ impl NativeSupport {
         }
     }
 }
+
+/// What a link makes: the image, or its reference graph (`link_reference_graph`).
+#[derive(Clone, Copy)]
+enum LinkKind { Image, ReferenceGraph }
 
 /// The static image's section and code layout: unreferenced sections are collected, and identical
 /// functions fold. Folding (`--icf`) is an lld feature, so the link uses lld when it is on the

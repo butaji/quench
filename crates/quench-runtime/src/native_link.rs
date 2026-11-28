@@ -5,13 +5,15 @@ mod exports;
 mod footprint;
 mod link;
 mod payload;
+mod reference_graph;
 pub use exports::{DynamicInterface, ExportPolicy};
 pub use link::{NativeLinkAudit, NativeSupport, checked_output};
 pub use footprint::NativeImageFootprint;
 pub use payload::{PayloadReduction, remove_offline_symbols};
+pub use reference_graph::reached_operations;
 
 /// The sections an image's marks live in, by platform (`shared_vm::marked_operation`).
-const MARK_SECTIONS: [&str; 2] = [".quench_operation_marks", "__quench_marks"];
+pub const MARK_SECTIONS: [&str; 2] = [".quench_operation_marks", "__quench_marks"];
 
 /// The little-endian 32-bit word of each symbol of `executable` whose name holds `marker`, or every word of the marks'
 /// section where the image has one:
