@@ -30,18 +30,10 @@ pub(crate) struct ObjectHeader {
     pub(crate) shape_fact: Option<ShapeFact>,
 }
 
-/// S7f DESIGN: the object record table is gone and every ordinary object is a class cell. A probe that needed a
-/// record id, or a table address, declines to `miss` unconditionally (`decline_record_table`) until the class cell
-/// is addressed directly; no native read reaches a record.
-pub(crate) fn decline_record_table(builder: &mut FunctionBuilder<'_>, miss: ir::Block) {
-    let never = emit(builder).raw_const(Lane::I32, 0);
-    emit_js_guard(builder, never, miss);
-}
-
 /// A verified direct-object locator. Address values are derived only for their consumers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ObjectRecord {
-    /// A record address already admitted by the region's receiver entry.
+    /// A function's record address (`ObjectHeader::prove_readable`): the only record a body reads. An ordinary object has none.
     Address(ir::Value),
     /// The class cell of a fixed class (`AotFacts::class_fixed_cell`): every instance is this cell from birth, so no record
     /// exists, and no presence or class test is made. The cell is `class_base + granule * 8`, whose fields are the
@@ -58,14 +50,6 @@ impl ObjectRecord {
         let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, granule, CLASS_CELL_GRANULE_BYTES as i64);
         Self::FixedCell { cell: emit(builder).raw_binary(Binary::Add, class_base, offset), granule }
-    }
-
-    /// The record probe of a direct object (staged `object::object_record_of`). The record table it addressed is
-    /// gone, so the probe declines (`decline_record_table`); the address that follows is unreachable.
-    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, _bits: ir::Value, class_base: ir::Value,
-        _known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        decline_record_table(builder, miss);
-        Self::Address(class_base)
     }
 
     /// The record's address, or a fixed class's cell (which holds no record).
@@ -109,17 +93,12 @@ impl ObjectRecord {
 }
 
 impl ObjectHeader {
-    pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        ObjectRecord::prove(builder, bits, class_base, known, miss).header(builder, known)
-    }
-
-    /// `prove` for a read, which a function's own fields answer too: a direct function's
-    /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
-    /// A direct object's record is gone (`decline_record_table`), so only a function's record is read here.
-    /// A store must not take this proof: its barrier reads object record marks.
+    /// The header of a direct function's record, read for a read: a function's own fields answer too, its record
+    /// holding its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words. An ordinary object has no
+    /// record (every ordinary object is a class cell), so only a function's record is read here: a receiver that is
+    /// no function leaves at `miss`. A store must not take this proof: its barrier reads object record marks.
     pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value, known: Option<typed_ir::VerifiedFact>,
-        functions: ir::Value, class_base: ir::Value, miss: ir::Block) -> Self {
+        functions: ir::Value, miss: ir::Block) -> Self {
         let function = quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT;
         let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);

@@ -251,8 +251,6 @@ pub(super) struct Entry {
     /// caller registers no unit instruction writes. Records stay put in a run, which
     /// collects nothing; shapes are derived per use.
     pub(super) records: Vec<Option<ObjectRecord>>,
-    /// Per folded receiver shape, whether the receiver has it.
-    pub(super) receiver_shapes: BTreeMap<u32, Variable>,
     /// Per stored atom, whether the run admits direct stores of it.
     pub(super) store_atoms: BTreeMap<Atom, Variable>,
     /// The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`).

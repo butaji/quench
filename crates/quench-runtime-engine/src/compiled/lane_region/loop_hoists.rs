@@ -142,10 +142,9 @@ impl Lowering<'_, '_> {
             let stores = record_stores;
             // An entry-fixed receiver has no record a store could name, so its record stores decline (`fixed_loop_store`).
             let object_header = if !stores.is_empty() && !receiver.is_some_and(|(owner, _)| self.entry_fixed(Some(owner))) {
-                receiver.map(|(owner, _)| self.object_header(state, Some(owner), false, exit))
+                receiver.and_then(|(owner, _)| self.object_header(state, Some(owner), false, exit))
             } else { None };
-            if let (Some((owner, _)), Some(object_header)) = (receiver, object_header) {
-                let object = self.tagged(state, owner);
+            if let Some(object_header) = object_header {
                 for (store, binding) in stores {
                     let instruction = self.unit.instructions[store];
                     let site = instruction.cache_site_index();
@@ -158,9 +157,7 @@ impl Lowering<'_, '_> {
                     let packed_address = self.builder.append_block_param(packed, types::I64);
                     let done = self.builder.create_block();
                     let address = self.builder.append_block_param(done, types::I64);
-                    let arena_address = emit_js_cached_field_slot(&mut self.builder,
-                        self.payload, object, site,
-                        false, exit, Some(binding), Some(object_header), Some(packed));
+                    let arena_address = emit_js_cached_field_slot(&mut self.builder, binding, object_header, exit, Some(packed));
                     self.goto(done, &[arena_address]);
                     self.builder.switch_to_block(packed);
                     self.goto(done, &[packed_address]);
