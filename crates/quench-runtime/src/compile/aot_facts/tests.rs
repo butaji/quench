@@ -86,7 +86,7 @@ fn a_field_takes_the_join_of_its_stores_through_reads_and_returns() {
         S.prototype.go = function () { this.current = new T(null); while (this.current != null) { this.current = this.current.run(); } };
         new S().go(); })();");
     let facts = analyze(&program);
-    let atom = |name: &str| program.atoms.iter().position(|atom| atom.as_ref() == name).unwrap() as u32;
+    let atom = |name: &str| atom_of(&program, name);
     let nullable_object = Type::DIRECT_OBJECT_FAMILY.join(Type::language(crate::ValueType::Null));
     assert!(facts.field_type(atom("count")).is_subtype(Type::INT32));
     assert_eq!(facts.field_type(atom("link")), Type::language(crate::ValueType::Null));
@@ -98,7 +98,7 @@ fn a_field_takes_the_type_of_the_argument_its_constructor_is_called_with() {
     // Wrapped in a function, as the test above, so the constructor is a slot of the program's own code.
     let program = program("(function () { function P(v) { this.v = v; } function mk() { return new P(3); } mk(); mk(); })();");
     let facts = analyze(&program);
-    let v = program.atoms.iter().position(|atom| atom.as_ref() == "v").expect("the field name") as u32;
+    let v = atom_of(&program, "v");
     assert!(facts.field_type(v).is_subtype(crate::typed_ir::Type::INT32));
 }
 
@@ -242,7 +242,7 @@ fn an_array_stored_in_a_field_is_mutated_through_the_field_in_the_original_regis
 
 /// The atom of the property name `name`, which the program names.
 fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
-    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("a name the program stores") as u32
+    atom_of(program, name)
 }
 
 #[test]
@@ -1012,7 +1012,6 @@ fn a_global_stored_twice_is_not_frozen() {
     assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_none(), "two stores write the key");
 }
 
-#[test]
 /// The atom of the name `text` in `program`.
 fn atom_of(program: &ResidualProgram, text: &str) -> u32 {
     program.atoms.iter().position(|atom| {
@@ -1204,7 +1203,6 @@ fn a_closure_made_in_a_loop_register_is_many() {
     assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Closure(inner)), "the loop creates a closure per iteration");
 }
 
-#[test]
 /// The pc of function `name`'s last instruction (its return) and its register count.
 fn last_pc_and_registers(program: &ResidualProgram, name: &str) -> (u32, usize) {
     let id = function_named(program, name);
@@ -1347,4 +1345,170 @@ fn a_slot_with_a_checked_store_of_another_class_joins_both_classes() {
     let function = facts.function_facts(f);
     assert!((0..4u16).filter_map(|slot| function.local_cell(slot)).any(|cell| cell.classes.ids().len() == 2),
         "x holds an A and then a B, so its slot's cell holds both classes");
+}
+
+// Soundness regressions, from the review of the solver's facts. Each asserts that a fact is NOT proven: the program writes the
+// thing the fact relies on, so the solver must stay conservative.
+
+/// The call targets the calls of function `function` name, in the closed solve.
+fn targets_in(facts: &AotFacts, function: u32) -> Vec<u32> {
+    facts.call_targets.iter().filter(|((caller, _), _)| *caller == function).map(|(_, &target)| target).collect()
+}
+
+/// The builtin path of global `global`, or of its member `member`, the program names.
+fn builtin_path(program: &ResidualProgram, global: &str, member: Option<&str>) -> BuiltinPath {
+    BuiltinPath { global: atom_of(program, global), member: member.map(|name| atom_of(program, name)) }
+}
+
+#[test]
+fn a_global_object_store_of_a_builtin_name_drops_the_builtin_and_its_members() {
+    let program = program("globalThis.Math = { floor: function (x) { return 0; } }; function f(x) { return Math.floor(x); } f(2.5);");
+    let facts = analyze(&program);
+    assert!(!facts.builtin_identity(builtin_path(&program, "Math", None)), "globalThis.Math = writes the global Math");
+    assert!(!facts.builtin_identity(builtin_path(&program, "Math", Some("floor"))), "Math is no longer the realm's, so its floor is not");
+    assert!(!identities_of(&program, &facts).contains(&Identity::Builtin(builtin_path(&program, "Math", Some("floor")))));
+}
+
+#[test]
+fn a_store_into_a_builtin_prototype_drops_the_identity_of_a_method_it_names() {
+    for store in ["Object.prototype.floor = function () { return 0; };", "Array.prototype.floor = function () { return 0; };"] {
+        let program = program(&format!("{store} function f(x) {{ return Math.floor(x); }} f(2.5);"));
+        let facts = analyze(&program);
+        assert!(!facts.builtin_identity(builtin_path(&program, "Math", Some("floor"))), "{store} names floor, which Math.floor reads");
+        assert!(!identities_of(&program, &facts).contains(&Identity::Builtin(builtin_path(&program, "Math", Some("floor")))), "{store}");
+    }
+}
+
+#[test]
+fn a_define_through_an_alias_of_define_property_leaves_the_instances_slots_unfixed() {
+    // `d` holds `Object.defineProperty`, so the call defines an accessor `x` on `p`: `p`'s class has no fixed cell.
+    let program = program("function P() { this.x = 1; } var p = new P(); const d = Object.defineProperty; \
+        d(p, 'x', { get: function () { return 2; } }); p.x;");
+    let facts = analyze(&program);
+    assert!(!facts.class_fixed_cell(function_named(&program, "P") as u32), "an aliased defineProperty may make x an accessor");
+}
+
+#[test]
+fn a_constructor_read_off_an_unknown_value_leaves_the_world_open() {
+    let program = program("var o = globalThis.hostInput; var c = o.constructor; c;");
+    assert!(world(&program) != World::Closed, "o may be a function, whose constructor reaches the Function constructor");
+}
+
+#[test]
+fn a_reflective_read_of_an_instance_keeps_its_stores_observed() {
+    for read in ["Object.getOwnPropertyDescriptor(p, 'x')", "Reflect.get(p, 'x')"] {
+        let program = program(&format!("function P() {{ this.x = 1; }} var p = new P(); p.x = 2; var r = {read};"));
+        let facts = analyze(&program);
+        assert!(facts.field_has_reader(FactKey::AnyField(atom_named(&program, "x"))), "{read} may observe any field of p");
+    }
+}
+
+#[test]
+fn a_global_stored_on_one_branch_names_no_call_target() {
+    let program = program("var h; function mm() { return 1; } if (Math.random() > 0.5) { h = mm; } \
+        function call() { return h(); } call();");
+    let facts = analyze(&program);
+    let (call, mm) = (function_named(&program, "call") as u32, function_named(&program, "mm") as u32);
+    assert!(!targets_in(&facts, call).contains(&mm), "h is mm only on one path, so the store does not dominate the call");
+}
+
+#[test]
+fn a_global_stored_after_a_use_names_no_call_target() {
+    let program = program("var h; function mm() { return 1; } function call() { return h(); } \
+        try { call(); } catch (e) {} h = mm; call();");
+    let facts = analyze(&program);
+    let (call, mm) = (function_named(&program, "call") as u32, function_named(&program, "mm") as u32);
+    assert!(!targets_in(&facts, call).contains(&mm), "the first call reads h before its one store");
+}
+
+#[test]
+fn a_property_stored_on_one_branch_is_no_closure_identity_at_its_read() {
+    let program = program("var o = {}; if (Math.random() > 0.5) { o.m = function mm() { return 1; }; } \
+        function f() { return o.m(); } f();");
+    let facts = analyze(&program);
+    let (f, mm) = (function_named(&program, "f") as u32, function_named(&program, "mm") as u32);
+    assert!(!identities_in(&program, &facts, "f").contains(&Identity::Closure(mm)), "o.m is mm only on one path");
+    assert!(!targets_in(&facts, f).contains(&mm), "o.m names mm only on one path");
+}
+
+#[test]
+fn a_local_holding_closures_from_two_paths_names_no_call_target() {
+    let program = program("function f(c) { let k; if (c) { k = function () { return 1; }; } else { k = function () { return 2; }; } \
+        return k(); } f(true); f(false);");
+    let facts = analyze(&program);
+    let f = function_named(&program, "f") as u32;
+    assert!(targets_in(&facts, f).is_empty(), "k holds one of two closures, so its call names no target");
+}
+
+#[test]
+fn a_parameter_bound_to_two_closures_names_no_call_target() {
+    let program = program("function run(cb) { return cb(); } run(function () { return 1; }); run(function () { return 2; });");
+    let facts = analyze(&program);
+    assert!(targets_in(&facts, function_named(&program, "run") as u32).is_empty(), "cb is one of two closures");
+}
+
+#[test]
+fn a_builtin_handed_to_a_script_function_that_stores_into_it_is_no_identity() {
+    for source in [
+        "function f(g) { g.floor = function () { return 0; }; } f(Math); var r = Math.floor(2.5);",
+        "var o = { m: Math }; o.m.floor = function () { return 0; }; var r = Math.floor(2.5);",
+        "function f(g) { Object.defineProperty(g, 'floor', { value: 0 }); } f(Math); var r = Math.floor(2.5);",
+    ] {
+        let program = program(source);
+        let facts = analyze(&program);
+        assert!(!identities_of(&program, &facts).contains(&Identity::Builtin(builtin_path(&program, "Math", Some("floor")))), "{source}");
+        assert!(!facts.builtin_identity(builtin_path(&program, "Math", Some("floor"))), "{source}");
+    }
+}
+
+/// The type the function named `f` returns in the closed solve of `source`.
+fn returned_type(source: &str) -> Type {
+    let program = program(source);
+    let facts = analyze(&program);
+    facts.function_facts(function_named(&program, "f") as u32).return_cell().ty
+}
+
+#[test]
+fn a_string_method_the_program_reassigns_is_no_string_method_fact() {
+    for (method, call) in [("charAt", "s.charAt(0)"), ("charCodeAt", "s.charCodeAt(0)"), ("substring", "s.substring(0, 1)"), ("slice", "s.slice(0, 1)")] {
+        let base = format!("function f(s) {{ return {call}; }} f('abc');");
+        assert_ne!(returned_type(&base), Type::ANY, "String.prototype.{method} is the host's, so its result is typed");
+        let reassigned = format!("String.prototype.{method} = function () {{ return 0; }}; {base}");
+        assert_eq!(returned_type(&reassigned), Type::ANY, "a store names String.prototype.{method}");
+    }
+}
+
+#[test]
+fn reassigning_an_unrelated_global_keeps_the_string_method_fact() {
+    let source = "function f(s) { return s.charCodeAt(0); } f('abc'); parseInt = function () { return 0; };";
+    assert_ne!(returned_type(source), Type::ANY, "parseInt is no String method");
+}
+
+#[test]
+fn reassigning_a_builtin_member_drops_its_identity() {
+    for name in ["abs", "ceil", "floor", "max", "min", "round", "sqrt", "trunc"] {
+        let base = program(&format!("function f(x) {{ return Math.{name}(x); }} f(4);"));
+        assert!(analyze(&base).builtin_identity(builtin_path(&base, "Math", Some(name))), "Math.{name} is the realm's when nothing writes it");
+        let reassigned = program(&format!("function f(x) {{ return Math.{name}(x); }} f(4); Math.{name} = function () {{ return 0; }};"));
+        assert!(!analyze(&reassigned).builtin_identity(builtin_path(&reassigned, "Math", Some(name))), "Math.{name} is stored");
+    }
+}
+
+#[test]
+fn reassigning_a_builtin_global_drops_its_identity() {
+    // (the global, the read that makes the program name it, the statement that reassigns it)
+    let rows = [
+        ("Math", "Math.sqrt(x)", "Math = { sqrt: function () { return 0; } };"),
+        ("Array", "Array(x)", "Array = function () { return 0; };"),
+        ("Object", "Object(x)", "Object = function () { return 0; };"),
+        ("String", "String(x)", "String = function () { return 0; };"),
+        ("parseInt", "parseInt(x)", "parseInt = function () { return 0; };"),
+        ("isNaN", "isNaN(x)", "isNaN = function () { return 0; };"),
+    ];
+    for (global, read, reassign) in rows {
+        let base = program(&format!("function f(x) {{ return {read}; }} f(4);"));
+        assert!(analyze(&base).builtin_identity(builtin_path(&base, global, None)), "{global} is the realm's when nothing writes it");
+        let reassigned = program(&format!("function f(x) {{ return {read}; }} f(4); {reassign}"));
+        assert!(!analyze(&reassigned).builtin_identity(builtin_path(&reassigned, global, None)), "{reassign}");
+    }
 }
