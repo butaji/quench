@@ -391,6 +391,15 @@ impl AotFacts {
         self.never_departs.contains(&class)
     }
 
+    /// Whether an instance of class `class` is a fixed cell from birth: the closed world proves its union layout, its instances
+    /// never depart it (`class_never_departs`), and its fields fit one cell (`heap::MAX_CELL_FIELDS`). Every union field has its
+    /// domain (`slot_domain`) by construction. The one bit the allocator (a fixed union-shaped cell at the class's constructed
+    /// root) and the lane (direct addressing, no record-presence or departure guard) both read; whether a site constructs the
+    /// class is the site's own fact (`FunctionFacts::cell_at`'s proven classes).
+    pub fn class_fixed_cell(&self, class: u32) -> bool {
+        self.unions.get(&class).is_some_and(|union| union.fields.len() <= crate::heap::MAX_CELL_FIELDS) && self.class_never_departs(class)
+    }
+
     /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in
     /// `cells`). `Classes::Many` where new code may call the function (`live`), or where the solve kept no cell.
     pub fn this_classes(&self, function: u32) -> crate::typed_ir::Classes {

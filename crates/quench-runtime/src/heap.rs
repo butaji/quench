@@ -254,7 +254,7 @@ pub use view_holders::{subscribe_typed_views, typed_views_stable};
 pub(crate) use view_holders::live_view_changed;
 
 /// The most fields a class cell holds: the capacity of the largest region (`class_space`).
-const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
+pub(crate) const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
 
 /// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
 /// holds them (an empty object's is region 1). `None` past the largest region, where the object keeps its record.
