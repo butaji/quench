@@ -131,7 +131,8 @@ pub(crate) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
     // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
-    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| stores_number(load.ty)).map(ic_entry)).flatten();
+    // A class-keyed store takes no row yet: its slot's type is not the class cell's (`stores_number`).
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| load.class.is_none() && stores_number(load.ty)).map(ic_entry)).flatten();
     let slot = own_slot_load(known, site);
     Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: slot.map(|load| load.ty), slot_shape: slot.map(|load| load.shape), ic, ..Decoded::heap(heap, None, value, None) })
 }
@@ -145,13 +146,14 @@ fn stores_number(ty: quench_runtime::typed_ir::Type) -> bool {
         && (quench_runtime::typed_ir::Type::NUMBER.is_subtype(ty) || ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))
 }
 
-/// The one own load cache `site` proves: what an
-/// inline-cache row (`Heap::IcGet`, `Heap::IcSet`) patches into its code.
+/// The one own load cache `site` proves: what an inline-cache row (`Heap::IcGet`, `Heap::IcSet`, or a class row
+/// `Heap::IcGetClass` and `Heap::IcHeldClass`, whose receiver is the live class cell) patches into its code.
 fn own_flat_load(known: Known, site: u16) -> Option<crate::compiled::object_slots::NativeFieldLoad> {
     let loads = known.reads?(site);
     let [load] = loads[..] else { return None };
-    // The row reads and writes either storage form, as the record's inline flag says.
-    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape && load.class.is_none()).then_some(load)
+    // The row reads and writes either storage form, as the record's inline flag says. A class-keyed held read
+    // names its holder by granule (`IcEntry::Class`), so its holder shape is no guard.
+    ((load.holder.is_none() || load.class.is_some()) && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
 }
 
 /// The dependency that proves the one own flat entry's slot holds one type a read may keep: a Number type
@@ -159,7 +161,8 @@ fn own_flat_load(known: Known, site: u16) -> Option<crate::compiled::object_slot
 /// whatever the receiver's storage form, or exactly `DIRECT_OBJECT_FAMILY`, whose words are direct object
 /// words (`SlotDependency::ty` names which, so the consumer branches on it).
 fn typed_slot(load: crate::compiled::object_slots::NativeFieldLoad) -> Option<quench_runtime::code_dependencies::SlotDependency> {
-    let kept = load.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) || load.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY;
+    // A class-keyed slot is a live class cell's field, which the shape's slot type does not record: no dependency of the shape.
+    let kept = load.class.is_none() && (load.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) || load.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY);
     kept.then(|| load.slot_dependency()).flatten()
 }
 
