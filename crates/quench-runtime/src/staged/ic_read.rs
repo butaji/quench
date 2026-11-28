@@ -6,7 +6,7 @@ use super::Stage;
 use super::ic::Reached;
 use super::Shaped;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
+use super::object::{Form, Layout, PackedAccess, arena_run, cell_fields, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::Representation;
 
@@ -144,7 +144,7 @@ pub(super) fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
     let loaded = super::object::cell_class(stage, at.record);
     let same = { let class = stage.site(u64::from(class)); stage.eq_imm(loaded, class) };
     stage.guard(same, miss)?;
-    Some(Shaped::of_guard(at.record))
+    Some(Shaped::of_cell(at.record))
 }
 
 /// `IcOp::GuardImageClass`: continues where the reached cell's class is the one an ahead image's loader
@@ -154,7 +154,7 @@ pub(super) fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S
     let loaded = super::object::cell_class(stage, at.record);
     let same = { let class = stage.image_word(super::stage::ImageWord::Layout, key); stage.eq_imm(loaded, class) };
     stage.guard(same, miss)?;
-    Some(Shaped::of_guard(at.record))
+    Some(Shaped::of_cell(at.record))
 }
 
 /// `IcOp::LoadField`: the tagged value at `slot` of the class cell the reached word names, which the class
@@ -240,11 +240,15 @@ pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>,
 pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let shaped = at.shaped.expect("a slot read follows the guard of its shape");
+    if let Some(cell) = shaped.cell() {
+        return Some(cell_fields(stage, cell, storage_len));
+    }
     if let Some(bits) = at.formed && let Some(layout) = super::object::proved_own_layout(stage, shaped, bits, storage_len) {
         return Some(layout);
     }
-    let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, shaped.record()));
-    own_layout(stage, shaped.record(), inline, form, storage_len, PackedAccess::Reload, miss)
+    let record = shaped.record();
+    let inline = at.inline.unwrap_or_else(#[inline(always)] || inline_storage(stage, record));
+    own_layout(stage, record, inline, form, storage_len, PackedAccess::Reload, miss)
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.

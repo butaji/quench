@@ -53,6 +53,20 @@ pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Wo
     super::entry::shape_link_matches(stage, record, (shape, link), miss).map(super::Linked::shaped)
 }
 
+/// `class`: `source` is a direct object whose live class cell's class is `class` (`ic::guard_class`). The class is one
+/// compare and fixes the exact shape and the prototype link together, so no record and no link test runs. A departed
+/// object's cell holds `DEPARTED_CLASS`, which no class is, so it leaves here. Any other word leaves.
+#[inline(always)]
+pub(crate) fn class<S: Stage>(stage: &mut S, source: S::Word, class: u32, miss: S::Miss) -> Option<super::Shaped<S::Word>> {
+    let direct = super::value::is_direct_object(stage, source);
+    stage.guard(direct, miss)?;
+    let cell = super::object::cell_of(stage, source);
+    let loaded = super::object::cell_class(stage, cell);
+    let same = stage.eq_imm(loaded, u64::from(class));
+    stage.guard(same, miss)?;
+    Some(super::Shaped::of_cell(cell))
+}
+
 /// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape
 /// `shape` (`entry::shape_link_matches` without the link) in storage `form`. `Arena` takes the auxiliary word equal to the
 /// shape, which is a flat run with no storage-form bit (`ic::own_field`'s one compare); `Packed` takes the exact shape
