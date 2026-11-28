@@ -224,18 +224,14 @@ impl Lowering<'_, '_> {
         let at = (instruction.capture_depth(), instruction.capture_slot());
         let site = self.capture_site(state, pc, at.0, admitted_callee, rooted);
         let value = read_capture(&mut self.builder, (self.payload, self.helpers), &site, at, exit);
-        self.frozen_capture(pc, value, exit)
+        self.frozen_capture(pc, value)
     }
 
-    /// The read-site guard of a frozen capture read at `pc`: compare the value the read
-    /// loaded with the closed program's value, then use that constant. A binding changed
-    /// elsewhere (or read before its declaration) fails the guard and leaves to the shared
-    /// body, so the fold is sound without an invalidation word.
-    fn frozen_capture(&mut self, pc: usize, value: ir::Value, exit: ir::Block) -> ir::Value {
+    /// The value of a frozen capture read at `pc`: the closed world's value of the slot, which its dominating store fixes
+    /// before any read runs (`AotFacts::dominated_root_store`), so the read is that constant.
+    fn frozen_capture(&mut self, pc: usize, value: ir::Value) -> ir::Value {
         let Some(quench_runtime::vm::global_facts::GlobalRead::Frozen { value: expected, .. }) =
             self.global_reads.get(&pc).copied() else { return value };
-        let same = self.is_identity(value, expected);
-        emit_js_guard(&mut self.builder, same, exit);
         self.identity_constant(expected)
     }
 
@@ -300,7 +296,7 @@ impl Lowering<'_, '_> {
         if !store {
             let destination = instruction.result_register();
             let value = self.tagged(state, destination);
-            let value = self.frozen_capture(pc, value, exit);
+            let value = self.frozen_capture(pc, value);
             self.set_tagged(state, destination, value);
         }
         true
