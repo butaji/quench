@@ -1252,8 +1252,9 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
-        // The header keeps the compare-jump form the load gave it (`specialize_compare_jumps`); it is not
-        // re-formed here, so the back edge fuses only when its target run already names that form.
+        // The header keeps the compare-jump form the load gave it (`specialize_compare_jumps`), or the formed
+        // instance it took while the loop ran; it is not re-formed here. A formed test is an instance of the
+        // comparison jump row (`compare_instances`), which the target run tests as it tests the plain row.
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
