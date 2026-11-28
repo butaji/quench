@@ -1136,7 +1136,7 @@ impl Vm {
             vm.with_call_roots([rejected], |vm| {
                 vm.promise_settle(p, rejected, PromiseState::Rejected, reason)?;
                 let promise = vm.promise_object()?;
-                Ok((rejected, promise))
+                Ok::<_, JsError>((rejected, promise))
             })
         })?;
         self.async_generator_await(p, generator, promise, continuation, rejected)?;

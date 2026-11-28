@@ -4129,7 +4129,7 @@ impl ResidualProgram {
                 })).filter(|span| span.end as usize <= length);
                 Some(CallSiteDescription { offset: rebase(site.offset)?, construct: site.construct, callee: site.callee.clone(), expression })
             });
-            self.record.call_sites = std::cell::OnceCell::from(rebased.collect::<Vec<_>>().into());
+            self.record.call_sites = std::cell::OnceCell::from(rebased.collect::<std::sync::Arc<[CallSiteDescription]>>());
         }
         if let Some(pcs) = self.record.call_pcs.take() {
             let rebased = pcs.iter().filter_map(|call| Some(CallPc { offset: rebase(call.offset)?, ..*call }));
@@ -4140,7 +4140,7 @@ impl ResidualProgram {
     /// The call-site descriptions and call offsets are sorted and well formed. Their offsets
     /// and expressions are checked against the text when the program keeps it.
     pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
-        let text = self.source.as_ref().map(|source| source.text.as_ref());
+        let text = self.source.as_ref().map(|source| &*source.text);
         let on_boundary = |offset: u32| text.is_none_or(|text| text.is_char_boundary(offset as usize));
         if let Some(sites) = self.record.call_sites.get() {
             let mut previous = None;
