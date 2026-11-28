@@ -90,6 +90,7 @@ impl ResidualProgram {
             closure_reads: None,
             wasm_lazy: None,
             load_encoding: Default::default(),
+            host_calls_result_once: false,
         })
     }
 }

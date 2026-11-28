@@ -3,7 +3,8 @@
 
 use super::{Solver, conditional_target};
 use super::super::effects::Before;
-use super::super::value::Word;
+use super::super::value::{Key, Origin, Word};
+use super::super::effects::tracked_local;
 use crate::bytecode::WideInstruction;
 use crate::staged::{Comparison, Operation};
 use crate::staged::typing;
@@ -41,7 +42,15 @@ impl Solver<'_> {
         let Some((register, fact)) = edge_fact(instruction, out, edge == jump) else { return out.clone() };
         let word = out[register];
         let mut refined = out.clone();
-        refined[register] = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
+        let narrowed = Word { cell: refine_cell(word.cell, fact), origin: word.origin };
+        refined[register] = narrowed;
+        // A register that holds what its frame local's last load read (`effects::tracked_local`) proves the fact of the local
+        // too: a later load of it reads the refined word, as `p ? p : d` reloads `p` on its truthy edge.
+        if let Some(Origin::Binding(Key::Slot { owner, slot })) = word.origin
+            && owner == self.ctx.id
+            && tracked_local(self.ctx, out, slot) == Some(word) {
+            refined[self.ctx.registers + usize::from(slot)] = narrowed;
+        }
         refined
     }
     /// The state an edge of a relational jump carries when its two operands are integer ranges: each keeps the range

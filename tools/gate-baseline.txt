@@ -1,0 +1,3 @@
+# Gate baselines (tools/handoff-gate.sh). Raise a number when a hand-off raises it; never lower it.
+# solver_tests_passing: tests/aot_facts passing count, source: NO-JIT 9ebc5df083 hand-off (99 of 155).
+solver_tests_passing 99

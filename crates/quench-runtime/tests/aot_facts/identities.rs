@@ -181,3 +181,50 @@ fn a_slot_with_a_checked_store_of_another_class_joins_both_classes() {
     assert!((0..4u16).filter_map(|slot| function.local_cell(slot)).any(|cell| cell.classes.ids().len() == 2),
         "x holds an A and then a B, so its slot's cell holds both classes");
 }
+
+/// A CommonJS module as the loader compiles it: the root makes the wrapper and returns it, and the host calls it once.
+fn commonjs(body: &str, host_calls_once: bool) -> quench_runtime::bytecode::ResidualProgram {
+    let mut program = program(&format!("(function (exports, require, module, __filename, __dirname) {{ {body}\n}});"));
+    program.host_calls_result_once = host_calls_once;
+    program
+}
+
+/// The id of the function expression assigned as `S.prototype.go` (the only nested function besides `S` in the module body).
+fn module_method(program: &quench_runtime::bytecode::ResidualProgram) -> u32 {
+    let s = function_named(program, "S");
+    (0..program.function_count()).find(|&id| id != s && program.with_record(id, |function| {
+        function.parent.is_some_and(|parent| parent != 0) && function.name.is_none_or(|atom| { let text: &str = program.atoms[atom as usize].as_ref(); text != "S" })
+    })).expect("the prototype method") as u32
+}
+
+const MODULE: &str = "function S(n) { this.n = n; } S.prototype.go = function () { return this.n; }; var s = new S(1); s.go();";
+
+#[test]
+fn a_commonjs_module_body_runs_once_so_its_top_level_closures_are_one_object() {
+    let program = commonjs(MODULE, true);
+    let facts = analyze(&program);
+    assert!(facts.closure_identity(function_named(&program, "S") as u32), "the wrapper body runs once and declares S once");
+    assert!(facts.closure_identity(module_method(&program)), "the wrapper body makes the prototype method once");
+}
+
+#[test]
+fn a_returned_wrapper_the_host_may_call_again_keeps_no_closure_identity() {
+    let program = commonjs(MODULE, false);
+    let facts = analyze(&program);
+    assert!(!facts.closure_identity(function_named(&program, "S") as u32), "each call of the returned function declares S again");
+    assert!(!facts.closure_identity(module_method(&program)), "each call of the returned function makes the method again");
+}
+
+#[test]
+fn a_commonjs_body_keeps_its_closure_identity_past_a_caller_read() {
+    // Legacy reflection never hands out the host's wrapper (`f.caller` reads `null` there, `Vm::hides_host_wrapper`), so a
+    // `caller` read reaches no value that could run the body again.
+    let program = commonjs(&format!("{MODULE} function f() {{ return f.caller; }} f();"), true);
+    assert!(analyze(&program).closure_identity(function_named(&program, "S") as u32), "f.caller is null, not the wrapper");
+}
+
+#[test]
+fn a_commonjs_body_that_reads_arguments_keeps_no_closure_identity() {
+    let program = commonjs(&format!("{MODULE} var again = arguments.callee;"), true);
+    assert!(!analyze(&program).closure_identity(function_named(&program, "S") as u32), "arguments.callee is the wrapper");
+}

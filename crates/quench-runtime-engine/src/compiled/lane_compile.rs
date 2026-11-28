@@ -429,7 +429,7 @@ impl LanePlan {
             fault_poll: lowered.region.fault_poll,
             exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif, proven_calls: false,
         };
-        finish_lane_method(memory, scalar, proven, facts)
+        finish_lane_method(super::lane_method::LaneCode::Owned(memory), scalar, proven, facts)
     }
 }
 

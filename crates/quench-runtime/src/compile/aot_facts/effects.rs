@@ -37,6 +37,10 @@ pub(super) struct Ctx<'a> {
     /// take the class of the closure's body and the key it was read from.
     pub(super) classes: &'a super::class_ids::ClassIds,
     pub(super) registers: usize,
+    /// How many frame locals the flow state follows past the registers (`flow::tracked_locals`): the word at
+    /// `registers + slot` is what the last load of plain frame local `slot` read, refined by the tests since, until a
+    /// write of the slot resets it to `Word::UNKNOWN`. 0 where the solve follows none.
+    pub(super) tracked_locals: usize,
     /// Per PC, whether the `MakeArray` there is a literal whose element definitions cover every index, so it
     /// holds no hole (`flow::whole_literals`).
     pub(super) whole_literals: &'a [bool],
@@ -82,6 +86,10 @@ pub(super) struct Events {
     pub(super) wild: Holders,
     /// The holders of each named store's object, by name (`FunctionFlow::member_bases`).
     pub(super) member_bases: Vec<(u32, Holders)>,
+    /// Whether the instruction is a global store of the program's own that names no global (`FunctionFlow::unkeyed_global`).
+    pub(super) unkeyed_global: bool,
+    /// The values a literal's definitions put in it, with the element class of an array literal's (`FunctionFlow::defined`).
+    pub(super) defined: Vec<(Option<ElementClass>, Word)>,
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
     pub(super) links: Vec<(ElementClass, ElementClass)>,
@@ -193,11 +201,13 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     writes(ctx, pc, instruction, operation, state, &mut events);
     // A literal's element definition joins the element type of the array it defines into (`MakeArray`).
     if instruction.op() == crate::bytecode::Op::DefineArrayElement {
+        events.defined.push((Some(state[usize::from(instruction.register_b())].elements_key()), state[usize::from(instruction.register_a())]));
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
             .join(Elements { ty: element.ty, classes: element.classes, length: Length::Never, view: View::None, holes: false });
     }
+    track_locals(ctx, typed_operation.as_ref(), value, &events, state);
     let defined = instruction.defined_register();
     for register in instruction.written_registers() {
         state[usize::from(register)] = if Some(register) == defined { value } else { Word::UNKNOWN };
@@ -220,6 +230,29 @@ pub(super) fn root_this(ctx: &Ctx<'_>) -> Word {
         Cell::of(Type::language(crate::ValueType::Undefined))
     };
     Word::of_cell(cell)
+}
+
+/// The word the flow state follows for frame local `slot` (`Ctx::tracked_locals`): `None` where it follows none, or a write
+/// of the slot since its last load reset it. A followed word is the binding's own (its origin names the slot).
+pub(super) fn tracked_local(ctx: &Ctx<'_>, state: &[Word], slot: u16) -> Option<Word> {
+    let word = *state.get(ctx.registers + usize::from(slot)).filter(|_| usize::from(slot) < ctx.tracked_locals)?;
+    (word.origin == Some(Origin::Binding(Key::Slot { owner: ctx.id, slot }))).then_some(word)
+}
+
+/// Keeps the followed frame locals of `state` (`Ctx::tracked_locals`) after `instruction`: a load of one follows the word
+/// it read, and a write of one (`events.writes`) resets it, so a later load reads the binding again.
+fn track_locals(ctx: &Ctx<'_>, operation: Option<&Operation<(), ()>>, value: Word, events: &Events, state: &mut [Word]) {
+    if ctx.tracked_locals == 0 { return; }
+    for (key, _) in &events.writes {
+        if let Key::Slot { owner, slot } = *key && owner == ctx.id && usize::from(slot) < ctx.tracked_locals {
+            if let Some(word) = state.get_mut(ctx.registers + usize::from(slot)) { *word = Word::UNKNOWN; }
+        }
+    }
+    if let Some(Operation::LoadLocalPlain { slot, .. } | Operation::LoadLocalChecked { slot, .. }) = operation
+        && usize::from(*slot) < ctx.tracked_locals
+        && let Some(word) = state.get_mut(ctx.registers + usize::from(*slot)) {
+        *word = value;
+    }
 }
 
 /// The fact of a load from `key`: the closure the census proved there, else the binding. The closure keeps its origin, so
@@ -293,7 +326,12 @@ fn value_of(
         }
         // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the
         // object it allocated.
-        if ctx.types.is_some() { return Word::of(Type::language(crate::ValueType::Object)); }
+        // A global the program writes nowhere is the realm's builtin of that name, which makes an object of no program class
+        // (`Origin::Foreign`; `escapes::Reach` takes it so only where no write the analysis cannot follow reaches the globals).
+        if let Some(types) = ctx.types {
+            let foreign = matches!(callee.origin, Some(Origin::Binding(key @ Key::Global(_))) if !types.written(key));
+            return Word { origin: foreign.then_some(Origin::Foreign), ..Word::of(Type::language(crate::ValueType::Object)) };
+        }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -366,9 +404,10 @@ fn value_of(
         Some(Operation::Move { source, .. } | Operation::StoreEnvLocal { source, .. } | Operation::StoreLocalPlain { source, .. }) => {
             state[usize::from(source)]
         }
-        Some(Operation::LoadEnvLocal { slot, .. } | Operation::LoadLocalPlain { slot, .. } | Operation::LoadLocalChecked { slot, .. }) => {
-            resolved(ctx, Key::Slot { owner: ctx.id, slot })
-        }
+        // A frame local's load reads what the edges since its last load proved of it (`tracked_local`), else its binding.
+        Some(Operation::LoadLocalPlain { slot, .. } | Operation::LoadLocalChecked { slot, .. }) =>
+            tracked_local(ctx, state, slot).unwrap_or_else(|| resolved(ctx, Key::Slot { owner: ctx.id, slot })),
+        Some(Operation::LoadEnvLocal { slot, .. }) => resolved(ctx, Key::Slot { owner: ctx.id, slot }),
         Some(Operation::LoadCapture { depth, slot, .. }) => ctx
             .scope
             .owner(ctx.id, depth)
@@ -548,6 +587,7 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         && !global_store
     {
         events.wild_global = true;
+        events.unkeyed_global = true;
         events.wild_owner = true;
     }
     match operation {
@@ -576,18 +616,22 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             Some(owner) => write(ctx, pc, true, events, Key::Slot { owner, slot }, state[usize::from(source)]),
             None => {
                 events.wild_global = true;
+                events.unkeyed_global = true;
                 events.wild_owner = true;
             }
         },
         Some(Operation::GlobalWrite { source, atom, .. }) => {
             write(ctx, pc, true, events, Key::Global(atom), state[usize::from(source)]);
         }
-        Some(
-            Operation::SetField { atom, .. }
-            | Operation::StoreField { atom, .. }
-            | Operation::FieldStoreMiss { atom, .. }
-            | Operation::FieldAdd { atom, .. },
-        ) => write(ctx, pc, true, events, Key::Global(atom), Word::UNKNOWN),
+        // A named store writes the global binding of its name only where its base may be the global object
+        // (`named_base_global`): a store into an object the solve proves is no global object leaves the globals alone.
+        Some(Operation::SetField { atom, base, .. } | Operation::StoreField { atom, base, .. }) => {
+            if named_base_global(ctx, base.map_or(FieldBase::THIS, FieldBase::register), state) {
+                write(ctx, pc, true, events, Key::Global(atom), Word::UNKNOWN);
+            }
+        }
+        Some(Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) =>
+            write(ctx, pc, true, events, Key::Global(atom), Word::UNKNOWN),
         _ => {}
     }
 }

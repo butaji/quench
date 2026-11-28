@@ -58,6 +58,8 @@ pub(super) struct Record {
     reads_this: bool,
     wild: Holders,
     member_bases: Vec<(u32, Holders)>,
+    defined: Vec<(Option<ElementClass>, Word)>,
+    unkeyed_global: bool,
     /// Whether a builtin stores an index into an object that may be a builtin's prototype (`FunctionFlow::prototype_writes`).
     prototype_writes: bool,
     /// Per register, the join of the facts it is defined with.
@@ -139,6 +141,8 @@ impl Record {
             reads_this: false,
             wild: Holders::NONE,
             member_bases: Vec::new(),
+            defined: Vec::new(),
+            unkeyed_global: false,
             prototype_writes: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
@@ -189,15 +193,15 @@ impl Record {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
             self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index), prototype: array.cell.prototype });
         }
-        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
-        if instruction.op() == crate::bytecode::Op::GetIndex {
-            self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
+        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`). `GetIndex` decodes as one
+        // (`Operation::ElementRead`): its key is an operand, so no field of it is read as a register but through the decode.
+        if let Some(crate::staged::Operation::ElementRead { base, .. }) = decoded(instruction) {
+            self.reads.insert(Key::Element(state[usize::from(base)].elements_key()));
         }
         // An element access (a read or a store) keeps the view of the array its base holds, so a tier reads a typed array's
         // element by its kind (`FunctionFacts::element_view`).
         let element_base = match decoded(instruction) {
-            Some(crate::staged::Operation::ElementWrite { base, .. }) => Some(base),
-            _ if instruction.op() == crate::bytecode::Op::GetIndex => Some(instruction.register_b()),
+            Some(crate::staged::Operation::ElementWrite { base, .. } | crate::staged::Operation::ElementRead { base, .. }) => Some(base),
             _ => None,
         };
         if let Some(base) = element_base {
@@ -319,6 +323,8 @@ impl Record {
         self.global_source |= events.global_source;
         self.wild = self.wild.join(events.wild);
         self.member_bases.extend(events.member_bases);
+        self.defined.extend(events.defined);
+        self.unkeyed_global |= events.unkeyed_global;
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
@@ -372,12 +378,11 @@ impl Record {
         if instruction.op() == crate::bytecode::Op::ForInStart {
             self.scan.for_in_sources.push(parameter(instruction.register_b()));
         }
-        if instruction.op() == crate::bytecode::Op::GetIndex {
-            if let Some(result) = instruction.defined_register() {
-                self.scan.element_reads.push((result, parameter(instruction.register_b()), instruction.register_c()));
-            }
-        }
         match decoded(instruction) {
+            // An element read whose key is a register (`CopyScan::copies` follows the key a for-in loop's key register holds).
+            Some(crate::staged::Operation::ElementRead { base, key, destination }) => if let Some(key) = key.register_index() {
+                self.scan.element_reads.push((destination, parameter(base), key));
+            },
             Some(crate::staged::Operation::ForInNext { destination, .. }) => self.scan.for_in_keys.push(destination),
             Some(crate::staged::Operation::ElementWrite { base, key, value, .. }) => {
                 self.scan.stores += 1;
@@ -433,6 +438,8 @@ impl Record {
             reads_this: self.reads_this,
             wild: self.wild,
             member_bases: self.member_bases,
+            defined: self.defined,
+            unkeyed_global: self.unkeyed_global,
             prototype_writes: self.prototype_writes,
             wild_elements: self.wild_elements,
             numbers,
@@ -448,6 +455,7 @@ impl Record {
             quiet: self.quiet,
             arity,
             in_register,
+            slotted: Box::default(),
             returns_out,
             strict,
             handed: self.handed,

@@ -799,6 +799,7 @@ impl Engine {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy,
         };

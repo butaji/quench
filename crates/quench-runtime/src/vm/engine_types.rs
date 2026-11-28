@@ -2326,8 +2326,12 @@ pub struct LiveImage {
     pub entries: Box<[usize]>,
     /// Each function's base body.
     pub bases: Box<[usize]>,
-    /// Each function's lane body, where it has one.
+    /// Each function's lane body, where it has one: linked, for an image placed in process; its unlinked text in the
+    /// executable, for one the system linker placed (`live::link_placed_lane` links it in place).
     pub lanes: Box<[Option<usize>]>,
+    /// The lane value table the system linker placed beside the lane text; 0 for an image placed in process, whose lane
+    /// bodies each carry their own.
+    pub lane_values: usize,
     /// Each lane helper's address by number, as the system linker bound the helpers the image names
     /// (0 for the rest); `None` for an image placed in process, whose helpers are the process's table.
     pub helpers: Option<&'static [usize]>,
@@ -2620,6 +2624,10 @@ pub struct InheritedConstant {
 pub struct LinkedTable {
     pub entries: &'static [usize],
     pub bases: &'static [usize],
+    /// Each function's unlinked lane text (`object::lane_text`), 0 where it has none.
+    pub lanes: &'static [usize],
+    /// The lane value table's address.
+    pub lane_values: usize,
     pub file: &'static [u8],
     pub calls: *mut CallRecord,
     /// The lane helpers the image names, by number (`LiveImage::helpers`).

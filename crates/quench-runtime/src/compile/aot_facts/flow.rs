@@ -16,6 +16,7 @@ use super::scope::Scope;
 use super::shape::Shape;
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
+use crate::typed_ir::Type;
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
@@ -84,6 +85,13 @@ pub(super) struct FunctionFlow {
     /// Per named property a store of this function writes, the holders of the object it stores on (`Holders::of` of the
     /// base). A read of the name is wild only where such a holder may be a wild holder (`Census::wild`).
     pub(super) member_bases: Vec<(u32, Holders)>,
+    /// The values the literals of this function define (`DefineArrayElement`, a data `DefinePropertyRecord`): an array or object
+    /// literal keeps them where no store records them, so unseen code holding an object of unknown origin may read them (`escapes`).
+    pub(super) defined: Vec<(Option<crate::typed_ir::ElementClass>, Word)>,
+    /// Whether this function makes a global store of its own that names no global (`with`, `delete`, a sloppy declaration, a
+    /// capture store of no known owner); a computed-key store is `computed_global`. Holding the global object (`global_wild`)
+    /// lets unseen code write globals too, but only with values it holds, which the escapes hold already.
+    pub(super) unkeyed_global: bool,
     /// Whether a store a builtin makes may write an index of an object that may be a builtin's prototype (`Cell::prototype`):
     /// an array mutator on one, or a property adder handed one. An element store records its own (`ElementStore::prototype`).
     pub(super) prototype_writes: bool,
@@ -120,6 +128,9 @@ pub(super) struct FunctionFlow {
     /// Per parameter, whether its argument is in a register at entry (`bound_parameters`): its array is then the
     /// parameter's own element class, which a resolved call links to the argument's (`types::entry_links`).
     pub(super) in_register: Box<[bool]>,
+    /// Per parameter, whether it lives in a local slot (`Key::Slot` of its index) rather than a register: the slot holds
+    /// the argument from entry, so its cell joins the parameter's (`types::Types::of`).
+    pub(super) slotted: Box<[bool]>,
     /// Whether the function's return value leaves the closed world: the program's root (the host reads its result),
     /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
     /// `types::escapes` takes its returns as positions the solve cannot follow.
@@ -200,6 +211,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
         resolved,
         classes,
         registers: usize::from(function.registers),
+        tracked_locals: tracked_locals(function),
         whole_literals: &whole[..],
         types,
         decode,
@@ -216,13 +228,14 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register, leaked: Default::default() };
     let fixpoint = solve(&mut solver);
     let inputs = solver.narrow(fixpoint);
-    let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words.clone())).collect();
+    let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words[..ctx.registers].to_vec())).collect();
     let mut record = Record::new(ctx.registers);
     record.joined(solver.joined.take());
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
-            let cells = state.words.iter().map(|word| settled(&ctx, *word)).collect();
-            let sources = state.words.iter().map(|word| Source::of(word.origin)).collect();
+            let registers = &state.words[..ctx.registers];
+            let cells = registers.iter().map(|word| settled(&ctx, *word)).collect();
+            let sources = registers.iter().map(|word| Source::of(word.origin)).collect();
             record.registers.push_entry(blocks.ranges[block].start as u32, cells, sources);
             solver.replay(block, state.words, &mut record);
         }
@@ -234,7 +247,17 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
     flow.leaked = leaked;
+    flow.slotted = (0..function.params).map(|index| function.promoted_register(index).is_none()).collect();
     flow
+}
+
+/// How many frame locals the flow state follows past the registers (`Ctx::tracked_locals`): every one, where only this
+/// function's own instructions write them. An `arguments` object aliases the parameters, and a dynamic scope (direct eval,
+/// `with`) reaches the locals by name, so a function with either follows none.
+fn tracked_locals(function: &Function) -> usize {
+    let reads_arguments = function.arguments_slot.is_some()
+        || (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
+    if reads_arguments || function.has_dynamic_scope_access() { 0 } else { usize::from(function.locals) }
 }
 
 /// How many parameters `function` binds from its arguments one to one (`FunctionFlow::arity`).
@@ -390,7 +413,23 @@ impl Solver<'_> {
     /// the register (`in_register`). A parameter the body keeps as a local stays unknown: only its promoted register
     /// holds the argument at entry (`Function::promoted_register`).
     fn entry_facts(&self) -> Vec<Word> {
-        let mut state = vec![Word::UNKNOWN; self.ctx.registers];
+        let mut state = vec![Word::UNKNOWN; self.ctx.registers + self.ctx.tracked_locals];
+        // A register no instruction writes and no parameter lives in is one an activation starts `undefined` where it is read
+        // (`ResidualProgram::entry_fill` fills every register live at entry): the receiver register of a plain call, say.
+        let mut written = vec![false; self.ctx.registers];
+        for pc in 0..self.function.code.len() {
+            for register in self.function.instruction_at(pc).written_registers() {
+                if let Some(slot) = written.get_mut(usize::from(register)) { *slot = true; }
+            }
+        }
+        for index in 0..self.function.params {
+            if let Some(slot) = self.function.promoted_register(index).and_then(|register| written.get_mut(usize::from(register))) { *slot = true; }
+        }
+        for (register, word) in state[..self.ctx.registers].iter_mut().enumerate() {
+            if !written[register] && register >= usize::from(self.function.params) {
+                *word = Word::of(Type::language(crate::ValueType::Undefined));
+            }
+        }
         if let Some(types) = self.ctx.types {
             for index in 0..self.function.params {
                 if let Some(register) = self.function.promoted_register(index) {
@@ -405,16 +444,17 @@ impl Solver<'_> {
     /// Replays `block` from its input `state`, recording what its instructions do. The mask bounds the block's
     /// registers hold (`mask_bounds`) start empty at each block: they follow from the bytecode alone, not from the facts.
     fn replay(&self, block: usize, mut state: Vec<Word>, record: &mut Record) {
-        let mut masks: Vec<Option<i64>> = vec![None; state.len()];
         let ctx = self.ctx;
+        let registers = ctx.registers;
+        let mut masks: Vec<Option<i64>> = vec![None; registers];
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
-            record.observe(ctx, instruction, pc, &state);
-            compared_bounds(ctx, instruction, &state, record);
+            record.observe(ctx, instruction, pc, &state[..registers]);
+            compared_bounds(ctx, instruction, &state[..registers], record);
             let events = step(ctx, pc, instruction, &mut state);
             stored_bounds(instruction, &events.writes, &masks, record);
             mask_bounds(self.ctx, instruction, &mut masks);
-            record.commit(pc as u32, instruction, &state, events);
+            record.commit(pc as u32, instruction, &state[..registers], events);
             let written: Box<[_]> = instruction.written_registers().map(|register| {
                 let word = state[usize::from(register)];
                 (u16::from(register), settled(self.ctx, word), Source::of(word.origin))

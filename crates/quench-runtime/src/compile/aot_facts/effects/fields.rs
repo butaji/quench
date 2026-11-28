@@ -38,9 +38,12 @@ fn stored_member_type(ctx: &Ctx<'_>, owner: Option<Word>, atom: u32) -> Cell {
     let named = types.cell(Key::Member(atom));
     // An owner that holds no object yet (the solve's bottom, or only `null`) reads none: its classes come with a later pass.
     if owner.is_some_and(|owner| owner.cell.classes == Classes::Never) { return Cell { classes: Classes::Never, ..named }; }
+    // An object of one class reads its class's own stores and the stores into objects of no one class (`Types::cell_on`). A
+    // class none of whose stores is seen yet reads the latter alone: every store of the name lands on the class's own key or
+    // on `Key::MemberAny` (each `Key::Member` write mirrors one of those), so another class's stores never reach it.
     owner.and_then(Word::class_site).and_then(|site| {
         let (class, instance, _) = site_holder(ctx, site, atom);
-        types.cell_on(class, instance, atom)
+        types.cell_on(class, instance, atom).or_else(|| types.written(Key::MemberAny(atom)).then(|| types.cell(Key::MemberAny(atom))))
     }).unwrap_or(named)
 }
 
@@ -116,6 +119,7 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
         match PropertyDefinitionMode::from_word(mode).and_then(accessor_mode) {
             Some(setter) => accessor_definition(pc, setter, target, key, state[usize::from(value)], events),
             None => {
+                events.defined.push((None, state[usize::from(value)]));
                 if let (Some(atom), Some((class, instance, false))) = (key.atom_key(), target.class_site()) {
                     events.writes.push((Key::MemberOn { class, instance, atom }, state[usize::from(value)]));
                 }
@@ -155,8 +159,13 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             events.writes.push(length_change(state[usize::from(base)].elements_key()));
         }
         Some(Operation::SetField { value, atom, base, .. }) => {
-            events.writes.push((Key::Member(atom), state[usize::from(value)]));
             let owner = match base { Some(base) => state[usize::from(base)], None if !ctx.is_root => this_fact(ctx), None => Word::UNKNOWN };
+            // An owner of no value yet (`Type::NEVER`: a pass from the bottom, or a function no call reaches) is no object yet, so
+            // the store puts no value yet: its keys are written (a read of them is no host value) with nothing a later pass
+            // that sees the owner does not add.
+            let landed = owner.cell.ty != Type::NEVER;
+            let value_word = if landed { state[usize::from(value)] } else { Word::of_cell(Cell::NEVER) };
+            events.writes.push((Key::Member(atom), value_word));
             events.member_bases.push((atom, Holders::of(owner.cell)));
             if ctx.scope.length == Some(atom) {
                 events.writes.push(length_change(owner.elements_key()));
@@ -164,17 +173,18 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             // A store into an object of a known class (`Word::class_site`) is that class's own field, as a class
             // body's method is (`DefinePropertyRecord`): a method on its prototype (`C.prototype.m = f`), or a data
             // field of its instances (`this.link = link` in `C`), which a read off an instance of `C` resolves per class.
-            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`). A store of `prototype`
-            // into a constructor the solve knows is that constructor's own static property (`Key::MemberOn` with `instance: false`):
-            // `copies::expand` reads the literal it stores and writes its keys as the class's prototype members.
-            let constructor = if Some(atom) == ctx.scope.prototype && owner.cell.ty.body_index().is_some() { ctx.classes.of_word(owner) } else { None };
+            // A store into an object of no one class may land in any class's instance (`Key::MemberAny`). A store into a
+            // constructor the solve knows is that constructor's own static property (`Key::MemberOn` with `instance: false`), as a
+            // class body's static method is: `C.run = f`, and `C.prototype = {...}`, whose literal `copies::expand` reads and
+            // writes its keys as the class's prototype members.
+            let constructor = if owner.cell.ty.body_index().is_some() { ctx.classes.of_word(owner) } else { None };
             let key = match (constructor, owner.class_site()) {
                 (Some(class), _) => Key::MemberOn { class, instance: false, atom },
                 (None, Some((class, true, _))) => Key::MemberOn { class, instance: true, atom },
                 _ => Key::MemberAny(atom),
             };
             // A store of an accessor's name may run its setter instead of storing the value (`accessor_call`): no class's field holds it.
-            let stored = if ctx.accessors.contains(&atom) { Word::UNKNOWN } else { state[usize::from(value)] };
+            let stored = if ctx.accessors.contains(&atom) && landed { Word::UNKNOWN } else { value_word };
             events.writes.push((key, stored));
         }
         Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {

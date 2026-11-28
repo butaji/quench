@@ -249,3 +249,4 @@ pub mod native_image;
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
+pub mod placed_text;

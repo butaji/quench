@@ -23,7 +23,7 @@ use super::scope::Scope;
 use super::shape::Change;
 use super::value::{Key, Origin};
 use super::AotFacts;
-use crate::bytecode::{used_registers, Class, FieldLookup, Function, Op, PropertyDefinitionMode, ResidualProgram, Traits, WideInstruction};
+use crate::bytecode::{used_registers, Class, FieldLookup, Function, PropertyDefinitionMode, ResidualProgram, Traits, WideInstruction};
 use crate::compile::liveness::{register_dead, RegisterMasks};
 use crate::staged::Operation;
 use crate::typed_ir::{Cell, Classes, FactKey, Type};
@@ -32,7 +32,7 @@ use crate::typed_ir::{Cell, Classes, FactKey, Type};
 use crate::staged::glue_prelude::*;
 
 /// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
-const PROTOCOL_NAMES: [&str; 33] = [
+pub(super) const PROTOCOL_NAMES: [&str; 33] = [
     "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "length", "next", "done", "value", "return",
     "throw", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll",
     "hasIndices", "exec", "join", "message", "name", "cause", "index", "input", "groups", "get", "set",
@@ -225,10 +225,9 @@ impl Readers {
     fn operation(&mut self, cx: &Scan<'_>, at: u32, instruction: WideInstruction) {
         if instruction.op().class() == Class::GetField {
             self.field_read(cx, at, instruction);
-        } else if instruction.op() == Op::GetIndex {
-            self.element_read(cx, at, instruction);
         } else {
             match Operation::<u64, ()>::of(instruction) {
+                Some(Operation::ElementRead { base, key, .. }) => self.element_read(cx, at, base, key),
                 Some(Operation::SetField { value, .. }) if owner_unknown(cx, at) => self.sinks.push(cx.cell(at, u16::from(value))),
                 Some(Operation::SetField { .. }) => {}
                 // A computed key that is an object is converted to a name: its `toString` runs.
@@ -302,9 +301,15 @@ impl Readers {
 
     /// Notes a computed read `base[key]`: a numeric key reads the array-index fields of `base`, any other key reads
     /// `base` in any way. An object key is converted to a name first, so it is a sink too.
-    fn element_read(&mut self, cx: &Scan<'_>, at: u32, instruction: WideInstruction) {
-        let base = cx.cell(at, u16::from(instruction.register_b()));
-        let key = cx.cell(at, u16::from(instruction.register_c()));
+    fn element_read(&mut self, cx: &Scan<'_>, at: u32, base: crate::bytecode::Register, key: crate::bytecode::Operand) {
+        let base = cx.cell(at, u16::from(base));
+        // The key is an operand (`Operation::ElementRead`): a register's cell, a constant's type, and any value for a local or a
+        // field the scan holds no cell of.
+        let key = match key.kind() {
+            Some(crate::bytecode::OperandKind::Register) => cx.cell(at, key.payload()),
+            Some(crate::bytecode::OperandKind::Constant) => Cell::of(cx.scope.constant_type(usize::from(key.payload()))),
+            _ => Cell::ANY,
+        };
         self.sinks.push(key);
         if is_number(key) {
             self.index_reads = self.index_reads.join(holders(base));

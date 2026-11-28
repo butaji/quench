@@ -228,6 +228,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy: None,
     }
@@ -348,6 +349,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy: None,
     };

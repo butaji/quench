@@ -88,6 +88,8 @@ pub(super) struct Census {
     writes: BTreeMap<Key, (u32, Word)>,
     /// Whether a write the analysis cannot follow reaches the globals.
     global_wild: bool,
+    /// Whether such a write is the program's own (`FunctionFlow::unkeyed_global`, `computed_global`), not unseen code's.
+    program_global_wild: bool,
     /// Per function, whether a write it cannot follow reaches its own slots.
     wild_owner: Vec<bool>,
     /// The objects a store under a name the analysis cannot list may write into, joined over the flows (`FunctionFlow::wild`).
@@ -143,6 +145,7 @@ impl Census {
             members_on,
             writes,
             global_wild: false,
+            program_global_wild: false,
             wild_owner: Vec::new(),
             phases: BTreeMap::new(),
             accessors: Accessors::default(),
@@ -165,6 +168,7 @@ impl Census {
         self.wild = flows.iter().fold(Holders::NONE, |wild, flow| wild.join(flow.wild));
         self.member_bases = member_bases;
         self.global_wild = flows.iter().any(|flow| flow.global_wild || flow.computed_global);
+        self.program_global_wild = flows.iter().any(|flow| flow.unkeyed_global || flow.computed_global);
         self.wild_owner = flows.iter().map(|flow| flow.wild_owner).collect();
     }
 
@@ -219,6 +223,12 @@ impl Census {
         self.wild.overlaps(Holders { classes: Classes::one(class, false), sites: Sites::Never })
     }
 
+    /// Whether a global store of the program's own that names no global may reach a global (`program_global_wild`): a global
+    /// no keyed program write reaches then holds only the realm's value or one unseen code put there.
+    pub(super) fn program_global_wild(&self) -> bool {
+        self.program_global_wild
+    }
+
     /// Whether a write the analysis cannot follow may reach the value a read off `origin` takes (`wild`).
     pub(super) fn wild_read(&self, origin: Origin) -> bool {
         match origin {
@@ -234,6 +244,11 @@ impl Census {
     pub(super) fn own_methods(&self, classes: Classes, atom: u32, callees: &[u32]) -> bool {
         let ids = classes.ids();
         !ids.is_empty() && ids.iter().all(|&class| matches!(self.members_on.get(&(class, true, atom)), Some(Some(function)) if callees.contains(function)))
+    }
+
+    /// Whether class `class`'s constructor-side key of `atom` holds one closure (`members_on`), and the callees are that closure.
+    pub(super) fn static_method(&self, class: u32, atom: u32, callees: &[u32]) -> bool {
+        matches!(self.members_on.get(&(class, false, atom)), Some(Some(function)) if callees == [*function])
     }
 
     /// The closure `key` holds, when it is written once, with a closure, and no write the

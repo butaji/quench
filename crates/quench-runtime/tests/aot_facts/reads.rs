@@ -301,3 +301,12 @@ fn a_global_stored_once_at_the_root_before_its_reader_is_frozen() {
     let facts = analyze(&program);
     assert!(facts.dominated_root_store(FactKey::Global(atom_named(&program, "K"))).is_some(), "the one store dominates f's read");
 }
+
+/// `p ? p : d` reloads the parameter's frame local after the test (a function that makes a closure keeps its parameters in
+/// frame locals): the truthy edge proves the local not nullish, and the reload reads that proof, so the `undefined` no call
+/// passes does not join the default (a closure joined with it becomes an unknown function, which escapes every class).
+#[test]
+fn a_reload_of_a_tested_local_keeps_the_tests_proof() {
+    let ty = returned_type("(function () { function f(p) { var g = function () {}; g(); return p ? p : 1; } f(); })();");
+    assert!(ty != Type::NEVER && !ty.may_be_languages(Type::language(quench_runtime::ValueType::Undefined)), "the reload reads no undefined: {ty:?}");
+}
