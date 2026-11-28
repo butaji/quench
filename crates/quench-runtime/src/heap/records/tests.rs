@@ -108,7 +108,7 @@ fn object_record_sweep_uses_marks_and_recycles_dead_ids() {
 }
 
 #[test]
-fn free_runs_reuse_vacancies_across_sweeps() {
+fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     use super::RecordSweep;
 
     let mut arena: RecordSpace<_, TEST_RECORD_CAPACITY> = RecordSpace::default();
@@ -133,9 +133,8 @@ fn free_runs_reuse_vacancies_across_sweeps() {
         assert!(arena.mark(live));
     }
     assert_eq!(arena.sweep(true, PromotionAge::First, true, |_| {}), (3, 0));
-    // The last run is taken first, and each run is taken from its lowest id up.
-    assert_eq!(arena.try_insert(11).unwrap(), ids[2]);
-    assert_eq!(arena.try_insert(12).unwrap(), ids[3]);
+    assert_eq!(arena.try_insert(11).unwrap(), ids[3]);
+    assert_eq!(arena.try_insert(12).unwrap(), ids[2]);
     assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
     assert_eq!(arena.try_insert(14).unwrap(), 6);
 }

@@ -11,7 +11,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A register whose object a loop's entering edge proved of an exact shape, for the blocks
 /// `header..=end`.
@@ -20,8 +19,6 @@ pub(crate) struct LoopShape {
     header: usize,
     end: usize,
     register: Register,
-    /// The register's resolved word at the entering edge, which holds the object across the loop (the register is not written).
-    word: ir::Value,
     shape: u32,
 }
 
@@ -71,17 +68,13 @@ impl Lowering<'_, '_> {
         let Some(online) = self.vm.online.filter(|_| self.entry.is_some() && self.division().folds(BindingTime::Site)) else { return };
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
         for (register, shape) in self.invariant_receiver_shapes(header, end) {
-            // A fixed class's cell has no shape to guard: its class is the fact (`fixed_cells`).
-            if !(online.shape_stable)(shape) || self.entry_fixed(Some(register)) { continue; }
+            if !(online.shape_stable)(shape) { continue; }
             let exit = self.guard_exit_for(state, header as u32, ExitFact::Shape);
-            // An ordinary object names no record a shape guard could hold (`object_header`): its loop keeps no shape.
-            let Some(proof) = self.object_header(state, Some(register), false, exit) else { continue };
-            let word = self.register_word(state, register);
-            headers::prove_header_shape(&mut self.builder, state, word, proof, shape, exit);
+            let proof = self.object_header(state, Some(register), false, exit);
+            headers::prove_header_shape(&mut self.builder, state, Some(register), proof, shape, exit);
             state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
-            state.proofs.kept_shapes.insert(word, shape);
-            let held = LoopShape { header, end, register, word, shape };
+            let held = LoopShape { header, end, register, shape };
             if !self.loop_shapes.iter().any(|known| known.header == header && known.register == register) { self.loop_shapes.push(held); }
         }
     }
@@ -92,7 +85,7 @@ impl Lowering<'_, '_> {
         for held in self.loop_shapes.iter().filter(|held| (held.header..=held.end).contains(&pc)) {
             let fact = state.values[usize::from(held.register)];
             if fact.value.ty.object_shape().is_none() && fact.value.representation == Representation::Tagged && fact.tagged.current() {
-                state.proofs.kept_shapes.insert(held.word, held.shape);
+                state.proofs.kept_shapes.insert(held.register, held.shape);
             }
         }
     }

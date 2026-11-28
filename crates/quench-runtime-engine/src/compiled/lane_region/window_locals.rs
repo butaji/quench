@@ -12,7 +12,6 @@ use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::bytecode::InstructionField;
 use quench_runtime::staged::environment::{environment_slot, environment_slot_define, environment_slot_open, environment_slot_store};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What an instruction does to an environment-owned slot.
 #[derive(Clone, Copy)]
@@ -89,7 +88,7 @@ impl Lowering<'_, '_> {
             Access::Write { source, .. } => Some(self.tagged(state, source)),
             Access::Read(_) | Access::Open => None,
         };
-        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None, facts: Default::default(), fresh: false };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None};
         let read = match (access, written) {
             (Access::Read(_), _) => environment_slot(&mut stage, storage, slot, miss),
             (Access::Write { define: false, .. }, Some(value)) => environment_slot_store(&mut stage, storage, slot, value, miss).map(|()| value),

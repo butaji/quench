@@ -66,6 +66,7 @@ impl Residual {
             // room its program kept for chunks; an encoding keeps the sites alone, so the decoded
             // program fits within them (`ChunkAppend::has_room_for` declines chunks past it).
             debug_assert!(program.cache_site_counts().fits_within(self.sites), "{:?} within {:?}", program.cache_site_counts(), self.sites);
+            program.prime_loop_decoding();
             Rc::new(program)
         })
     }

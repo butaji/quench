@@ -32,7 +32,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Function, InstructionField};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether `slot` of `function` (the function with index `id`) is a local only its frame owns.
 fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {

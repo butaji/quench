@@ -2,7 +2,6 @@
 
 use super::{TypedArrayKind, Vm};
 use crate::staged::typed_elements::{element_number, element_word, NATIVE_LITTLE_ENDIAN};
-#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     /// Each `source_kind` element of `source` into `target` as `target_kind`, as storing the
@@ -16,7 +15,7 @@ impl Vm {
     ) {
         let (source_width, target_width) = (source_kind.width(), target_kind.width());
         if let (Some(signed), Some(_), false) =
-            (typed_array_kind_integer_signed(source_kind), typed_array_kind_integer_signed(target_kind), target_kind == TypedArrayKind::Uint8Clamped)
+            (source_kind.integer_signed(), target_kind.integer_signed(), target_kind == TypedArrayKind::Uint8Clamped)
         {
             return convert_integers(source, source_width, signed, target, target_width);
         }

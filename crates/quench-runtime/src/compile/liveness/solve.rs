@@ -5,7 +5,7 @@
 //! initializer, mandreel's `global_init`) is tens of megabytes at a load's peak.
 
 use super::{RegisterSet, register_bit};
-use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op, Successors};
+use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op};
 use crate::compile::CompileScratch;
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
@@ -32,6 +32,23 @@ impl LiveMask for u128 {
 impl LiveMask for RegisterSet {
     fn narrow(set: RegisterSet) -> Self {
         set
+    }
+}
+
+/// An instruction index in a successor table.
+pub(crate) trait Pc: Copy {
+    fn index(self) -> usize;
+}
+
+impl Pc for usize {
+    fn index(self) -> usize {
+        self
+    }
+}
+
+impl Pc for u32 {
+    fn index(self) -> usize {
+        self as usize
     }
 }
 
@@ -97,28 +114,30 @@ pub(crate) fn analyze_successors<M: LiveMask>(
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
             .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register)))
     };
-    let mut live = analyze_graph(transfers, successors, |_| observable);
+    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), successors.edges(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
     live
 }
 
-/// Solve shared instruction transfers with per-PC recovery requirements, over `successors`
-/// (one entry per instruction, its successors and how control reaches each). The final
-/// requirement describes falling off the graph. Rewritten native units add their recovery
-/// floors here. An instruction an abrupt completion may leave by a handler reaches the
-/// handler's live-in set whatever the instruction writes, since the write is not made on that
-/// edge: it is live before every instruction the handler covers.
+/// Solve shared instruction transfers with per-PC recovery requirements.
+/// `starts` indexes a compact successor table; the final requirement describes
+/// falling off the graph. Rewritten native units add their recovery floors here.
+/// `kinds` gives how control reaches each successor (empty: every one in order). An
+/// instruction an abrupt completion may leave by a handler reaches the handler's live-in set
+/// whatever the instruction writes, since the write is not made on that edge: it is live
+/// before every instruction the handler covers.
 ///
-/// A backward problem of the one driver, `dataflow::solve`, over basic blocks: the blocks are
-/// `Successors::leaders`, so a handler edge leaves from the end of its block. A block's state is
-/// the pair (live after its last instruction, live into the handlers it may leave by); blocks
-/// are numbered from the function's end, so the driver's lowest-first order is a reverse sweep.
-pub fn analyze_graph<M: LiveMask>(
-    transfers: &[(M, M)], successors: &Successors, required: impl Fn(usize) -> M,
+/// A backward problem of the one driver, `dataflow::solve`, over basic blocks: a block ends at
+/// every instruction that does not just fall through to the next (a branch, an exit, or one a
+/// handler covers), so a handler edge leaves from the end of its block. A block's state is the
+/// pair (live after its last instruction, live into the handlers it may leave by); blocks are
+/// numbered from the function's end, so the driver's lowest-first order is a reverse sweep.
+pub fn analyze_graph<M: LiveMask, P: Pc>(
+    transfers: &[(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: impl Fn(usize) -> M,
 ) -> Vec<M> {
     let length = transfers.len();
-    assert_eq!(successors.starts().len(), length + 1);
-    let mut graph = LiveGraph::new(transfers, successors, required);
+    assert_eq!(starts.len(), length + 1);
+    let mut graph = LiveGraph::new(transfers, starts, successors, kinds, required);
     crate::dataflow::solve(&mut graph);
     graph.live
 }
@@ -142,10 +161,21 @@ struct LiveGraph<'a, M, F> {
 }
 
 impl<'a, M: LiveMask, F: Fn(usize) -> M> LiveGraph<'a, M, F> {
-    fn new(transfers: &'a [(M, M)], successors: &Successors, required: F) -> Self {
+    fn new<P: Pc>(transfers: &'a [(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: F) -> Self {
         let length = transfers.len();
-        let leaders = successors.leaders(length);
-        let heads: Vec<usize> = (0..length).filter(|&pc| leaders.contains(pc)).collect();
+        let is_handler = |edge: usize| kinds.get(edge) == Some(&ControlEdge::Handler);
+        let mut head = vec![false; length + 1];
+        if length > 0 { head[0] = true; }
+        for pc in 0..length {
+            let (first, last) = (starts[pc].index(), starts[pc + 1].index());
+            let falls_through = last == first + 1 && successors[first].index() == pc + 1 && !is_handler(first);
+            if !falls_through { head[pc + 1] = true; }
+            for successor in &successors[first..last] {
+                if successor.index() < length { head[successor.index()] = true; }
+            }
+        }
+        let heads: Vec<usize> = (0..length).filter(|&pc| head[pc]).collect();
+        drop(head);
         let count = heads.len();
         let block_of = |pc: usize| count - heads.partition_point(|&start| start <= pc);
         let end_of = |block: usize| heads.get(count - block).copied().unwrap_or(length);
@@ -155,13 +185,13 @@ impl<'a, M: LiveMask, F: Fn(usize) -> M> LiveGraph<'a, M, F> {
         let mut pairs: Vec<(usize, usize, bool)> = Vec::new();
         for block in 0..count {
             let last = end_of(block) - 1;
-            for (target, edge) in successors.at(last) {
-                let by_handler = edge == ControlEdge::Handler;
+            for edge in starts[last].index()..starts[last + 1].index() {
+                let target = successors[edge].index();
                 if target < length {
-                    pairs.push((block_of(target), block, by_handler));
+                    pairs.push((block_of(target), block, is_handler(edge)));
                 } else if target == length {
                     exits[block].0 |= live[length];
-                    if by_handler { exits[block].1 |= live[length]; }
+                    if is_handler(edge) { exits[block].1 |= live[length]; }
                 }
             }
         }
@@ -275,7 +305,7 @@ mod tests {
         let bit = RegisterSet::bit;
         // A loop that reads a register before writing it: the live sets need a second sweep.
         let transfers = [(bit(0), bit(1)), (bit(1), bit(2)), (RegisterSet::default(), RegisterSet::default())];
-        let mut program = crate::Engine::specialize("", "wide-solve.js").unwrap();
+        let mut program = crate::Engine::specialize_unspecialized("", "wide-solve.js").unwrap();
         let function = &mut program.functions[0];
         function.code = vec![
             Instr::new(Op::Move, 1, 0, 0, 0),

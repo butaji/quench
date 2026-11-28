@@ -107,12 +107,16 @@ impl Native {
         )
     }
 
-    /// The string functions, which `call_native_table` dispatches directly.
+    /// The string, RegExp and `Math` functions, which `call_native_table` dispatches
+    /// directly.
     pub(crate) fn is_string_regexp_or_math(self) -> bool {
         self.is_pure_string_method()
+            || self.is_math_function()
             || matches!(
                 self,
-                Self::StringReplace
+                Self::RegExpExec
+                    | Self::RegExpTest
+                    | Self::StringReplace
                     | Self::StringReplaceAll
                     | Self::StringMatch
                     | Self::StringMatchAll

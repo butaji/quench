@@ -81,11 +81,14 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         argument_count: 0,
         receiver_path: ReceiverPath::NONE,
     });
-    let call_method = program.atoms.iter().position(|name| name == "callMethod").unwrap() as u32;
     let function = program
         .functions
         .iter_mut()
-        .find(|function| function.name == Some(call_method))
+        .find(|function| {
+            function
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "callMethod")
+        })
         .unwrap();
     assert_eq!(function.params, 1);
     assert!(function.wide.is_empty());
@@ -125,7 +128,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
                 receiver,
                 holder: NO_FIELD_HOLDER,
                 slot: 0,
-                holder_cell: NO_FIELD_HOLDER_LAYOUT,
+                holder_id: NO_FIELD_HOLDER_LAYOUT,
             },
         );
     }
@@ -167,21 +170,49 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     vm.execute(&program).unwrap();
     let receiver = vm.own_property(vm.realm.globals, vm.lookup_atom("receiver").unwrap()).unwrap();
     let other = vm.own_property(vm.realm.globals, vm.lookup_atom("other").unwrap()).unwrap();
+    let child = vm.own_property(vm.realm.globals, vm.lookup_atom("child").unwrap()).unwrap();
     let third = vm.own_property(vm.realm.globals, vm.lookup_atom("third").unwrap()).unwrap();
+    let hint = vm.field_cache_entry(site);
     vm.profile.field_primitives = Default::default();
-    // The site's class-keyed entry admits the warmed receiver's class only: other shapes miss.
-    assert!(vm.primary_own_field_store_hit::<false>(receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
-    assert!(!vm.primary_own_field_store_hit::<false>(other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
-    assert!(vm.primary_own_field_store_hit::<true>(receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
-    assert!(vm.cached_field_store_hit(receiver, atom, Value::integer(4), site));
+    assert_eq!(vm.record_field_entry_hit(hint, receiver), Some(Value::integer(0)));
+    assert_eq!(vm.record_field_entry_hit(hint, other), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::HintOwnRead), 1);
+    // The child inherits exactly the own data slot the warmed entry proves.
+    let holder_hint = FieldCache {
+        receiver: vm.heap.object(child).unwrap().exact_shape(),
+        holder: hint.receiver,
+        slot: hint.slot,
+        holder_id: NO_FIELD_HOLDER_LAYOUT,
+    };
+    assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
+    assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::HintHolderRead), 1);
+    assert_eq!(vm.primary_own_field_hit(&program, receiver, site), Some(Value::integer(0)));
+    assert_eq!(vm.primary_own_field_hit(&program, other, site), None);
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryOwnRead), 1);
+    assert!(vm.primary_own_field_store_hit::<false>(&program, receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert!(!vm.primary_own_field_store_hit::<false>(&program, other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreNoLog), 1);
+    assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
+    assert_eq!(vm.profile.field_primitives.count(Path::PrimaryStoreLogged), 1);
+    assert!(vm.hinted_primary_field_store_hit::<false>(hint, receiver, atom, Value::integer(2)));
+    assert!(!vm.hinted_primary_field_store_hit::<false>(hint, other, atom, Value::integer(2)));
+    assert_eq!(vm.profile.field_primitives.count(Path::HintedPrimaryStore), 1);
+    assert!(vm.hinted_own_field_store_hit(hint, receiver, atom, Value::integer(3)));
+    assert!(!vm.hinted_own_field_store_hit(hint, other, atom, Value::integer(3)));
+    assert_eq!(vm.profile.field_primitives.count(Path::HintedStore), 1);
+    assert!(vm.cached_field_store_hit(&program, receiver, atom, Value::integer(4), site));
     assert_eq!(vm.profile.field_primitives.count(Path::CachedStore), 1);
-    assert!(vm.set_field_cache_hit(receiver, atom, Value::integer(5), site, true));
+    assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site, true));
     assert_eq!(vm.profile.field_primitives.count(Path::GeneralStore), 1);
     assert_eq!(vm.own_property(receiver, atom), Some(Value::integer(5)));
     assert_eq!(vm.own_property(other, atom), Some(Value::integer(0)));
     // Real reads install the other two shape/slot pairs at this same site.
     assert_eq!(vm.get_field_cached(&program, other, atom, site).unwrap(), Value::integer(0));
     assert_eq!(vm.get_field_cached(&program, third, atom, site).unwrap(), Value::integer(0));
+    assert!(vm.polymorphic_own_field_store_hit(&program, other, atom, Value::integer(6), site, crate::heap::PropertyStoreLayout::MayWiden).is_some());
+    assert_eq!(vm.profile.field_primitives.count(Path::PolymorphicStore), 1);
+    assert_eq!(vm.own_property(other, atom), Some(Value::integer(6)));
 }
 
 #[cfg(all(feature = "profile-field-primitives", not(any(feature = "profile-aggregate", feature = "profile-memory"))))]
@@ -224,35 +255,14 @@ fn warmed_field_stores_follow_descriptor_transitions() {
       var changed = {value: 0}; warm(changed); delete changed.value;
       changed.padding = 1; changed.value = 2; write(changed, 9); print(changed.value);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.set_execution_mode(crate::ExecutionMode::Interpreted);
-    let program = compile(source, "store-descriptor-transitions.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["199", "TypeError", "199", "TypeError", "8", "8", "9"]);
-}
-
-#[test]
-fn two_classes_adding_the_same_first_field_keep_distinct_shapes_and_slot_domains() {
-    // Each class's receivers are made from its own constructed root (`ShapeTransition::Constructed`), so the shapes and
-    // slot owners their first field takes are the class's own: a seed of one class's domain never reaches the other's.
-    let program = Engine::specialize(
-        "class A { x = 1; } class B { x = 'text'; } var a = new A(); var b = new B();",
-        "class-shape-roots.js",
-    ).unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.track_slots();
-    vm.execute(&program).unwrap();
-    let (a_atom, b_atom) = (vm.intern_atom("a"), vm.intern_atom("b"));
-    let a = vm.own_property(vm.realm.globals, a_atom).unwrap();
-    let b = vm.own_property(vm.realm.globals, b_atom).unwrap();
-    let shape_a = vm.heap.object(a).unwrap().shape();
-    let shape_b = vm.heap.object(b).unwrap().shape();
-    assert_ne!(shape_a, shape_b, "each class's receivers reach their own constructed root");
-    assert!(vm.heap.slot_type(shape_a, 0).is_subtype(crate::typed_ir::Type::NUMBER));
-    assert!(vm.heap.slot_type(shape_b, 0).is_subtype(crate::typed_ir::Type::language(crate::ValueType::String)));
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+        let program = compile(source, "store-descriptor-transitions.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["199", "TypeError", "199", "TypeError", "8", "8", "9"]);
+    }
 }
 
 #[test]
@@ -275,30 +285,36 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
-        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u32, holder_cell: NO_FIELD_HOLDER_LAYOUT,
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
     });
     vm.heap.track_slot_representations(&vm.shape_layouts());
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
     // SAFETY: the receiver remains rooted by its global binding; no allocation
     // or collection happens between obtaining this slot and the Number write.
-    assert!(unsafe { vm.cached_field_store_pointer(receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
+    assert!(unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
         "widening declines before exposing a raw writer to an active native caller");
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
-    assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
+    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
     // The next admission consumes the already-widened domain.
-    let pointer = unsafe { vm.cached_field_store_pointer(receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
+    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
     for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
         unsafe { pointer.write(value); }
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
     }
+    assert_eq!(vm.heap.unrepresented_slots(), 0);
+    let hint = vm.field_cache_entry(site);
     let child = vm.object();
-    assert!(!vm.primary_own_field_store_hit::<false>(receiver, atom, child, site, crate::heap::PropertyStoreLayout::Preserve),
-        "the no-log store must defer a reference barrier");
-    // A real reference store logs its owner through the class cell's barrier, and the collector follows it.
-    vm.heap.property_set(receiver, slot, child);
+    assert!(!vm.hinted_primary_field_store_hit::<true>(hint, receiver, atom, child),
+        "the hinted no-log store must defer a reference barrier");
+    let record = receiver.direct_object_index().unwrap();
+    // SAFETY: the same exact own-data shape still proves this initialized slot.
+    assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },
+        "a Number pointer store must not consume the owner's reference barrier");
+    // A real reference store still logs its owner, and the collector follows it.
+    assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
-    assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(child));
+    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
 }
 
 #[test]
@@ -311,21 +327,27 @@ fn cached_field_reads_follow_in_place_writes() {
       receiver.value = 2;
       print(readValue(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "field-cache-write.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "field-cache-write.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
 
-    let value = vm.intern_atom("value");
-    assert!(
-        field_cache_entries(&vm, &program, value)
-            .iter()
-            .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
-        "specialized field read should populate its cache"
-    );
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
+                "specialized field read should populate its cache"
+            );
+        }
+    }
 }
 
 #[test]
@@ -346,8 +368,8 @@ fn object_spread_of_a_plain_source_adopts_its_shape_in_key_order() {
     let src = vm.own_property(globals, src_name).unwrap();
     let out = vm.own_property(globals, out_name).unwrap();
     let result = vm.own_property(globals, result_name).unwrap();
-    let src_shape = vm.heap.object(src).unwrap().shape();
-    let out_shape = vm.heap.object(out).unwrap().shape();
+    let src_shape = vm.object_data(src).unwrap().shape();
+    let out_shape = vm.object_data(out).unwrap().shape();
     assert_eq!(out_shape, src_shape, "the copy adopts the source's shape");
     assert_eq!(vm.to_string(&program, result).unwrap(), "b,a,c|1,x,true|b,a,c|b,c");
 }
@@ -452,47 +474,51 @@ fn static_three_field_object_literals_share_the_shape_site() {
       print(Object.getOwnPropertyDescriptor(result, "second").enumerable);
     "#;
     let expected = ["123", "first,second,third", "3,6,9", "true"];
-    let compile = Engine::specialize;
-    let program = compile(source, "static-object-literal.js").unwrap();
-    program.compile_released();
-    let (function_id, function) = program
-        .functions
-        .iter()
-        .enumerate()
-        .find(|(_, function)| {
-            function
-                .name
-                .is_some_and(|name| &program.atoms[name as usize] == "make")
-        })
-        .unwrap();
-    let (pc, instruction) = function
-        .code
-        .iter()
-        .copied()
-        .enumerate()
-        .find(|(_, instruction)| instruction.op() == Op::MakeObjectLiteral)
-        .unwrap_or_else(|| panic!("compiler did not select the literal site"));
-    let window = instruction.register_window();
-    assert_eq!(window.count, 3);
-    let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-    for register in window.base..window.base + window.count {
-        assert_ne!(
-            root_map & crate::compile::liveness::register_bit(register),
-            0,
-            "register {register}"
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let program = compile(source, "static-object-literal.js").unwrap();
+        program.compile_released();
+        let (function_id, function) = program
+            .functions
+            .iter()
+            .enumerate()
+            .find(|(_, function)| {
+                function
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "make")
+            })
+            .unwrap();
+        let (pc, instruction) = function
+            .code
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, instruction)| instruction.op() == Op::MakeObjectLiteral)
+            .unwrap_or_else(|| panic!("{mode} compiler did not select the literal site"));
+        let window = instruction.register_window();
+        assert_eq!(window.count, 3, "{mode}");
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
+        for register in window.base..window.base + window.count {
+            assert_ne!(
+                root_map & crate::compile::liveness::register_bit(register),
+                0,
+                "{mode}: register {register}"
+            );
+        }
+        assert_eq!(
+            program.object_sites[instruction.object_site_index()]
+                .atoms
+                .len(),
+            3
         );
-    }
-    assert_eq!(
-        program.object_sites[instruction.object_site_index()]
-            .atoms
-            .len(),
-        3
-    );
 
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), expected);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode}");
+    }
 }
 
 #[test]
@@ -510,14 +536,20 @@ fn custom_prototype_fallback_tracks_changes_and_rejects_cycles() {
       catch (error) { print("cycle-rejected"); }
       print(Object.getPrototypeOf(receiver) === second);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "field-cache-prototype.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["1", "1", "2", "cycle-rejected", "true"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "field-cache-prototype.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "1", "2", "cycle-rejected", "true"],
+            "{mode}"
+        );
+    }
 }
 
 #[test]
@@ -559,32 +591,37 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
       print(readValue(receiver));
       print(readValue(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "direct-object-holder-cache.js").unwrap();
-    program.compile_released();
-    #[cfg(feature = "profile-aggregate")]
-    let depth_one_hits_before = vm.profile.field_cache_depths[1];
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["41", "41", "41"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "direct-object-holder-cache.js").unwrap();
+        program.compile_released();
+        #[cfg(feature = "profile-aggregate")]
+        let depth_one_hits_before = vm.profile.field_cache_depths[1];
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["41", "41", "41"], "{mode}");
 
-    let receiver_atom = vm.intern_atom("receiver");
-    let holder_atom = vm.intern_atom("holder");
-    let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
-    let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
-    // The receiver is an ordinary object, so a class cell; the function holder is no class cell.
-    assert!(vm.heap.live_class_cell(receiver).is_some());
-    assert!(vm.heap.live_class_cell(holder).is_none());
+        if vm.specialized {
+            let receiver_atom = vm.intern_atom("receiver");
+            let holder_atom = vm.intern_atom("holder");
+            let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
+            let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
+            assert!(vm.heap.object_record(receiver).is_some());
+            assert!(vm.heap.object_record(holder).is_none());
 
-    let inherited = vm.intern_atom("inherited");
-    assert!(
-        field_cache_entries(&vm, &program, inherited)
-            .iter()
-            .any(|entry| entry.holder != NO_FIELD_HOLDER)
-    );
-    #[cfg(feature = "profile-aggregate")]
-    assert!(vm.profile.field_cache_depths[1] - depth_one_hits_before >= 2);
+            let inherited = vm.intern_atom("inherited");
+            assert!(
+                field_cache_entries(&vm, &program, inherited)
+                    .iter()
+                    .any(|entry| entry.holder != NO_FIELD_HOLDER)
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(vm.profile.field_cache_depths[1] - depth_one_hits_before >= 2);
+        }
+    }
 }
 
 #[test]
@@ -623,7 +660,7 @@ fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
     let third_atom = vm.intern_atom("third");
     for atom in [first_atom, second_atom, third_atom] {
         let value = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap.live_class_cell(value).is_some());
+        assert!(vm.heap.object_record(value).is_some());
     }
     let inherited = vm.intern_atom("inherited");
     let mut holder_shapes = field_cache_entries(&vm, &program, inherited)
@@ -662,14 +699,20 @@ fn custom_prototype_fallback_reads_live_data_and_keeps_accessor_fallback() {
       receiver.value = 9;
       print(readValue(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "inherited-field-cache.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["1", "1", "2", "3", "4", "2", "8", "9"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "inherited-field-cache.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "1", "2", "3", "4", "2", "8", "9"],
+            "{mode}"
+        );
+    }
 }
 
 #[test]
@@ -695,24 +738,32 @@ fn inherited_builtin_fields_cache_array_and_object_prototypes() {
       print(array[0]);
       print(object.hasOwnProperty(1));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "inherited-builtin-fields.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        [
-            "true", "true", "true", "true", "true", "true", "1", "7", "true"
-        ]);
-    for atom in [vm.intern_atom("push"), vm.intern_atom("hasOwnProperty")] {
-        assert!(
-            field_cache_entries(&vm, &program, atom)
-                .iter()
-                .any(|entry| entry.holder != NO_FIELD_HOLDER),
-            "inherited builtin reads should cache their immediate prototype"
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "inherited-builtin-fields.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "true", "true", "true", "true", "true", "true", "1", "7", "true"
+            ],
+            "{mode}"
         );
+        if vm.specialized {
+            for atom in [vm.intern_atom("push"), vm.intern_atom("hasOwnProperty")] {
+                assert!(
+                    field_cache_entries(&vm, &program, atom)
+                        .iter()
+                        .any(|entry| entry.holder != NO_FIELD_HOLDER),
+                    "inherited builtin reads should cache their immediate prototype"
+                );
+            }
+        }
     }
 }
 
@@ -725,21 +776,27 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
       receiver.method = function() { return 2; };
       print(callMethod(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "optional-method-cache-write.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "optional-method-cache-write.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2"], "{mode}");
 
-    let method = vm.intern_atom("method");
-    assert!(
-        field_cache_entries(&vm, &program, method)
-            .iter()
-            .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
-        "optional method lookup should populate its field cache"
-    );
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                field_cache_entries(&vm, &program, method)
+                    .iter()
+                    .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
+                "optional method lookup should populate its field cache"
+            );
+        }
+    }
 }
 
 #[test]
@@ -752,33 +809,39 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
       receiver.method = function() { return this.value + 1; };
       print(callMethod(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = method_cache_program(
-        compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
-    );
-    program.compile_released();
-    assert!(
-        !program.method_sites.is_empty(),
-        "test must exercise CallMethod"
-    );
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = method_cache_program(
+            compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
+        );
+        program.compile_released();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
 
-    let method = vm.intern_atom("method");
-    assert!(
-        vm.method_caches
-            .iter()
-            .flatten()
-            .any(|entry| entry.atom == method && entry.target.is_some()),
-        "specialized method site should populate its method cache"
-    );
-    #[cfg(feature = "profile-aggregate")]
-    assert!(
-        vm.profile.method_cache_hits > 0,
-        "specialized method site should take its method-cache hit path"
-    );
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .any(|entry| entry.atom == method && entry.target.is_some()),
+                "specialized method site should populate its method cache"
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(
+                vm.profile.method_cache_hits > 0,
+                "specialized method site should take its method-cache hit path"
+            );
+        }
+    }
 }
 
 #[test]
@@ -793,19 +856,23 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
       prototype.method = function() { return this.value + 1; };
       print(callMethod(receiver));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = method_cache_program(
-        compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
-    );
-    program.compile_released();
-    assert!(
-        !program.method_sites.is_empty(),
-        "test must exercise CallMethod"
-    );
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = method_cache_program(
+            compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
+        );
+        program.compile_released();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
+    }
 }
 
 #[test]
@@ -828,42 +895,50 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
       third.method = function() { return this.value + 10; };
       print(callMethod(third));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program =
-        method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
-    assert_eq!(program.method_sites.len(), 1, "test needs one method site");
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["1", "2", "3", "4", "1", "2", "3", "4", "13"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program =
+            method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
+        assert_eq!(program.method_sites.len(), 1, "test needs one method site");
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "2", "3", "4", "1", "2", "3", "4", "13"],
+            "{mode}"
+        );
 
-    assert!(
-        vm.megamorphic_methods.is_empty(),
-        "mutation should clear the megamorphic method cache"
-    );
-    let third_atom = vm.intern_atom("third");
-    let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
-    let third_shape = vm.heap.object(third).unwrap().shape();
-    let method_atom = vm.intern_atom("method");
-    let target = vm
-        .call_target(vm.own_property(third, method_atom).unwrap())
-        .unwrap();
-    assert!(
-        vm.method_caches[0]
-            .iter()
-            .any(|entry| entry.shape == third_shape
-                && entry.atom == method_atom
-                && entry.target == Some(target)),
-        "the replacement should refill the receiver's method cache"
-    );
-    #[cfg(feature = "profile-aggregate")]
-    assert!(
-        vm.profile.method_cache_tiers[2] > 0,
-        "calls should hit the megamorphic method-cache tier"
-    );
+        if vm.specialized {
+            assert!(
+                vm.megamorphic_methods.is_empty(),
+                "mutation should clear the megamorphic method cache"
+            );
+            let third_atom = vm.intern_atom("third");
+            let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
+            let third_shape = vm.object_data(third).unwrap().shape();
+            let method_atom = vm.intern_atom("method");
+            let target = vm
+                .call_target(vm.own_property(third, method_atom).unwrap())
+                .unwrap();
+            assert!(
+                vm.method_caches[0]
+                    .iter()
+                    .any(|entry| entry.shape == third_shape
+                        && entry.atom == method_atom
+                        && entry.target == Some(target)),
+                "the replacement should refill the receiver's method cache"
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(
+                vm.profile.method_cache_tiers[2] > 0,
+                "calls should hit the megamorphic method-cache tier"
+            );
+        }
+    }
 }
 
 #[test]
@@ -878,21 +953,27 @@ fn field_cache_fallback_preserves_accessor_reentry() {
       print(readValue(receiver));
       print(count);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "2", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
-    let value = vm.intern_atom("value");
-    assert!(
-        field_cache_entries(&vm, &program, value)
-            .iter()
-            .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
-        "accessor lookup must use the generic re-entrant path"
-    );
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
+                "accessor lookup must use the generic re-entrant path"
+            );
+        }
+    }
 }
 
 #[test]
@@ -911,21 +992,27 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
       print(readValue(proxy));
       print(reads);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "field-cache-proxy-get.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "2", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "field-cache-proxy-get.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
-    let value = vm.intern_atom("value");
-    assert!(
-        field_cache_entries(&vm, &program, value)
-            .iter()
-            .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
-        "Proxy reads must retain the generic trap path"
-    );
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
+                "Proxy reads must retain the generic trap path"
+            );
+        }
+    }
 }
 
 #[test]
@@ -944,20 +1031,26 @@ fn inherited_field_cache_preserves_proxy_prototype_traps() {
       print(readValue(receiver));
       print(reads);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["1", "2", "2"]);
-    let value = vm.intern_atom("value");
-    assert!(
-        field_cache_entries(&vm, &program, value)
-            .iter()
-            .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
-        "Proxy prototype reads must retain the generic trap path"
-    );
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
+                "Proxy prototype reads must retain the generic trap path"
+            );
+        }
+    }
 }
 
 #[test]
@@ -977,36 +1070,44 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
       print(callMethod(proxy));
       print(reads);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
-    program.compile_released();
-    assert!(
-        !program.method_sites.is_empty(),
-        "test must exercise CallMethod"
-    );
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["true", "1", "true", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
+        program.compile_released();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["true", "1", "true", "2"],
+            "{mode}"
+        );
 
-    let method = vm.intern_atom("method");
-    assert!(
-        vm.method_caches
-            .iter()
-            .flatten()
-            .all(|entry| entry.atom != method),
-        "Proxy method reads must retain the generic trap path"
-    );
-    assert!(
-        vm.megamorphic_methods
-            .iter()
-            .all(|cache| cache.entries[..usize::from(cache.len)]
-                .iter()
-                .all(|entry| entry.atom != method)),
-        "Proxy method reads must not enter a megamorphic cache"
-    );
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .all(|entry| entry.atom != method),
+                "Proxy method reads must retain the generic trap path"
+            );
+            assert!(
+                vm.megamorphic_methods
+                    .iter()
+                    .all(|cache| cache.entries[..usize::from(cache.len)]
+                        .iter()
+                        .all(|entry| entry.atom != method)),
+                "Proxy method reads must not enter a megamorphic cache"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1025,34 +1126,42 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
       print(callMethod(receiver));
       print(reads);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
-    program.compile_released();
-    assert!(
-        !program.method_sites.is_empty(),
-        "test must exercise CallMethod"
-    );
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["true", "1", "true", "2"]);
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
+        program.compile_released();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["true", "1", "true", "2"],
+            "{mode}"
+        );
 
-    let method = vm.intern_atom("method");
-    assert!(
-        field_cache_entries(&vm, &program, method)
-            .iter()
-            .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
-        "optional accessor lookup must retain the generic getter path"
-    );
-    assert!(
-        vm.method_caches
-            .iter()
-            .flatten()
-            .all(|entry| entry.atom != method),
-        "optional accessor lookup must not enter the method cache"
-    );
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                field_cache_entries(&vm, &program, method)
+                    .iter()
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
+                "optional accessor lookup must retain the generic getter path"
+            );
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .all(|entry| entry.atom != method),
+                "optional accessor lookup must not enter the method cache"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1068,31 +1177,39 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
       print(first(array)); print(first(view));
       print(noncanonical(view)); print(noncanonical(view));
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "static-index-cache.js").unwrap();
-    program.compile_released();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        ["41", "41", "42", "43", "44", "44"]);
-    // A canonical index literal reads by its integer (`literal_index_key`), never
-    // through a named field site.
-    let index = vm.intern_atom("0");
-    assert!(
-        field_cache_entries(&vm, &program, index).is_empty(),
-        "canonical index names read as integer keys"
-    );
-    let atom = vm.intern_atom("view");
-    let view = vm.own_property(vm.realm.globals, atom).unwrap();
-    let noncanonical = vm.intern_atom("01");
-    assert!(
-        field_cache_entries(&vm, &program, noncanonical)
-            .iter()
-            .any(|entry| entry.receiver == vm.heap.object(view).unwrap().shape()),
-        "noncanonical typed-array names use ordinary shape storage"
-    );
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "static-index-cache.js").unwrap();
+        program.compile_released();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["41", "41", "42", "43", "44", "44"],
+            "{mode}"
+        );
+        if vm.specialized {
+            // A canonical index literal reads by its integer (`literal_index_key`), never
+            // through a named field site.
+            let index = vm.intern_atom("0");
+            assert!(
+                field_cache_entries(&vm, &program, index).is_empty(),
+                "canonical index names read as integer keys"
+            );
+            let atom = vm.intern_atom("view");
+            let view = vm.own_property(vm.realm.globals, atom).unwrap();
+            let noncanonical = vm.intern_atom("01");
+            assert!(
+                field_cache_entries(&vm, &program, noncanonical)
+                    .iter()
+                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().shape()),
+                "noncanonical typed-array names use ordinary shape storage"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1102,32 +1219,38 @@ fn exhausted_field_cache_preserves_generic_reads() {
         "var sum = 0; function read(value) {{return value.payload;}} for (var index = 1; index <= {count}; index++) {{var value = {{payload:index}}; value['shape' + index] = index; sum += read(value);}} print(sum);"
     );
     let expected = (count * (count + 1) / 2).to_string();
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(&source, "field-cache-exhaustion.js").unwrap();
-    vm.initialize(&program).unwrap();
-    vm.heap.retain_allocations_for_test();
-    let root = vm.closure(&program, 0, Value::NULL).unwrap();
-    vm.call_value(&program, root, vm.realm.globals, &[])
-        .unwrap();
-    assert_eq!(
-        vm.heap.stats().1,
-        0,
-        "cache budget must fill before collection clears it"
-    );
-    assert_eq!(output.borrow().as_slice(), [expected.as_str()]);
-    assert!(
-        vm.megamorphic_fields
-            .iter()
-            .any(|set| set.len() == FIELD_MEGAMORPHIC_LIMIT),
-        "test must exhaust the existing per-site shape budget"
-    );
-    assert!(
-        vm.megamorphic_fields
-            .iter()
-            .all(|set| set.len() <= FIELD_MEGAMORPHIC_LIMIT)
-    );
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(&source, "field-cache-exhaustion.js").unwrap();
+        vm.initialize(&program).unwrap();
+        vm.heap.retain_allocations_for_test();
+        let root = vm.closure(&program, 0, Value::NULL).unwrap();
+        vm.call_value(&program, root, vm.realm.globals, &[])
+            .unwrap();
+        assert_eq!(
+            vm.heap.stats().1,
+            0,
+            "cache budget must fill before collection clears it"
+        );
+        assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
+        if vm.specialized {
+            assert!(
+                vm.megamorphic_fields
+                    .iter()
+                    .any(|set| set.len() == FIELD_MEGAMORPHIC_LIMIT),
+                "test must exhaust the existing per-site shape budget"
+            );
+            assert!(
+                vm.megamorphic_fields
+                    .iter()
+                    .all(|set| set.len() <= FIELD_MEGAMORPHIC_LIMIT)
+            );
+        }
+    }
 }
 
 #[test]
@@ -1183,37 +1306,43 @@ fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
       Object.defineProperty(symbolic, symbol, { get: function () { return "sym"; }, configurable: true });
       say(symbolic[symbol]);
     "#;
-    let compile = Engine::specialize;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = compile(source, "slot-getters.js").unwrap();
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        [
-            "126 24192",
-            "true true true a,b,c",
-            r#"{"a":3,"b":6,"c":9} {"a":4,"b":8,"c":12}"#,
-            r#"undefined {"writable":true,"enumerable":true,"configurable":true} 2"#,
-            "12 5 14",
-            "7 9 false",
-            "undefined",
-            "true 24 function",
-            "data 18 b,c,a",
-            "sym",
-        ]);
-    // 64 objects of three getters each share one chain instead of owning one each: the
-    // same layout built for one object costs as many shapes.
-    let layout_shapes = |count: usize| {
-        let source = format!(
-            "for (var i = 0; i < {count}; i++) {{ var o = {{}}; for (var key of ['a', 'b', 'c']) \
-             Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = compile(source, "slot-getters.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "126 24192",
+                "true true true a,b,c",
+                r#"{"a":3,"b":6,"c":9} {"a":4,"b":8,"c":12}"#,
+                r#"undefined {"writable":true,"enumerable":true,"configurable":true} 2"#,
+                "12 5 14",
+                "7 9 false",
+                "undefined",
+                "true 24 function",
+                "data 18 b,c,a",
+                "sym",
+            ],
+            "{mode}"
         );
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
-        vm.shapes.len()
-    };
-    assert_eq!(layout_shapes(64), layout_shapes(1));
+        // 64 objects of three getters each share one chain instead of owning one each: the
+        // same layout built for one object costs as many shapes.
+        let layout_shapes = |count: usize| {
+            let source = format!(
+                "for (var i = 0; i < {count}; i++) {{ var o = {{}}; for (var key of ['a', 'b', 'c']) \
+                 Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
+            );
+            let mut vm = Vm::new(TestHost::default());
+            vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
+            vm.shapes.len()
+        };
+        assert_eq!(layout_shapes(64), layout_shapes(1), "{mode}");
+    }
 }
 
 #[test]
@@ -1269,7 +1398,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm, site: usize| {
         for receiver in 1..=3 {
-            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_cell: NO_FIELD_HOLDER_LAYOUT });
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_id: NO_FIELD_HOLDER_LAYOUT });
         }
     };
     let all_empty = |vm: &Vm| {
@@ -1294,7 +1423,7 @@ fn an_empty_field_cache_stores_as_zero_words() {
     use super::site_table::SiteEntry;
     assert_eq!(
         EMPTY_CACHE.store(),
-        crate::staged::field_cache_layout::FieldCacheWords { receiver: 0, holder: 0, slot: 0, holder_cell: 0 }
+        crate::staged::field_cache_layout::FieldCacheWords { receiver: 0, holder: 0, slot: 0, holder_id: 0 }
     );
     assert_eq!(NO_MEGAMORPHIC_FIELD.store(), 0);
     assert_eq!(NO_FIELD_ADD_SET.store(), 0);
@@ -1323,8 +1452,8 @@ fn assign_shape_adoption_yields_to_prototype_setters_read_only_keys_and_proto() 
         let target = vm.own_property(globals, target_name).unwrap();
         assert_eq!(vm.adopt_source_shape_for_set(target, src), expected, "{source_expr} after {setup:?}");
         if expected {
-            let src_shape = vm.heap.object(src).unwrap().shape();
-            assert_eq!(vm.heap.object(target).unwrap().shape(), src_shape);
+            let src_shape = vm.object_data(src).unwrap().shape();
+            assert_eq!(vm.object_data(target).unwrap().shape(), src_shape);
         } else {
             assert!(vm.own_named_keys(target).is_empty(), "a refused adoption has no effect");
         }

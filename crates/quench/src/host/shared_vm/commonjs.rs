@@ -3583,7 +3583,7 @@ pub(crate) fn native_commonjs_source(
         keep_records: entry, typescript,
     };
     let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
-    quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &[&options.cache_goal(), &source])
+    quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
 }
 
 /// Compiles and evaluates a CommonJS wrapper. An entry module's functions keep their compiled
@@ -3603,8 +3603,7 @@ fn evaluate_wrapper(
         let error = super::esm_errors::type_stripping_unsupported(filename);
         return Err(throw_module_load_error(context, error)?);
     }
-    // The loader calls the wrapper this evaluates once (`run_wrapper`, `compile_public`), whichever module it is.
-    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript, true)
+    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript)
 }
 
 pub(crate) fn compile_public(

@@ -14,7 +14,6 @@ fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
 use super::*;
 use quench_runtime::value::EXACT_I64_TRUNCATION_LIMIT;
 use cranelift_codegen::ir::condcodes::FloatCC;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[test]
 fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
@@ -57,7 +56,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
     let caller = named("run");
     let other = named("other") as u32;
     let targets = static_call_targets(&program);
-    let unit_for = |polymorphic| super::super::lane_unit::unit_planned(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32,
+    let unit_for = |polymorphic| super::super::lane_unit::unit(&program, caller as u32,
         program.function(caller), &|function, pc| {
             let mut found: Vec<_> = targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
@@ -83,7 +82,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let addresses = LaneHelper::addresses();
         let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense).expect("capture loop region");
+            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
         let function = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -212,7 +211,7 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
     for name in ["fieldChoice", "calleeChoice"] {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-        let unit = super::super::lane_unit::unit_planned(&program, Some(&super::super::lane_unit::test_graph(&program)), caller as u32, program.function(caller),
+        let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
             &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                 .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
@@ -271,6 +270,8 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
         for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
             let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(mode);
+            #[cfg(not(quench_profiled))]
+            vm.programs.enable_js_jit_diagnostics();
             vm.programs.enable_js_lane_methods();
             let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
@@ -283,10 +284,10 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let program = quench_runtime::Engine::specialize(
         "function predicate(x){let result;if(x<0)result=x===-1;else result=x===1;if(result)return 7;return 9;}",
         "boolean-join.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
@@ -334,10 +335,10 @@ fn comparison_boolean_proofs_survive_branch_joins() {
 fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     let program = quench_runtime::Engine::specialize(
         "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
     assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
     for instruction in region.function.layout.blocks()
         .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -399,6 +400,8 @@ fn a_masked_index_reads_the_element_it_names_whatever_the_array_length() {
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
         vm.programs.enable_js_lane_methods();
         let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");

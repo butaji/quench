@@ -20,6 +20,7 @@
 //! | `heap::EnvironmentSlots::link` / `linked_parent` stamps (vm/environment.rs `link_capture_chain`, vm/construction.rs, vm/dispatch_fast.rs) | `Heap::collection_epoch` | no | Not migrated: these stamps are read by the heap's own slot records, which compare against the heap counter. |
 //! | `settle_registers` / `suspended_epoch` (vm/generator.rs, vm/activation/frame_record.rs) | `Heap::collection_epoch` | no | Not migrated: stamped into heap-side frame records. |
 //! | For-in key lists (vm/object_static/for_in_keys.rs), JSON parse cache (vm/json/*), promise async (vm/promise_async.rs), lane frame heap records (vm/dispatch_fast/lane_frame.rs `heap_records`) | `Heap::collection_epoch` | no | Not migrated in this pass: each stores the heap counter next to heap-side records. |
+//! | `rc_pin_epoch` (vm.rs, vm/gc.rs) | `Heap::rc_pin_epoch` | no | Not migrated: a heap-owned pin counter, not a collection event. |
 //! | `NativeBases::epoch` (vm/compiled.rs) | `Heap::collection_epoch` | no | Not migrated: written at reread, never compared in this file. |
 //!
 //! Every `gc` value is `Heap::collection_epoch`'s count at the time of the last `bump_gc`: the

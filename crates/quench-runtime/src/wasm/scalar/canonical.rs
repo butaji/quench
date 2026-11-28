@@ -17,7 +17,6 @@ pub struct CanonicalSignature(u32);
 
 impl CanonicalSignature {
     /// What an element that is the null reference holds.
-    #[quench_macros::test_visible]
     pub(crate) const NULL: Self = Self(u32::MAX);
     /// What an element holds when its function's signature is not a canonical id: a host
     /// function, which the VM checks against the expected type.

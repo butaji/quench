@@ -7,7 +7,6 @@ use crate::engine_prelude::*;
 use quench_runtime::vm::engine_types::{AheadImages, LaneView, LaneBody};
 #[cfg(feature = "jit")]
 use crate::aot_image::{self, ImageTarget};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(AheadImagesLifted160)]
 impl AheadImages {
@@ -48,7 +47,7 @@ impl LaneView {
     pub fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if let LaneBody::Compiling { pending } = body { crate::compiled::pending_lane_ref(&**pending).retire_named_shapes(); }
+        if let LaneBody::Compiling { pending, .. } = body { crate::compiled::pending_lane_ref(&**pending).retire_named_shapes(); }
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && method.lease().is_some_and(|method| method.names_shapes)
         {
@@ -60,7 +59,9 @@ impl LaneView {
             }
             self.drop_body(body);
         }
+        self.tier().retired.borrow_mut().clear();
         self.clear_hints(&self.field_records);
+        self.clear_name_hints();
         for site in &self.loops {
             let tier = site.tier.borrow();
             tier.retire_named_shapes();

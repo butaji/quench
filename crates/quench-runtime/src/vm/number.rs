@@ -237,9 +237,7 @@ impl Vm {
                 setter: None,
             },
         );
-        self.heap.ensure_cell_extras(prototype);
-        self.heap
-            .object_mut(prototype)
+        self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
@@ -291,9 +289,7 @@ impl Vm {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        self.heap.ensure_cell_extras(prototype);
-        self.heap
-            .object_mut(prototype)
+        self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
         self.install_realm_native_rows(prototype, Holder::NumberPrototype, global)?;
@@ -548,7 +544,7 @@ pub const MATH_INLINE_ARGUMENTS: usize = 4;
 /// names. `None` for any other native.
 pub const fn math_call(native: Native) -> Option<MathCall> {
     use crate::staged::math::{atan, atanh, cbrt, f16_round};
-    use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Power, Unary};
+    use MathCall::{Binary, Extreme, Imul, LeadingZeros, Libm, Unary};
     Some(match native {
         Native::MathFloor => Unary(FloatUnary::Floor),
         Native::MathAbs => Unary(FloatUnary::Abs),
@@ -562,7 +558,7 @@ pub const fn math_call(native: Native) -> Option<MathCall> {
         Native::MathMax => Extreme(true),
         Native::MathMin => Extreme(false),
         Native::MathImul => Imul,
-        Native::MathPow => Power,
+        Native::MathPow => Binary(crate::staged::math::power),
         Native::MathAtan2 => Binary(crate::staged::math::atan2),
         Native::MathF16Round => Libm(f16_round),
         Native::MathAtanh => Libm(atanh),
@@ -606,7 +602,7 @@ pub fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
         MathCall::Extreme(maximum) => Some(values.iter().fold(MathCall::extreme_start(maximum), |result, &number| {
             float_extreme(maximum, result, number)
         })),
-        call @ (MathCall::Binary(_) | MathCall::Imul | MathCall::Power) => {
+        call @ (MathCall::Binary(_) | MathCall::Imul) => {
             let args: SmallVec<[Value; 2]> = values.iter().take(2).map(|&number| Value::number(number)).collect();
             concrete_math_call(call, &args)?.as_number()
         }
@@ -632,6 +628,11 @@ pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     let call = math_call(native).filter(|call| call.reads_one_number())?;
     concrete_math_call(call, &[Value::number(value)])?.as_number()
+}
+
+/// Whether `native` is a Math function of one Number, which `math_unary` computes.
+pub(super) fn is_math_unary(native: Native) -> bool {
+    math_call(native).is_some_and(MathCall::reads_one_number)
 }
 
 impl Vm {

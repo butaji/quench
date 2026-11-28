@@ -22,7 +22,6 @@ use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_step::Step;
 use quench_bjit::padded_holes;
 use quench_bjit::wasm as codes;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 // The row's stencil reads these layouts from `quench_bjit::wasm` (`wasm_rows_indirect.rs`), so each
 // is asserted against the runtime's own.
@@ -48,7 +47,7 @@ fn is_reference(instruction: WideInstruction) -> bool {
 /// Whether `instruction` loads a constant: the lowering places the call's signature constant
 /// between the target and the call.
 fn is_constant(instruction: WideInstruction) -> bool {
-    quench_runtime::staged::wasm_instance::instance_of(instruction.op()) == Some(quench_runtime::staged::wasm_instance::Instance::Constant)
+    quench_runtime::staged::wasm_instance::Instance::of(instruction.op()) == Some(quench_runtime::staged::wasm_instance::Instance::Constant)
 }
 
 /// The `Call::Reference` the target at `pc` feeds: the first instruction after it that loads no

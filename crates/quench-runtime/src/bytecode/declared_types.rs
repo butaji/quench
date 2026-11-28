@@ -233,10 +233,7 @@ pub struct DeclaredTypes {
 }
 
 impl DeclaredTypes {
-    /// Records a declaration over `span`. The front end passes its parser's span, converted at
-    /// the call (`compile`'s `From` impl); the declared environment itself holds only a `SourceSpan`.
-    pub(crate) fn declare(&mut self, kind: DeclaredKind, name: Option<&str>, span: impl Into<super::SourceSpan>) {
-        let span = span.into();
+    pub(crate) fn declare(&mut self, kind: DeclaredKind, name: Option<&str>, span: oxc_span::Span) {
         self.declared.push(Declared { kind, name: name.map(Box::from), start: span.start, end: span.end });
     }
 

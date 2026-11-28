@@ -4,7 +4,6 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// A constant's value and type: an immediate, or in online code the string or BigInt the
@@ -26,7 +25,7 @@ impl Lowering<'_, '_> {
         {
             let value = self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits());
             self.define(state, instruction.result_register(), value,
-                RegisterFact::narrowest(super::super::facts::constant_type(constant)));
+                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
             return Some(true);
         }
         if super::super::facts::immediate(constant).is_none()
@@ -40,7 +39,7 @@ impl Lowering<'_, '_> {
             let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
             let value = self.raw_load(Lane::I64, regions::constant(), address, 0);
             self.define(state, instruction.result_register(), value,
-                RegisterFact::narrowest(super::super::facts::constant_type(constant)));
+                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
             return Some(true);
         }
         self.constant_value(index).map(|(value, ty)| {
@@ -78,7 +77,7 @@ impl Lowering<'_, '_> {
         let made = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, made, exit);
         self.allocated(state);
-        self.define(state, instruction.result_register(), value, RegisterFact::narrowest(ty));
+        self.define(state, instruction.result_register(), value, RegisterFact::definition(ty, Representation::Tagged));
         Some(true)
     }
 
@@ -104,18 +103,32 @@ impl Lowering<'_, '_> {
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
     /// own `typeof` test (`compiled::typeof_is_in_lane`); `false` for any other fact.
     pub(crate) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {
-        let Some((kind, name)) = [(quench_runtime::ValueType::String, "string"), (quench_runtime::ValueType::BigInt, "bigint")].into_iter()
-            .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))) else { return false };
+        let Some(name) = [(quench_runtime::ValueType::String, "string"), (quench_runtime::ValueType::BigInt, "bigint")].into_iter()
+            .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };
         let bits = self.tagged(state, register);
-        // The register's solver type already names the typeof name: its `typeof` holds, so no test is made.
-        if !state.values[usize::from(register)].value.ty.is_subtype(Type::language(kind)) {
-            let index = self.raw_const(Lane::I64, quench_runtime::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
-            let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
-            let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
-            emit_js_guard(&mut self.builder, holds, exit);
-        }
-        self.define(state, register, bits, RegisterFact::narrowest(ty));
+        let index = self.raw_const(Lane::I64, quench_runtime::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
+        let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
+        let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
+        emit_js_guard(&mut self.builder, holds, exit);
+        self.define(state, register, bits, RegisterFact::definition(ty, Representation::Tagged));
         true
     }
 }
 
+/// The binary operators a string or BigInt takes (`facts::heap_primitive_binary`) by the facts
+/// from `entry`, which ask no Number of the function's parameters.
+pub(crate) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &quench_runtime::dataflow::BitSet,
+    constants: &[quench_runtime::bytecode::Constant], native_calls: bool, raises: &[super::super::facts::Raise]) -> quench_runtime::dataflow::BitSet {
+    // A unit with no generic operator has none to find, and needs no analysis to say so.
+    if !instructions.iter().any(|instruction| super::super::facts::heap_operator(*instruction)) { return quench_runtime::dataflow::BitSet::new(); }
+    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, raises, super::super::facts::Seeds::observing(super::super::facts::Observed::NONE));
+    let mut pcs = quench_runtime::dataflow::BitSet::with_capacity(instructions.len());
+    for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::heap_operator(**instruction) && facts.reached(*pc)) {
+        let operand = |operand| super::super::facts::operand_type(constants, operand, |register|
+            facts.before(pc, register, instructions, leaders, constants, &writes, native_calls));
+        if super::super::facts::heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c())).is_some() {
+            pcs.insert(pc);
+        }
+    }
+    pcs
+}

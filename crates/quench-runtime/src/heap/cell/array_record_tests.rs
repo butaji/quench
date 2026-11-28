@@ -10,8 +10,8 @@ fn values(array: &ArrayObject) -> Vec<Value> {
 
 /// The backing header the staged reader finds for `array` (`staged::elements::array_header`).
 fn staged_header(array: &ArrayObject) -> u64 {
-    let mut stage = crate::staged::Concrete::pure();
-    crate::staged::elements::array_header(&mut stage, array as *const ArrayObject as u64, crate::staged::region::Region::Payload.mutable())
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    crate::staged::elements::array_header(&mut stage, array as *const ArrayObject as u64)
 }
 
 #[test]

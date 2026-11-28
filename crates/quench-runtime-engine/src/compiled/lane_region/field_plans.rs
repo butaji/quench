@@ -8,10 +8,9 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use quench_runtime::staged::ic::IcOp;
-use quench_runtime::staged::property::{Arm, ClassArm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
+use quench_runtime::staged::property::{Arm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use quench_runtime::staged::Form;
 use quench_runtime::typed_ir::Representation;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What one access's frame proved: the plan of its read and of its store.
 pub(crate) struct LanePlans<'p> {
@@ -56,12 +55,6 @@ impl Fast {
             [] => Self::Host,
             [load] if load.holder.is_none() && !load.valid() => Self::Host,
             [load] => Self::Single(*load),
-            // A class-keyed load beside shape loads: the shape loads are the plan's rest, and the class-keyed loads its
-            // class arms (`with_read_plan`, `FieldPlan::Classed`). Only class-keyed loads: Classed over the VM's read as the rest.
-            loads if loads.iter().any(|load| load.class.is_some()) => {
-                let shapes: Vec<NativeFieldLoad> = loads.iter().filter(|load| load.class.is_none()).copied().collect();
-                if shapes.is_empty() { Self::Host } else { Self::of(&shapes) }
-            }
             loads => match field_load_groups(loads) {
                 Some(groups) if groups.iter().all(|(load, _)| load.holder.is_some() || load.valid()) => Self::Family(groups),
                 _ => Self::Host,
@@ -88,16 +81,9 @@ impl Fast {
     }
 }
 
-/// Whether a link's read dispatches over classes (`FieldPlan::Classed`): its class-keyed loads are the class arms and
-/// its shape loads the rest (the VM's read where there are none). A lone class-keyed load is `Fast::Single`'s.
-fn dispatches_classes(loads: &[NativeFieldLoad]) -> bool {
-    let classes = loads.iter().filter(|load| load.class.is_some()).count();
-    classes > 1 || (classes == 1 && loads.len() > 1)
-}
-
 /// Whether a link's value comes from its loads' native reads, as the VM's own read does not.
 pub(crate) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
-    dispatches_classes(loads) || !matches!(Fast::of(loads), Fast::Host)
+    !matches!(Fast::of(loads), Fast::Host)
 }
 
 /// The values a holder load folds as constants (its prototypes' links and bits), where the
@@ -128,12 +114,12 @@ fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
         && quench_runtime::staged::ic::layout_shape(id) == load.shape)
 }
 
-/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_cell`), where it is
+/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_id`), where it is
 /// a real id of the holder's exact shape: one compare of the prototype's own word then proves that
 /// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
-fn holder_cell(load: &NativeFieldLoad) -> Option<u32> {
+fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
     let holder = load.holder?;
-    load.holder_cell.filter(|&id| id != 0 && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
+    load.holder_id.filter(|&id| id != 0 && (id as usize) < quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY
         && quench_runtime::staged::ic::layout_shape(id) == holder)
 }
 
@@ -142,27 +128,10 @@ fn holder_cell(load: &NativeFieldLoad) -> Option<u32> {
 /// layout id a single-shape load was guarded by (`formed_id`), whose form the slot is read in;
 /// a family's shapes are guarded one by one, so their slots keep the form the site observed.
 fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<u32>) -> Vec<IcOp<'a>> {
-    // An ahead image's construction: the class its loader resolves guards the live cell, and the field is the cell's own.
-    if load.image_layout() {
-        return vec![IcOp::GuardImageClass(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
-            IcOp::LoadField { slot: load.slot, rep: Representation::Tagged }];
-    }
-    if load.class.is_some() {
-        // A class-keyed read: its own field of the cell, or the held one of the holder cell its entry names by
-        // granule. The class guard before these (`link_ops`) proves the cell.
-        return match (load.holder, load.holder_cell) {
-            (None, _) => vec![IcOp::LoadField { slot: load.slot, rep: Representation::Tagged }],
-            (Some(_), Some(granule)) => vec![IcOp::LoadHeldField { holder: granule, slot: load.slot }],
-            (Some(_), None) => {
-                debug_assert!(false, "a class-keyed held read names its holder cell");
-                Vec::new()
-            }
-        };
-    }
     match load.holder {
-        None => vec![IcOp::LoadSlot { slot: load.record_slot(),
+        None => vec![IcOp::LoadSlot { slot: load.slot,
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
-            storage_len: load.storage_len, rep: Representation::Tagged }],
+            storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
         // An ahead image's guessed holder (`ic::SYMBOLIC_SHAPE`): the value the holder holds when
         // the image links, a fact the loader proves and the holder's prototype-value watch retires
@@ -170,12 +139,12 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
         Some(holder) if holder & quench_runtime::staged::ic::SYMBOLIC_SHAPE != 0 => vec![IcOp::HolderConstant(holder & !quench_runtime::staged::ic::SYMBOLIC_SHAPE)],
         Some(holder) => {
             // The prototype's layout id proves its shape (and storage form) in one compare where
-            // the entry kept it (`holder_cell`); else its shape alone is compared.
-            let guard = match holder_cell(load) {
+            // the entry kept it (`holder_id`); else its shape alone is compared.
+            let guard = match holder_id(load) {
                 Some(id) => IcOp::GuardLayout(id),
                 None => IcOp::GuardShape(holder),
             };
-            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.record_slot())]
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
         }
     }
 }
@@ -201,16 +170,15 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
             // An own read whose receivers' layout the site observed guards the whole layout word; one whose
             // receivers keep a plain arena run guards the whole auxiliary word, so the form is proved once
             // and the slot read tests none of it (`IcOp::GuardShapeFormed`).
-            let guard = match (load.class, formed_id(load)) {
-                // A class-keyed read guards the live cell's class: one compare of its header (`IcOp::GuardClass`).
-                (Some(class), _) => Some(IcOp::GuardClass(class)),
-                (None, Some(id)) => Some(IcOp::GuardLayout(id)),
-                // An ahead image's construction guards its class cell in its own ops (`load_ops`).
-                (None, None) if load.image_layout() => None,
-                (None, None) if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => Some(IcOp::GuardShapeFormed(load.shape)),
-                (None, None) => Some(IcOp::GuardShape(load.shape)),
+            let guard = match formed_id(load) {
+                Some(id) => IcOp::GuardLayout(id),
+                // An ahead image's guess of a construction's arena run: the layout id its loader
+                // resolves proves the shape, the form and the link in one compare.
+                None if load.image_layout() => IcOp::GuardImageLayout(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
+                None if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
+                None => IcOp::GuardShape(load.shape),
             };
-            lists.map(|ops| guard.into_iter().chain(ops).collect()).collect()
+            lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
         }
         _ => lists.collect(),
     }
@@ -242,15 +210,7 @@ pub(crate) fn with_read_plan<R>(links: &[LinkInput], (folds_stable, known): (boo
     }).collect();
     let readable: Vec<FieldPlan<'_>> = fasts.iter().zip(&fast_plans).map(|(fast, plan)|
         if fast.readable() { FieldPlan::Readable(plan) } else { *plan }).collect();
-    // A mixed site's class-keyed loads, each an arm of its class: the class is dispatched once (`FieldPlan::Classed`),
-    // so an arm's ops read the live cell it matched (`class_loads` of a class-keyed load, no class guard of its own).
-    let class_loads: Vec<Vec<(u32, Vec<IcOp<'_>>)>> = links.iter().map(|link| link.loads.iter()
-        .filter_map(|load| Some((load.class?, load_ops(load, &[], None)))).collect()).collect();
-    let class_arms: Vec<Vec<ClassArm<'_>>> = class_loads.iter().map(|arms| arms.iter()
-        .map(|(class, ops)| ClassArm { class: *class, ops: ops.as_slice() }).collect()).collect();
-    let sited: Vec<FieldPlan<'_>> = links.iter().zip(&readable).zip(&class_arms).map(|((link, plan), classes)|
-        if dispatches_classes(&link.loads) { FieldPlan::Classed { classes, rest: plan } } else { *plan }).collect();
-    let mut plans: Vec<FieldPlan<'_>> = links.iter().zip(&fasts).zip(&sited).map(|((link, fast), plan)| match fast {
+    let mut plans: Vec<FieldPlan<'_>> = links.iter().zip(&fasts).zip(&readable).map(|((link, fast), plan)| match fast {
         Fast::Host => *plan,
         _ if link.probed => FieldPlan::Probed { fast: plan, atom: link.atom, site: link.site },
         _ => *plan,

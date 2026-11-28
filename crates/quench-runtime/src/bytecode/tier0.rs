@@ -10,11 +10,12 @@ use std::rc::Rc;
 
 use super::{Function, FunctionSlot, ProgramKind, RecordUse, RegisterRoots, ResidualProgram};
 
-/// A function's unlowered record, and whether a lane view derived from it,
+/// A function's unlowered record, the runs it made, and whether a lane view derived from it,
 /// in any program sharing the record (`ResidualProgram::pin_tier0`).
 #[derive(Clone, Debug)]
 pub(crate) struct Tier0 {
     record: Rc<Function>,
+    runs: Cell<u8>,
     pinned: Cell<bool>,
 }
 
@@ -88,17 +89,18 @@ impl FunctionSlot {
     }
 }
 
-/// Whether function `index`, unlowered, may run as it is.
+/// Whether function `index`, unlowered, may run as it is: not under `tier0-off`.
 fn runs_unlowered(program: &ResidualProgram, index: usize, function: &Function) -> bool {
     index != crate::vm::ROOT_FUNCTION_ID as usize
         && program.kind != ProgramKind::Wasm
+        && !crate::trace::Dev::Tier0Off.on()
         && !function.loops()
         && !function.suspends()
         // A program running from its kept form lowers every record on first read, as its
         // decoded ones are: a first-call chunk appended to it adds records that would otherwise
         // run unlowered, and a recursive one (a parser's descent, a tree walk's visitor) keeps
         // a frame of itself live through its runs until its unlowered record is pinned for good
-        // (`ResidualProgram::pin_tier0`): acorn-wtb +8% per steady iteration.
+        // (`ResidualProgram::tier0_blocked`): acorn-wtb +8% per steady iteration.
         && program.encoded_records.is_none()
 }
 
@@ -123,14 +125,39 @@ impl ResidualProgram {
         }
         // Every register is a root and starts `undefined`: no liveness runs for it.
         function.register_roots = RegisterRoots::new(false);
-        let tier0 = slot.tier0.get_or_init(|| Box::new(Tier0 { record: Rc::new(function), pinned: Cell::new(false) }));
+        function.decoded.prime_loop(&function.code, &function.wide);
+        let tier0 = slot.tier0.get_or_init(|| Box::new(Tier0 { record: Rc::new(function), runs: Cell::new(1), pinned: Cell::new(false) }));
         Some(tier0.record())
     }
 
-    /// Whether function `index` runs unlowered and unpinned, so it lowers now.
-    pub(crate) fn tier0_due(&self, index: usize) -> bool {
+    /// Whether function `index` runs unlowered, unpinned, and made its `runs`, counting the
+    /// one asked for.
+    pub(crate) fn tier0_due(&self, index: usize, runs: u8) -> bool {
         let slot = &self.functions[index];
-        slot.record.get().is_none() && slot.tier0.get().is_some_and(|tier0| !tier0.pinned.get())
+        if slot.record.get().is_some() {
+            return false;
+        }
+        let Some(tier0) = slot.tier0.get().filter(|tier0| !tier0.pinned.get()) else { return false };
+        let made = tier0.runs.get();
+        if made >= runs {
+            return true;
+        }
+        tier0.runs.set(made + 1);
+        false
+    }
+
+    /// Whether function `index` still runs unlowered after its lowering, due, was blocked on
+    /// the calls up to `runs` (counting the one asked for) by a live frame of it: a recursion
+    /// that never unwinds to a call free of it, as a renderer's tree walk. Its lane view then
+    /// derives from the unlowered record, which pins it, instead of every call leaving the lane.
+    pub(crate) fn tier0_blocked(&self, index: usize, runs: u8) -> bool {
+        let Some(tier0) = self.functions[index].tier0.get().filter(|_| self.runs_tier0(index)) else { return false };
+        let made = tier0.runs.get();
+        if made >= runs {
+            return true;
+        }
+        tier0.runs.set(made + 1);
+        false
     }
 
     /// Whether function `index` still runs its unlowered record, from which no lane view

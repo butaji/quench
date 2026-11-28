@@ -6,14 +6,9 @@
 //! compile the same statuses. The Stage-generic steps the stencils run over them live in
 //! `protocol.rs`.
 //!
-//! The meaning of each status is `exit::Exit` (`exit.rs`, mounted here by path so the host and the
-//! stencils compile it too); this file holds the numbers it is encoded with and the views the call
-//! rows read. Two domains share numbers: a helper's return and a body's or native run's status both
-//! use `1` (`LANE_CALL_MISSED`, `NATIVE_JS_STOPPED`), which is why `Exit` has two encodings.
-
-#[path = "exit.rs"]
-pub mod exit;
-use exit::Exit;
+//! Two enums, because the two status domains share numbers: a helper's return (`LaneCall`) and a
+//! body's or native run's status (`LaneStatus`) both use `1` (`LANE_CALL_MISSED`,
+//! `NATIVE_JS_STOPPED`).
 
 /// The general dispatch's return statuses count down from the top of `u32` by this many blocks
 /// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).
@@ -38,24 +33,41 @@ pub const fn return_status_pc(status: u32) -> Option<u32> {
 /// bits, which its IR narrows into the status word after the add of `GENERAL_RETURN_STATUS_BASE`.
 pub const RETURN_PC_MASK: u32 = u32::MAX;
 
-/// A body's or a native run's status word (the `u32` a lane body or entry returns with), the body
-/// encoding of `Exit`: each named status is `exit::BODY_*`.
+/// What a helper call returned (`vm::compiled::LANE_CALL_*`): completed with its result in the
+/// call's register, missed before any effect, left the lane inside the callee's activation,
+/// terminated the run, a call-out that decides a comparison held, the callee's body ended by an
+/// exception (its activation popped, the exception waiting in `Vm::lane_raised`), or a completed
+/// step that branched (a conditional jump, taken).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaneCall {
+    Completed = 0,
+    Missed = 1,
+    Left = 2,
+    Terminated = 3,
+    /// `LANE_CALL_COMPLETED` is the comparison's not-holding completion.
+    Holds = 4,
+    Raised = 5,
+    Branched = 6,
+}
+
+/// A body's or a native run's status word (the `u32` a lane body or entry returns with).
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaneStatus {
     /// The body of a stop with a result word naming where (`NATIVE_JS_STOPPED`); also the status
     /// of a callee's leave, whose word is `CALLEE_EXIT`-tagged.
-    NativeJsStopped = exit::BODY_LEFT,
+    NativeJsStopped = 1,
     /// A terminated run (`TERMINATED_STATUS`), one past the runtime's raised status, which follows
     /// its Wasm trap codes (`vm::compiled::TRAPS`, asserted there).
-    Terminated = exit::BODY_TERMINATED,
+    Terminated = 26,
     /// A lane body whose activation completes (`LANE_BODY_RETURNED`).
-    Returned = exit::BODY_RETURNED,
+    Returned = GENERAL_RETURN_STATUS_BASE - 1,
     /// A callee entry cell that held the stub, so nothing ran (`LANE_BODY_NOT_ENTERED`).
-    NotEntered = exit::BODY_NOT_ENTERED,
+    NotEntered = GENERAL_RETURN_STATUS_BASE - 2,
     /// A lane body whose activation ends by an exception no handler of its function covers
     /// (`LANE_BODY_THREW`).
-    Threw = exit::BODY_THREW,
+    Threw = GENERAL_RETURN_STATUS_BASE - 3,
 }
 
 impl LaneStatus {
@@ -72,22 +84,21 @@ impl LaneStatus {
 /// The result word of a stop inside a callee's activation (`LaneExit::Callee`), with `NATIVE_JS_STOPPED`.
 pub const CALLEE_EXIT: u64 = 1 << 63;
 
-pub const LANE_CALL_COMPLETED: u64 = exit::HELPER_COMPLETED;
-pub const LANE_CALL_MISSED: u64 = exit::HELPER_MISSED;
-pub const LANE_CALL_LEFT: u64 = exit::HELPER_LEFT;
-pub const LANE_CALL_TERMINATED: u64 = exit::HELPER_TERMINATED;
-/// `LANE_CALL_HOLDS` is a call-out's decision that a comparison holds (a completion too).
-pub const LANE_CALL_HOLDS: u64 = exit::HELPER_HOLDS;
-pub const LANE_CALL_RAISED: u64 = exit::HELPER_RAISED;
-pub const LANE_CALL_BRANCHED: u64 = exit::HELPER_BRANCHED;
+pub const LANE_CALL_COMPLETED: u64 = LaneCall::Completed as u64;
+pub const LANE_CALL_MISSED: u64 = LaneCall::Missed as u64;
+pub const LANE_CALL_LEFT: u64 = LaneCall::Left as u64;
+pub const LANE_CALL_TERMINATED: u64 = LaneCall::Terminated as u64;
+pub const LANE_CALL_HOLDS: u64 = LaneCall::Holds as u64;
+pub const LANE_CALL_RAISED: u64 = LaneCall::Raised as u64;
+pub const LANE_CALL_BRANCHED: u64 = LaneCall::Branched as u64;
 
-pub const LANE_BODY_RETURNED: u32 = exit::BODY_RETURNED;
-pub const LANE_BODY_NOT_ENTERED: u32 = exit::BODY_NOT_ENTERED;
-pub const LANE_BODY_THREW: u32 = exit::BODY_THREW;
-pub const NATIVE_JS_STOPPED: u32 = exit::BODY_LEFT;
-pub const TERMINATED_STATUS: u32 = exit::BODY_TERMINATED;
+pub const LANE_BODY_RETURNED: u32 = LaneStatus::Returned as u32;
+pub const LANE_BODY_NOT_ENTERED: u32 = LaneStatus::NotEntered as u32;
+pub const LANE_BODY_THREW: u32 = LaneStatus::Threw as u32;
+pub const NATIVE_JS_STOPPED: u32 = LaneStatus::NativeJsStopped as u32;
+pub const TERMINATED_STATUS: u32 = LaneStatus::Terminated as u32;
 
-/// Where a helper call's status sends the call row (`call_helper`'s successors): a view of `Exit`.
+/// Where a helper call's status sends the call row (`call_helper`'s successors).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// Continues at the next row.
@@ -104,25 +115,15 @@ pub enum Outcome {
     Terminated,
 }
 
-impl Outcome {
-    /// The successor of an exit. Exits the rows neither continue nor leave by (`Holds`, a body's
-    /// `Returned`) terminate the run, as the helper row always did.
-    pub const fn of(exit: Exit) -> Self {
-        match exit {
-            Exit::Completed => Self::Next,
-            Exit::Branched => Self::Taken,
-            Exit::Missed => Self::Missed,
-            Exit::Left { .. } => Self::Left,
-            Exit::Raised => Self::Raised,
-            Exit::Terminated | Exit::Holds | Exit::Returned { .. } => Self::Terminated,
-        }
-    }
-}
-
-/// The successor a helper's `status` selects. Any status no helper returns terminates the run.
+/// The successor a helper's `status` selects. Any status but the four the rows continue or leave by
+/// terminates the run, as the helper row always did.
 pub fn helper_outcome(status: u64) -> Outcome {
-    match Exit::from_helper(status) {
-        Some(exit) => Outcome::of(exit),
-        None => Outcome::Terminated,
+    match status {
+        LANE_CALL_COMPLETED => Outcome::Next,
+        LANE_CALL_BRANCHED => Outcome::Taken,
+        LANE_CALL_MISSED => Outcome::Missed,
+        LANE_CALL_LEFT => Outcome::Left,
+        LANE_CALL_RAISED => Outcome::Raised,
+        _ => Outcome::Terminated,
     }
 }

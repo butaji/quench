@@ -35,7 +35,6 @@ use quench_runtime::bytecode::{ImmediateLayout, RETURN_REGISTER, WideInstruction
 use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_step::Step;
 use quench_bjit::padded_holes;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether `instruction` is a call whose destination is flagged as a return.
 fn is_tail(instruction: WideInstruction) -> bool {

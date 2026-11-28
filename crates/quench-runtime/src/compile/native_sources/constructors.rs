@@ -205,7 +205,7 @@ impl<'a> Visit<'a> for Discovery<'_> {
     }
 }
 
-pub(super) fn analyze(program: &Program<'_>, scoping: &Scoping) -> (Vec<NativeSourceKey>, Vec<u32>) {
+pub(super) fn analyze(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> (Vec<NativeSourceKey>, Vec<u32>) {
     let mut discovery = Discovery { scoping, constraints: Vec::new(), requests: Vec::new() };
     discovery.visit_program(program);
     let bindings = discovery.solve();
@@ -214,7 +214,7 @@ pub(super) fn analyze(program: &Program<'_>, scoping: &Scoping) -> (Vec<NativeSo
     for request in discovery.requests {
         for kind in request.callee.value(&bindings).callable.iter() {
             match &request.source {
-                Some((parameters, body)) => { sources.insert(NativeSourceKey::function_constructor(kind, parameters, body)); },
+                Some((parameters, body)) => { sources.insert(NativeSourceKey::function_constructor(specialized, kind, parameters, body)); },
                 None => { dynamic.insert(request.offset); },
             }
         }

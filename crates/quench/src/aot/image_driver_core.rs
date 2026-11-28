@@ -1,15 +1,8 @@
 //! The pure-ECMAScript image driver: the same compiled program and image tables as the Node
 //! driver, executed on the runtime's own host. It links `quench_runtime` alone, so the
-//! executable carries no Node host and no operation table. It starts by mapping the dump its
-//! build made (`image_dump::adopt`): the realm and the entry at rest, with no installation and
-//! no decoding. Its build dumps that state (`start_state`) before the image is published.
-#![no_main]
+//! executable carries no Node host, no bootstrap snapshot and no operation table.
 
-use quench_runtime::native_link::image_dump;
-use quench_runtime::tier_surface::Native;
-use quench_runtime::vm::activation::FrameRecord;
-use quench_runtime::{ExecutionMode, NativeJsProgram, RealmRoots, Runtime, SystemHost};
-use std::collections::BTreeSet;
+use quench_runtime::{ExecutionMode, MemoryPolicy, NativeProgramNamespace, Runtime, SystemHost};
 
 // Every runtime layer (engine, intl, stencils) links through this facade: the core calls their
 // `extern "Rust"` symbols, so a binary that uses the core must name the crate.
@@ -23,96 +16,52 @@ static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
-/// The state an image starts from: its runtime at rest, the entry it runs, and the input chain
-/// the build captured at the entry's first input, which the start resumes (`resume_input_chain`).
-struct Rest {
-    runtime: Runtime<SystemHost>,
-    program: NativeJsProgram,
-    resume: Option<Box<FrameRecord>>,
+/// The policy this image runs: the default, or memory-first under the experiment the Node host
+/// also reads (`QUENCH_DEV=memory-first`).
+fn memory_policy() -> MemoryPolicy {
+    if quench_runtime::trace::Dev::MemoryFirst.on() {
+        MemoryPolicy::MemoryFirst
+    } else {
+        MemoryPolicy::default()
+    }
 }
 
-/// Serve small requests from Quench's allocator where the build chose it (`ALLOCATOR_SERVES_SMALL`,
-/// written into the catalog at compile time), as the Node host's `allocator_policy` does.
-fn apply_allocator_policy() {
+/// Serve small requests from Quench's allocator under the throughput policy, as the Node host's
+/// `allocator_policy` does; the memory-first policy keeps the system allocator.
+fn apply_allocator_policy(policy: MemoryPolicy) {
     #[cfg(unix)]
-    if ALLOCATOR_SERVES_SMALL {
+    if policy == MemoryPolicy::Throughput && !quench_runtime::memory_mix_has("alloc") {
         quench_alloc::QuenchAlloc::enable();
     }
+    #[cfg(not(unix))]
+    let _ = policy;
 }
 
-/// The state of a fresh start: the entry bound, the realm installed at rest, nothing run yet.
-fn fresh_state() -> Result<Box<Rest>, String> {
+fn run() -> Result<std::process::ExitCode, String> {
     // SAFETY: the compiler emits the catalog, metadata and objects together.
-    let program = unsafe { bind_entry() }?;
-    // The Intl and Temporal layer links only where the realm reaches it (`REACHES_INTL`).
-    if REACHES_INTL {
-        quench_runtime::install_intl();
-    }
-    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS, &EXECUTION);
+    let entry = unsafe { bind_entry() }?;
+    let namespace = NativeProgramNamespace::from_entry(entry.residual())?;
+    let policy = memory_policy();
+    apply_allocator_policy(policy);
+    let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
-    runtime.set_memory_policy(MEMORY_POLICY);
-    runtime.install_native_at_rest(&program).map_err(|error| uncaught(&error))?;
-    Ok(Box::new(Rest { runtime, program, resume: None }))
-}
-
-/// The state the image starts from: the dump its build made, mapped back where it was made. An
-/// image without a dump, or whose addresses are taken, builds a fresh state.
-fn start_state() -> Result<Box<Rest>, String> {
-    if let Some(root) = image_dump::adopt(0) {
-        // SAFETY: the dump's root is the `Rest` its build leaked, mapped back at its address.
-        let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };
-        rest.runtime.note_adopted();
-        return Ok(rest);
+    runtime.set_memory_policy(policy);
+    runtime.set_native_program_resolver(move |name, parts| {
+        // SAFETY: this resolver belongs to the same compiler-owned image.
+        unsafe { resolve(&namespace, name, parts) }
+    });
+    let program = entry.residual();
+    match runtime.execute_native_deferred_jobs(&entry) {
+        Ok(()) => {
+            runtime.run_host_jobs(program).map_err(|error| uncaught(&error))?;
+            runtime.finish_deferred_execution(program).map_err(|error| uncaught(&error))?;
+        },
+        Err(error) => return Err(uncaught(&error)),
     }
-    fresh_state()
-}
-
-/// The dump run (C5 D1c): runs the entry under the watched input edge until its first input, and
-/// dumps the state there with the chain the input native captured. An entry with no captured
-/// input dumps its state before it runs, which is what it was built to keep.
-fn dump_state() -> Result<(), String> {
-    let mut rest = fresh_state()?;
-    quench_runtime::clock::watch_inputs(rest.runtime.execution_interrupt_handle());
-    // The run ends at its input with the caller chain as its outcome, taken before anything
-    // allocates (the chain is not rooted in flight).
-    let outcome = {
-        let Rest { runtime, program, .. } = &mut *rest;
-        runtime.execute_restored(program.residual())
-    };
-    match outcome {
-        Err(quench_runtime::vm::exit::Exit::Captured(chain)) => rest.resume = Some(chain),
-        _ => rest = fresh_state()?,
+    if runtime.module_evaluation_pending(program).map_err(|error| uncaught(&error))? {
+        return Ok(std::process::ExitCode::from(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT));
     }
-    // The dump keeps the realm the closed world reaches: the closure of the program over the
-    // global names the build recorded and the natives this image keeps (`close`), and the chain.
-    let globals: BTreeSet<Box<str>> = CLOSED_GLOBALS.iter().map(|name| Box::from(*name)).collect();
-    let natives: BTreeSet<Native> = BUILTINS.natives.unwrap_or(&[]).iter().copied().collect();
-    let Rest { runtime, program, resume } = &mut *rest;
-    runtime
-        .collect_closed_world(program.residual(), RealmRoots { globals: &globals, natives: &natives }, resume.as_deref())
-        .map_err(|error| uncaught(&error))?;
-    image_dump::write(0, Box::into_raw(rest).cast());
-    Ok(())
-}
-
-fn run() -> Result<u8, String> {
-    apply_allocator_policy();
-    if image_dump::requested_wait().is_some() {
-        dump_state()?;
-        return Ok(0);
-    }
-    let mut rest = start_state()?;
-    let Rest { runtime, program, resume } = &mut *rest;
-    match resume.take() {
-        Some(chain) => runtime.resume_input_chain(chain).map_err(|error| uncaught(&error))?,
-        None => runtime.execute_restored(program.residual()).map_err(|exit| uncaught(&quench_runtime::JsError::from(exit)))?,
-    }
-    runtime.run_host_jobs(program.residual()).map_err(|error| uncaught(&error))?;
-    runtime.finish_deferred_execution(program.residual()).map_err(|error| uncaught(&error))?;
-    if runtime.module_evaluation_pending(program.residual()).map_err(|error| uncaught(&error))? {
-        return Ok(quench_runtime::UNSETTLED_TOP_LEVEL_AWAIT_EXIT);
-    }
-    Ok(0)
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 /// An uncaught guest exception ends the process with status 1 and the error on stderr, as the
@@ -121,21 +70,12 @@ fn uncaught(error: &quench_runtime::JsError) -> String {
     format!("Uncaught {error}")
 }
 
-/// The process's start. `#![no_main]` leaves out std's runtime start: the program runs on a
-/// fixed-stack worker (`image_dump::run_on_fixed_stack`), so a dump's thread-locals lie at the
-/// address they had, with no std stack-overflow handler. Its buffered standard output is
-/// flushed by `exit_process`, which then ends the process with `_exit`.
-#[unsafe(no_mangle)]
-extern "C" fn main(_: std::ffi::c_int, _: *const *const std::ffi::c_char) -> std::ffi::c_int {
-    quench_runtime::host::begin_process();
-    image_dump::begin(image_dump::DumpRequest::from_arguments(std::env::args()));
-    let status = image_dump::run_on_fixed_stack(|| match run() {
+fn main() -> std::process::ExitCode {
+    match run() {
         Ok(code) => code,
         Err(error) => {
-            quench_runtime::host::flush_stdout();
             eprintln!("{error}");
-            1
+            std::process::ExitCode::FAILURE
         }
-    });
-    quench_runtime::host::exit_process(status.unwrap_or(1))
+    }
 }

@@ -3,7 +3,7 @@
 
     gate.py OUT_DIR --runs results/A.jsonl[,B.jsonl] --ir results/X.ir.jsonl
 
-OUT_DIR/score.txt    `<mode> <structure> <score|FAIL> <peak_rss_kb>` for no-jit, default
+OUT_DIR/score.txt    `<mode> <structure> <score|FAIL> <peak_rss_kb>` for no-jit, b-jit, default
 OUT_DIR/ir.txt       `<structure> <no-jit Ir per op, geomean of its cases>`
 OUT_DIR/comparators.txt  `<node|bun> <structure> <score|FAIL> <peak_rss_kb>`
 OUT_DIR/order.txt    `<structure>/<case> <mode> <ms> <ir_per_op|-> <peak_rss_kb|?>` (tier order, TOD-2152)
@@ -14,7 +14,7 @@ Then: QUENCH_DS_SWEEP=OUT_DIR QUENCH_DS_COMPARATORS=OUT_DIR/comparators.txt quen
 import argparse, collections, json, math
 from pathlib import Path
 
-MODES = {"q-no-jit": "no-jit", "q-default": "default"}
+MODES = {"q-no-jit": "no-jit", "q-b-jit": "b-jit", "q-default": "default"}
 PEERS = ("node", "bun")
 
 

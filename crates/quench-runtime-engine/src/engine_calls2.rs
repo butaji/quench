@@ -25,6 +25,9 @@ const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_laneview_
 fn quench_engine2_fn_function_candidate(function: &Function, program: &ResidualProgram) -> bool { crate::js_compiled::function_candidate(function, program) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_function_candidate = quench_engine2_fn_function_candidate;
 #[unsafe(no_mangle)]
+fn quench_engine2_fn_pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool { crate::compiled::pays_native_entry(body) }
+const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_pays_native_entry = quench_engine2_fn_pays_native_entry;
+#[unsafe(no_mangle)]
 fn quench_engine2_fn_subscribe_stable(stable: &StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>, facts: &mut quench_runtime::vm::tier_queries::FactWatch<'_>) -> bool { crate::compiled::lane_compile::dependencies::subscribe_stable(stable, code, facts) }
 const _: quench_runtime::vm::engine_calls2::signatures::quench_engine2_fn_subscribe_stable = quench_engine2_fn_subscribe_stable;
 #[unsafe(no_mangle)]

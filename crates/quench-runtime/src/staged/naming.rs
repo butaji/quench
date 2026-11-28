@@ -33,7 +33,7 @@ pub fn name_form(slot: u16) -> Form {
 /// edge's after-shape; `None` (leaving at `miss`, before any write) otherwise. The name is written
 /// before the shape, as the add row writes its value, so no reader sees the shape without it.
 #[inline(always)]
-pub fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, (edge, empty): (Edge<S::Word>, S::Word),
+pub(crate) fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, (edge, empty): (Edge<S::Word>, S::Word),
     form: Form, name: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted(stage, StagedRecordSpace::Function, record, record_id, edge.before, name, miss)?;
     let current = plain_value(stage, record, edge.slot, miss)?;

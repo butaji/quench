@@ -1,172 +1,57 @@
 //! The register dataflow of one function (`dataflow::solve` over its basic blocks): each
 //! register's fact at each point, and what the function does that the closed-world facts read.
 
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{InvocationFormsExt};
-mod bounds;
-mod refine;
-
-use self::bounds::{compared_bounds, mask_bounds, relational_bounds, stored_bounds};
 use super::blocks::Blocks;
-use super::effects::{Ctx, settled, step};
-use super::record::Record;
-use super::registers::{RegisterCells, Source};
-use crate::staged::typing;
+use super::effects::{Ctx, Events, step};
 use super::scope::Scope;
-use super::shape::Shape;
-use super::value::{Accessor, Key, Origin, Word};
-use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
-use crate::typed_ir::Type;
-use crate::dataflow::{BitSet, Dataflow, solve};
-use super::quiet::Quiet;
-use crate::staged::Operation;
-use crate::typed_ir::{Cell, ElementClass, Holders, Identity, Representation, WIDENING_ROUNDS};
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
+use super::value::{Fact, Key, PrototypeBase};
+use crate::bytecode::{ControlEdge, Function, Successors, Traits, WideInstruction, used_registers};
+use crate::dataflow::{Dataflow, solve};
+use crate::typed_ir::{Representation, Type};
 
 /// What a call names as its callee (`staged::Callee`): a register, whose fact the census resolves; a
 /// function of the program the record names; or a method of its receiver, by name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Target {
     Register,
     Known(u32),
     Method(u32),
-    /// A named access of `atom` on the receiver: its getter (a read), or its setter with the stored value as the argument
-    /// (`setter`). Its callees are the accessors the census proves for the receiver's classes (`types::targets`); none where
-    /// it proves none, and then the access is no call.
-    Accessor { atom: u32, setter: bool },
 }
 
 /// A call or a `new` a function makes, with its callee's fact and its arguments' facts.
 pub(super) struct Call {
     pub(super) pc: u32,
     /// The fact of the callee register: for a `Target::Register` call only, unknown otherwise.
-    pub(super) callee: Word,
+    pub(super) callee: Fact,
     pub(super) target: Target,
     pub(super) construct: bool,
     /// The fact of the `this` it passes its callee (`staged::Receiver`): a register's, the caller's own
     /// `this` or a field of it, an allocated object's; unknown for any other receiver.
-    pub(super) receiver: Word,
-    /// Whether the call passes no receiver (`staged::Receiver::Undefined`): a sloppy callee then binds `this` to the global
-    /// object (`types::Types::receivers`).
-    pub(super) plain: bool,
+    pub(super) receiver: Fact,
     /// The facts of the arguments it passes (`staged::Invocation::arguments`), in order.
-    pub(super) arguments: Vec<Word>,
+    pub(super) arguments: Vec<Fact>,
 }
 
 /// What one function contributes to the closed-world facts.
 pub(super) struct FunctionFlow {
     pub(super) calls: Vec<Call>,
-    /// Every binding write, with the PC that makes it and the fact of the value written (`phase::folds` orders them).
-    pub(super) writes: Vec<(u32, Key, Word)>,
+    /// Every binding write, with the fact of the value written.
+    pub(super) writes: Vec<(Key, Fact)>,
     /// Whether a write the analysis cannot follow reaches the function's own slots.
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
     pub(super) global_wild: bool,
-    /// Whether a store through a non-Number key may write a name of the global object (`effects::writes_global_name`).
-    pub(super) computed_global: bool,
-    /// Whether an instruction keys an access into a value that may be the global object (`effects::keyed_global`): a
-    /// computed access the closed world's call graph cannot see through.
-    pub(super) global_keyed: bool,
-    /// Whether an instruction reads `constructor`, or a computed key that may name it, off a value that may be a function or a
-    /// prototype object (`effects::reflective_read`): the `Function` constructor, which compiles code the closed world does not see.
-    pub(super) reflective_read: bool,
-    /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
-    /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
-    pub(super) global_source: bool,
-    /// The callee of each call the function makes with no receiver: its function id, if it names one, else None.
-    pub(super) plain_calls: Vec<Option<u32>>,
-    /// Whether the function reads its `this` (a load, a store or a field read of it, or a method of it).
-    pub(super) reads_this: bool,
-    /// The objects a store under a name the analysis cannot list may write into: a computed-key store's base, a copy's
-    /// destination from a source whose names are unknown (`copies::expand`). `Holders::NONE` where there is none.
-    pub(super) wild: Holders,
-    /// Per named property a store of this function writes, the holders of the object it stores on (`Holders::of` of the
-    /// base). A read of the name is wild only where such a holder may be a wild holder (`Census::wild`).
-    pub(super) member_bases: Vec<(u32, Holders)>,
-    /// The values the literals of this function define (`DefineArrayElement`, a data `DefinePropertyRecord`): an array or object
-    /// literal keeps them where no store records them, so unseen code holding an object of unknown origin may read them (`escapes`).
-    pub(super) defined: Vec<(Option<crate::typed_ir::ElementClass>, Word)>,
-    /// Whether this function makes a global store of its own that names no global (`with`, `delete`, a sloppy declaration, a
-    /// capture store of no known owner); a computed-key store is `computed_global`. Holding the global object (`global_wild`)
-    /// lets unseen code write globals too, but only with values it holds, which the escapes hold already.
-    pub(super) unkeyed_global: bool,
-    /// Whether a store a builtin makes may write an index of an object that may be a builtin's prototype (`Cell::prototype`):
-    /// an array mutator on one, or a property adder handed one. An element store records its own (`ElementStore::prototype`).
-    pub(super) prototype_writes: bool,
+    /// Whether a store through a key the analysis cannot name may write a named property.
+    pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
+    /// The named properties stored into a function's `prototype`, in code order.
+    pub(super) prototype_writes: Vec<(PrototypeBase, u32)>,
     /// Per named field read or store, by PC, the class of the object it reads or stores (`effects::field_owner`).
-    pub(super) field_owners: std::collections::BTreeMap<u32, crate::typed_ir::Classes>,
-    /// Per element access (a read or a store), by PC, the view of the array its base holds (`typed_ir::View`).
-    pub(super) element_views: std::collections::BTreeMap<u32, crate::typed_ir::View>,
-    /// The capture slots the function reads from its parent's environment, as (owner, slot) (`Record::observe`).
-    pub(super) captures: std::collections::BTreeSet<(u32, u16)>,
-    /// The register cells of the function at every point, for the tiers that lower it (`RegisterCells`).
-    pub(super) registers: RegisterCells,
-    /// The keys the settled cells of the function were read from: binding loads, field reads (a class's own,
-    /// or the name's), element reads of an array's class. Its parameters, receiver and callees' returns are
-    /// added by `AotFacts` (`dependencies`).
-    pub(super) reads: std::collections::BTreeSet<Key>,
-    /// The keys each instruction reads, by PC, in PC order (`Record::observe`): what `frozen` checks a dominating store
-    /// against. A by-name load reads its global; a capture reads its environment slot; a value read from a key is that key's read.
-    pub(super) key_reads: Vec<(u32, Key)>,
-    /// The element-class links the stores and calls make (`Word::link`): an array joins its destination's class.
-    pub(super) links: Vec<(crate::typed_ir::ElementClass, crate::typed_ir::ElementClass)>,
-    /// Whether the function writes elements of arrays it cannot name (`effects::Events::wild_elements`).
-    pub(super) wild_elements: bool,
-    /// The changes its instructions and calls make to named properties, in PC order (`shape`).
-    pub(super) shapes: Vec<Shape>,
-    /// The PCs, in order, of the instructions that may run guest code with the objects they touch (`effects::runs_guest_code`).
-    pub(super) guest_runs: Vec<u32>,
-    /// The proofs a guest-run point may hold (`quiet::Quiet`), by PC, in order.
-    pub(super) quiet: Vec<(u32, Quiet)>,
+    pub(super) field_owners: std::collections::BTreeMap<u32, super::value::Class>,
     /// How many parameters the function binds from its arguments one to one: `None` for a rest,
     /// generator or async function, whose parameters the calls do not type (`types::parameters`).
     pub(super) arity: Option<u16>,
-    /// Per parameter, whether its argument is in a register at entry (`bound_parameters`): its array is then the
-    /// parameter's own element class, which a resolved call links to the argument's (`types::entry_links`).
-    pub(super) in_register: Box<[bool]>,
-    /// Per parameter, whether it lives in a local slot (`Key::Slot` of its index) rather than a register: the slot holds
-    /// the argument from entry, so its cell joins the parameter's (`types::Types::of`).
-    pub(super) slotted: Box<[bool]>,
-    /// Whether the function's return value leaves the closed world: the program's root (the host reads its result),
-    /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
-    /// `types::escapes` takes its returns as positions the solve cannot follow.
-    pub(super) returns_out: bool,
-    /// Whether the function is strict code (`Function::strict`, which class bodies and Modules set): a plain call binds its
-    /// `this` to `undefined`, not to the global object, so only a sloppy function's `this` may be the global object (`types`).
-    pub(super) strict: bool,
-    /// The values the function hands to code the solve cannot follow: each value it throws, and every register at
-    /// a `yield` or `await`, which the runtime carries to a consumer or a promise reaction (`types::escapes`).
-    pub(super) handed: Vec<Word>,
-    /// The functions whose closure the function defines in a register. Where a value's identity is lost (a function
-    /// alternative with no body), any of them may be the closure it holds (`types::escapes`).
-    pub(super) closures: Vec<u32>,
-    /// The integer bounds the function puts on the keys it stores to and compares against, in replay order (`Record::bounds`):
-    /// each constant a relational jump compares a key's value with, and each mask bound a store writes. `Types::of` widens
-    /// the key's ranges to them, so a field that counts up to a constant it is compared with settles at that constant.
-    pub(super) bounds: Vec<(Key, i64)>,
-    /// The words each block's settled solve entered it with (`None` for a block no path reaches): the lengths pass replays
-    /// the blocks from them (`length_settle::settle`).
-    pub(super) entries: Vec<Option<Vec<Word>>>,
-    /// Per pc of an element store, the array it writes and the indices it touches (`record::ElementStore`).
-    pub(super) element_stores: std::collections::BTreeMap<u32, super::record::ElementStore>,
-    /// The accessors the function defines, in PC order (`accessors::accessor_definition`); each names its object's class where proven.
-    pub(super) accessors: Vec<Accessor>,
-    /// The `extends` links the function makes: `(class, parent)` for each intrinsic `setPrototypeOf` that links two class
-    /// prototypes (`accessors::heritage_link`). `types::Types::holder` walks them.
-    pub(super) parents: Vec<(u32, u32)>,
-    /// The parameters `(destination, source)` of a copy helper: a body that copies each element a for-in over `source`
-    /// reaches into `destination` and returns it, as `Object.extend` does (`Record::copies`). Its one store is accounted at
-    /// its call sites (`copies::expand`), not as a wild store.
-    pub(super) copies: Option<(u16, u16)>,
-    /// Per object literal of a fixed shape, by allocation PC, its keys and the values they hold at the allocation (its `Cell::sites`).
-    pub(super) literals: std::collections::BTreeMap<u32, Vec<(u32, Word)>>,
-    /// The global names of the builtins a join of this function's registers no longer holds as one object (`Solver::join_words`):
-    /// a builtin one side of a join held and the joined word does not (`identity::leaked`).
-    pub(super) leaked: std::collections::BTreeSet<u32>,
 }
 
 /// The dataflow problem of one function: its registers' facts over its basic blocks.
@@ -174,138 +59,38 @@ struct Solver<'a> {
     ctx: &'a Ctx<'a>,
     function: &'a Function,
     blocks: &'a Blocks,
-    /// The integer bounds a loop header widens its ranges to (`typing::thresholds`): the bounds the relational jumps compare against.
-    thresholds: Vec<i64>,
-    /// The blocks a backedge enters: the loop headers, where a join widens (`join`).
-    headers: BitSet,
-    /// Per block, how many joins changed its input: past `WIDENING_ROUNDS` a loop header widens on every change.
-    rounds: Vec<std::cell::Cell<u8>>,
-    /// The element-class links the joins make of words with different origins (`Word::join_links`): the record keeps them.
-    joined: std::cell::RefCell<std::collections::BTreeSet<(ElementClass, ElementClass)>>,
-    /// Per parameter, whether its argument is in a register at entry (`bound_parameters`).
-    in_register: &'a [bool],
-    /// The global names of the builtins a join made no longer one object (`FunctionFlow::leaked`).
-    leaked: std::cell::RefCell<std::collections::BTreeSet<u32>>,
-}
-
-/// The state a block starts with, or an edge carries: the words of the registers, and the block the state flows into,
-/// so a join there knows whether it is a loop header and how often it has changed (`Solver::join`).
-#[derive(Clone, PartialEq)]
-struct Arrival {
-    block: usize,
-    words: Vec<Word>,
 }
 
 /// The facts of function `id`, whose record is `function`.
 pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, records): (&Scope, crate::staged::DecodeContext<'_>, &[crate::bytecode::Register]),
-    resolved: &std::collections::BTreeMap<Key, u32>, classes: &super::class_ids::ClassIds, accessors: &std::collections::BTreeSet<u32>,
-    types: Option<&super::types::Types>, feedback: &super::length_settle::Feedback) -> FunctionFlow {
+    resolved: &std::collections::BTreeMap<Key, u32>, types: Option<&super::types::Types>) -> FunctionFlow {
     let successors = Successors::of_code(function);
     let blocks = Blocks::of(&successors, function.code.len());
-    let whole = whole_literals(function);
     let ctx = Ctx {
         id,
         parameter_end: function.parameter_end_pc as usize,
         is_root: function.parent.is_none(),
         scope,
         resolved,
-        classes,
         registers: usize::from(function.registers),
-        tracked_locals: tracked_locals(function),
-        whole_literals: &whole[..],
         types,
         decode,
         records,
-        accessors,
-        filled: &feedback.filled,
-        hole_free_stores: &feedback.hole_free_stores,
-        in_bounds_reads: &feedback.in_bounds_reads,
-        spans: &feedback.spans,
     };
-    let thresholds = typing::thresholds(relational_bounds(function, scope));
-    let rounds = vec![std::cell::Cell::new(0); blocks.ranges.len()];
-    let in_register = bound_parameters(function);
-    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks, thresholds, headers: loop_headers(&blocks), rounds, joined: Default::default(), in_register: &in_register, leaked: Default::default() };
-    let fixpoint = solve(&mut solver);
-    let inputs = solver.narrow(fixpoint);
-    let entries = inputs.iter().map(|input| input.as_ref().map(|state| state.words[..ctx.registers].to_vec())).collect();
+    let mut solver = Solver { ctx: &ctx, function, blocks: &blocks };
+    let inputs = solve(&mut solver);
     let mut record = Record::new(ctx.registers);
-    record.joined(solver.joined.take());
     for (block, input) in inputs.into_iter().enumerate() {
         if let Some(state) = input {
-            let registers = &state.words[..ctx.registers];
-            let cells = registers.iter().map(|word| settled(&ctx, *word)).collect();
-            let sources = registers.iter().map(|word| Source::of(word.origin)).collect();
-            record.registers.push_entry(blocks.ranges[block].start as u32, cells, sources);
-            solver.replay(block, state.words, &mut record);
+            solver.replay(block, state, &mut record);
         }
     }
-    record.registers.sort();
-    let arity = arity_of(function);
-    let returns_out = ctx.is_root || function.is_generator || function.is_async;
-    let leaked = solver.leaked.take();
-    let mut flow = record.finish(arity, returns_out, in_register, function.strict);
-    flow.entries = entries;
-    flow.leaked = leaked;
-    flow.slotted = (0..function.params).map(|index| function.promoted_register(index).is_none()).collect();
-    flow
-}
-
-/// How many frame locals the flow state follows past the registers (`Ctx::tracked_locals`): every one, where only this
-/// function's own instructions write them. An `arguments` object aliases the parameters, and a dynamic scope (direct eval,
-/// `with`) reaches the locals by name, so a function with either follows none.
-fn tracked_locals(function: &Function) -> usize {
-    let reads_arguments = function.arguments_slot.is_some()
-        || (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
-    if reads_arguments || function.has_dynamic_scope_access() { 0 } else { usize::from(function.locals) }
-}
-
-/// How many parameters `function` binds from its arguments one to one (`FunctionFlow::arity`).
-fn arity_of(function: &Function) -> Option<u16> {
-    (!function.rest && !function.is_generator && !function.is_async).then_some(function.params)
-}
-
-/// Per parameter, whether its argument is in a register at entry: a parameter bound one to one that the body promotes to a
-/// register (`Function::promoted_register`). A function that reads its `arguments` object reaches every argument through
-/// it, which the solve does not follow, so none of its parameters is one (their arrays are the unnamed class).
-fn bound_parameters(function: &Function) -> Box<[bool]> {
-    let reads_arguments = (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
-    let one_to_one = arity_of(function).is_some() && !reads_arguments;
-    (0..function.params).map(|index| one_to_one && function.promoted_register(index).is_some()).collect()
-}
-
-/// The blocks a backedge enters (a normal edge to a block no later than its source): every loop has one, and every cycle
-/// of the graph passes through one, so widening at these blocks alone makes the solve finite.
-pub(super) fn loop_headers(blocks: &Blocks) -> BitSet {
-    let mut headers = BitSet::with_capacity(blocks.ranges.len());
-    for (block, (targets, kinds)) in blocks.targets.iter().zip(&blocks.kinds).enumerate() {
-        for (&target, kind) in targets.iter().zip(kinds) {
-            if matches!(kind, ControlEdge::Normal) && target <= block { headers.insert(target); }
-        }
-    }
-    headers
-}
-
-/// Per PC, whether the `MakeArray` there is a literal whose `DefineArrayElement` records follow it back to back and
-/// define every index in order (`allocation::literal_elements`). Such an array holds no hole: an elision leaves its index
-/// undefined, so it is not whole.
-pub(super) fn whole_literals(function: &Function) -> Box<[bool]> {
-    (0..function.code.len()).map(|pc| {
-        let make = function.instruction_at(pc);
-        make.op() == crate::bytecode::Op::MakeArray && (0..make.array_length()).all(|index| {
-            let at = pc + 1 + index;
-            at < function.code.len() && {
-                let define = function.instruction_at(at);
-                define.op() == crate::bytecode::Op::DefineArrayElement
-                    && define.register_b() == make.result_register()
-                    && define.imm() as usize == index
-            }
-        })
-    }).collect()
+    let arity = (!function.rest && !function.is_generator && !function.is_async).then_some(function.params);
+    record.finish(arity)
 }
 
 impl Dataflow for Solver<'_> {
-    type State = Arrival;
+    type State = Vec<Fact>;
 
     fn blocks(&self) -> usize {
         self.blocks.ranges.len()
@@ -315,151 +100,164 @@ impl Dataflow for Solver<'_> {
         &self.blocks.targets[block]
     }
 
-    fn entry_state(&self, block: usize) -> Option<Arrival> {
-        (block == 0).then(|| Arrival { block, words: self.entry_facts() })
+    fn entry_state(&self, block: usize) -> Option<Vec<Fact>> {
+        (block == 0).then(|| self.entry_facts())
     }
 
-    /// Joins `incoming` into the input of `into.block`. At a loop header, once its input has changed `WIDENING_ROUNDS`
-    /// times, a range that grows is widened to the nearest threshold (`typing::widen`), so the header reaches a fixed
-    /// bound in finitely many joins; elsewhere the join is exact. `narrow` then tightens what widening over-approximated.
-    fn join(&self, into: &mut Arrival, incoming: &Arrival) -> bool {
-        let widen = self.headers.contains(into.block) && self.rounds[into.block].get() >= WIDENING_ROUNDS;
-        let words = self.join_words(&mut into.words, &incoming.words, widen);
-        if words {
-            let rounds = &self.rounds[into.block];
-            rounds.set(rounds.get().saturating_add(1));
-        }
-        words
-    }
-
-    fn transfer(&mut self, block: usize, state: &Arrival) -> Arrival {
-        let ctx = self.ctx;
-        let mut words = state.words.clone();
-        for pc in self.blocks.ranges[block].clone() {
-            let instruction = self.function.instruction_at(pc);
-            step(ctx, pc, instruction, &mut words);
-        }
-        Arrival { block, words }
-    }
-
-    /// An exception edge may leave the block before any of its writes, so it carries no fact. A normal edge carries
-    /// the fact its block's conditional jump proves on it (`Solver::refine`).
-    fn transfer_edge_at(&self, block: usize, index: usize, out: &Arrival) -> Arrival {
-        let target = self.blocks.targets[block][index];
-        let words = match self.blocks.kinds[block][index] {
-            ControlEdge::Handler => vec![Word::UNKNOWN; out.words.len()],
-            ControlEdge::Normal => self.refine(block, target, &out.words),
-        };
-        Arrival { block: target, words }
-    }
-}
-
-impl Solver<'_> {
-    /// Joins the words `incoming` holds into `into`, register by register; whether `into` changed. Where `widen`, a
-    /// word's integer range is widened (`typing::widen`) instead of joined, and its other parts are joined.
-    fn join_words(&self, into: &mut [Word], incoming: &[Word], widen: bool) -> bool {
+    fn join(&self, into: &mut Vec<Fact>, incoming: &Vec<Fact>) -> bool {
         let mut changed = false;
         for (slot, &fact) in into.iter_mut().zip(incoming) {
-            self.joined.borrow_mut().extend(slot.join_links(fact));
             let joined = slot.join(fact);
-            for side in [slot.cell.identity, fact.cell.identity] {
-                if let Identity::Builtin(path) = side && joined.cell.identity != side {
-                    self.leaked.borrow_mut().insert(path.global);
-                }
-            }
-            let next = if widen {
-                Word { cell: Cell { ty: typing::widen(&self.thresholds, slot.cell.ty, joined.cell.ty), ..joined.cell }, ..joined }
-            } else {
-                joined
-            };
-            changed |= next != *slot;
-            *slot = next;
+            changed |= joined != *slot;
+            *slot = joined;
         }
         changed
     }
 
-    /// One descending pass over the fixpoint `inputs` (narrowing): each block's input is recomputed as the join of the
-    /// edges the fixpoint's inputs send it, without widening, so a widened range tightens to what its edges carry (a
-    /// counter widened to int32's span becomes `[0, n]` under `i < n`). `inputs` is a post-fixpoint, so each edge's state
-    /// is at most the one it had, and the result still bounds every reachable state.
-    fn narrow(&mut self, inputs: Vec<Option<Arrival>>) -> Vec<Option<Arrival>> {
-        let mut next: Vec<Option<Arrival>> = (0..inputs.len()).map(|block| self.entry_state(block)).collect();
-        for (block, input) in inputs.iter().enumerate() {
-            let Some(state) = input else { continue };
-            let out = self.transfer(block, state);
-            for index in 0..self.blocks.targets[block].len() {
-                let edge = self.transfer_edge_at(block, index, &out);
-                match &mut next[edge.block] {
-                    Some(known) => {
-                        self.join_words(&mut known.words, &edge.words, false);
-                    }
-                    slot => *slot = Some(edge),
-                }
-            }
+    fn transfer(&mut self, block: usize, state: &Vec<Fact>) -> Vec<Fact> {
+        let mut out = state.clone();
+        for pc in self.blocks.ranges[block].clone() {
+            step(self.ctx, pc, self.function.instruction_at(pc), &mut out);
         }
-        next
+        out
     }
-}
 
-/// The jump target of a conditional jump (`JumpIf`, or the fused `CompareJump`); `None` for any other instruction.
-pub(super) fn conditional_target(instruction: WideInstruction) -> Option<usize> {
-    matches!(Operation::<u64, ()>::of(instruction), Some(Operation::JumpIf { .. } | Operation::CompareJump { .. }))
-        .then(|| instruction.jump_target() as usize)
+    /// An exception edge may leave the block before any of its writes, so it carries no fact.
+    fn transfer_edge_at(&self, block: usize, index: usize, out: &Vec<Fact>) -> Vec<Fact> {
+        match self.blocks.kinds[block][index] {
+            ControlEdge::Handler => vec![Fact::UNKNOWN; out.len()],
+            ControlEdge::Normal => out.clone(),
+        }
+    }
 }
 
 impl Solver<'_> {
     /// The facts at entry: every register unknown, but a promoted parameter holds its argument, whose
-    /// type the pass before found (`Types::param`), with the parameter's element class where the argument is in
-    /// the register (`in_register`). A parameter the body keeps as a local stays unknown: only its promoted register
-    /// holds the argument at entry (`Function::promoted_register`).
-    fn entry_facts(&self) -> Vec<Word> {
-        let mut state = vec![Word::UNKNOWN; self.ctx.registers + self.ctx.tracked_locals];
-        // A register no instruction writes and no parameter lives in is one an activation starts `undefined` where it is read
-        // (`ResidualProgram::entry_fill` fills every register live at entry): the receiver register of a plain call, say.
-        let mut written = vec![false; self.ctx.registers];
-        for pc in 0..self.function.code.len() {
-            for register in self.function.instruction_at(pc).written_registers() {
-                if let Some(slot) = written.get_mut(usize::from(register)) { *slot = true; }
-            }
-        }
-        for index in 0..self.function.params {
-            if let Some(slot) = self.function.promoted_register(index).and_then(|register| written.get_mut(usize::from(register))) { *slot = true; }
-        }
-        for (register, word) in state[..self.ctx.registers].iter_mut().enumerate() {
-            if !written[register] && register >= usize::from(self.function.params) {
-                *word = Word::of(Type::language(crate::ValueType::Undefined));
-            }
-        }
+    /// type the pass before found (`Types::param`). A parameter the body keeps as a local stays unknown:
+    /// only its promoted register holds the argument at entry (`Function::promoted_register`).
+    fn entry_facts(&self) -> Vec<Fact> {
+        let mut state = vec![Fact::UNKNOWN; self.ctx.registers];
         if let Some(types) = self.ctx.types {
             for index in 0..self.function.params {
                 if let Some(register) = self.function.promoted_register(index) {
-                    let origin = self.in_register[usize::from(index)].then_some(Origin::Parameter { function: self.ctx.id, index });
-                    state[usize::from(register)] = Word { cell: types.param(self.ctx.id, index), origin };
+                    state[usize::from(register)] = Fact::of_class(types.param(self.ctx.id, index), types.param_class(self.ctx.id, index));
                 }
             }
         }
         state
     }
 
-    /// Replays `block` from its input `state`, recording what its instructions do. The mask bounds the block's
-    /// registers hold (`mask_bounds`) start empty at each block: they follow from the bytecode alone, not from the facts.
-    fn replay(&self, block: usize, mut state: Vec<Word>, record: &mut Record) {
-        let ctx = self.ctx;
-        let registers = ctx.registers;
-        let mut masks: Vec<Option<i64>> = vec![None; registers];
+    /// Replays `block` from its input `state`, recording what its instructions do.
+    fn replay(&self, block: usize, mut state: Vec<Fact>, record: &mut Record) {
         for pc in self.blocks.ranges[block].clone() {
             let instruction = self.function.instruction_at(pc);
-            record.observe(ctx, instruction, pc, &state[..registers]);
-            compared_bounds(ctx, instruction, &state[..registers], record);
-            let events = step(ctx, pc, instruction, &mut state);
-            stored_bounds(instruction, &events.writes, &masks, record);
-            mask_bounds(self.ctx, instruction, &mut masks);
-            record.commit(pc as u32, instruction, &state[..registers], events);
-            let written: Box<[_]> = instruction.written_registers().map(|register| {
-                let word = state[usize::from(register)];
-                (u16::from(register), settled(self.ctx, word), Source::of(word.origin))
-            }).collect();
-            if !written.is_empty() { record.registers.push_writes(pc as u32, written); }
+            record.observe(self.ctx, instruction, pc, &state);
+            let events = step(self.ctx, pc, instruction, &mut state);
+            record.commit(instruction, &state, events);
+        }
+    }
+}
+
+/// What a replay gathers over a function's reachable code.
+struct Record {
+    calls: Vec<Call>,
+    writes: Vec<(Key, Fact)>,
+    wild_owner: bool,
+    wild_global: bool,
+    wild_member: bool,
+    prototype_writes: Vec<(PrototypeBase, u32)>,
+    /// Per register, the join of the facts it is defined with.
+    defs: Vec<Option<Fact>>,
+    /// Per register, whether a read saw a value that is not a Number.
+    unsafe_reads: Vec<bool>,
+    field_owners: std::collections::BTreeMap<u32, super::value::Class>,
+}
+
+impl Record {
+    fn new(registers: usize) -> Self {
+        Self {
+            calls: Vec::new(),
+            writes: Vec::new(),
+            wild_owner: false,
+            wild_global: false,
+            wild_member: false,
+            prototype_writes: Vec::new(),
+            defs: vec![None; registers],
+            unsafe_reads: vec![false; registers],
+            field_owners: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Notes the reads and the calls `instruction` makes, from the facts before it.
+    fn observe(&mut self, ctx: &Ctx<'_>, instruction: WideInstruction, pc: usize, state: &[Fact]) {
+        for register in used_registers(instruction) {
+            if !state[usize::from(register)].is_number() {
+                self.unsafe_reads[usize::from(register)] = true;
+            }
+        }
+        if let Some(owner) = super::effects::field_owner(ctx, instruction, state) {
+            let joined = self.field_owners.entry(pc as u32).or_insert(super::value::Class::Never);
+            *joined = joined.join(owner.class);
+        }
+        let traits = instruction.op().traits();
+        let construct = traits.has(Traits::CONSTRUCTION);
+        // Every call form the staged decoder reads (`staged::Invocation`): a register call, a known
+        // function's, a method site's, a construction; not an eval, `super(...)` or an array of arguments.
+        if let Some(invocation) = crate::staged::Invocation::of(instruction, ctx.decode) {
+            let (target, callee) = match invocation.callee {
+                crate::staged::Callee::Register(register) => (Target::Register, state[usize::from(register)]),
+                crate::staged::Callee::Known(function) => (Target::Known(u32::from(function)), Fact::UNKNOWN),
+                crate::staged::Callee::Method { atom, .. } => (Target::Method(atom), Fact::UNKNOWN),
+            };
+            let arguments = invocation.arguments.registers(ctx.records).map(|register| state[usize::from(register)]).collect();
+            let this = || ctx.types.map_or(Type::ANY, |types| types.this(ctx.id));
+            let receiver = match invocation.receiver {
+                crate::staged::Receiver::Register(register) => state[usize::from(register)],
+                crate::staged::Receiver::This { path: None } if !ctx.is_root =>
+                    Fact::of_class(this(), ctx.types.map_or(super::value::Class::Many, |types| types.this_class(ctx.id))),
+                crate::staged::Receiver::This { path: Some((atom, _)) } => ctx.types.map_or(Fact::UNKNOWN,
+                    |types| Fact::of_class(types.field(atom), types.class(super::value::Key::Member(atom)))),
+                // A construction's receiver is the object it allocates: an instance of the class it constructs.
+                crate::staged::Receiver::Allocated => match callee.ty.body_index() {
+                    Some(class) if construct => Fact::instance(class),
+                    _ => Fact::of(Type::DIRECT_OBJECT_FAMILY),
+                },
+                _ => Fact::UNKNOWN,
+            };
+            self.calls.push(Call { pc: pc as u32, callee, target, construct, receiver, arguments });
+        }
+    }
+
+    /// Notes the writes `instruction` made and the facts it defined, from the facts after it.
+    fn commit(&mut self, instruction: WideInstruction, state: &[Fact], events: Events) {
+        self.wild_owner |= events.wild_owner;
+        self.wild_global |= events.wild_global;
+        self.wild_member |= events.wild_member;
+        self.writes.extend(events.writes);
+        self.prototype_writes.extend(events.prototype_write);
+        for register in instruction.written_registers() {
+            let index = usize::from(register);
+            self.defs[index] = Some(self.defs[index].map_or(state[index], |def| def.join(state[index])));
+        }
+    }
+
+    fn finish(self, arity: Option<u16>) -> FunctionFlow {
+        let numbers: Box<[Option<Representation>]> = self
+            .defs
+            .iter()
+            .zip(&self.unsafe_reads)
+            .map(|(def, &unsafe_read)| if unsafe_read { None } else { def.and_then(Fact::representation) })
+            .collect();
+        FunctionFlow {
+            calls: self.calls,
+            writes: self.writes,
+            wild_owner: self.wild_owner,
+            global_wild: self.wild_global,
+            member_wild: self.wild_member,
+            numbers,
+            prototype_writes: self.prototype_writes,
+            field_owners: self.field_owners,
+            arity,
         }
     }
 }

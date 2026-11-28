@@ -6,7 +6,6 @@
 //! the held word (`Lowering::hoisted_read`). The operation has no effect to reorder: it reads its
 //! operands, which are not written, and writes the register it is held for.
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
@@ -14,8 +13,6 @@ use super::plan::{arithmetic_of, Nest};
 use super::{Bound, Decision, Hoist};
 use super::super::super::facts::Point;
 use super::super::super::operations::NumberArithmetic;
-use super::super::tag_proofs::decides_flat_strings;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The loops of `loops` the region lowers whole.
@@ -112,17 +109,12 @@ impl Lowering<'_, '_> {
         if decisions.is_empty() { return; }
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Element);
         for Decision { pc, sources, .. } in decisions {
-            let operator_field = self.unit.instructions[pc].binary_operator_field();
-            // Two flat strings the solve proves, under an operator `Decide` answers for strings (`decides_flat_strings`),
-            // are a Boolean: the helper's word is never `DELETED`, so no leave is made.
-            let flat_pair = decides_flat_strings(operator_field) && sources.iter().all(|&register| self.proven_flat(pc, register));
+            let instruction = self.unit.instructions[pc];
             let [left, right] = sources.map(|register| self.tagged(state, register));
-            let operator = self.raw_const(Lane::I64, i64::from(operator_field));
+            let operator = self.raw_const(Lane::I64, i64::from(instruction.binary_operator_field()));
             let word = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
-            if !flat_pair {
-                let decided = self.raw_compare_imm(Relation::NotEqual, word, Value::DELETED.to_bits() as i64);
-                emit_js_guard(&mut self.builder, decided, exit);
-            }
+            let decided = self.raw_compare_imm(Relation::NotEqual, word, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut self.builder, decided, exit);
             let value = self.builder.declare_var(types::I64);
             self.builder.def_var(value, word);
             self.hoisted.insert(pc, LoopRead { value, ty: Type::language(quench_runtime::ValueType::Boolean),

@@ -40,7 +40,7 @@ fn build_id() -> u64 {
     }
     // An image's ABI: the source, the target and the lane call convention. Profiles only choose
     // code generation, so a host compiler and a static image's cold support built with different
-    // profiles share the ID when they select the same convention (M1B-3B: `aot-image`).
+    // profiles share the ID when they select the same convention (M1B-3B: `aot-compact`).
     hash = mix(hash, env::var("TARGET").unwrap_or_default().as_bytes());
     let opt_level = env::var("OPT_LEVEL").unwrap_or_default();
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();

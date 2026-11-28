@@ -13,7 +13,6 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
 #[path = "../../quench-runtime/src/staged/int_math.rs"] pub(crate) mod int_math;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
-#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/power.rs"] pub(crate) mod power;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/proof.rs"] pub(crate) mod proof;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use proof::{Float64, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped, TypedViewFact, Viewed};
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/builtins.rs"] pub(crate) mod builtins;
@@ -95,9 +94,6 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 // The runtime's root names its stencil layout numbers `layout_offsets`; the stencils' are `crate::layout`.
 pub(crate) use crate::layout as layout_offsets;
-// The encoding modules the staged rows read, as the runtime's `staged::{object_encoding, value_encoding}`.
-pub(crate) use crate::layout::{field_cache_layout, object_encoding, value_encoding};
-#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/bump.rs"] pub(crate) mod bump;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/protocol.rs"] pub(crate) mod protocol;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/native_frame.rs"] pub(crate) mod native_frame;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use protocol::CallOperation;
@@ -108,6 +104,7 @@ pub(crate) use crate::layout::{field_cache_layout, object_encoding, value_encodi
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/native_call.rs"] mod native_call;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/allocation.rs"] mod allocation;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] pub(crate) use allocation::Allocation;
+#[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/flow.rs"] pub(crate) mod flow;
 #[cfg(not(any(stencil_family = "wasm", stencil_family = "regexp")))] #[path = "../../quench-runtime/src/staged/poll.rs"] pub(crate) mod poll;
 // The Wasm families `step` dispatches to (pure word arithmetic over the stage).

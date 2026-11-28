@@ -11,7 +11,7 @@ use std::{
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
-pub mod backtrack; pub mod identifier;
+pub mod backtrack;
 mod ascii_search;
 mod emoji_zwj;
 mod range_search;
@@ -407,16 +407,6 @@ impl std::fmt::Debug for Regex {
 impl Regex {
     pub fn capture_count(&self) -> usize {
         self.capture_names.len()
-    }
-
-    /// Adds `frequency` to the pattern's static frequency, the one its compiled programs weigh when the embedder
-    /// decides whether they get native code (`backtrack::native::NativeCompiler::compiles`). Both programs take it.
-    pub fn set_static_frequency(&self, frequency: u64) {
-        let complete = self.complete();
-        complete.backtracking.set_static_frequency(frequency);
-        if let Some(bounds) = &complete.bounds {
-            bounds.set_static_frequency(frequency);
-        }
     }
 
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {

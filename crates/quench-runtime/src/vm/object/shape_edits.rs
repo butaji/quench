@@ -85,53 +85,35 @@ impl Vm {
             .then_some(parent)
     }
 
-    /// Deletes `key`, whose slot of the object's shape is already `Value::DELETED` (`delete_shape_slot`). The object's
-    /// shape moves on: back to the shape before the key's add when it was the last-added key, else along a `Delete`
-    /// transition. A class cell takes either change in place: its class moves, or it turns dictionary
-    /// (`DictionaryTrigger::DeletionPattern`) and the key goes from its table. A delete never moves an object out of its cell.
     pub(in crate::vm) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.heap.object(object).map(|object| object.shape()) else { return };
+        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
         if let Some(parent) = self.shape_before_last_add(shape, key, slot) {
-            self.return_to_parent_shape(object, parent);
+            // The object returns to the shape it had before adding `key`: transient keys added
+            // and deleted in turn (an object used as a stack of entries) fork no shapes.
+            let data = self.object_data(object).expect("object survived property deletion");
+            let kept = self.shapes[parent as usize].storage_len();
+            if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
+                // The shorter length names a smaller arena range, so the values move to one;
+                // the object owns the same edges, which its write barrier already logged.
+                let values = (0..kept)
+                    .map(|index| self.heap.property_get(data, index).unwrap_or(Value::DELETED))
+                    .collect::<Vec<_>>();
+                self.heap.initialize_object_properties(object, parent, &values);
+            }
+            self.heap.set_object_shape(object, parent);
             self.reconfigure_function_name(object, key);
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        if self.heap.live_class_cell(object).is_some() {
-            // The cell's fields move into its table, which then takes the delete as a record's does.
-            self.mark_object_dictionary(object, DictionaryTrigger::DeletionPattern);
-        }
-        let shape = self.heap.object(object).map_or(shape, |object| object.shape());
         let next_id =
             self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
         self.heap.set_object_shape(object, next_id);
         self.pack_owned_dictionary(object, next_id);
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
-    }
-
-    /// The object returns to `parent`, the shape it had before its last-added key, so transient keys added and deleted in
-    /// turn (an object used as a stack of entries) fork no shapes. A class cell takes that class in place
-    /// (`Heap::class_cell_drop_last`). A record cuts its arena run to the parent's length.
-    fn return_to_parent_shape(&mut self, object: Value, parent: u32) {
-        if let Some(granule) = self.heap.live_class_cell(object) {
-            return self.heap.class_cell_drop_last(granule, parent);
-        }
-        // record-only: the arena run of the record's values
-        let data = self.heap.object(object).expect("object survived property deletion").record_only().expect("object survived property deletion");
-        let kept = self.shapes[parent as usize].storage_len();
-        if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
-            // The shorter length names a smaller arena range, so the values move to one;
-            // the object owns the same edges, which its write barrier already logged.
-            let values = (0..kept)
-                .map(|index| self.heap.property_get(data, index).unwrap_or(Value::DELETED))
-                .collect::<Vec<_>>();
-            self.heap.initialize_object_properties(object, parent, &values);
-        }
-        self.heap.set_object_shape(object, parent);
     }
 }
 

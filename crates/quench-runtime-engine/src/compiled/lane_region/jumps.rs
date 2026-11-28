@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// `Jump`: a backedge to the region entry counts and polls, and a pure loop header test it
@@ -11,12 +10,10 @@ impl Lowering<'_, '_> {
     pub(crate) fn jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let target = instruction.jump_target() as usize;
         if target <= pc {
-            // A back edge carries a poll, a safepoint: no holder made before it stays fresh past it (`LocalProofs::fresh`).
-            state.proofs.fresh.clear();
             self.backedge |= target == self.coverage.entry();
             if target == self.coverage.entry() { self.count_trip(); }
             if self.shared_backedge(state, target) { return false; }
-            self.back_edge_check(state, pc, target);
+            self.interrupt_check(state, pc as u32);
             if let Some(header) = self.unit.instructions.get(target).copied()
                 && quench_runtime::staged::meaning::means(header, quench_runtime::staged::meaning::Meaning::ConditionalJump)
                 && header.result_flags() == 0

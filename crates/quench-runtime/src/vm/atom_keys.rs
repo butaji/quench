@@ -133,6 +133,10 @@ impl crate::compile::AtomPrefix for Vm {
             crate::compile::AtomPrefix::len(self),
         )
     }
+
+    fn specialized(&self) -> bool {
+        self.specialized
+    }
 }
 
 /// How an atom's text is held (`Vm::atom_text`).

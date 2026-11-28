@@ -53,14 +53,98 @@ pub enum Protocol {
     Wasm(super::protocol_wasm::WasmHostStep),
 }
 
+#[cfg(not(stencil_build))]
+/// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
+/// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
+pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
 
+#[cfg(not(stencil_build))]
+/// The staged operation `instruction` denotes among the name, environment and iteration
+/// opcodes; `None` for any other opcode.
+#[inline(always)]
+pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
+    let destination = move || instruction.result_register();
+    let slot = move || Some(crate::staged::window_slot(instruction.imm()));
+    Some(match instruction.op() {
+        Op::CloneEnv => Operation::CloneEnv { plan: instruction.imm() & ENVIRONMENT_CLONE_PLAN_MASK },
+        Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },
+        Op::StoreEnvLocal => Operation::StoreEnvLocal { source: instruction.register_a(),
+            slot: slot()?, result: instruction.optional_register_b(),
+            initialize: instruction.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false) },
+        Op::ArgumentsLength => Operation::ArgumentsLength { destination: destination(), slot: slot()? },
+        Op::ArgumentGet => Operation::ArgumentGet { destination: destination(), index: instruction.register_b(), slot: slot()? },
+        Op::LoadNameTypeof => Operation::GlobalTypeof { destination: destination(), atom: instruction.atom_index(), site: instruction.cache_site_index() },
+        Op::SetFunctionName => Operation::SetFunctionName { function: instruction.register_a(), name: instruction.atom_index(),
+            site: instruction.cache_site_index() },
+        Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
+            site: instruction.cache_site_index(),
+            initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
+        Op::LoadGlobalLexical => Operation::GlobalLexicalLoad { destination: destination(), declaration: instruction.imm(),
+            site: instruction.cache_site_index() },
+        Op::StoreGlobalLexical => Operation::GlobalLexicalStore { source: instruction.register_a(), declaration: instruction.imm(),
+            site: instruction.cache_site_index(), initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
+        Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
+        Op::GetEnumerated => Operation::EnumeratedGet { destination: destination(), base: instruction.register_b(),
+            key: instruction.register_c(), state: crate::bytecode::ImmediateLayout::register_pair(instruction.imm()).0 },
+        Op::IteratorCleanupPush => Operation::IteratorCleanupPush { iterator: instruction.register_a(), done: instruction.register_b() },
+        Op::IteratorCleanupPop => Operation::IteratorCleanupPop,
+        _ => return decode_protocol(instruction),
+    })
+}
 
+#[cfg(not(stencil_build))]
+impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
+    /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
+    /// tier's `proof` of the global it names; `None` for any other opcode.
+    #[inline(always)]
+    pub fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
+        let receiver = match instruction.op() {
+            Op::LoadName => None,
+            Op::LoadNameCall => Some(instruction.register_b()),
+            _ => return None,
+        };
+        Some(Self::LoadName { destination: instruction.result_register(), atom: instruction.atom_index(),
+            site: instruction.cache_site_index(), receiver, proof })
+    }
+}
 
+#[cfg(not(stencil_build))]
+/// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
+#[inline(always)]
+fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
+    let (step, destination, operands) = match instruction.op() {
+        Op::AppendArray => (Protocol::AppendArray { length: instruction.array_length(),
+            spread: instruction.boolean_field(crate::bytecode::InstructionField::C)? },
+            None, [Some(instruction.register_a()), instruction.optional_register_b()]),
+        Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::ConstantFieldsHeld => (Protocol::ConstantFieldsHeld { site: instruction.cache_site_index() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
+            Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
+        // A sequence of tests, not `Option::or_else`: its closures left out of line kept every
+        // decoder's test at run time in a row whose opcode is a constant (`generated_row`).
+        _ => {
+            let decoded = if let Some(decoded) = super::protocol_literals::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_classes::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_values::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_owned::decode(instruction) { decoded }
+                else if let Some(decoded) = super::protocol_wasm::decode(instruction) { decoded }
+                else { return super::spread::decode(instruction) };
+            decoded
+        }
+    };
+    Some(Operation::Protocol { step, destination, operands })
+}
 
 /// Run a name, environment or iteration `operation` on `frame`; `Unresolved` where the frame
 /// has neither the row's own reading nor a host for its callout.
 #[inline(always)]
-pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::LoadEnvLocal { destination, slot } => if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_ENV_LOCAL]) } { load_environment(stage, frame, destination, slot) } else { unreachable!() },
@@ -98,7 +182,7 @@ pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut
 
 /// `step_of` for any operation.
 #[inline(always)]
-pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
@@ -207,7 +291,7 @@ fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     match frame.global_binding(proof) {
         GlobalBinding::Constant(value) => frame.global_constant(stage, destination, value),
         GlobalBinding::Held { value, ty } => frame.global_held(stage, destination, value, ty),
-        GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, value, ty),
+        GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, atom, site, value, ty, proof),
         GlobalBinding::Lexical { address } => frame.global_lexical(stage, destination, address, proof),
         GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, Type::ANY, proof),
         GlobalBinding::Typed { ty } => frame.global_read(stage, destination, atom, site, ty, proof),
@@ -304,18 +388,21 @@ fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     }
 }
 
-/// `EnumeratedGet`: the VM's element read of `base[key]` (the call-out). The keyed fast arm over the
-/// for-in state's memo needs the collection epoch, which no frame's `heap_records` offers, so it is gone.
+/// `EnumeratedGet`: where the frame reads live records (`Frame::heap_records`), the key's listed
+/// slot under the state's memo (`iteration::for_in_keyed_get`); any other read, and a frame that
+/// reads none, take the element read the VM makes.
 #[inline(always)]
 fn enumerated_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
-    [_state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
+    [state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
+    if let Some((arrays, objects, epoch)) = frame.heap_records(stage) {
+        let (state_word, base_word, key_word) = (frame.tagged(stage, state), frame.tagged(stage, base), frame.tagged(stage, key));
+        let miss = frame.miss();
+        if let Some(value) = super::iteration::for_in_keyed_get(stage, (arrays, objects), state_word, base_word, key_word, epoch, miss) {
+            return Step::Value(value);
+        }
+    }
     calling(stage, frame, CallOut::EnumeratedGet { base, key }, Some(destination))
 }
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;

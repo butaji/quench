@@ -238,7 +238,7 @@ impl Vm {
     /// comparator is guest code, so this is asked after the sort.
     pub(super) fn can_copy_back(&self, object: Value, length: usize) -> bool {
         self.dense_array_length(object) == Some(length)
-            && self.heap.object(object).is_some_and(|data| self.chain_holds_no_index(data.proto()))
+            && self.object_data(object).is_some_and(|data| self.chain_holds_no_index(data.proto()))
             && self.present_dense_elements(object, 0..length).is_some()
     }
 }

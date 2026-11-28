@@ -187,7 +187,7 @@ pub fn step_known_call_of<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &
 fn invoke_function<A: WasmActivation>(call: &mut A, function: FunctionId, window: (Register, u16), result: Register)
     -> Result<A::Resume, Admitted> {
     let mut frame = WasmCallFrame { call, function: u32::from(function), shape: None, admitted: Admitted::Pending, ran: None };
-    match step_known_call_of(&mut Concrete::pure(), &mut frame, (), (function, window, result, false)) {
+    match step_known_call_of(&mut Concrete::new(std::ptr::null()), &mut frame, (), (function, window, result, false)) {
         Step::Control(resumed) => Ok(resumed),
         _ => Err(frame.admitted),
     }

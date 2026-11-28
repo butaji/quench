@@ -4,11 +4,10 @@
 //! (`entry_pins`: int32s and doubles), which every entry checks before pc 0 runs. A call's argument is proven where its register holds a Number at the call on every path. The analysis is an
 //! invariant of the bytecode, as `exact.rs` relies on: a region or resume stub enters only in states it covers.
 
-#[allow(unused_imports)] use quench_runtime::staged::{CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::super::facts::{self, Seeds, Text};
-use super::super::lane_region::writes;
+use super::super::facts::{self, Observed, Seeds, Text};
+use super::super::lane_region::{leaders, writes};
 use super::call_plan::{CallForm, CallShape};
 use super::link::INT32_BIT;
 use super::plan::Homes;
@@ -16,7 +15,6 @@ use super::span::Span;
 use super::webs::Webs;
 use quench_runtime::bytecode::{Constant, Function, Register, WideInstruction};
 use quench_runtime::typed_ir::Type;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame registers of the pinned int32 and double webs the body's entry guards at its header (`entry_rows`'s pin
 /// rows, which every entry runs): `(int32s, doubles)`.
@@ -36,7 +34,7 @@ pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numb
         return None;
     }
     let instructions: Vec<WideInstruction> = function.instructions().collect();
-    let blocks = quench_runtime::bytecode::instruction_leaders(&instructions);
+    let blocks = leaders(&instructions);
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     for &register in numbers {
         initial[usize::from(register)] = Type::NUMBER;
@@ -46,7 +44,7 @@ pub(crate) fn proven_arguments(function: &Function, constants: &[Constant], numb
     }
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
-    let seeds = Seeds::typed();
+    let seeds = Seeds { contracts: &[], observed: Observed::NONE, entering: &[], model: None, signless: &[] };
     let mut masks = vec![0u64; instructions.len()];
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         let instruction = instructions[pc];

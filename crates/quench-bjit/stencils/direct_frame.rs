@@ -8,7 +8,8 @@
 //!
 //! - the arguments: a leading argument may be a pinned register's value (`call_words`, read from the
 //!   places the planner named; the rest from the caller's window);
-//! - admission (`call_room`): the shared `admit_native` (one room check) plus the plain depth bound;
+//! - admission (`call_room`): the shared `admit_native` (one validity compare, one room check) plus
+//!   the plain depth bound;
 //! - entry (`call_enter`): the callee's plain header, its body in the body table, the lane's new
 //!   tops, then its row entry or lane body entry, a `call reg` only a `call_*` row may make;
 //! - settle (`call_settle`): the pop and the result register's write.
@@ -18,12 +19,11 @@
 
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::CALL_CONTEXT_BODY_SHIM;
-use crate::layout::call_record::{CalleeRecord, CallRecord, LaneStatus, PLACED_ARGUMENTS, REGISTER_BYTES};
-use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
+use crate::layout::call_record::{CallRecord, LaneStatus, PLACED_ARGUMENTS, REGISTER_BYTES};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_RECOVERY_AT, CELL_ROWS_AT,
     CELL_USES_THIS_AT, CONTEXT_BODY, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_THIS, FRAME_CONTEXT_WORDS, JS_STEP_ACTIVATION_COUNT,
     JS_STEP_BODY_TABLE, JS_STEP_LANE_VALUES_END, JS_STEP_NATIVE_TABLE, JS_STEP_POP_OBSERVED_HEADER, JS_STEP_RESIDUAL, JS_STEP_VM,
-    PLAIN_DEPTH_LIMIT, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+    PLAIN_DEPTH_LIMIT, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::bytecode::Register;
@@ -55,9 +55,8 @@ struct BodyReturn {
     value: u64,
 }
 
-/// The SysV shim a lane body is entered through (`lane_body_abi::body_shim`): (context, receiver, capture word,
-/// registers, body), where `body` is the lane body it calls: (context, receiver, capture word, registers).
-type BodyShim = unsafe extern "C" fn(usize, u64, u64, usize, usize) -> BodyReturn;
+/// A lane body's entry (`BodyEntry`): (context, receiver, capture word, registers).
+type BodyEntry = unsafe extern "C" fn(usize, u64, u64, usize) -> BodyReturn;
 /// A b-jit body's row entry (`entry_rows`, `EntryCell::rows`): (window, context, receiver, captures)
 /// -> (word, status), in the row ABI, which saves no callee-saved register.
 type RowsEntry = unsafe extern "rust-preserve-none" fn(usize, usize, u64, u64) -> RowsReturn;
@@ -125,23 +124,11 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
         word_at(self.record, at)
     }
 
-    /// The callee record the site names (`CallRecord::callee_record`): the callee's words are read through it.
-    #[inline(always)]
-    fn callee(&self) -> usize {
-        word_at(self.record, offset_of!(CallRecord, callee_record)) as usize
-    }
-
-    /// A word of the callee record at `at` (an `offset_of!(CalleeRecord, _)`).
-    #[inline(always)]
-    fn callee_field(&self, at: usize) -> u64 {
-        word_at(self.callee(), at)
-    }
-
     /// The register index the record names at `at`, read as the frame's accesses are (`Region::Frame`: a call
     /// record lives on the lane stack).
     #[inline(always)]
     fn register(&self, at: usize) -> Register {
-        StencilStage::from_hole(0, payload(&self.places.s)).load_u16(Region::Frame.mutable(), self.record as u64, at as i32) as Register
+        StencilStage::from_hole(0).load_u16(Region::Frame.mutable(), self.record as u64, at as i32) as Register
     }
 
     /// The call the record makes: its callee register, receiver register and window of `ARGC` arguments.
@@ -166,7 +153,7 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     #[inline(always)]
     fn argument_words(&self) -> [u64; ARGC] {
         let s = &self.places.s;
-        let mut stage = StencilStage::from_hole(0, payload(&self.places.s));
+        let mut stage = StencilStage::from_hole(0);
         let window = self.register(offset_of!(CallRecord, args_register));
         let places = (self.record + offset_of!(CallRecord, argument_places)) as *const u8;
         let mut words = [0u64; ARGC];
@@ -188,8 +175,8 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     /// native header a record (`LaneStack::spill_plain`), leaving no plain header, or a helper linked it
     /// (`native_frames::link_header`), which cleared its NATIVE flag and gave it a side record that pops with it.
     #[inline(always)]
-    fn pop(a: &Admitted, payload: usize) {
-        let mut stage = StencilStage::from_hole(0, payload);
+    fn pop(a: &Admitted) {
+        let mut stage = StencilStage::from_hole(0);
         protocol::pop_native_frame(&mut stage, &a.tops, a.top as u64, a.frames, Some((a.depth, a.registers)), #[inline(always)] |_| {
             core::hint::cold_path();
             // SAFETY: the payload's helper is `pop_observed_header_in_lane`, which takes the VM and residual words.
@@ -221,8 +208,8 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
                 let RowsReturn { value, status } = entry(a.top, ctx, this, captures);
                 BodyReturn { status: status as u32, value }
             } else {
-                let shim: BodyShim = transmute(word_at(ctx, CALL_CONTEXT_BODY_SHIM) as usize);
-                shim(ctx, this, captures, a.top, word_at(a.cell, CELL_ENTRY_AT) as usize)
+                let entry: BodyEntry = transmute(word_at(a.cell, CELL_ENTRY_AT) as usize);
+                entry(ctx, this, captures, a.top)
             }
         }
     }
@@ -238,11 +225,13 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
         let (Some(a), Some(body)) = (self.admitted, self.returned) else { return Ended::Refused };
         match LaneStatus::of(body.status) {
             Some(LaneStatus::NotEntered) => {
-                Self::pop(&a, payload(&self.places.s));
+                Self::pop(&a);
                 Ended::Refused
             }
             Some(LaneStatus::Threw) => {
-                Self::pop(&a, payload(&self.places.s));
+                Self::pop(&a);
+                let counters = word_at(a.cell, CELL_COUNTERS_AT);
+                StencilStage::from_hole(0).store_u64(Region::EntryCell.mutable(), a.cell as u64, CELL_COUNTERS_AT as i32, counters.wrapping_add(RAISED_RUN));
                 Ended::Raised
             }
             _ => Ended::Left(body.status, body.value),
@@ -321,7 +310,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
     }
 
     /// A strict callee's receiver, bound as it is, enters only as a direct object: the lane's rows and a body
-    /// that takes its receiver as one (`dispatch_fast::receiver_trusted`), so any other takes the generic call, whose
+    /// that holds the `this` trust take it as one (`Vm::this_trust`), so any other takes the generic call, whose
     /// binding checks it once. A sloppy callee's binding made it one already; a lexical callee reads none.
     #[inline(always)]
     fn call_this_bound(&mut self, stage: &mut Concrete, this: u64, miss: ()) -> Option<()> {
@@ -349,30 +338,30 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
 
     #[inline(always)]
     fn call_identity(&mut self, _stage: &mut Concrete) -> Option<u64> {
-        Some(self.callee_field(offset_of!(CalleeRecord, callee)))
+        Some(self.field(offset_of!(CallRecord, callee)))
     }
 
     #[inline(always)]
     fn call_global(&mut self, _stage: &mut Concrete) -> Option<u64> {
-        Some(self.callee_field(offset_of!(CalleeRecord, global_this)))
+        Some(self.field(offset_of!(CallRecord, global_this)))
     }
 
-    /// The cell's room (`admit_native`, less the callee's recovery space) and the plain depth bound.
+    /// The cell's validity and room (`admit_native`, less the callee's recovery space) and the plain depth bound.
     #[inline(always)]
     fn call_room(&mut self, stage: &mut Concrete, _miss: ()) -> Option<Room<u64>> {
-        let payload = payload(&self.places.s);
-        let cell = self.callee_field(offset_of!(CalleeRecord, cell)) as usize;
+        let (record, payload) = (self.record, payload(&self.places.s));
+        let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
         let tops = protocol::lane_tops(stage, payload as u64);
         let (top, end) = (word_at(tops.values_at as usize, 0), word_at(payload, JS_STEP_LANE_VALUES_END));
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
         let reserved = word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64;
-        let (room, fill) = admit_native(stage, cell as u64, top, end, reserved, ())?;
+        let (room, fill) = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), top, end, reserved, ())?;
         let depth = word_at(tops.plain_at as usize, PLAIN_DEPTH_AT);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) + 1;
         // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames
         // under a bound run or the run's window is a leaf's (`refuse_direct_calls_in_leaf`): the helper row calls then.
         // Comparing against the cell's address instead admitted every call, so a body entered as a leaf pushed its callee
-        // over the leaf's pending activation (crypto's and deltablue's failures under the b-jit tier alone).
+        // over the leaf's pending activation (crypto's and deltablue's `--b-jit` failures).
         if depth + frames > word_at(word_at(payload, PLAIN_DEPTH_LIMIT) as usize, 0) {
             return None;
         }
@@ -389,7 +378,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
     fn call_enter(&mut self, _stage: &mut Concrete, this: u64, _room: Room<u64>) -> Option<Entered<u64, ()>> {
         let a = self.admitted?;
         let file = self.places.s.frame as u64;
-        let captures = self.callee_field(offset_of!(CalleeRecord, captures));
+        let captures = self.field(offset_of!(CallRecord, captures));
         // The receiver only where the callee's activation reads `this`: the cell's word says so, read now, so a
         // republish that changes it is seen by the next call.
         if word_at(a.cell, CELL_USES_THIS_AT) != 0 {
@@ -397,18 +386,16 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         }
         set_context_word(a.top, CONTEXT_BODY, captures);
         // The callee's environment and captures pointer, which the interpreter reads from a linked frame.
-        set_context_word(a.top, CONTEXT_ENV, self.callee_field(offset_of!(CalleeRecord, env)));
-        set_context_word(a.top, CONTEXT_CAPTURE, self.callee_field(offset_of!(CalleeRecord, capture)));
-        // The header's packed word is the site's flags and argc with the callee's function.
-        let packed = self.field(offset_of!(CallRecord, packed)) | self.callee_field(offset_of!(CalleeRecord, function));
+        set_context_word(a.top, CONTEXT_ENV, self.field(offset_of!(CallRecord, env)));
+        set_context_word(a.top, CONTEXT_CAPTURE, self.field(offset_of!(CallRecord, capture)));
         let header = protocol::BodyHeader { call: self.field(offset_of!(CallRecord, call)), caller_registers: file,
-            caller_base: self.field(offset_of!(CallRecord, caller_base)), packed,
-            callee: self.callee_field(offset_of!(CalleeRecord, callee)) };
-        let mut stage = StencilStage::from_hole(0, payload(&self.places.s));
+            caller_base: self.field(offset_of!(CallRecord, caller_base)), packed: self.field(offset_of!(CallRecord, packed)),
+            callee: self.field(offset_of!(CallRecord, callee)) };
+        let mut stage = StencilStage::from_hole(0);
         // Its body and descriptor at the frame's index (the descriptor links the native header where Rust observes
         // it, `native_frames::link_header`), the plain depth and window it bumps: the native frame every tier pushes.
         protocol::push_native_frame(&mut stage, &a.tops, protocol::NativeFrame { window: a.top as u64, header, body: word_at(a.cell, CELL_BODY_AT),
-            descriptor: self.callee_field(offset_of!(CalleeRecord, descriptor)), index: a.frames,
+            descriptor: self.field(offset_of!(CallRecord, descriptor)), index: a.frames,
             next: (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64 },
             // The tables load here, past the window's fill, so their addresses are not live across it.
             #[inline(always)] |_| protocol::NativePlaces { bodies: word_at(a.payload, JS_STEP_BODY_TABLE), descriptors: word_at(a.payload, JS_STEP_NATIVE_TABLE),
@@ -421,7 +408,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
     /// The callee completed with `value`: its window and frame pop, and the word goes to the call's register.
     #[inline(always)]
     fn call_settle(&mut self, stage: &mut Concrete, site: &Invocation, _entered: Entered<u64, ()>, _room: Room<u64>, value: u64) -> Option<()> {
-        Self::pop(&self.admitted?, payload(&self.places.s));
+        Self::pop(&self.admitted?);
         stage.store_u64(Region::Frame.mutable(), self.places.s.frame as u64, word_offset(site.result), value);
         Some(())
     }

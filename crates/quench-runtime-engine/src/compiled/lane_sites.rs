@@ -1,10 +1,8 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalReads, ReceiverLink, GlobalSlot, GlobalTable, StableCell, scalar_native};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(CompiledLaneSitesVm)]
 impl Vm {
@@ -33,7 +31,7 @@ impl Vm {
                     Some((_, value)) => GlobalRead::Constant(*value),
                     None => match stored.get(&atom) {
                         Some(slot) => *slot,
-                        None => self.stable_global_read(atom, site),
+                        None => self.stable_global_read(program, atom, site),
                     },
                 };
                 (pc, read)
@@ -174,7 +172,7 @@ impl Vm {
             if !self.reads_global_scope(program, function, atom) {
                 return None;
             }
-            match self.stable_global_read(atom, load.cache_site_index()) {
+            match self.stable_global_read(program, atom, load.cache_site_index()) {
                 GlobalRead::Stable { value, fact, .. } if value == callee => Some(Held::Global(fact)),
                 _ => None,
             }
@@ -207,7 +205,7 @@ impl Vm {
         if entered.contains(member) || base.register_index()? != code[read].result_register() { return None; }
         let load = code[read];
         if !quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
-        let GlobalRead::Stable { value: object, .. } = self.stable_global_read(load.atom_index(), load.cache_site_index()) else { return None };
+        let GlobalRead::Stable { value: object, .. } = self.stable_global_read(program, load.atom_index(), load.cache_site_index()) else { return None };
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;
@@ -322,7 +320,7 @@ impl Vm {
     /// made a watched prototype so that a write to one of its values retires that code.
     fn native_holder(&mut self, holder: Value) -> Option<u32> {
         self.mark_prototype(holder);
-        Some(self.heap_reads().object(holder)?.shape())
+        Some(self.object_data(holder)?.shape())
     }
 }
 

@@ -235,6 +235,7 @@ async function runOne(spec, round) {
       QUENCH_BENCH_ROUNDS: env.QUENCH_BENCH_ROUNDS ?? "5000",
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
       ...Object.fromEntries([
+        "QUENCH_DEV",
         "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT",
         "QUENCH_NPM_PERF_SKIP_BUN_NO_JIT",
         "QUENCH_NPM_PERF_RSS_SAMPLE_MS",

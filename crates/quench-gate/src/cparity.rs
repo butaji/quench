@@ -1,6 +1,5 @@
 //! Step 5: the C-parity gate. Each kernel (`crates/quench-tier-corpus/cparity/js`, with its C
-//! reference in `.../c`) runs in the default mode with the compiled regions dumped (AOT output
-//! carries no such dumps; the aot step measures AOT). The hottest
+//! reference in `.../c`) runs on every JIT tier with the compiled regions dumped. The hottest
 //! loop's machine code is measured per iteration (`classes`): instruction count and the residual
 //! classes C would not spend. The measurement is compared with the ratchet table
 //! (`crates/quench-tier-corpus/cparity.txt`): growth fails, improvement lowers the ceiling,
@@ -10,7 +9,8 @@
 //! from the first tier's run (headers are bytecode positions, the same on every tier). It is
 //! measured in the loop region compiled for it, else in the body compiled for its function; its
 //! hottest loop is `flow::hottest`. A kernel with no loop (a recursive function) is measured
-//! per call, along the scalar entry of the body that has one (`flow::call_path`).
+//! per call, along the scalar entry of the body that has one (`flow::call_path`). Dumps are
+//! deterministic only when compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
 
 mod asm;
 mod classes;
@@ -41,7 +41,9 @@ const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
-const TRACE_CHANNELS: &str = "js-jit,jit-dump=";
+const TRACE_CHANNELS: &str = "js-jit,loop-kernel,jit-dump=";
+const DEV_VARIABLE: &str = "QUENCH_DEV";
+const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 /// The longest one kernel run may take before it counts as hung.
 const RUN_SECONDS: u32 = 300;
 
@@ -73,9 +75,9 @@ fn node(config: &Config, host: &Path, kernel: &Path, flag: Option<&str>, dumps: 
     let mut command = config.command(host);
     command.args(flag).arg(kernel);
     if let Some(directory) = dumps {
-        command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display()));
+        command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display())).env(DEV_VARIABLE, SYNCHRONOUS_COMPILE);
     }
-    // A kernel runs in seconds; one past the deadline is hung (a compile that never returns) and fails the step.
+    // A kernel runs in seconds; one past the deadline is hung (a sync compile that never returns) and fails the step.
     let run = process::run_within(&command, RUN_SECONDS)?;
     if run.success { Ok(run) } else { Err(format!("{} {} failed:\n{}", kernel.display(), flag.unwrap_or("(default)"), run.excerpt())) }
 }
@@ -126,8 +128,9 @@ fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured,
     Ok(scalar_call(directory, &dumps)?.map_or(Measured::Nothing, Measured::Code))
 }
 
-/// Runs one kernel in the default mode (every tier on; user, 2026-11-22) and settles the
-/// measurement against the ratchet. The interpreter is the reference, not measured here.
+/// Runs one kernel in each compiling mode Quench ships (b-jit only, and the default with every
+/// tier on; user, 2026-11-22) and settles each measurement against the ratchet. A forced `--u-jit`
+/// is not a shipped mode, so it does not decide the gate (TOD-2068 flaw 9).
 fn measure(config: &Config, host: &Path, kernel: &Path, table: &mut Table, tally: &mut Tally) -> Result<(), String> {
     let name = kernel.file_stem().and_then(|stem| stem.to_str()).ok_or("a kernel has no name")?;
     let expected = node(config, host, kernel, Some(INTERPRETER), None)?.stdout;

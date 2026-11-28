@@ -13,9 +13,12 @@ pub struct HeapMemoryComposition {
     pub cell_variant_names: Vec<&'static str>,
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
+    pub object_record_reserved_bytes: usize,
+    pub object_record_reusable_ids: usize,
+    pub object_record_allocation_scan_cursor: usize,
     pub array_record_reserved_bytes: usize,
     pub array_record_reusable_ids: usize,
-    pub array_record_free_runs: usize,
+    pub array_record_allocation_scan_cursor: usize,
     pub function_record_reserved_bytes: usize,
     pub promise_record_reserved_bytes: usize,
     pub await_record_reserved_bytes: usize,
@@ -69,6 +72,7 @@ pub struct HeapMemoryComposition {
 impl Heap {
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_record_pages(&self, phase: &str) {
+        self.object_records.report_pages("object", phase);
         self.array_records.report_pages("array", phase);
         self.function_records.report_pages("function", phase);
         self.string_records.report_pages("string", phase);
@@ -104,6 +108,7 @@ impl Heap {
         let mut buffer_identities = HashSet::new();
         self.for_each_live_value(|identity| {
             occupied_slots += 1;
+            let object_record = self.object_record(identity);
             let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
             if let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.environment(identity) {
@@ -195,7 +200,7 @@ impl Heap {
                     .profile_variant_name()
             };
             *cell_variant_counts.entry(variant_name).or_insert(0usize) += 1;
-            let object = self.object(identity).and_then(|object| object.record_only());
+            let object = object_record.or_else(|| self.object(identity));
             if let Some(object) = object {
                 object_headers += 1;
                 let property_width = self.properties.len(object.properties());
@@ -228,7 +233,7 @@ impl Heap {
                 }
             }
             let payload_bytes = if direct_object {
-                0
+                object_record.map_or(0, Object::allocated_extra_bytes)
             } else if let Some(array) = array {
                 array.allocated_extra_bytes() + array.elements().capacity() * size_of::<Value>()
             } else if direct_function {
@@ -310,9 +315,12 @@ impl Heap {
             cell_variant_names: cell_variant_counts.keys().copied().collect(),
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
+            object_record_reserved_bytes: self.object_records.allocated_bytes(),
+            object_record_reusable_ids: self.object_records.reusable_ids(),
+            object_record_allocation_scan_cursor: self.object_records.allocation_scan_cursor(),
             array_record_reserved_bytes: self.array_records.allocated_bytes(),
             array_record_reusable_ids: self.array_records.reusable_ids(),
-            array_record_free_runs: self.array_records.free_run_count(),
+            array_record_allocation_scan_cursor: self.array_records.allocation_scan_cursor(),
             function_record_reserved_bytes: self.function_records.allocated_bytes(),
             promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
@@ -389,6 +397,7 @@ impl HeapMemoryComposition {
     /// `used_bytes`, without ArrayBuffer backing stores.
     pub fn reserved_bytes(&self) -> usize {
         self.slot_arena_reserved_bytes
+            + self.object_record_reserved_bytes
             + self.array_record_reserved_bytes
             + self.function_record_reserved_bytes
             + self.promise_record_reserved_bytes

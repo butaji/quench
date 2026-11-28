@@ -1,15 +1,6 @@
 use super::*;
 
 impl Vm {
-    /// Records `depth`, the lane window activation that holds the mapped `arguments` object, in its extras (an
-    /// array record's, or a class cell's by extras id), where an element's write finds its parameter.
-    pub fn note_arguments_window_depth(&mut self, arguments: Value, depth: usize) {
-        self.heap.ensure_cell_extras(arguments);
-        if let Some(mut object) = self.heap.object_mut(arguments) {
-            object.set_window_depth(depth);
-        }
-    }
-
     pub(super) fn mapped_argument_load(
         &self,
         p: &ResidualProgram,
@@ -74,8 +65,8 @@ impl Vm {
     }
 
     fn mapped_argument_index(&self, arguments: Value, slot: usize) -> Option<usize> {
-        self.heap.object(arguments)
-            .and_then(|object| object.arguments_map())
+        self.object_data(arguments)
+            .and_then(Object::arguments_map)
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -92,7 +83,7 @@ impl Vm {
 
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
         let slot = self
-            .heap.object(object)
+            .object_data(object)
             .and_then(|object| object.mapped_argument_slot(index));
         self.sync_mapped_argument_slot(object, slot, value);
     }
@@ -152,10 +143,9 @@ impl Vm {
     }
 
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
-        let Some(mut view) = self.heap.object_mut(object) else {
-            return;
-        };
-        if let Some(mapping) = view.arguments_map_mut()
+        if let Some(mapping) = self
+            .object_data_mut(object)
+            .and_then(Object::arguments_map_mut)
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

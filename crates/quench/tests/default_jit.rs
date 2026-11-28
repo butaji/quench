@@ -44,15 +44,20 @@ fn run_flags(arguments: &[&str]) -> (bool, String) {
 }
 
 #[test]
-fn the_jit_mode_flags_select_one_mode_and_the_removed_flags_are_gone() {
-    assert!(run_flags(&["--no-jit"]).0, "--no-jit runs");
-    assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    for flag in ["--b-jit", "--q-jit", "--u-jit"] {
-        let (ok, stderr) = run_flags(&[flag]);
-        assert!(!ok && stderr.contains(&format!("unknown JIT flag {flag}")), "{flag} is removed: {stderr}");
+fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
+    for flag in ["--no-jit", "--b-jit", "--q-jit", "--u-jit"] {
+        assert!(run_flags(&[flag]).0, "{flag} runs");
     }
+    assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
+    assert!(!run_flags(&["--jit"]).0, "--jit is removed");
     let (ok, stderr) = run_flags(&["--zz-jit"]);
     assert!(!ok && stderr.contains("unknown JIT flag --zz-jit"), "any other --*-jit flag is an unknown-flag error: {stderr}");
+    if cfg!(target_arch = "x86_64") {
+        assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
+    }
+    assert!(compiles(&["--q-jit"]) > 0, "--q-jit: the hot loop runs quick-compiled code");
+    assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
 
 /// Runs the fixture under `flag`; the exit status and stdout.
@@ -65,13 +70,41 @@ fn run_fixture(flag: &str, fixture: &str) -> (bool, String) {
 /// Loops whose registers hold ints, then doubles, then ints, left at every guard (widening
 /// recompiles, element and tag exits) leave the lane exactly as the interpreter has it.
 #[test]
-fn compiled_exits_leave_the_interpreters_state() {
+fn b_jit_exits_leave_the_interpreters_state() {
     for fixture in ["base_jit_webs.js", "base_jit_exit_state.js"] {
         let expected = run_fixture("--no-jit", fixture);
         assert!(expected.0, "{fixture} under --no-jit");
         for _ in 0..3 {
-            assert_eq!(run_fixture("--", fixture), expected, "{fixture} under the default mode");
+            assert_eq!(run_fixture("--b-jit", fixture), expected, "{fixture} under --b-jit");
         }
+    }
+}
+
+/// The function-level compile attempts (before each function's `osr` section) and the loop-region runs of a run's statistics.
+fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
+    let output = Command::new(env!("CARGO_BIN_EXE_quench"))
+        .args([flag, "-e", HOT_LOOP])
+        .env("QUENCH_TRACE", "js-jit")
+        .env_remove("NODE_OPTIONS")
+        .output()
+        .expect("run quench");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let (mut attempts, mut runs) = (0, 0);
+    for json in String::from_utf8_lossy(&output.stderr).lines().filter_map(|line| line.strip_prefix("QUENCH_JS_JIT_STATS ")) {
+        let (function, osr) = json.split_once("\"osr\"").unwrap_or((json, ""));
+        attempts += count_after(function, "\"compile_attempts\":");
+        runs += count_after(osr, "\"native_region_runs\":");
+    }
+    (attempts, runs)
+}
+
+#[test]
+fn b_jit_compiles_no_function_and_runs_base_regions() {
+    let (attempts, runs) = function_attempts_and_region_runs("--b-jit");
+    assert_eq!(attempts, 0, "--b-jit: no Cranelift function compile is attempted");
+    // The stencil strip emits the x86-64 frame shapes; another host runs the lanes instead.
+    if cfg!(target_arch = "x86_64") {
+        assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
     }
 }
 
@@ -98,11 +131,18 @@ fn osr_transitions_between_tiers_keep_the_output() {
     let expected = run_fixture("--no-jit", "osr_transitions.js");
     assert!(expected.0 && expected.1.lines().count() == 6, "--no-jit: {}", expected.1);
     // `--` ends the options: the default mode, every tier on.
-    assert_eq!(run_fixture("--", "osr_transitions.js"), expected, "osr_transitions.js under the default mode");
+    for flag in ["--b-jit", "--q-jit", "--u-jit", "--"] {
+        assert_eq!(run_fixture(flag, "osr_transitions.js"), expected, "osr_transitions.js under {flag}");
+    }
     let keys = ["native_region_runs", "tier_ups", "body_runs"];
     let [regions, published, ran] = fixture_osr_counts("--", "osr_transitions.js", keys);
     // The default mode runs the loop in its body: a region is entered only where a trial
     // beats the lane's loop rate (`LoopTier`), so the loop's native tier here is the body.
     assert!(regions + ran > 0, "the default mode: the hot loop runs a native tier");
     assert!(published > 0 && ran > 0, "the default mode: a loop body publishes ({published}) and runs ({ran})");
+    // The stencil strip emits x86-64's frame shapes; another host's `--b-jit` runs the lanes.
+    if cfg!(target_arch = "x86_64") {
+        let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
+        assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
+    }
 }

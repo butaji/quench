@@ -4,7 +4,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::Stage;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// ToBoolean of `register` as an i8, from its proved representation; a tagged value whose
 /// truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `miss`.

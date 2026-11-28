@@ -48,7 +48,7 @@ pub(crate) fn owe_invariants(vm: &mut Vm, completion: Completion, target: Value,
     // An array's `length` and elements are answered by its element facts too, which its
     // layout does not name; any other name by its shape, which its layout does.
     let by_layout = vm.heap_reads().array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::ARRAY_INDEX));
-    let layout = if by_layout { vm.heap_reads().object(target).map_or(0, |data| data.layout_id()) } else { 0 };
+    let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
     vm.lane_stack.recomplete_top(completion);
     vm.lane_stack.attach_payload(SidePayload::Trapped(check));
@@ -69,7 +69,7 @@ pub(crate) fn trap_result_needs_general_path(vm: &Vm, payload: SidePayload, valu
         TrapAccess::StrictStore if !vm.truthy(value) => true,
         TrapAccess::Store | TrapAccess::StrictStore if !vm.truthy(value) => false,
         // A target whose layout the trap left as it was leaves the key unconstrained still.
-        _ => !(check.layout != 0 && vm.heap_reads().object(check.target).is_some_and(|data| data.layout_id() == check.layout))
+        _ => !(check.layout != 0 && vm.object_data(check.target).is_some_and(|data| data.layout_id() == check.layout))
             && !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
     }
 }

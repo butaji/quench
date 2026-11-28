@@ -1,61 +1,26 @@
 //! The closed-world gate: which facts hold of a program that may receive code at run time.
-//!
-//! The solve is optimistic. It runs in `World::Closed` (no code is added), and `verify` checks the assumption once the
-//! solve settles; a program that fails the check is solved again in `World::Open`. The check uses the solve's own call
-//! graph, so no second reading of the program decides the world.
-//!
-//! Soundness. The solve assumes that no code is added at run time. Code enters only through an opener site (a direct
-//! `eval`, a `Function` constructor, a reflective call that may reach one; `openers`) or a dynamic import (`Open`). The
-//! check holds when both of these hold:
-//! - No opener lies in a function the call graph reaches. The call graph over-approximates what can run:
-//!   - a function is reached by a call the solve resolves to it (`types::targets`), by an unresolved call's callee, which
-//!     may be any escaped function (`escapes::escapes`), or without a recorded call when code the solve does not see
-//!     starts it: the root, a class constructor (`super` calls run it), an accessor, a closure a named property holds (a
-//!     runtime conversion calls `toString` or `valueOf`), and a Module's declarations (the host imports them);
-//!   - a declaration nothing calls or escapes is not reached: it runs only when read, and a read the solve follows is a call.
-//!   The host is not a caller: it runs no program closure except through an escape, as the solve already assumes.
-//! - The global object reaches no place that can name a global the call graph does not record. A value that may be the
-//!   global object (`Cell::global`) is produced only by a Script's root `this` (a Module's is `undefined`), a global-object
-//!   name (`globalThis`, `window`, `self`, `global`, `frames`), and the `this` a plain call binds to a sloppy function: one
-//!   a recorded plain call reaches, or one unknown code may call plainly (`escapes::Escapes::plain`). Strict code never
-//!   binds the global object. The host hands the program no other global object, as the premise of the closed world. From such a value,
-//!   a reached computed access (`g[k]`), a for-in or `in` over it, or a named access (`g.f`, whose result may be a global
-//!   function called later) would reach any global function by name: `effects::keyed_global` marks those. An escape that
-//!   holds it (`escapes::Escapes::sinks`) gives unseen code the global object, which may read every global function.
-//!
-//! The check is the standard optimistic-then-verify pattern: the solve's facts under `Closed` are kept only when the
-//! assumption they rest on is verified by the settled solve; otherwise they are recomputed under `Open`.
 
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::bytecode::{ProgramKind, ResidualProgram};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::{Engine, SourceKind};
-use super::census::Census;
-use super::escapes::{self, Escapes};
-use super::flow::{Call, FunctionFlow, Target};
-use super::types::targets;
-use super::value::{Key, Origin};
-use super::AotFacts;
-use crate::typed_ir::FactKey;
-use std::collections::BTreeSet;
 
 /// The global name a dynamic `import()` calls (`compile::ast::expression`), a host hook that loads code.
 const DYNAMIC_IMPORT: &str = "\0quench:dynamic-import";
 
-/// How closed a program is: what code added at run time can change. Every world solves the same
-/// facts; the world only says which keys new code can move (`World::live`).
+/// How closed a program is: what code added at run time can change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum World {
     /// Code may be added that reaches its scopes (a direct `eval`, a dynamic import, source the
-    /// gate cannot read): every key is live, slots and parameters included.
+    /// gate cannot read): no fact holds.
     Open,
     /// Code may be added, but only as global code (`Function`, an indirect `eval`, a reflective
-    /// `o[k]` that may reach either): it can write globals and any object's properties, never a
-    /// function's own bindings or registers. Globals, named members and elements are live; slots,
-    /// returns and parameters are not. No verdict produces it (a site that adds code opens the world).
+    /// `o[k]` that may reach either; `SourceDemands::function`, `reflective`): it can write
+    /// globals and any object's properties, never a function's own bindings or registers. Facts
+    /// of those hold; facts of globals and named members do not.
     Locals,
-    /// No code can be added: no key is live.
+    /// No code can be added (`SourceDemands::requires_dynamic_source` is false): every fact holds.
     Closed,
 }
 
@@ -64,242 +29,37 @@ impl World {
     pub fn from_byte(byte: u8) -> Option<Self> {
         [Self::Open, Self::Locals, Self::Closed].into_iter().find(|world| *world as u8 == byte)
     }
+}
 
-    /// Whether code added in this world can move `key`: what a fact under `key` guesses. Only a
-    /// live key's fact is a guess held under an edge, so only a live key's readers subscribe.
-    pub fn live(self, key: FactKey) -> bool {
-        match self {
-            Self::Closed => false,
-            Self::Open => true,
-            Self::Locals => matches!(key, FactKey::Global(_) | FactKey::Field { .. } | FactKey::AnyField(_) | FactKey::Elements(_)),
-        }
+/// How closed `program` is: its source's demands (`Engine::standalone_source_demands`, the
+/// decision every producer makes), and whether it calls a dynamic import. A program whose source
+/// is not kept is not proved closed.
+pub(super) fn world(program: &ResidualProgram) -> World {
+    // An execution-only build runs no code its image did not archive (`require_source_compilation`
+    // refuses dynamic source), so every program it can run is closed; the source parse below is
+    // the compiler's own proof and needs the syntax frontend this build does not carry.
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = program;
+        World::Closed
     }
-}
-
-/// The sites that may receive code at run time (`SourceDemands`: eval, Function-family and reflective sites), by offset in
-/// the program's source, every site whether or not it runs (`verify` decides which run). None where the program's source
-/// does not bound its sites (an eval program, a dynamic import, a source that does not parse): the world is Open.
-#[cfg(feature = "jit")]
-pub(super) fn openers(program: &ResidualProgram) -> Option<Vec<u32>> {
-    let kind = match program.kind {
-        ProgramKind::Script => SourceKind::Script,
-        ProgramKind::Module => SourceKind::Module,
-        ProgramKind::Eval | ProgramKind::Wasm => return None,
-    };
-    let imports = program.atoms.iter().any(|name| name == DYNAMIC_IMPORT);
-    // Without the front end nothing reads the source: no program is proved closed.
-    if !cfg!(feature = "source") || imports {
-        return None;
+    #[cfg(feature = "jit")]
+    {
+        let kind = match program.kind {
+            ProgramKind::Script => SourceKind::Script,
+            ProgramKind::Module => SourceKind::Module,
+            ProgramKind::Eval | ProgramKind::Wasm => return World::Open,
+        };
+        let imports = program.atoms.iter().any(|name| name == DYNAMIC_IMPORT);
+        // Without the front end nothing reads the source: no program is proved closed.
+        if !cfg!(feature = "source") || imports {
+            return World::Open;
+        }
+        let Some(demands) = program.source.as_ref().and_then(|source| Engine::standalone_source_demands(&source.text, kind)) else {
+            return World::Open;
+        };
+        if !demands.eval.is_empty() { World::Open }
+        else if demands.requires_dynamic_source() { World::Locals }
+        else { World::Closed }
     }
-    let demands = Engine::standalone_source_demands(&program.source.as_ref()?.text, kind)?;
-    let mut sites = [demands.eval, demands.function, demands.reflective].concat();
-    sites.sort_unstable();
-    sites.dedup();
-    Some(sites)
-}
-
-/// An execution-only build runs no code its image did not archive (`require_source_compilation` refuses dynamic source),
-/// so every program it can run is closed.
-#[cfg(not(feature = "jit"))]
-pub(super) fn openers(program: &ResidualProgram) -> Option<Vec<u32>> {
-    let _ = program;
-    Some(Vec::new())
-}
-
-/// Whether the settled solve's assumption holds: `flows`, `facts`, `census` and `escaped` are the solve's own, taken in
-/// `World::Closed` with the program's `openers` (`openers`). See the module's soundness argument.
-pub(super) fn verify(program: &ResidualProgram, openers: &[u32], flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &Escapes) -> bool {
-    let reached = reached(program, flows, facts, census, escaped);
-    let indexed = flows.iter().zip(&reached).any(|(flow, &live)| live && flow.global_keyed);
-    // A reached read of `constructor`, or of a computed key, off a value that may be a function or a prototype object reaches the
-    // `Function` constructor, whose code no opener site names (`effects::reflective_read`).
-    let reflective = flows.iter().zip(&reached).any(|(flow, &live)| live && flow.reflective_read);
-    let escaping = escaped.sinks.iter().any(|cell| cell.global);
-    let opened = opener_functions(program, openers).is_some_and(|functions| functions.iter().all(|&function| !reached[function as usize]));
-    opened && !indexed && !reflective && !escaping
-}
-
-/// The functions the solve's call graph reaches: every seed (`seeds`) and every target a reached function's calls may name.
-/// A function nothing names is not reached, so its code runs in no run of a closed program.
-pub(super) fn reached(program: &ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &Escapes) -> Vec<bool> {
-    let mut reached = vec![false; flows.len()];
-    let mut pending = seeds(program, flows, census, escaped);
-    while let Some(function) = pending.pop() {
-        if std::mem::replace(&mut reached[function as usize], true) {
-            continue;
-        }
-        for call in &flows[function as usize].calls {
-            pending.extend(targets(function, call, facts, census));
-        }
-    }
-    reached
-}
-
-/// The closures the program stores under a named property (`Member`, `MemberOn`, `MemberAny`): code the call graph does not
-/// record may call them, as a host reads a property and calls what it holds.
-pub(super) fn named_closures(flows: &[FunctionFlow]) -> BTreeSet<u32> {
-    let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
-    let mut named = BTreeSet::new();
-    for flow in flows {
-        for (_, key, word) in &flow.writes {
-            if matches!(key, Key::Member(_) | Key::MemberOn { .. } | Key::MemberAny(_)) {
-                escapes::mark(&word.cell, &materialized, &mut named);
-            }
-        }
-    }
-    named
-}
-
-/// The functions code the call graph does not record may start: the program's roots, its class constructors, accessors, the
-/// closures named properties hold (`escapes::mark`: a closure a conversion or the host may call), the escaped functions, and,
-/// for a Module, the functions its root declares (the host imports them).
-pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
-    let mut seeds = started_seeds(program, flows, census, escaped);
-    seeds.extend(named_closures(flows));
-    seeds
-}
-
-/// The seeds (`seeds`) other than the closures named properties hold: the functions code the call graph does not record may
-/// start whether or not the program has made their closure yet.
-pub(super) fn started_seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
-    let root = (0..flows.len()).find(|&id| program.with_record(id, |function| function.parent.is_none())).map(|id| id as u32);
-    let module_root = if matches!(program.kind, ProgramKind::Module) { root } else { None };
-    let mut seeds: Vec<u32> = (0..flows.len())
-        .filter(|&id| program.with_record(id, |function| {
-            function.parent.is_none() || function.is_class_constructor || (module_root.is_some() && function.parent == module_root)
-        }))
-        .map(|id| id as u32)
-        .collect();
-    seeds.extend(escaped.functions.iter().copied());
-    seeds.extend(census.accessors.functions());
-    seeds
-}
-
-/// The function each opener site lies in: the innermost function whose source span contains it, the root for top-level code.
-/// None where a function nested in the root has no span, since a site may then lie in code the spans do not name.
-fn opener_functions(program: &ResidualProgram, openers: &[u32]) -> Option<Vec<u32>> {
-    let mut spans = Vec::new();
-    let mut root = None;
-    for id in 0..program.function_count() {
-        let (top, span) = program.with_record(id, |function| (function.parent.is_none(), function.source_span));
-        if top && root.is_none() {
-            root = Some(id as u32);
-        }
-        match span {
-            Some(span) => spans.push((span.start, span.end, id as u32)),
-            None if !top => return None,
-            None => {}
-        }
-    }
-    let root = root?;
-    Some(openers.iter().map(|&offset| {
-        spans
-            .iter()
-            .filter(|&&(start, end, _)| start <= offset && offset < end)
-            .min_by_key(|&&(start, end, _)| end - start)
-            .map_or(root, |&(_, _, id)| id)
-    }).collect())
-}
-/// Names whose presence lets an element access run an accessor the flows do not see: a proxy's traps run for every access, and a
-/// descriptor object (`create`, `defineProperties`) may define an index accessor with keys no flow names.
-const INDEX_ACCESSOR_NAMES: [&str; 3] = ["Proxy", "create", "defineProperties"];
-/// The builtin that defines one property from its key and descriptor; its key is known only where an argument names a non-index atom.
-const PROPERTY_DEFINER: &str = "defineProperty";
-
-/// The text of atom `atom`.
-fn atom_text(program: &ResidualProgram, atom: u32) -> &str {
-    let text: &str = program.atoms[atom as usize].as_ref();
-    text
-}
-
-/// Whether atom `atom` is an array index: its text is the canonical form of an integer below `u32::MAX`.
-fn index_name(program: &ResidualProgram, atom: u32) -> bool {
-    let text = atom_text(program, atom);
-    text.parse::<u32>().is_ok_and(|index| index != u32::MAX && index.to_string() == text)
-}
-
-/// Whether `call` is a `defineProperty` that may define an index: its callee is that property, read by name or through an alias
-/// (`aliased`: the program names it, and the callee is no member read), and no argument names a non-index atom as the key.
-fn may_define_index(program: &ResidualProgram, call: &Call, aliased: bool) -> bool {
-    is_property_definer(program, call, aliased)
-        && !call.arguments.iter().any(|argument| argument.atom_key().is_some_and(|atom| !index_name(program, atom)))
-}
-
-/// Whether `call` calls the builtin `defineProperty` (`Object.defineProperty`, `Reflect.defineProperty`), by the name it is read by:
-/// a method, or a named read. A callee read through no name is that builtin only where the program names it (`aliased`,
-/// `names_property_definer`).
-pub(super) fn is_property_definer(program: &ResidualProgram, call: &Call, aliased: bool) -> bool {
-    let name = match call.target {
-        Target::Method(atom) => Some(atom),
-        Target::Register => match call.callee.origin {
-            Some(Origin::Member(atom) | Origin::MemberOn { atom, .. }) => Some(atom),
-            _ => return aliased,
-        },
-        Target::Known(_) | Target::Accessor { .. } => None,
-    };
-    name.is_some_and(|atom| atom_text(program, atom) == PROPERTY_DEFINER)
-}
-
-/// Whether the program names `defineProperty`, so a callee read through no name may be that builtin (`is_property_definer`).
-pub(super) fn names_property_definer(program: &ResidualProgram) -> bool {
-    program.atoms.iter().any(|atom| {
-        let text: &str = atom.as_ref();
-        text == PROPERTY_DEFINER
-    })
-}
-
-/// Whether no index accessor can run for an element access of `program`, so that the access runs no guest code for a key that
-/// converts to none (`lengths::transfer::element_runs_guest_code`). Only the closed world proves it: code added at run time may define one.
-/// Given a closed world, it holds when no accessor the flows define has an index name or an unknown key (`FunctionFlow::wild`),
-/// no `defineProperty` may name an index, and the program names no proxy or descriptor-defining builtin (`INDEX_ACCESSOR_NAMES`).
-pub(super) fn index_accessors_absent(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
-    let names = |name: &str| program.atoms.iter().any(|atom| {
-        let text: &str = atom.as_ref();
-        text == name
-    });
-    let aliased = names(PROPERTY_DEFINER);
-    world == World::Closed
-        && !INDEX_ACCESSOR_NAMES.iter().any(|name| names(name))
-        && flows.iter().all(|flow| {
-            flow.wild.is_none()
-                && flow.accessors.iter().all(|accessor| !index_name(program, accessor.atom))
-                && flow.calls.iter().all(|call| !may_define_index(program, call, aliased))
-        })
-}
-
-/// Whether no builtin prototype object (`Cell::prototype`) gains an index property through a store the flows record: no element
-/// store writes one, and no builtin store does (`FunctionFlow::prototype_writes`). `AotFacts::prototype_indices_empty` adds this
-/// to `index_accessors_absent`, which already rules out an index defined by `defineProperty` or an accessor.
-pub(super) fn prototype_writes_absent(flows: &[FunctionFlow]) -> bool {
-    flows.iter().all(|flow| !flow.prototype_writes && flow.element_stores.values().all(|store| !store.prototype))
-}
-
-/// Names whose presence lets a property of an object change with no store the flows record: a descriptor-defining builtin
-/// (`defineProperty`, `defineProperties`, `assign`), a prototype setter that retargets a function's chain (`setPrototypeOf`,
-/// `__proto__`), and the reflective and proxy objects that write through a trap or `Reflect.set`.
-const APPLY_WRITE_NAMES: [&str; 6] = ["defineProperty", "defineProperties", "setPrototypeOf", "__proto__", "Reflect", "Proxy"];
-
-/// Whether a write of `key` names property `atom` (`Member`, `MemberAny` or `MemberOn`): a store the census counts.
-fn writes_named(key: Key, atom: u32) -> bool {
-    matches!(key, Key::Member(name) | Key::MemberAny(name) | Key::MemberOn { atom: name, .. } if name == atom)
-}
-
-/// Whether property `apply` of every function is `Function.prototype.apply`, the builtin, so `f.apply(this, arguments)` reaches
-/// the builtin for every `f`. Only the closed world proves it: code added at run time may store `apply`. Given a closed world,
-/// it holds when no flow stores `apply` under a name, no store through a computed key may write a named property
-/// (`FunctionFlow::wild`), and the program names no builtin that writes a property the flows do not record
-/// (`APPLY_WRITE_NAMES`). A program that never names `apply` has no such call, so it holds.
-pub(super) fn apply_is_builtin(program: &ResidualProgram, world: World, flows: &[FunctionFlow]) -> bool {
-    let names = |name: &str| program.atoms.iter().any(|atom| {
-        let text: &str = atom.as_ref();
-        text == name
-    });
-    let Some(apply) = program.atoms.iter().position(|atom| {
-        let text: &str = atom.as_ref();
-        text == "apply"
-    }) else { return true };
-    let apply = apply as u32;
-    world == World::Closed
-        && !APPLY_WRITE_NAMES.iter().any(|name| names(name))
-        && flows.iter().all(|flow| flow.wild.is_none() && flow.writes.iter().all(|(_, key, _)| !writes_named(*key, apply)))
 }

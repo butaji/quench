@@ -1,37 +1,33 @@
-//! Step `tier-order`: the modes are ordered by their score, interpreter < default < AOT, so in
-//! instructions a faster mode never runs a program in more than the one under it: the default
-//! (every function in its predicted-cheapest tier) no more than the interpreter, and AOT (the
-//! `quench aot` build) no more than the default.
+//! Step `tier-order`: a higher tier never runs a program in more instructions than the tier under it
+//! (interpreter > b-jit > u-jit, and the default, which tiers b-jit up to u-jit, no more than b-jit).
 //! Each C-parity kernel, and every `.js` file in the directories `QUENCH_TIER_ORDER_CORPUS` names
-//! (colon-separated, such as the V8-v7 files), runs cold in callgrind under each mode; AOT runs
-//! the executable its compile makes of the program. A pair whose faster mode counts more than the
-//! slack over the slower one is a violation, one `program higher>lower` line (the faster mode
-//! first), held to `crates/quench-tier-corpus/tier_order.txt`: a violation the file does not list fails the step,
+//! (colon-separated, such as the V8-v7 files), runs cold in callgrind under each mode with
+//! `QUENCH_DEV=sync-compile`, so a compile counts where it is made. A pair whose higher tier counts
+//! more than the slack over the lower one is a violation, one `program higher>lower` line, held to
+//! `crates/quench-tier-corpus/tier_order.txt`: a violation the file does not list fails the step,
 //! and a listed one that no longer occurs leaves it, so the list only shrinks. `quench-lint
 //! --census` counts its lines. Alone: `quench-gate --only tier-order`. The same ladder per op is
-//! `ir-budget`'s (`tier_inversions.txt`, `tier_inversions_aot.txt`); this step holds whole programs.
+//! `ir-budget`'s (`tier_inversions.txt`, `tier_inversions_default.txt`); this step holds whole programs.
 
-use std::{collections::{BTreeMap, BTreeSet}, env, ffi::OsString, fs, path::{Path, PathBuf}, sync::{atomic::{AtomicUsize, Ordering}, Mutex, PoisonError}, thread};
+use std::{collections::{BTreeMap, BTreeSet}, env, fs, path::{Path, PathBuf}, sync::{atomic::{AtomicUsize, Ordering}, Mutex, PoisonError}, thread};
 
-use crate::{build::NODE, config::Config, cparity, process, step::Verdict, tiers::{AOT, DEFAULT, INTERPRETER, launch}};
+use crate::{build::NODE, config::Config, cparity, process, step::Verdict, tiers::INTERPRETER};
 
 /// The violations, one `program higher>lower` per line, sorted.
 pub const LIST: &str = "crates/quench-tier-corpus/tier_order.txt";
 const EXTRA_CORPUS: &str = "QUENCH_TIER_ORDER_CORPUS";
 const VALGRIND: &str = "valgrind";
-/// Where each program's launch is built (AOT's executable): one directory per program.
-const SCRATCH: &str = "tier-order";
 /// The JIT tiers patch the code they emit (call links, stubs): valgrind must see each write, or it runs
 /// a stale translation and the program crashes partway with a total that counts only that part.
 const CALLGRIND: [&str; 4] = ["--tool=callgrind", "--fair-sched=yes", "--smc-check=all", "--callgrind-out-file=/dev/null"];
 /// The line callgrind ends its report with, before the total.
 const COLLECTED: &str = "Collected : ";
-/// Cold runs, with no caches.
-const ENVIRONMENT: [(&str, &str); 2] = [("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off")];
-/// Each mode by its name in the list and by `tiers` (the interpreter's flag, `default`, `aot`).
-const MODES: [(&str, &str); 3] = [("no-jit", INTERPRETER), ("default", DEFAULT), ("aot", AOT)];
-/// The pairs held in order: the faster mode (first) never counts more than the slower one (second).
-const ORDER: [(&str, &str); 2] = [("default", "no-jit"), ("aot", "default")];
+/// Cold runs, every compile on the running thread.
+const ENVIRONMENT: [(&str, &str); 3] = [("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off"), ("QUENCH_DEV", "sync-compile")];
+/// Each mode by name and runner flag (none for the default).
+const MODES: [(&str, Option<&str>); 4] = [("no-jit", Some(INTERPRETER)), ("b-jit", Some("--b-jit")), ("u-jit", Some("--u-jit")), ("default", None)];
+/// The pairs held in order: the first never counts more than the second.
+const ORDER: [(&str, &str); 3] = [("b-jit", "no-jit"), ("u-jit", "b-jit"), ("default", "b-jit")];
 /// The share of the lower count under which the higher one is the same count (about 0.3%).
 const SAME_COUNT_DIVISOR: u64 = 333;
 const HEADER: &str = "# Programs a higher tier runs in more instructions than the tier under it (quench-gate step `tier-order`).\n\
@@ -47,24 +43,14 @@ fn corpus(config: &Config) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// The total Ir of the run `argv` (a program's launch in one mode) under callgrind.
-fn instructions(config: &Config, argv: &[OsString], program: &Path, mode: &str) -> Result<u64, String> {
+/// The total Ir of `program` run in the mode `flag`.
+fn instructions(config: &Config, host: &Path, flag: Option<&str>, program: &Path) -> Result<u64, String> {
     let mut command = config.command(VALGRIND);
-    command.args(CALLGRIND).args(argv).envs(ENVIRONMENT);
+    command.args(CALLGRIND).arg(host).args(flag).arg(program).envs(ENVIRONMENT);
     let run = process::run(&mut command)?;
-    if !run.success { return Err(format!("{} {mode}: failed under callgrind\n{}", program.display(), run.excerpt())); }
+    if !run.success { return Err(format!("{} {}: failed under callgrind\n{}", program.display(), flag.unwrap_or("default"), run.excerpt())); }
     run.stderr.lines().find_map(|line| line.split_once(COLLECTED)).and_then(|(_, total)| total.trim().parse().ok())
-        .ok_or_else(|| format!("{} {mode}: callgrind reported no total\n{}", program.display(), run.excerpt()))
-}
-
-/// The total Ir of `program` in the mode `MODES[mode]`, its launch built in the program's own
-/// scratch directory (`slot`), so an AOT compile never shares an output with another program.
-fn measure(config: &Config, host: &Path, program: &Path, slot: usize, mode: usize) -> Result<u64, String> {
-    let (name, flag) = MODES[mode];
-    let scratch = config.target.join(SCRATCH).join(slot.to_string());
-    fs::create_dir_all(&scratch).map_err(|error| format!("{}: {error}", scratch.display()))?;
-    let argv = launch(config, host, flag, program, &scratch, &[])?;
-    instructions(config, &argv, program, name)
+        .ok_or_else(|| format!("{} {}: callgrind reported no total\n{}", program.display(), flag.unwrap_or("default"), run.excerpt()))
 }
 
 /// The violations of `counts` (Ir by mode) for the program `name`.
@@ -82,14 +68,14 @@ fn listed(text: &str) -> BTreeSet<String> {
 pub fn run(config: &Config) -> Verdict {
     let host = config.binary(NODE)?;
     let programs = corpus(config)?;
-    // Each (program, mode) run is its own callgrind process (AOT's compile first): `config.jobs` of them at once.
+    // Each (program, mode) run is its own callgrind process: `config.jobs` of them at once.
     let runs: Vec<(usize, usize)> = (0..programs.len()).flat_map(|program| (0..MODES.len()).map(move |mode| (program, mode))).collect();
     let next = AtomicUsize::new(0);
     let measured: Mutex<BTreeMap<(usize, usize), Result<u64, String>>> = Mutex::default();
     thread::scope(|scope| {
         for _ in 0..config.jobs.min(runs.len()) {
             scope.spawn(|| while let Some(&(program, mode)) = runs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                let count = measure(config, &host, &programs[program], program, mode);
+                let count = instructions(config, &host, MODES[mode].1, &programs[program]);
                 measured.lock().unwrap_or_else(PoisonError::into_inner).insert((program, mode), count);
             });
         }
@@ -130,18 +116,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_faster_mode_over_the_slower_one_is_a_violation() {
-        let counts = BTreeMap::from([("no-jit", 1000), ("default", 1100), ("aot", 1000)]);
-        assert_eq!(violations("k", &counts), vec!["k default>no-jit".to_owned()]);
-        let close = BTreeMap::from([("no-jit", 1000), ("default", 1003)]);
+    fn a_higher_tier_over_the_lower_one_is_a_violation() {
+        let counts = BTreeMap::from([("no-jit", 1000), ("b-jit", 1100), ("u-jit", 1000), ("default", 1101)]);
+        assert_eq!(violations("k", &counts), vec!["k b-jit>no-jit".to_owned()]);
+        let close = BTreeMap::from([("no-jit", 1000), ("b-jit", 1003)]);
         assert!(violations("k", &close).is_empty());
-    }
-
-    #[test]
-    fn aot_counts_no_more_than_the_default() {
-        let counts = BTreeMap::from([("no-jit", 1000), ("default", 900), ("aot", 910)]);
-        assert_eq!(violations("k", &counts), vec!["k aot>default".to_owned()]);
-        let in_order = BTreeMap::from([("no-jit", 1000), ("default", 900), ("aot", 600)]);
-        assert!(violations("k", &in_order).is_empty());
     }
 }

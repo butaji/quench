@@ -127,8 +127,8 @@ pub(crate) use crate::staged::encodings::NARROW_LEN;
 /// The `Header::len` flag of a double backing: every value word is the IEEE-754 bits of a
 /// Number, whole or not (3 as 3.0's bits, never the int32 tag), and a hole is
 /// `Value::DELETED`'s word, which arithmetic never produces; `Header::others` then counts
-/// holes, and the backing holds no heap reference. Writes canonicalize (`double_word`), so
-/// reads take the word as it is. A Number stored into a double backing it alone owns stays double
+/// holes, and the backing holds no heap reference. Reads re-canonicalize (`Value::number`),
+/// so values are unchanged. A Number stored into a double backing it alone owns stays double
 /// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
 /// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
 /// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both
@@ -141,12 +141,14 @@ pub use crate::staged::encodings::DOUBLE_LEN;
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
 pub use crate::staged::encodings::ENCODED_LEN;
 
-/// Whether backings may take the double kind (`DOUBLE_LEN`): always in production; in a test
-/// only where it asks (`TEST_DOUBLES`), as tests slice backings as wide values.
+/// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
+/// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
+/// slice backings as wide values.
 #[cfg(not(test))]
 #[inline(always)]
 fn double_elements() -> bool {
-    true
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !crate::trace::Dev::NoDoubleElements.on())
 }
 
 /// `double_elements` in a test.
@@ -269,6 +271,20 @@ impl ArrayElements {
             // SAFETY: the new allocation holds `len` slots after the header.
             unsafe { elements.values().add(slot).write(written) };
         }
+        elements.make_mut().set_others(counted);
+        elements
+    }
+
+    /// `from_fn` of a constant: `len` copies of `value` in one allocation, filled as a slice,
+    /// whose count of others is `len` when `value` is no int32 and none otherwise.
+    pub(crate) fn filled(len: usize, value: Value) -> Self {
+        if len == 0 {
+            return Self::new();
+        }
+        let mut elements = Self::allocate(len, len);
+        // SAFETY: the new allocation holds `len` slots after the header.
+        unsafe { std::slice::from_raw_parts_mut(elements.values(), len) }.fill(value);
+        let counted = if other(value) == 0 { 0 } else { len as u32 };
         elements.make_mut().set_others(counted);
         elements
     }
@@ -463,6 +479,13 @@ impl ArrayElements {
     pub fn double_values(&self) -> Option<&[f64]> {
         // SAFETY: a double backing's first `len` words are initialized f64 bits.
         self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
+    }
+
+    /// Whether this array alone owns its double backing's words, so a store replaces them
+    /// in place (a shared double backing copies before its store, `replace_in_place`).
+    #[inline]
+    pub(crate) fn owns_double_words(&self) -> bool {
+        self.is_double() && self.header().owners == 1
     }
 
     /// A double backing's words that hold no hole (`ElementViews::Double`); `None` otherwise.

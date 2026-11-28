@@ -23,11 +23,7 @@ impl Vm {
         }
         let first_constant = delta.base.constants;
         let target = p.append_chunk(delta);
-        let atoms = super::program_atoms(p);
-        let constants: Vec<Value> = p.constants[first_constant..].iter().map(|constant| {
-            let atom = super::constant_atom(&atoms, constant);
-            self.materialize_constant(constant, atom)
-        }).collect();
+        let constants: Vec<Value> = p.constants[first_constant..].iter().map(|constant| self.materialize_constant(constant)).collect();
         self.programs.push_constants(program, constants.into_iter());
         if program == self.active_program {
             self.set_active_program(program);

@@ -1,4 +1,4 @@
-//! What a loop region's code calls and inlines under the b-jit tier: the callees its call sites
+//! What a loop region's code calls and inlines under `--b-jit`: the callees its call sites
 //! recorded (`RegionCalls`), which its build stitches in or calls by their entries, and what its
 //! published code owns of them (`CallCode`).
 
@@ -11,6 +11,7 @@ use super::super::lane_facts::bind_callees;
 use quench_runtime::bytecode::{ResidualProgram, WideInstruction};
 use quench_runtime::code_dependencies::Invalidation;
 use crate::dispatch_fast::LaneRecoverySpace;
+use quench_bjit::call_record::CallRecord;
 
 /// The callees the call sites of a region's function recorded, and the realm they were found in:
 /// what the region's build stitches in. The default has no call site: every call stays a call.
@@ -56,11 +57,11 @@ impl CallCode {
 
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
-    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectArm]>, Vec<crate::compiled::OwnedCallRecord>), caller_registers: u16, invalidation: Invalidation) -> Self {
+    pub(crate) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
         // The windows start past the function's environment window (`base_region::function::inline_base`):
         // the room covers that reach as well as the activations a leave inside a callee pushes.
         let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
-        Self { inlined, direct, records, caller_registers, recovery, invalidation }
+        Self { inlined, direct, records, rebound: Default::default(), held: Box::default(), caller_registers, recovery, invalidation }
     }
 
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a
@@ -88,6 +89,6 @@ impl CallCode {
     /// The callees its calls name by identity, which a collection that frees one retires it over
     /// while its code compiles.
     pub(crate) fn identities(&self) -> Box<[Value]> {
-        self.inlined.iter().filter_map(|call| call.target.identity()).chain(self.direct.iter().map(|callee| callee.closure.callee)).collect()
+        self.inlined.iter().filter_map(|call| call.target.identity()).chain(self.direct.iter().map(|callee| callee.callee)).collect()
     }
 }

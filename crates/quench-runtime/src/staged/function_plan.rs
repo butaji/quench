@@ -8,17 +8,9 @@
 //! Only the operation is stored. Its binding times (`Operation::operand_times`) and effect row
 //! (`Operation::effects`) are functions of it, read where a tier asks.
 
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::allocation::AllocationAllocationExt;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::decode::DecodeContext;
 use super::{Allocation, Operation};
 use crate::bytecode::{GenericStep, JsDenotation, Register, WideInstruction};
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
 
 /// A plan operation's word and proof are its registers and a proof slot to come (K-PROOF):
 /// the plan names what an instruction reads, never a copy of a fact.

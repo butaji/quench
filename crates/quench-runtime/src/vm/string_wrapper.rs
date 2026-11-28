@@ -20,7 +20,7 @@ pub(super) const STRING_INDEX_ATTRIBUTES: PropertyAttributes = PropertyAttribute
 impl Vm {
     /// The string a String wrapper `object` boxes.
     pub(super) fn string_wrapper_primitive(&self, object: Value) -> Option<Value> {
-        let primitive = self.heap.ordinary_view(object)?.boxed_primitive()?;
+        let primitive = self.heap.ordinary_object(object)?.boxed_primitive()?;
         self.heap.is_string(primitive).then_some(primitive)
     }
 

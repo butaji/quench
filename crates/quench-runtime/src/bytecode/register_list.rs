@@ -16,7 +16,7 @@ pub struct RegisterList {
 
 impl RegisterList {
     /// The list of `count` registers `register` names by index; `None` past the window.
-    pub fn collect(
+    pub(crate) fn collect(
         count: usize,
         mut register: impl FnMut(usize) -> Register,
     ) -> Option<Self> {

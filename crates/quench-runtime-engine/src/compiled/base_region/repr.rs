@@ -2,8 +2,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::typed_ir::{Representation, Type};
-use crate::operand_class::{OperandClass, Site};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
+use crate::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// The representation of each web, by its number: `None` is unseen (a web no writer reaches), else
 /// how its values are held. A register takes the widest of what its writers produce.
@@ -19,7 +18,7 @@ pub(crate) fn operand_repr(reprs: &[Option<Representation>], source: Option<Sour
     }
 }
 
-/// The variant of row a site gets, chosen from its operands' solver classes (`Site`).
+/// The variant of row a site gets, chosen from its operand feedback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Variant {
     /// The int32-speculating row: guards int32 operands, exits at the PC on any other.
@@ -38,23 +37,32 @@ impl Variant {
     }
 }
 
-/// The kinds whose generic site becomes its concatenation variant where one of its operands is a string.
+/// The variant of each feedback class: a site never declined takes the int32 row it was
+/// compiled with, the lattice's higher classes the wider rows.
+const SELECTION: [(OperandClass, Variant); 4] = [
+    (OperandClass::Unseen, Variant::Int32),
+    (OperandClass::Int32, Variant::Int32),
+    (OperandClass::Number, Variant::Double),
+    (OperandClass::Any, Variant::Generic),
+];
+
+/// The kinds whose generic site becomes its concatenation variant once it has met a string.
 const STRING_VARIANTS: [(Kind, Variant); 1] = [(Kind::Add, Variant::Concat)];
 
-/// The variant of the row of `kind` at a site (`Site`): the int32 row where both operands are int32s, the Number row
-/// where both are Numbers, the concatenation row for a `+` with a string operand, else the generic row. A row with no
-/// site takes the int32 row.
-pub(crate) fn variant_of(kind: Kind, site: Option<Site>) -> Variant {
+fn selected(class: OperandClass) -> Variant {
+    SELECTION.iter().find(|(candidate, _)| *candidate == class).map_or(Variant::Generic, |(_, variant)| *variant)
+}
+
+/// The variant of the row of `kind` at a site with `kinds`.
+pub(crate) fn variant_of(kind: Kind, kinds: Option<&OperandKinds>) -> Variant {
     // A no-overflow row's operands are int32s by proof: it never meets a string (no Concat) or a double.
     if matches!(kind, Kind::AddNoOverflow | Kind::SubNoOverflow) {
         return Variant::Int32;
     }
-    let Some(site) = site else { return Variant::Int32 };
-    match site.class {
-        OperandClass::Int32 => Variant::Int32,
-        OperandClass::Number => Variant::Double,
-        OperandClass::Any if site.string => STRING_VARIANTS.iter().find(|(candidate, _)| *candidate == kind).map_or(Variant::Generic, |(_, variant)| *variant),
-        OperandClass::Any => Variant::Generic,
+    let Some(kinds) = kinds else { return Variant::Int32 };
+    match selected(kinds.class()) {
+        Variant::Generic if kinds.has_string() => STRING_VARIANTS.iter().find(|(candidate, _)| *candidate == kind).map_or(Variant::Generic, |(_, variant)| *variant),
+        variant => variant,
     }
 }
 
@@ -94,10 +102,10 @@ fn read_doubles(row: &Decoded) -> bool {
 }
 
 /// Keeps each site read's slot-type proof (`Decoded::typed`) only where a row drops a check on it: an inline-cache
-/// read (`Decoded::takes_ic_row`) whose slot holds direct objects and whose destination is a frame slot, whose fast row
-/// delivers the word with the destination's direct-object check left to the site row's path (`plan::ic_plan`). A Number
-/// slot keeps none: no row drops its tag test. Code that makes a call or a helper step keeps none, as the call may widen
-/// the slot before a later run of the read.
+/// read (`Decoded::takes_ic_row`) whose slot holds a Number and whose destination is a pinned double, which delivers
+/// the word untested (`plan::ic_plan`); or whose slot holds direct objects and whose destination is a frame slot, which
+/// the destination's proof after the read relies on (`proofs::typed_object`). Code that makes a call or a helper step
+/// keeps none, as the call may widen the slot before a later run of the read.
 ///
 /// INVARIANT (one fact store): a check the b-jit drops is backed by a fact-store proof and the dependency that keeps it
 /// true. The proof is the slot's observed type (`NativeFieldLoad::ty`, the type `Heap::slot_type` maintains on every
@@ -110,7 +118,8 @@ pub(crate) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
     for row in decoded.iter_mut() {
         let place = row.dst.map(|dst| homes.place(dst));
         let kept = match row.typed.map(|dependency| dependency.ty) {
-            Some(ty) => !ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) && matches!(place, Some(Place::Mem)),
+            Some(ty) if ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) => matches!(place, Some(Place::PinF(_))),
+            Some(_) => matches!(place, Some(Place::Mem)),
             None => false,
         };
         if calls || !row.takes_ic_row() || row.heap != Some(Heap::Site) || !kept {
@@ -134,7 +143,7 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
         Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Some(Representation::Int32) => Some(Representation::Int32),
         Kind::Abs if !widened && operands == Some(Representation::Int32) => Some(Representation::Int32),
         Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max
-        | Kind::Pow | Kind::Fround | Kind::Sign => Some(Representation::Float64),
+        | Kind::Fround | Kind::Sign => Some(Representation::Float64),
         Kind::Imul | Kind::Clz32 => Some(Representation::Int32),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
@@ -144,9 +153,15 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
     }
 }
 
-/// Whether the row is widened: its site's operands are not all int32s (`site`, the solver's).
-fn row_widened(site: Option<Site>) -> bool {
-    site.is_some_and(|site| site.class != OperandClass::Int32)
+/// Whether the row at `pc` is widened: named by a leave, recorded as declining its int32 step
+/// (`kinds`, its site's, where it is a caller instruction), or a loaded value among widened ones.
+fn row_widened(widened: &[usize], pc: usize, with_loads: bool, kinds: Option<&OperandKinds>) -> bool {
+    with_loads || widened.contains(&pc) || kinds.is_some_and(|kinds| !selected(kinds.class()).speculates())
+}
+
+/// Whether a loaded value (a heap row) is among the widened PCs.
+fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
+    decoded.iter().enumerate().any(|(k, row)| row.heap.is_some() && widened.contains(&(header as usize + k)))
 }
 
 /// Where a web starts: unseen where the region is not entered with it, else the narrowest representation
@@ -167,7 +182,11 @@ fn entry_repr(entered: bool, register: Register, seen: &[Type]) -> Option<Repres
 
 /// The representation of every web the region names, to a fixed point: where the compile
 /// began (`seen`, the entry's observed types; dead at the header: none yet), then each writer's result.
-pub(crate) fn representations(span: &Span, decoded: &[Decoded], sites: &[Option<Site>], seen: &[Type], webs: &Webs) -> Reprs {
+pub(crate) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: &[Type], webs: &Webs) -> Reprs {
+    let header = span.header;
+    // One loaded value that left for its int32 speculation widens every loaded value at once: the
+    // next compile need not discover them one leave at a time.
+    let loads_widened = loads_widened(decoded, header, widened);
     let entered = webs.entry_live(span);
     let mut reprs: Reprs = webs.orig.iter().enumerate().map(|(web, register)| entry_repr(entered.contains(&web), *register, seen)).collect();
     let mut changed = true;
@@ -180,8 +199,8 @@ pub(crate) fn representations(span: &Span, decoded: &[Decoded], sites: &[Option<
             }
             let Some(dst) = row.dst else { continue };
             let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
-            let site = sites.get(k).copied().flatten();
-            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(site), numbers) };
+            let site = kinds.get(k).and_then(Option::as_ref);
+            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), site), numbers) };
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;
@@ -193,8 +212,8 @@ pub(crate) fn representations(span: &Span, decoded: &[Decoded], sites: &[Option<
 
 /// Whether `row` is a generic `+` whose site met a string (`Variant::Concat`): its result is a tagged word, a string
 /// or a Number the step helper writes where the fast arm misses (`plan::concat_run`).
-fn concat_site(row: &Decoded, site: Option<Site>) -> bool {
-    row.generic && row.kind == Kind::Add && row.heap.is_none() && row.step.is_none() && variant_of(Kind::Add, site) == Variant::Concat
+fn concat_site(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+    row.generic && row.kind == Kind::Add && row.heap.is_none() && row.step.is_none() && variant_of(Kind::Add, kinds) == Variant::Concat
 }
 
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a
@@ -223,48 +242,51 @@ pub(crate) fn ranked(decoded: &[Decoded], reprs: &[Option<Representation>], repr
 mod tests {
     use super::*;
 
-    const INT: Site = Site { class: OperandClass::Int32, string: false };
-    const NUMBER: Site = Site { class: OperandClass::Number, string: false };
-    const GENERIC: Site = Site { class: OperandClass::Any, string: false };
-    const STRING: Site = Site { class: OperandClass::Any, string: true };
+    const INT: OperandKinds = OperandKinds::INT32;
+
+    fn variant(kind: Kind, kinds: OperandKinds) -> Variant {
+        variant_of(kind, Some(&kinds))
+    }
 
     #[test]
-    fn a_site_of_int32_operands_takes_the_int32_row() {
-        assert_eq!(variant_of(Kind::Add, Some(INT)), Variant::Int32);
+    fn a_site_that_never_declined_takes_the_int32_row() {
+        assert_eq!(variant(Kind::Add, OperandKinds::NONE), Variant::Int32);
+        assert_eq!(variant(Kind::Add, INT), Variant::Int32);
         assert_eq!(variant_of(Kind::Add, None), Variant::Int32);
-        assert_eq!(variant_of(Kind::AddNoOverflow, Some(GENERIC)), Variant::Int32);
     }
 
     #[test]
     fn a_number_site_takes_the_double_row() {
-        assert_eq!(variant_of(Kind::Mul, Some(NUMBER)), Variant::Double);
-        assert_eq!(variant_of(Kind::Add, Some(NUMBER)), Variant::Double);
+        assert_eq!(variant(Kind::Mul, INT.union(OperandKinds::DOUBLE)), Variant::Double);
+        assert_eq!(variant(Kind::Add, INT.union(OperandKinds::WIDENED)), Variant::Double);
     }
 
     #[test]
     fn a_string_on_add_takes_the_concatenation_row() {
-        assert_eq!(variant_of(Kind::Add, Some(STRING)), Variant::Concat);
+        assert_eq!(variant(Kind::Add, OperandKinds::STRING), Variant::Concat);
+        assert_eq!(variant(Kind::Add, INT.union(OperandKinds::STRING)), Variant::Concat);
     }
 
     #[test]
-    fn other_sites_take_the_generic_row() {
-        assert_eq!(variant_of(Kind::Sub, Some(STRING)), Variant::Generic);
-        assert_eq!(variant_of(Kind::Add, Some(GENERIC)), Variant::Generic);
-        assert_eq!(variant_of(Kind::Lt, Some(GENERIC)), Variant::Generic);
+    fn other_kinds_take_the_generic_row() {
+        assert_eq!(variant(Kind::Sub, OperandKinds::STRING), Variant::Generic);
+        assert_eq!(variant(Kind::Add, OperandKinds::OTHER), Variant::Generic);
+        assert_eq!(variant(Kind::Lt, OperandKinds::BIGINT), Variant::Generic);
     }
 
-    /// An object read into a frame slot keeps its object proof; a Number read, a read into the other place, a read with
+    /// A site read into a pinned double keeps its Number proof (the dependency the code holds and the row that drops
+    /// the tag test); an object read into a frame slot keeps its object proof; a read into the other place, a read with
     /// no inline-cache row, or code that makes a helper step keeps none.
     #[test]
     fn a_typed_read_keeps_its_proof_only_where_a_check_drops() {
         let number = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::NUMBER };
         let object = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::DIRECT_OBJECT_FAMILY };
-        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(IcEntry::Shape(7)), typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
+        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(7), proven: true, typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
         // Web 0 holds a pinned double, web 1 a frame slot; web 2 is the receiver.
         let homes = Homes::of(&[], &[0], vec![0, 1, 2], &[Vec::new(), Vec::new(), Vec::new()]);
         let mut rows = [read(0, number), read(1, number), read(1, object), Decoded { ic: None, ..read(0, number) }];
         keep_typed_reads(&homes, &mut rows);
-        assert_eq!(rows.iter().map(|row| row.typed.is_some()).collect::<Vec<_>>(), [false, false, true, false]);
+        assert_eq!(rows.iter().map(|row| row.typed.is_some()).collect::<Vec<_>>(), [true, false, true, false]);
         let mut calling = [read(0, number), Decoded::step(Step::Helper, None)];
         keep_typed_reads(&homes, &mut calling);
         assert!(calling[0].typed.is_none(), "a helper step may widen the slot");

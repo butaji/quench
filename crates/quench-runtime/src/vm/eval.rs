@@ -94,7 +94,7 @@ impl Vm {
     fn in_native_env_realm(&mut self, body: impl FnOnce(&mut Self) -> Result<Value, JsError>) -> Result<Value, JsError> {
         let previous_global = self
             .active_native_env()
-            .filter(|global| self.heap.object(*global).is_some())
+            .filter(|global| self.object_data(*global).is_some())
             .map(|global| self.switch_realm_global(global));
         let result = body(self);
         if let Some(previous_global) = previous_global {
@@ -127,7 +127,7 @@ impl Vm {
         {
             let native = match self.resolve_native_program(
                 crate::GLOBAL_SCRIPT_SOURCE_NAME,
-                &[crate::GLOBAL_SCRIPT_GOAL, source],
+                &[self.specialization_part(), crate::GLOBAL_SCRIPT_GOAL, source],
             ) {
                 Ok(native) => native,
                 Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(p, &message),
@@ -187,7 +187,7 @@ impl Vm {
         let result = (|| {
             self.instantiate_global_declarations(&residual)?;
             let root = self.closure(&residual, 0, Value::NULL)?;
-            self.call_root(&residual, root, self.realm.globals).map_err(JsError::from)
+            self.call_root(&residual, root, self.realm.globals)
         })();
         self.set_active_program(active_program);
         self.eval_script_context = eval_script_context;
@@ -456,13 +456,13 @@ impl Vm {
     pub(crate) fn prepare_embedding_library_body_kept(
         &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
-        let parts = [prefix, &*body, suffix];
+        let parts = [self.specialization_part(), prefix, &*body, suffix];
         #[cfg(feature = "native-execution")]
         if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
             return self.prepare_native_script(native);
         }
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
-            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name)
+            && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
         {
             return Ok(crate::PreparedScript { program: Rc::new(program), #[cfg(feature = "native-execution")] native: None });
         }
@@ -475,6 +475,14 @@ impl Vm {
 
     /// `program`'s compile-cache form, when every atom it names is found again by its text:
     /// a VM atom whose UTF-16 has no lossless host spelling cannot be cached by name.
+    /// Names this VM's specialization in a compile-cache key: a program compiled under the
+    /// other does not decode here (`decode_cached_program`). Without it, processes that run
+    /// a module under each specialization replaced each other's entry, and each compiled it
+    /// again (typescript.js, 9 MB of source, about 3 s per process).
+    pub fn specialization_part(&self) -> &'static str {
+        if self.specialized { "specialized" } else { "unspecialized" }
+    }
+
     /// What a compilation keeps of the records its load releases: their compile-cache
     /// encoding when its program is `cached` and the host keeps compiled programs, which
     /// `encode_cached_program` then copies.
@@ -511,9 +519,11 @@ impl Vm {
     }
 
     /// A program `encode_cached_program` encoded, with this VM's atom ids and `text` as its
-    /// source, which must be what it compiled from `name` after a `base`-byte prefix.
+    /// source, which must be what it compiled from `name` after a `base`-byte prefix, with
+    /// `specialized` as its specialization.
     pub(super) fn decode_cached_program(
         &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
+        specialized: bool,
     ) -> Result<crate::ResidualProgram, String> {
         let read = bytes.clone();
         let mut program = crate::ResidualProgram::decode_compact(
@@ -527,7 +537,7 @@ impl Vm {
         // 4.2 MB of compile-cache pages at its 30 MB peak).
         (self.host_statics.kept_bytes_read)((*read).as_ref());
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
-        if program.source_name != name || !source_matches {
+        if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
         }
         program.atoms =
@@ -544,7 +554,7 @@ impl Vm {
     fn kept_script(
         &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
     ) -> Option<crate::PreparedScript> {
-        let entry = self.host.kept_compiled_program(name, &[goal, source])?;
+        let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
         self.decode_kept_script(entry, source, name, origin)
     }
 
@@ -561,7 +571,8 @@ impl Vm {
         if let crate::bytecode::SourceText::Kept(kept) = &text {
             (self.host_statics.kept_bytes_read)(kept.as_bytes());
         }
-        let mut kept = self.decode_cached_program(bytes, text, 0, name).ok()?;
+        let specialized = self.specialized;
+        let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
@@ -597,7 +608,7 @@ impl Vm {
         let cache_key = retained.is_none().then(|| options.cache_goal());
         #[cfg(feature = "native-execution")]
         if let Some(goal) = &cache_key {
-            let parts = [goal.as_str(), source];
+            let parts = [self.specialization_part(), goal, source];
             if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
                 return self.prepare_native_script(native);
             }
@@ -655,8 +666,9 @@ impl Vm {
             && let Some(mut bytes) = self.encode_compact_program(&residual)
         {
             crate::bytecode::append_kept_source(&mut bytes, source);
+            let mode = self.specialization_part();
             if self.host.keeps_compiled_programs() {
-                self.host.keep_compiled_program(name, &[goal.as_str(), source], &bytes);
+                self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
             }
             // The program then runs from its kept form, as every later run of the text does,
             // whether or not the host could keep it: one execution path for an entry, never one
@@ -696,7 +708,6 @@ impl Vm {
         Ok(Some(id))
     }
 
-    #[quench_macros::test_visible]
     pub(crate) fn compile_embedding_host_script(
         &mut self, source: &str, name: &str, origin: (u32, u32),
     ) -> Result<crate::CompiledScript, JsError> {
@@ -720,7 +731,6 @@ impl Vm {
             && self.programs.owns_script(&script.state)
     }
 
-    #[quench_macros::test_visible]
     pub(crate) fn evaluate_embedding_compiled_script(
         &mut self, script: &crate::CompiledScript,
     ) -> Result<Value, JsError> {
@@ -1106,7 +1116,7 @@ impl Vm {
         let atom = self.intern_atom(name);
         if self.own_property(globals, atom).is_none() {
             if self
-                .heap.object(globals)
+                .object_data(globals)
                 .is_some_and(|object| !object.is_extensible())
             {
                 return Err(self.type_error(p, format!("cannot define global {name}")));

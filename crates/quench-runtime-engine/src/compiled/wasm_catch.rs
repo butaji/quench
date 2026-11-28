@@ -1,5 +1,5 @@
 //! The catch of a raise in the u-jit's Wasm functions: the handler each pc's raise enters
-//! (`catch_frame`), the handler's entry state in the analysis (`raise_entry`), and the emitted catch
+//! (`catch_frame`), the handler's entry state in the analysis (`raise_edge`), and the emitted catch
 //! of a raised status (`Emitter::catch_raised`). The catch callout takes the error a call left
 //! raised when a handler catches it, and binds its thrown value to the handler's frame local. A
 //! trap, a link failure and a termination are never caught, as `Vm::exception_handler_target` does.
@@ -12,13 +12,20 @@ use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, Mach
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_instance::local_register;
 use cranelift_codegen::ir::{self, MemFlagsData};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The catch a raise enters: the pc its thrown value goes to, and the register that holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Catch {
     pub(crate) target: usize,
     pub(crate) local: u16,
+}
+
+impl Catch {
+    /// The state a handler is entered in from `state`: its thrown value is a reference in its local.
+    fn entry(self, mut state: AnalysisState, bound: u16) -> Option<AnalysisState> {
+        state.set(self.local, bound, Slot::Value(Kind::Reference))?;
+        Some(state)
+    }
 }
 
 /// The catch of each pc of `function` and the frame's state bound (its registers and locals), or
@@ -45,13 +52,30 @@ fn catch_of(function: &Function, handler: Handler) -> Option<Catch> {
     Some(Catch { target, local: local_register(function.registers, u32::from(slot)) })
 }
 
-/// The state a handler is entered in by a raise at its pc: the state `before` the raising
-/// instruction, with the thrown value a reference in the handler's local. `None` where that local
-/// is not a register of the frame bound `bound`.
-pub(crate) fn raise_entry(catch: Catch, before: &AnalysisState, bound: u16) -> Option<AnalysisState> {
-    let mut entered = before.clone();
-    entered.set(catch.local, bound, Slot::Value(Kind::Reference))?;
-    Some(entered)
+/// Joins the entry of a raise at a pc into its handler's state: the state `before` the raising
+/// instruction, with the thrown value bound. Nothing where the pc has no catch.
+pub(crate) fn raise_edge(
+    states: &mut [Option<AnalysisState>],
+    work: &mut Vec<usize>,
+    catch: Option<Catch>,
+    before: &AnalysisState,
+    bound: u16,
+) -> Option<()> {
+    let Some(catch) = catch else {
+        return Some(());
+    };
+    let incoming = catch.entry(before.clone(), bound)?;
+    let changed = match &mut states[catch.target] {
+        Some(existing) => existing.join_from(&incoming),
+        target @ None => {
+            *target = Some(incoming);
+            true
+        }
+    };
+    if changed {
+        work.push(catch.target);
+    }
+    Some(())
 }
 
 /// Whether a handler catches `error`: a Wasm exception, or a JavaScript exception, which `catch_all`

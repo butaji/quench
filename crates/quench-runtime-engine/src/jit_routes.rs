@@ -9,7 +9,7 @@ use crate::ext_traits::*;
 
 /// The JIT's route of `specialize_in_lane` for a function with no ahead image.
 pub(crate) type LaneJit = fn(*mut quench_runtime::vm::engine_types::LaneContext, &quench_runtime::vm::engine_types::LaneView, u32, &[quench_runtime::Value],
-    crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome;
+    Option<(u64, u64)>, crate::compiled::LaneBodyWork<'_>) -> crate::compiled::LaneBodyOutcome;
 
 /// The routes `Vm::new` installs.
 pub(crate) struct JitRoutes {
@@ -19,25 +19,17 @@ pub(crate) struct JitRoutes {
     pub(crate) body: crate::compiled::lane_compile::BodyWork,
     /// A numeric function's image (`js_compiled::start`).
     pub(crate) numeric: crate::js_compiled::NumericStart,
-    /// A Wasm program's code (`compile_program_and_root`).
+    /// A hot loop's region (`compiled::start_osr_region`).
+    pub(crate) region: crate::compiled::RegionStart,
+    /// A Wasm program's code (`compile_program_with_diagnostics_and_root_mode`).
     pub(crate) wasm: crate::compiled::WasmCompile,
-    /// The compiler of regexp programs (`regexp_native::enable`).
-    pub(crate) regexp: fn(bool),
+    /// The compiler of hot regexp programs (`regexp_native::enable`).
+    pub(crate) regexp: fn(bool, (u32, u32)),
     /// The lane's fusion passes, which name every fused and chain row.
     pub(crate) fuse: LaneFusion,
-    /// The creation edge of a body's one closure (`layer_hooks::closure_created`): binds the image's proven calls of it.
-    pub(crate) closure_created: fn(&mut quench_runtime::vm::Vm, quench_runtime::vm::ProgramId, u32),
 }
 
-/// The creation edge of a body's one closure, which the runtime calls (`layer_hooks::closure_created`): the JIT's route
-/// binds the image's proven calls of that body. Without the routes (`jit`), no image binds, and nothing runs.
-#[unsafe(no_mangle)]
-fn quench_layer_closure_created(vm: &mut quench_runtime::vm::Vm, program: quench_runtime::vm::ProgramId, body: u32) {
-    if let Some(routes) = jit() { (routes.closure_created)(vm, program, body) }
-}
-const _: quench_runtime::vm::layer_hooks::signatures::closure_created = quench_layer_closure_created;
-
-pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction],
+pub(crate) type LaneFusion = fn(&mut [crate::dispatch_fast::LaneInstruction], &[quench_runtime::bytecode::WideInstruction], &[quench_runtime::value::Value],
     Option<&quench_runtime::compile::liveness::RegisterMasks>, bool, bool) -> Vec<(usize, usize)>;
 
 static JIT: std::sync::OnceLock<JitRoutes> = std::sync::OnceLock::new();
@@ -60,16 +52,16 @@ fn quench_layer_enable_jit() {
         lane: crate::dispatch_fast::jit_lane_body,
         body: <quench_runtime::vm::Vm as crate::compiled::lane_compile::CompiledLaneCompileVm>::compile_body_work,
         numeric: crate::js_compiled::start_numeric,
+        region: crate::compiled::compile_osr_region,
         wasm: <quench_runtime::vm::Vm as crate::compiled::CompiledVm4>::compile_wasm_program,
         regexp: crate::regexp_native::enable_compiler,
-        closure_created: |vm, program, body| <quench_runtime::vm::Vm as crate::dispatch_fast::proven_callees::DispatchFastProvenCalleesVm>::bind_closure_records(vm, program, body),
         // Chains, the target back edges, then pairs (`derive_lane_view`); an image, whose bodies leave to the
         // lane only at misses, links no fused row.
-        fuse: |records, decoded, live, loop_tier, raw_results| {
+        fuse: |records, decoded, constants, live, loop_tier, raw_results| {
             use crate::dispatch_fast::{fuse_target_backedges, lane_frame::{fuse_chains, fuse_rows}};
             let mut fused = fuse_chains(records, decoded, live, raw_results);
             fuse_target_backedges(records, loop_tier);
-            fused.extend(fuse_rows(records, decoded, live, loop_tier, raw_results));
+            fused.extend(fuse_rows(records, decoded, constants, live, loop_tier, raw_results));
             fused
         },
     });

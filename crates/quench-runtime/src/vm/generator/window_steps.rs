@@ -3,7 +3,6 @@
 //! makes no `Box<Frame>` and copies no register, and a yield suspends the frame in place.
 use super::*;
 use super::super::activation::FrameRecord;
-use super::super::activation::frame_record::ParkedNative;
 
 impl Vm {
     /// Whether the lane resumes `frame`, suspended by a function of `code`, over its register
@@ -205,9 +204,6 @@ impl Vm {
         iterators: impl Iterator<Item = ActiveIterator>,
         with_objects: impl Iterator<Item = Value>,
     ) {
-        if let Some(caller) = frame.split_caller() {
-            self.push_resumed_frame(caller, std::iter::empty(), std::iter::empty());
-        }
         frame.close_environment_window();
         let mut frame = frame.into_frame(self.with_stack.len());
         frame.with_objects.extend(with_objects);
@@ -216,93 +212,18 @@ impl Vm {
         self.frames.push(frame);
     }
 
-    /// Resumes a chain `capture_chain` captured: its frames go back on the frame stack bottom
-    /// first, each with the state its record kept. A top frame parked in a native call makes that
-    /// call again through the ordinary path (`call_value`, or `construct_value_with_new_target`
-    /// when the parked call is a `new`), delivers its result to the call instruction's destination
-    /// and continues after it; the frames below wait for the run.
-    /// No production caller yet: the build-time input capture (MEM, c5-capture-at-input.md) resumes
-    /// a parked chain here.
-    #[allow(dead_code)]
-    pub fn resume_chain(&mut self, mut chain: Box<FrameRecord>) -> Result<(), JsError> {
-        let parked = chain.parked.take();
-        let (program, function) = (chain.program, chain.function);
-        self.push_resumed_frame(chain, std::iter::empty(), std::iter::empty());
-        let Some(parked) = parked else { return Ok(()) };
-        let top = self.frames.len() - 1;
-        // SAFETY: the chain names a program this VM has loaded, and a loaded program stays loaded
-        // for as long as the VM runs its frames, so the reference holds across the call.
-        let p: *const ResidualProgram = self.programs.residual(program).expect("a chain's program is loaded");
-        let p = unsafe { &*p };
-        let call_pc = parked.call_pc as usize;
-        let destination = p.function(function as usize).instruction_at(call_pc).result_register();
-        let value = match parked.new_target {
-            Some(new_target) => self.construct_value_with_new_target(p, parked.callee, new_target, &parked.args)?,
-            None => self.call_value(p, parked.callee, parked.this, &parked.args)?,
-        };
-        self.frames[top].pc = call_pc + 1;
-        self.frames[top].pc_is_resume = true;
-        if let Some(slot) = self.frames[top].registers.get_mut(usize::from(destination)) {
-            *slot = value;
-        }
-        Ok(())
-    }
-
-    /// Captures the chain down to `base_depth` (`capture_chain`) at a native's edge, with the native
-    /// call its top frame is parked in: the top frame's pc is the call instruction. `new_target` is
-    /// `None` for a call and `Some` for a construction. One call, so the parked values go straight
-    /// from the native's arguments into the traced record.
-    #[allow(dead_code)]
-    pub fn capture_chain_parked(
-        &mut self,
-        base_depth: usize,
-        callee: Value,
-        this: Value,
-        args: Box<[Value]>,
-        new_target: Option<Value>,
-    ) -> Box<FrameRecord> {
-        let call_pc = self.frames.last().expect("a native is parked in a frame").pc as u32;
-        let mut top = self.capture_chain(base_depth);
-        top.parked = Some(ParkedNative { callee, this, args, call_pc, new_target });
-        top
-    }
-
-    /// Takes the frames from the top of the frame stack down to `base_depth` (inclusive) off it as
-    /// one chain of records: the record returned is the top frame, whose `caller` is the frame it
-    /// returns into, down to the base, whose `caller` is `None`. Each frame's `with` objects go
-    /// with its record, as a suspension's do. `resume_chain` pushes the chain back. No production
-    /// caller yet: the build-time input capture (C4b) is the first exit that needs a chain.
-    #[allow(dead_code)]
-    pub fn capture_chain(&mut self, base_depth: usize) -> Box<FrameRecord> {
-        assert!(base_depth < self.frames.len(), "a chain captures at least its base frame");
-        let mut popped = Vec::with_capacity(self.frames.len() - base_depth);
-        while self.frames.len() > base_depth {
-            let mut frame = self.frames.pop().expect("a frame above the base");
-            frame.with_objects = self.with_stack.split_off(frame.with_base);
-            popped.push(frame);
-        }
-        // `popped` is top first: linking from the base up gives each record its caller already built.
-        let mut chain: Option<Box<FrameRecord>> = None;
-        for frame in popped.into_iter().rev() {
-            let mut record = FrameRecord::capture(frame);
-            record.caller = chain;
-            chain = Some(record);
-        }
-        chain.expect("the base frame is captured")
-    }
-
     /// The `value` and `done` of `result` where it is an iterator result this realm made
     /// (`iterator_result`) whose fields are still its own data slots, `done` a Boolean: a
     /// delegate step's result, which no code has seen. `None` for any other object, whose
     /// fields `[[Get]]` reads.
     pub fn own_iterator_result_parts(&self, result: Value) -> Option<(Value, bool)> {
         let (prototype, header) = self.iterator_result_header?;
-        let object = self.heap.direct_object_view(result)?;
+        let object = self.heap.object_record(result)?;
         if object.shape() != header.shape() || object.proto() != prototype {
             return None;
         }
-        let value = self.heap.property_get_ref(object, crate::vm::iterators::ITERATOR_RESULT_VALUE_SLOT)?;
-        Some((value, self.heap.property_get_ref(object, crate::vm::iterators::ITERATOR_RESULT_DONE_SLOT)?.as_bool()?))
+        let value = self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_VALUE_SLOT)?;
+        Some((value, self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_DONE_SLOT)?.as_bool()?))
     }
 
     /// The iterator result of a generator step that stopped with `value`: the reused object a step
@@ -320,31 +241,10 @@ impl Vm {
 #[cfg(test)]
 pub(super) mod tests {
     use crate::test_host::TestHost;
-    use crate::vm::EngineVm;
     use crate::vm::{activation::frames_made, Vm};
     use crate::Engine;
     use std::cell::RefCell;
     use std::rc::Rc;
-
-    /// A chain of three frames captured off the frame stack resumes bottom first, each frame
-    /// with the function and pc it had, and the top one runs next.
-    #[test]
-    fn captured_chain_resumes_three_levels_bottom_first() {
-        let mut vm = Vm::new(TestHost::default());
-        for (function, pc) in [(1u32, 3usize), (2, 5), (3, 7)] {
-            let mut frame = Box::new(crate::vm::Frame::empty(crate::vm::program_store::ProgramId::MAIN, 0));
-            frame.function = function;
-            frame.pc = pc;
-            vm.frames.push(frame);
-        }
-        let chain = vm.capture_chain(0);
-        assert!(vm.frames.is_empty());
-        assert_eq!((chain.function, chain.pc), (3, 7));
-        assert!(chain.caller.is_some());
-        vm.resume_chain(chain).unwrap();
-        let resumed: Vec<(u32, usize)> = vm.frames.iter().map(|frame| (frame.function, frame.pc)).collect();
-        assert_eq!(resumed, [(1, 3), (2, 5), (3, 7)]);
-    }
 
     /// What running `source` prints, and how many frames its resumes made.
     pub(in crate::vm) fn run(source: &str) -> (Vec<String>, usize) {

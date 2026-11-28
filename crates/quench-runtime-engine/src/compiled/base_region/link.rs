@@ -173,7 +173,7 @@ pub(crate) struct Layout<'a> {
     pub(crate) homes: Homes,
     pub(crate) webs: Webs,
     pub(crate) ending: Ending,
-    /// Per caller PC, what the call there knows of each arm, in arm order: the code
+    /// Per caller PC, what the call there recorded of each callee it reached, latest first: the code
     /// calls each by its entry.
     pub(crate) callees: &'a [Vec<DirectFacts>],
     /// Per row of a stitched program, where the interpreter resumes if the row leaves.
@@ -188,6 +188,9 @@ pub(crate) struct Layout<'a> {
     pub(crate) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(crate) realm: Option<RealmProof>,
+    /// Per row, whether a proof the body established reaches it (`Decoded::relies`): no resume stub enters there.
+    /// Proofs the entry seed alone reaches get a stub, whose entry rows re-run the declared guards (`guards`).
+    pub(crate) relies: &'a [bool],
     /// Per row, whether its checked operand is a Number on every path into it, so its number guard is redundant
     /// (`numbers::proven_operands`).
     pub(crate) number_held: &'a [bool],
@@ -203,10 +206,14 @@ pub(crate) struct Layout<'a> {
     pub(crate) numbers: Vec<Register>,
     /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
     pub(crate) prototypes: Vec<super::function::ClassProto>,
+    /// The loop-invariant receivers whose exact shape the entry checks, and the proofs seed (`Known::shapes`, `Heap::Shape`).
+    pub(crate) shapes: Vec<super::function::ShapeProto>,
     /// The VM's reads of a cache site (`Known::reads`), which a method call's chain reads (`plan::chain_reads`).
     pub(crate) reads: Option<&'a dyn Fn(u16) -> Vec<crate::compiled::NativeFieldLoad>>,
     /// The holders the planned chains read through, which the body subscribes to with its own (`function::assemble`).
     pub(crate) holders: &'a std::cell::RefCell<Vec<u32>>,
+    /// Whether a store is admitted on the run's stores word the entry checks (`Heap::Stores`, `proofs::prove`).
+    pub(crate) stores: bool,
     /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
     pub(crate) identities: Vec<(u16, u64)>,
     /// Per caller PC, the builtin its callee is, where the b-jit runs it on a row (`Callees::builtins`).
@@ -214,7 +221,7 @@ pub(crate) struct Layout<'a> {
 }
 
 impl Layout<'_> {
-    /// What the call at caller PC `pc` knows of each arm, in arm order.
+    /// What the call at caller PC `pc` recorded of each callee it reached, latest first.
     pub(crate) fn callees(&self, pc: u32) -> &[DirectFacts] {
         self.callees.get(pc as usize).map_or(&[], Vec::as_slice)
     }

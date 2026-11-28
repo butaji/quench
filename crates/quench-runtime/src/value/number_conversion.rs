@@ -1,13 +1,21 @@
 //! Number to 32-bit integer conversions: ToUint32 and the truncation the value encoding uses.
 
+#[cfg(not(stencil_build))]
 use crate::float_layout::binary64_parts;
+// The stencil build mounts the same file (`float_layout.rs`), which the runtime's root names `crate::float_layout`.
+#[cfg(stencil_build)]
+#[allow(dead_code)]
+#[path = "../float_layout.rs"]
+mod float_layout;
+#[cfg(stencil_build)]
+use float_layout::binary64_parts;
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
 /// conversion back differs from `value`. x86-64 truncates directly (out-of-range and NaN
 /// inputs give `i32::MIN`), skipping the saturation a Rust cast adds.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-pub fn truncate_to_i32(value: f64) -> i32 {
+pub(super) fn truncate_to_i32(value: f64) -> i32 {
     use std::arch::x86_64::{_mm_cvttsd_si32, _mm_set_sd};
     // SAFETY: SSE2 is part of the x86-64 baseline.
     #[allow(unused_unsafe)]
@@ -18,13 +26,14 @@ pub fn truncate_to_i32(value: f64) -> i32 {
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub fn truncate_to_i32(value: f64) -> i32 {
+pub(super) fn truncate_to_i32(value: f64) -> i32 {
     value as i32
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
 /// modulo 2^32.
-pub const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 
 /// The bits of 2^63, the same limit as `EXACT_I64_TRUNCATION_LIMIT`, for the integer test in `exact_uint32`.
 const EXACT_I64_TRUNCATION_LIMIT_BITS: u64 = 0x43E0_0000_0000_0000;
@@ -64,7 +73,7 @@ fn truncate_to_i64(value: f64) -> i64 {
 /// all fail. The one home of the rule `Value::number` boxes by (an int32 word) and every caller
 /// that asks whether a Number is an int32 (the AOT lattice, small strings, the serializer's Smi).
 #[inline(always)]
-pub fn exact_int32(value: f64) -> Option<i32> {
+pub(crate) fn exact_int32(value: f64) -> Option<i32> {
     let integer = truncate_to_i32(value);
     (f64::from(integer).to_bits() == value.to_bits()).then_some(integer)
 }
@@ -74,7 +83,7 @@ pub fn exact_int32(value: f64) -> Option<i32> {
 /// and magnitudes from 2^63 up (-2^63 included), which take `number_to_u32_wide`. The test reads
 /// the bits, so it is one integer compare and needs no float constant.
 #[inline(always)]
-pub fn exact_uint32(value: f64) -> Option<u32> {
+pub(crate) fn exact_uint32(value: f64) -> Option<u32> {
     let magnitude = value.to_bits() & !(1 << 63);
     (magnitude < EXACT_I64_TRUNCATION_LIMIT_BITS).then(|| truncate_to_i64(value) as u32)
 }

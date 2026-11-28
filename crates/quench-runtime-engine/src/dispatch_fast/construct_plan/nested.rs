@@ -2,7 +2,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::bytecode::{ImmediateLayout, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
+use quench_runtime::bytecode::{ImmediateLayout, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 
 pub(crate) use quench_runtime::vm::engine_types::NestedField;
 
@@ -28,12 +28,10 @@ fn capture_value(vm: &mut Vm, env: Value, capture: u32) -> Option<Value> {
 }
 
 /// A fresh object of `constructor` as its own plans build it from `arguments`, which run no
-/// guest code: `None` where it has no holding plan. A nested construction has no construct site
-/// of its own in the bytecode, so its class is the constructor's body (`Vm::ordinary_class`).
+/// guest code: `None` where it has no holding plan.
 pub(crate) fn nested_construction(vm: &mut Vm, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
-    let class = vm.ordinary_class(constructor);
-    planned_construction(vm, constructor, class, argument)
+    planned_construction(vm, constructor, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, argument))
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain
@@ -61,8 +59,8 @@ pub(crate) fn nested_construct_in_lane(vm: &mut Vm, env: Value, construct: &Nest
 }
 
 /// The forwarded initializer's adds on `this`, which a construction completes in the lane when
-/// none runs guest code: `None` where an add cannot be applied (the construction then activates).
-/// A fixed class's receiver takes its stores in its union slots.
+/// none runs guest code: the plan of the fields they gave it (`None` where it cannot hold one),
+/// nested constructions included, or the outer `None` where an add cannot be applied (the construction then activates).
 pub(crate) fn finish_forwarded_in_lane(
     vm: &mut Vm,
     code: &ResidualProgram,
@@ -70,33 +68,22 @@ pub(crate) fn finish_forwarded_in_lane(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
-    read: impl Fn(u32) -> bool,
-    union: Option<quench_runtime::vm::engine_types::FixedUnion>,
-) -> Option<()> {
-    // Each store's name and value in store order: a fixed receiver's slot writes.
-    let mut atoms = [0; quench_runtime::tier_surface::MAX_CELL_FIELDS];
-    let mut values = [Value::UNDEFINED; quench_runtime::tier_surface::MAX_CELL_FIELDS];
-    let mut stored = 0;
-    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read, union.is_some(),
-        |vm, construct| nested_construct_in_lane(vm, env, construct).map(|(built, _)| built),
+) -> Option<Option<ConstructPlan>> {
+    let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
+    let nested = std::cell::Cell::new(None);
+    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument,
+        |vm, construct| {
+            let (built, field) = nested_construct_in_lane(vm, env, construct)?;
+            nested.set(Some(field));
+            Some(built)
+        },
         |store, value| {
-            if let (Some(atom), Some(stored_value)) = (atoms.get_mut(stored), values.get_mut(stored)) {
-                *atom = store.atom;
-                *stored_value = value;
-            }
-            stored += 1;
+            fields = fields.and_then(|fields| match store.value {
+                InitializerValue::Construct(_) => fields.with_nested(nested.take()?),
+                _ => fields.with_field(store, value),
+            });
         });
-    if !applied {
-        return None;
-    }
-    let Some(union) = union else {
-        return Some(());
-    };
-    for (&atom, &value) in atoms.iter().zip(&values).take(stored) {
-        let slot = union.slot_of(atom).expect("a fixed class's store names one of its union slots");
-        vm.store_fixed_cell_slot(this, slot, atom, value);
-    }
-    Some(())
+    applied.then_some(fields)
 }
 
 #[quench_macros::ext(ConstructPlanOps2)]

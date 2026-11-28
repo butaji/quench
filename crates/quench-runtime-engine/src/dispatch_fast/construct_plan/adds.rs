@@ -15,35 +15,27 @@ pub(crate) fn add_initializer_fields_in_lane(
     this: Value,
     function: u32,
     argument: impl Fn(u16) -> Value,
-    read: impl Fn(u32) -> bool,
-    fixed: bool,
     nested: impl FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>,
     each: impl FnMut(&quench_runtime::bytecode::InitializerStore, Value),
 ) -> bool {
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
-    add_stores_in_lane(vm, this, stores, argument, read, fixed, nested, each)
+    add_stores_in_lane(vm, code, this, stores, argument, nested, each)
 }
 
-/// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`). A store to a field
-/// no code reads (`read`, `field_reader`) makes nothing and is passed to no `each`, unless it constructs: its
-/// nested construction still runs, since a constructor may have effects.
+/// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`).
 #[inline(always)]
 pub(crate) fn add_stores_in_lane(
     vm: &mut Vm,
+    code: &ResidualProgram,
     this: Value,
     stores: &[quench_runtime::bytecode::InitializerStore],
     argument: impl Fn(u16) -> Value,
-    read: impl Fn(u32) -> bool,
-    fixed: bool,
     mut nested: impl FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>,
     mut each: impl FnMut(&quench_runtime::bytecode::InitializerStore, Value),
 ) -> bool {
     for store in stores {
-        if !matches!(store.value, quench_runtime::bytecode::InitializerValue::Construct(_)) && !read(store.atom) {
-            continue;
-        }
         let value = match &store.value {
             quench_runtime::bytecode::InitializerValue::Construct(construct) => nested(vm, construct),
             _ => initializer_store_value(vm, store, &argument),
@@ -51,9 +43,7 @@ pub(crate) fn add_stores_in_lane(
         let Some(value) = value else {
             return false;
         };
-        // A fixed class's receiver is its union cell, which has no add cache: its stores are written by slot by the
-        // caller (`initialize_stores_in_lane`), so no hit is made (`fixed`).
-        if !fixed && (!vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(this, store.atom, value, store.site)) {
+        if !vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site) {
             return false;
         }
         each(store, value);

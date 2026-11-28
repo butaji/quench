@@ -12,15 +12,12 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub use lattice::{ANY_LANGUAGES, Languages, MAX_STRING_ATOMS, StringFact, StringLength, Type, TypeKind, language_bit};
-pub use representation::{repr, Representation};
+pub use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
+pub use representation::Representation;
 mod slot_type;
 pub use slot_type::SlotType;
 #[allow(unused_imports)]
 pub use int_range::{IntRange, WIDENING_ROUNDS};
-pub mod arithmetic;
-mod cell;
-pub use cell::{view_element_type, BuiltinPath, Cell, Classes, ElementClass, Elements, FactKey, Holders, Identity, Length, Site, Sites, View, MAX_CLASSES};
 
 /// An element index is below its array's length, which every layout stores in 32 bits: it
 /// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.

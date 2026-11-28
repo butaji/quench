@@ -52,7 +52,7 @@ pub enum Effect {
 
 /// The method's answer once every element was visited without a step ending it.
 #[derive(Clone, Copy)]
-pub enum Answer {
+pub(crate) enum Answer {
     /// The method's value.
     Value(Value),
     /// `findIndex` and `findLastIndex` found no element: the answer is -1, which the vm builds as
@@ -63,14 +63,14 @@ pub enum Answer {
 /// Whether the kind visits its elements from the end: `findLast`, `findLastIndex` and
 /// `reduceRight`.
 #[inline(always)]
-pub fn visits_backwards(kind: Kind) -> bool {
+pub(crate) fn visits_backwards(kind: Kind) -> bool {
     matches!(kind, Kind::FindLast | Kind::FindLastIndex | Kind::ReduceRight)
 }
 
 /// Whether the kind reads every index by [[Get]], holes included, with no HasProperty first: the
 /// finds (`find`, `findIndex`, `findLast`, `findLastIndex`).
 #[inline(always)]
-pub fn visits_holes(kind: Kind) -> bool {
+pub(crate) fn visits_holes(kind: Kind) -> bool {
     matches!(kind, Kind::Find | Kind::FindIndex | Kind::FindLast | Kind::FindLastIndex)
 }
 
@@ -90,7 +90,7 @@ pub fn applies_results(kind: Kind) -> bool {
 /// The next element an iteration visits, given `visited` elements visited of `length`: its
 /// index and the visited count after it; `None` past the last element.
 #[inline(always)]
-pub fn next_index(kind: Kind, visited: usize, length: usize) -> Option<(usize, usize)> {
+pub(crate) fn next_index(kind: Kind, visited: usize, length: usize) -> Option<(usize, usize)> {
     if exhausted(visited, length) {
         return None;
     }
@@ -116,7 +116,7 @@ pub fn present(slot: Value) -> Option<Value> {
 /// ToBoolean, asked only where the kind reads it). `kept` is a filter's count of kept elements,
 /// advanced when it keeps one.
 #[inline(always)]
-pub fn apply(
+pub(crate) fn apply(
     kind: Kind,
     index: usize,
     element: Value,

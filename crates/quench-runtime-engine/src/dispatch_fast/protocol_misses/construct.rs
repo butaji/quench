@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Parameter codes of the construction records (the construction family).
 /// `new C(...)` of a frameless target, the first record the construction runs (`script_construct_miss`).

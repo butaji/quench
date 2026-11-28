@@ -1,29 +1,25 @@
-//! A function's BaseJIT body (the b-jit tier): the whole function stitched from stencils
+//! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
 //! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
-use super::base_region::call_plan::planned;
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
+use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
-use quench_runtime::code_dependencies::Invalidation;
+use quench_runtime::code_dependencies::{InstanceofFact, Invalidation};
 use quench_runtime::vm::global_facts::GlobalTable;
 use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
-#[cfg(feature = "jit")]
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::typed_ir::Type;
-use quench_runtime::compile::aot_facts::AotFacts;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
 /// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).
@@ -40,6 +36,51 @@ fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register)
         Some(quench_runtime::staged::Operation::ElementWrite { base, .. }) => is_typed(base),
         // A frame local's base (`ElementReadOperand`) is no register an entry parameter holds.
         _ => false,
+    })
+}
+
+/// The PCs a previous body left at: its rows there take the general (tagged) semantics.
+/// A loop's interpreter kernel, run on the loop's entry edge (`LaneHelper::KernelStep`, `base_region::kernel_entries`): the
+/// record at `call_pc`, the loop's head, runs its kernel (`loop_kernel::enter_kernel`) over the running activation's
+/// registers, as the interpreter's head does, and the body's rows continue the loop from where it left them. A body
+/// running as a native callee runs it in its own frame, which the helper makes the context's
+/// (`native_frames::in_innermost_frame`), as every helper of a native callee does. A head the kernel stood down from,
+/// and a body running as a frameless leaf (whose records are its caller's), runs nothing here: the rows run the loop.
+pub(super) unsafe extern "C" fn kernel_step_in_lane(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
+    // SAFETY: the payload holds the running lane context, live while the body runs.
+    if !unsafe { (*cx).leaf.call }.is_null() {
+        return super::LANE_CALL_COMPLETED;
+    }
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records and registers are the running activation's (`in_innermost_frame`), and its
+        // view holds `call_pc`.
+        let ip = unsafe { (*cx).base.add(call_pc as usize) };
+        // SAFETY: the kernel runs over the frame's registers, which the chain spilled the pinned ones to.
+        let ran = unsafe { crate::dispatch_fast::loop_kernel::kernel_at(ip) }.is_some_and(|kernel| unsafe { crate::dispatch_fast::loop_kernel::enter_kernel(kernel, cx, (*cx).registers, ip) });
+        // A run wrote the registers the loop writes, whose values the body's pins and int proofs did not see: the
+        // interpreter continues at the head from the frame as the kernel left it (a missed step's leave, which spills
+        // nothing), where the loop's test now fails, as the interpreter's own head goes on after its kernel.
+        if ran { super::LANE_CALL_MISSED } else { super::LANE_CALL_COMPLETED }
+    })
+}
+
+/// The `LoadConst` record at `call_pc` of the running body (`LaneHelper::ConstantStep`): the running program's constant as
+/// the VM materialized it (`ProgramStore::constant`), written to the record's register. `LANE_CALL_MISSED` for any other
+/// record, which nothing ran for. A body running as a native callee runs it in its own frame (`in_innermost_frame`).
+pub(super) unsafe extern "C" fn constant_step(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    let cx = context as usize as *mut quench_runtime::vm::engine_types::LaneContext;
+    crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's program, records and registers are the running activation's (`in_innermost_frame`).
+        let (code, program, registers) = unsafe { (&*(*cx).code, (*cx).program, (*cx).registers) };
+        let body = code.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let instruction = body.widened(body.code[call_pc as usize]);
+        let loaded = quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) && instruction.result_flags() == 0;
+        // SAFETY: the VM is the running lane's.
+        match loaded.then(|| unsafe { &*(*cx).vm }.programs.constant(program, instruction.constant_index())).flatten() {
+            Some(value) => { registers.set(instruction.result_register(), value); super::LANE_CALL_COMPLETED }
+            None => super::LANE_CALL_MISSED,
+        }
     })
 }
 
@@ -60,6 +101,26 @@ pub(super) unsafe extern "C" fn throw_step(_vm: u64, _residual: u64, context: u6
         }
         super::LANE_CALL_MISSED
     })
+}
+
+/// The element define of an array literal at `call_pc` of the running body (`LaneHelper::DefineElementStep`): the value
+/// into the fresh dense array at its index (`Vm::define_literal_element`), which runs no guest code; where the array is
+/// no such array, the general step.
+pub(super) unsafe extern "C" fn define_element_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    use quench_runtime::vm::engine_types::LaneContext;
+    let cx = context as usize as *mut LaneContext;
+    let defined = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
+        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let Some(quench_runtime::staged::Operation::DefineElement { array, index, value }) = quench_runtime::staged::Operation::<(), ()>::decode_literal(body.widened(body.code[call_pc as usize]).without_return(), ())
+            else { return super::LANE_CALL_MISSED };
+        // SAFETY: the running lane's context.
+        let (r, vm) = unsafe { ((*cx).registers, &mut *(*cx).vm) };
+        if vm.define_literal_element(r.get(array), index as usize, r.get(value)) { super::LANE_CALL_COMPLETED } else { super::LANE_CALL_MISSED }
+    });
+    if defined == super::LANE_CALL_COMPLETED { return defined; }
+    // SAFETY: the caller's contract, which the general step shares.
+    unsafe { crate::dispatch_fast::body_general_step(vm, residual, context, call_pc) }
 }
 
 /// The staged call-out of the record at `call_pc` of the running body (`LaneHelper::CallOutStep`), made by the VM in place
@@ -85,6 +146,40 @@ pub(super) unsafe extern "C" fn allocation_step(vm: u64, residual: u64, context:
     }
 }
 
+/// The closure the `MakeClosure` record at `call_pc` of the running body makes (`LaneHelper::ClosureStep`), over the binding
+/// environment its frame captures (`Vm::owner_closure`), written to the record's destination; `LANE_CALL_MISSED` for any
+/// other record, or where it raised (the error stashed for the general path). Making a closure runs no guest code, so the
+/// body goes on in place. A lane activation's closure is its window's environment (`window_environment`), which the
+/// general step's frames make for now.
+pub(super) unsafe extern "C" fn closure_step(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    use quench_runtime::vm::engine_types::LaneContext;
+    let cx = context as usize as *mut LaneContext;
+    // SAFETY: the running lane's context.
+    if unsafe { &*(*cx).vm }.lane_stack.has_frames() {
+        return unsafe { crate::dispatch_fast::vm_steps::body_general_step(vm, residual, context, call_pc) };
+    }
+    let status = crate::dispatch_fast::native_frames::in_innermost_frame(cx, || {
+        // SAFETY: the context's records are the running activation's (`in_innermost_frame`).
+        let body = unsafe { &*(*cx).code }.function(crate::dispatch_fast::running_function_in_lane(cx) as usize);
+        let instruction = body.widened(body.code[call_pc as usize]).without_return();
+        let Some((destination, quench_runtime::staged::Allocation::Closure { function })) = quench_runtime::staged::Allocation::decode(instruction, &[])
+            else { return super::LANE_CALL_MISSED };
+        // SAFETY: the running lane's context and a record of its body.
+        let (ip, frame) = unsafe { ((*cx).base.add(call_pc as usize), (*cx).frame()) };
+        let made = crate::dispatch_fast::in_place_in_lane(cx, ip, |vm, code| {
+            vm.owner_closure(code, quench_runtime::vm::var_owner::VarOwner::Frame(frame), function, call_pc as usize + 1)
+        });
+        let Some(closure) = made else { return super::LANE_CALL_MISSED };
+        // The owner's captured locals moved into its environment: the capture caches that named the old slots go.
+        crate::dispatch_fast::handler_edges::drop_environment_caches(cx);
+        // SAFETY: no guest code ran, so the lane's register file is the activation's still.
+        unsafe { (*cx).registers }.set(destination, closure);
+        super::LANE_CALL_COMPLETED
+    });
+    unsafe { crate::dispatch_fast::refresh_body_bases(context); crate::dispatch_fast::refresh_region_bases_of(context) };
+    status
+}
+
 /// The value step at `call_pc` of the running body (`LaneHelper::ValueStep`: a `Binary`, `Unary` or comparison jump over
 /// registers and constants), made by the VM's operator on their values over the running registers, a frame's or an
 /// activation's (`value_steps::activation_value_step`), as that step answers; `LANE_CALL_MISSED` for any other record.
@@ -105,6 +200,22 @@ pub(super) unsafe extern "C" fn value_step(_vm: u64, _residual: u64, context: u6
     status
 }
 
+/// Whether a loop of `code` has an interpreter kernel (`LoopKernel::recurrence`) that `cheaper`
+/// says runs it in fewer instructions than the tier asking: its back jump lands before it, on a
+/// header whose loop the kernel takes.
+pub(super) fn kernel_loop(code: &[WideInstruction], constants: &[Value], function: &quench_runtime::bytecode::Function, live: Option<&RegisterMasks>,
+    cheaper: impl Fn(&crate::dispatch_fast::loop_kernel::recur::Recurrence) -> bool) -> bool {
+    code.iter().enumerate().any(|(backedge, jump)| {
+        matches!(quench_runtime::staged::Operation::<(), ()>::decode(*jump, quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump))
+            && (jump.jump_target() as usize) < backedge
+            && crate::dispatch_fast::loop_kernel::LoopKernel::recurrence(code, constants, function, (jump.jump_target() as usize, backedge), live).is_some_and(|recurrence| cheaper(&recurrence))
+    })
+}
+
+fn widened(generic: &[LaneExit]) -> Vec<usize> {
+    generic.iter().filter_map(|exit| match exit { LaneExit::At(pc) => Some(*pc), _ => None }).collect()
+}
+
 #[quench_macros::ext(LaneMethodOps2)]
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
@@ -114,7 +225,7 @@ impl LaneMethod {
     /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
     /// caches and the values its folded reads hold of prototypes), whose change retires it and
     /// sets `invalidation`: the word its rows read, whose address its code names.
-    fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectArm]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
+    fn of_base_body(tiers: &Tiers, body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
@@ -126,11 +237,11 @@ impl LaneMethod {
         // `entry_rows` follows `entry_body` (`base_region::rows_entry_offset`).
         let rows = super::base_region::row_entries(memory.pointer().addr(), body.number_guards, body.uses_this);
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: Some(memory), entry,
-            recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.body.as_ref().is_some_and(|body| body.fault_poll)),
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: Some(memory), entry,
+            recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, frame_reach: body.scratch,
-            direct, proven_calls: false, closed, _records: body.records, constructors: Box::default(), inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::compiled::admission::Tier::Base) || !direct.is_empty(),
+            direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
 }
@@ -148,7 +259,7 @@ impl LaneMethod {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &[]), stable: StableFacts::default(), invalidation, _code: None, entry,
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&[]).reaching(scratch), fault_poll: false,
             names_shapes: false, exits: ExitTable::default(), scratch_width: 0, framed: true,
-            caller_registers: registers, frame_reach: scratch,
+            caller_registers: registers, frame_reach: scratch, amortizes: true,
             direct: Box::new([]), proven_calls: false, closed: false, _records: Vec::new(), constructors: Box::default(), inlined: Vec::new(), scalar: None, rows: None, realm_bound: false, proven: None, summary: None, withdrawn: Default::default(),
         }
     }
@@ -156,6 +267,7 @@ impl LaneMethod {
 
 /// The facts of a program's sites that its code folds (`Vm::site_facts`).
 struct SiteFacts {
+    constructors: Vec<Option<Value>>,
     presences: Vec<Option<quench_runtime::vm::in_presence::InPresence>>,
     globals: Option<quench_runtime::vm::global_facts::GlobalReads>,
 }
@@ -167,8 +279,6 @@ impl Vm {
     /// refused otherwise), and the inlining body proves that realm active at its entry (`RealmProof`).
     fn inlinable_callee(&self, program: &ResidualProgram, callee: Value, function: u32) -> Option<InlineBody> {
         self.same_realm_user_target(callee)?;
-        let graph = self.programs.call_graph(self.active_program)?;
-        if !quench_runtime::vm::tier_policy::inlines(&graph, program, function) { return None; }
         InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function), self.programs.constants(self.active_program))
     }
 
@@ -176,16 +286,12 @@ impl Vm {
     /// PC) a stitch calls by their entries or inlines, and the Stable fact that holds each one's
     /// callee register (`Vm::stable_callees`).
     pub(crate) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
-        let facts = self.programs.aot_facts(self.active_program);
-        let graph = self.programs.call_graph(self.active_program);
-        let inlinable = |callee: u32| graph.as_deref().is_some_and(|graph| quench_runtime::vm::tier_policy::inlines(graph, program, callee));
-        let plans = planned::of(program, facts.as_deref(), function, code.len(), &inlinable);
-        let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates, &plans));
+        let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
-        let inline_body = |callee: &DirectArm| self.inlinable_callee(program, callee.closure.callee, callee.body.target.function);
-        Callees::of(code, candidates, &inline_body, stable, natives, plans)
+        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
+        Callees::of(code, candidates, &inline_body, stable, natives)
     }
 
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
@@ -193,12 +299,15 @@ impl Vm {
         RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
     }
 
-    /// The facts of the program's sites the code folds, where it `folds`: its membership tests, and its global names'
-    /// accesses, which read the global object's slots under its layout.
-    fn site_facts(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
+    /// The facts of the program's sites the code folds, where it `folds`: the constructors its
+    /// `instanceof` rows name, its membership tests, and its global names' accesses, which read the
+    /// global object's slots under its layout.
+    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, (code, parameters): (&[WideInstruction], &[Value]), body: &quench_runtime::bytecode::Function) -> SiteFacts {
+        if !folds { return SiteFacts { constructors: Vec::new(), presences: Vec::new(), globals: None }; }
         SiteFacts {
+            constructors: self.instanceof_constructors(program, code, parameters),
             presences: self.membership_facts(code),
-            globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
+            globals: Some(self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base)),
         }
     }
 
@@ -207,96 +316,117 @@ impl Vm {
         let closed = callees.closed(code);
         // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
         // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
-        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.closure.callee).is_some());
-        let Some(mut method) = LaneMethod::of_base_body(built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
+        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
+        let Some(mut method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
         method.exits = ExitTable::of_code(code);
+        // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
+        // length, as a Cranelift body does (`start_lane_method`).
+        if !method.amortizes_entry() && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }.map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
 
-    /// `function`'s body for lane activations under the b-jit tier: what `parameters` (the entry's)
+    /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
-    /// run first.
+    /// run first, or is too short for its entry to pay (`amortizes_entry`).
     /// The unit `base_body_work` compiles `function` as, or the outcome the gate gives where it
-    /// declines (`admission::specialize`): not covered, or indexing a typed parameter.
-    pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value])
-        -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+    /// declines (`admission::specialize`): not covered, too short to repay its entry (refused as
+    /// `NotAmortized`), or indexing a typed parameter.
+    pub(crate) fn base_unit_or_outcome(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // An execution-only build (no `jit`) runs no stencil tier.
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, parameters);
+            let _ = (program, function, parameters, caller);
             return Err(LaneBodyOutcome::Declined);
         }
         #[cfg(feature = "jit")]
-        self.base_unit_or_outcome_compiled(program, function, parameters)
+        self.base_unit_or_outcome_compiled(program, function, parameters, caller)
     }
 
     #[cfg(feature = "jit")]
-    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value])
-        -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
+    fn base_unit_or_outcome_compiled(&mut self, program: &ResidualProgram, function: u32, parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView) -> Result<super::admission::CompiledUnit, LaneBodyOutcome> {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
+        self.keep_slot_representations();
         let Some(body) = program.function_get(function as usize) else { return Err(LaneBodyOutcome::Declined) };
         let code: Vec<_> = body.instructions().collect();
         let facts = super::admission::UnitFacts {
             covers: super::base_region::covers(&code),
+            amortizes: super::body_may_amortize(self.programs.tiers(), body, crate::compiled::admission::Tier::Base),
+            called_by_bodies: caller.called_by_bodies(),
             indexes_typed: indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))),
             ..Default::default()
         };
-        super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }).ok_or(LaneBodyOutcome::Declined)
+        match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::Base, facts }) {
+            super::admission::Decision::Compile(unit) => Ok(unit),
+            super::admission::Decision::Short => { refuse(self, Refusal::NotAmortized); Err(LaneBodyOutcome::Short) }
+            super::admission::Decision::Declined => Err(LaneBodyOutcome::Declined),
+            super::admission::Decision::Unpaid | super::admission::Decision::Base => unreachable!("a stencil body's gate decides only Short or Declined"),
+        }
     }
 
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
-    pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+    pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         // An execution-only build (no `jit`) stitches no stencil body.
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (unit, program, function, parameters, caller, direct);
+            let _ = (unit, program, function, generic, parameters, caller, direct);
             return LaneBodyOutcome::Declined;
         }
         #[cfg(feature = "jit")]
-        self.base_body_work_compiled(unit, program, function, parameters, caller, direct)
+        self.base_body_work_compiled(unit, program, function, generic, parameters, caller, direct)
     }
 
     #[cfg(feature = "jit")]
-    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
-        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&mut Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
+    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+        caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
+        let _mark = quench_runtime::trace::CompileMark::begin("b-jit", "body", function, 0, || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
+        // What the body's rows leave to helpers is noted at this function's instructions (`quench_runtime::fallback`).
+        let _focus = quench_runtime::fallback::focus(program, function, 0);
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
-        let candidates = direct(&mut *self);
-        let callees = self.stitch_callees(program, function, region.instructions(), &candidates);
+        let callees = self.stitch_callees(program, function, region.instructions(), &direct(self));
         let invalidation = Invalidation::default();
-        // The code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
-        let SiteFacts { presences, globals } = self.site_facts(program, function, region.instructions(), body);
+        // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
+        let folds = self.specialized && program.specialized;
+        let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (region.instructions(), parameters), body);
         let classes = self.class_prototypes(program, function, region.instructions(), parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
+        let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
+        let names = |site: u16, atom| self.native_function_name(site, atom);
         let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
-            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: Some(self.method_cache_atoms.bits()),
-            reads: Some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
-            adds: Some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
+            program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
+            reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            adds: folds.then_some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
+            names: folds.then_some(&names as &dyn Fn(u16, quench_runtime::bytecode::Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
-            presences: Some(presences.as_slice()),
-            fields: Some(&fields as &dyn Fn(u16) -> bool),
+            instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
+            presences: folds.then_some(presences.as_slice()),
+            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
-            classes: classes.as_slice(),
+            classes: if folds { classes.as_slice() } else { &[] },
+            shapes: &[],
         };
-        // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
-        let facts = self.aot_facts_of(program);
-        let typed: Vec<_> = facts.as_deref()
-            .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
+        let speculated = widened(generic);
+        // The typed kind each element record observed (`dispatch_fast::typed_element_kind`), from the region's header.
+        let typed: Vec<_> = self.programs.views_in_lane(self.active_program).and_then(|views| views.get(function as usize))
+            .and_then(quench_runtime::vm::program_store::derived_lane_view)
+            .map(|view| (region.header as usize..=region.backedge as usize).map(|pc| crate::dispatch_fast::typed_element_kind(view, pc)).collect())
             .unwrap_or_default();
-        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), seen: &seen, facts: facts.as_deref(), typed: &typed };
-        // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectArm`).
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[], typed: &typed };
+        // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
     }
@@ -321,13 +451,13 @@ impl Vm {
     /// fold: the entry checks the receiver's exact shape and link.
     fn class_prototype_of(&self, program: &ResidualProgram, code: &[WideInstruction], (register, instance): (Register, Value), class: u32) -> Option<ClassProto> {
         instance.direct_object_index()?;
-        let receiver = self.heap_reads().object(instance)?;
+        let receiver = self.object_data(instance)?;
         let shape = receiver.exact_shape();
         let link = receiver.proto_link();
-        let prototype = Value::direct_object(link.object_granule()?);
-        let data = self.heap_reads().object(prototype)?;
+        let prototype = Value::direct_object(link.object_record_id()?);
+        let data = self.object_data(prototype)?;
         let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
-        let constructor = self.heap_reads().property_get_ref(data, slot)?;
+        let constructor = self.heap_reads().property_get(data, slot)?;
         let Some(quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::User(_, index), .. }) = self.function_record(constructor) else { return None };
         let body = program.function_get(*index as usize)?;
         if !body.is_class_constructor || body.source_span.map(|span| span.start) != Some(class) { return None; }
@@ -336,17 +466,16 @@ impl Vm {
             _ => None,
         }).filter(|atom| self.shape_slot(shape, *atom).is_none())
             .filter_map(|atom| Some((atom, self.own_data_bits(prototype, atom)?))).collect();
-        let class = self.heap_reads().live_class_key(instance)? & !quench_runtime::staged::field_cache_layout::CLASS_KEY;
-        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members, class })
+        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members })
     }
 
     /// The bits of `object`'s own data property `atom`: `None` for an absent name, or where the shape may hold accessors
     /// (`shape_may_have_accessors`), whose slot is no data value.
     fn own_data_bits(&self, object: Value, atom: Atom) -> Option<u64> {
-        let data = self.heap_reads().object(object)?;
+        let data = self.object_data(object)?;
         if self.shape_may_have_accessors(data.shape()) { return None; }
         let slot = self.shape_slot(data.shape(), atom)?;
-        self.heap_reads().property_get_ref(data, slot).map(|value| value.to_bits())
+        self.heap_reads().property_get(data, slot).map(|value| value.to_bits())
     }
 }
 
@@ -367,7 +496,8 @@ pub(crate) struct ImageBody {
 }
 
 /// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
-pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: u32) -> Result<ImageBody, String> {
+pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<ImageBody, String> {
+    let _focus = quench_runtime::fallback::focus(program, function, 0);
     let body = program.function_get(function as usize).ok_or("no such function")?;
     let code: Vec<WideInstruction> = body.instructions().collect();
     // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree
@@ -388,10 +518,10 @@ pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: 
     // boolean, a Number), and any other constant is the deleted marker, which no constant row takes (`value_row`).
     let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
-        program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None,
-        invalidation: None, constants: &constants, typeof_names: &[], presences: None, fields: None, globals: None, classes: &[],
+        program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
+        invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
-    let spec = BodySpec { function, registers: body.registers, known, realm: None, seen: &[], facts: Some(facts), typed: &[] };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[], typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
     let calls = image_calls(&built)?;

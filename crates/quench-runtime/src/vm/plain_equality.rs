@@ -109,8 +109,8 @@ impl Vm {
                 .all(|(&a, &b)| self.plain_equal_values(a, b, constructor, ancestors))
     }
 
-    fn plain_object(&self, value: Value, constructor: Option<Atom>) -> Option<ObjectRef<'_>> {
-        let data = self.heap.direct_object_view(value)?;
+    fn plain_object(&self, value: Value, constructor: Option<Atom>) -> Option<&crate::heap::Object> {
+        let data = self.heap.object_record(value)?;
         let shape = data.shape();
         let plain = data.proto() == self.object_proto
             && !data.is_raw_json()
@@ -152,7 +152,7 @@ impl Vm {
                     self.slot_attributes(right_data, slot).is_some_and(|attributes| attributes.enumerable)
                 })
             };
-            let values = (self.heap.property_get_ref(left_data, slot as usize), right_slot.and_then(|slot| self.heap.property_get_ref(right_data, slot)));
+            let values = (self.heap.property_get(left_data, slot as usize), right_slot.and_then(|slot| self.heap.property_get(right_data, slot)));
             matches!(values, (Some(a), Some(b)) if self.plain_equal_values(a, b, constructor, ancestors))
         })
     }

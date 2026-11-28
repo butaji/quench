@@ -3,16 +3,14 @@
 //! analysis computes it with every other fact and `lane_region::int_ranges` and `packed_ranges`
 //! read what it proves; this file is the one meaning of a range.
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{immediate, operand_type, set};
 use quench_runtime::bytecode::{Constant, Operand, WideInstruction};
-use quench_runtime::typed_ir::{arithmetic, IntRange, Type};
+use quench_runtime::typed_ir::{IntRange, Type};
 use quench_runtime::staged::{DecodeContext, NumberOperation, Operation};
 use quench_runtime::value::Value;
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The range of an operand: a register's by its type, a constant's by its value.
 pub(crate) type Lookup<'a> = &'a dyn Fn(Operand) -> Option<IntRange>;
@@ -20,6 +18,25 @@ pub(crate) type Lookup<'a> = &'a dyn Fn(Operand) -> Option<IntRange>;
 /// The ranges of `types`' registers and of `constants`.
 pub(crate) fn lookup<'a>(types: &'a [Type], constants: &'a [Constant]) -> impl Fn(Operand) -> Option<IntRange> + 'a {
     move |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).int_range()
+}
+
+/// The exact range of an int32 `operation` over operands of ranges `left` and `right`: it may
+/// leave int32 (`IntRange::fits_int32`), which is where the operation overflows.
+fn arithmetic(operation: NumberArithmetic, left: IntRange, right: IntRange) -> Option<IntRange> {
+    match operation {
+        NumberArithmetic::Add => left.add(right),
+        NumberArithmetic::Subtract => left.subtract(right),
+        NumberArithmetic::Multiply => left.multiply(right),
+        _ => None,
+    }
+}
+
+/// Whether a product of operands in these ranges may be negative zero, which no integer type
+/// holds: zero is a product of an operand that may be zero, and negative where the other may be.
+fn negative_zero(operation: NumberArithmetic, left: IntRange, right: IntRange) -> bool {
+    let zero = IntRange::singleton(0);
+    operation == NumberArithmetic::Multiply
+        && ((left.contains(zero) && right.min < 0) || (right.contains(zero) && left.min < 0))
 }
 
 /// The arithmetic operator `instruction` is and its operands' ranges, where both are known.
@@ -45,34 +62,53 @@ pub(crate) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<
     if instruction.result_flags() != 0 { return None; }
     if matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
-    arithmetic::exact(operation, left, right)
+    arithmetic(operation, left, right)
 }
 
-/// The type of an arithmetic operator's result: its range (`arithmetic::number_range`), else a Number.
+/// The range of the binary64 Numbers an add, subtract or multiply of integers in ranges `left`
+/// and `right` makes (`IntRange::rounded`), where it stays within `IntRange::WORD`.
+fn word_range(operation: NumberArithmetic, left: IntRange, right: IntRange) -> Option<IntRange> {
+    arithmetic(operation, left, right).map(IntRange::rounded).filter(|range| IntRange::WORD.contains(*range))
+}
+
+/// `word_range` where the result is no negative zero: an integer Number, which no integer type holds a `-0` of.
+fn number_range(operation: NumberArithmetic, left: IntRange, right: IntRange) -> Option<IntRange> {
+    word_range(operation, left, right).filter(|_| !negative_zero(operation, left, right))
+}
+
+/// The type of an arithmetic operator's result: its range (`number_range`), else a Number.
 pub(crate) fn arithmetic_type(lookup: Lookup<'_>, instruction: WideInstruction) -> Type {
     let Some((operation, left, right)) = operation(lookup, instruction) else { return Type::NUMBER };
-    arithmetic::number_range(operation, left, right).map_or(Type::NUMBER, Type::int)
+    number_range(operation, left, right).map_or(Type::NUMBER, Type::int)
 }
 
-/// The range of the result of the arithmetic operator at `instruction` where it leaves int32 but is
-/// an integer Number a 64-bit word holds (`arithmetic::index_range`), which an index is computed in.
+/// The range of the result of the arithmetic operator at `instruction` where it leaves int32:
+/// an integer Number a 64-bit word holds (`IntRange::WORD`), which an index is computed in. A
+/// `signless` product (no consumer reads the sign of its zero) may be a negative zero, which the
+/// word holds as zero.
 pub(crate) fn index_range(lookup: Lookup<'_>, instruction: WideInstruction, signless: bool) -> Option<IntRange> {
+    let range = if signless { signless_range(lookup, instruction) } else { checked_range(lookup, instruction) };
+    range.filter(|range| !range.fits_int32())
+}
+
+/// The range of the result of the arithmetic operator at `instruction`, where it is an integer Number.
+fn checked_range(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
     let (operation, left, right) = operation(lookup, instruction)?;
-    arithmetic::index_range(operation, left, right, signless)
+    number_range(operation, left, right)
 }
 
 /// The range of the product at `instruction` of ranged operands, whether or not it may be a
-/// negative zero: what a result no consumer reads the sign of is typed by (`arithmetic::signless_range`).
+/// negative zero: what a result no consumer reads the sign of is typed by.
 pub(crate) fn signless_range(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
     let (operation, left, right) = operation(lookup, instruction)?;
-    arithmetic::signless_range(operation, left, right)
+    (operation == NumberArithmetic::Multiply).then(|| word_range(operation, left, right)).flatten()
 }
 
-/// Whether the product at `instruction` of ranged operands is no negative zero (`arithmetic::zero_free`).
+/// Whether the product at `instruction` of ranged operands is no negative zero.
 pub(crate) fn zero_free(lookup: Lookup<'_>, instruction: WideInstruction) -> bool {
-    operation(lookup, instruction).is_some_and(|(operation, left, right)| arithmetic::zero_free(operation, left, right))
+    operation(lookup, instruction).is_some_and(|(operation, left, right)| !negative_zero(operation, left, right))
 }
 
 /// The transfer of an int32 increment or decrement: its operand is proved int32 (keeping the

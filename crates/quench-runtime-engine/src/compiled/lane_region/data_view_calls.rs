@@ -11,7 +11,6 @@ use quench_runtime::bytecode::ImmediateLayout;
 use quench_runtime::tier_surface::Native;
 use quench_runtime::staged::data_view::{self, DataViewElement, DataViewWords};
 use super::builtin_calls::continues;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A DataView getter or setter of a fixed-width element, by its element kind and direction.
 #[derive(Clone, Copy)]

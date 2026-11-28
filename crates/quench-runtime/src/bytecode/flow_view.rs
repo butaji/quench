@@ -3,7 +3,7 @@
 //! successors, all derived from the opcode field layouts.
 use super::instruction::WideInstruction;
 use super::{FieldLayout, ImmediateRole, InstructionField, Operand, ResidualProgram, control_flow};
-use crate::operator::BinaryOperator;
+use oxc_ast::ast::BinaryOperator;
 
 /// Every `BinaryOperator`, to name an operator by its discriminant.
 const BINARY_OPERATORS: [BinaryOperator; 22] = [

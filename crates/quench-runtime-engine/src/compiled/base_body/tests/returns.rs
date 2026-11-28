@@ -2,15 +2,14 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{assert_bodies_agree, run_both};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
+use super::{assert_bodies_never_leave, run_both};
 
 /// An instruction that carries the return flag (`return a + b`, `-x`, `o.p`, `typeof v`, `a < b`,
 /// `f(x)`) is its row followed by the completion with its result: the body never leaves, and the
 /// result is the interpreter's.
 #[test]
 fn returning_instructions_complete_the_activation_in_a_body() {
-    assert_bodies_agree(
+    assert_bodies_never_leave(
         "function sum(a, b) { return a + b; }
          function neg(x) { return -x; }
          function pick(o) { return o.p; }
@@ -27,7 +26,7 @@ fn returning_instructions_complete_the_activation_in_a_body() {
 /// instruction with its flag, and the interpreter completes the function with the value.
 #[test]
 fn a_returning_instruction_that_misses_completes_in_the_interpreter() {
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, [runs, _]) = run_both(
         "function sum(a, b) { return a + b; }
          function pick(o) { return o.p; }
          let t = 0; for (let k = 0; k < 300; k++) t = (t + sum(k, 1) + pick({ p: k })) | 0;
@@ -35,6 +34,7 @@ fn a_returning_instruction_that_misses_completes_in_the_interpreter() {
          print(pick({ get p() { return 'got'; } })); print(pick({}));",
     );
     assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
 }
 
 /// The call forms beyond the plain call (a method call, a call through `this`, a spread, an applied
@@ -43,7 +43,7 @@ fn a_returning_instruction_that_misses_completes_in_the_interpreter() {
 /// interpreter prints.
 #[test]
 fn every_call_form_runs_in_a_body() {
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, [runs, _]) = run_both(
         "function add(a, b) { return a + b; }
          const obj = { base: 2, m(x) { return x + this.base; }, n() { return this.m(1); } };
          class P { constructor(v) { this.v = v; } get() { return this.v; } }
@@ -58,13 +58,14 @@ fn every_call_form_runs_in_a_body() {
          print(t); print(forms(0, [0, 0])); print(forms(2.5, [1, 2]));",
     );
     assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
 }
 
 /// A call form that raises, a constructor that returns an object, and a spread of a non-iterable
 /// end as the interpreter's do: the same exception, caught by the same handler.
 #[test]
 fn a_call_form_that_raises_ends_as_the_interpreter_does() {
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, _) = run_both(
         "function boom(x) { if (x > 250) throw new Error('big ' + x); return x; }
          const o = { go(x) { return boom(x); } };
          function ctor(x) { return new (function () { this.v = boom(x); })().v; }
@@ -81,7 +82,7 @@ fn a_call_form_that_raises_ends_as_the_interpreter_does() {
 /// A returning construction and a returning method call complete the activation with their result.
 #[test]
 fn returning_call_forms_complete_the_activation() {
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, [runs, _]) = run_both(
         "class P { constructor(v) { this.v = v; } }
          const obj = { m(x) { return x * 2; } };
          function make(v) { return new P(v); }
@@ -90,6 +91,7 @@ fn returning_call_forms_complete_the_activation() {
          print(t); print(make(3).v); print(call(4));",
     );
     assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
 }
 
 /// A constant that is no Number (a string, `undefined`, `null`, a boolean) is the row that writes its
@@ -101,13 +103,14 @@ fn non_number_constants_and_local_initializations_are_fast_rows() {
     use quench_runtime::bytecode::Op as Opcode;
     let ops = [Opcode::LoadConst, Opcode::InitializeTdz, Opcode::StoreLocal];
     let before = ops.map(crate::compiled::base_region::fast_rows);
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, [runs, _]) = run_both(
         "function tdz(n) { let s = 0; for (let i = 0; i < n; i++) { try { s = s + z; let z = 1; } catch (e) { s = s + 1; } } return s; }
          function consts(n) { let k = 'k', u = undefined, w = null, b = false, c = 0; for (let i = 0; i < n; i++) { k = k === 'k' ? 'j' : 'k'; b = !b; c = c + (u === undefined ? 1 : 0) + (w === null ? 2 : 0); } return k + b + c; }
          let t = 0; for (let m = 0; m < 300; m++) t = (t + tdz(m % 5) + consts(m % 4).length) | 0;
          print(t); print(tdz(3)); print(consts(3));",
     );
     assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
     for (op, before) in ops.into_iter().zip(before) {
         assert!(crate::compiled::base_region::fast_rows(op) > before, "{op:?} has no fast row");
     }
@@ -120,7 +123,7 @@ fn non_number_constants_and_local_initializations_are_fast_rows() {
 fn typeof_tests_and_indexes_are_fast_rows() {
     use quench_runtime::bytecode::Op;
     let before = crate::compiled::base_region::fast_rows(Op::Unary);
-    let (interpreted, compiled) = run_both(
+    let (interpreted, compiled, [runs, _]) = run_both(
         "function is(v) { return typeof v === 'number'; }
          function kind(v) { switch (typeof v) { case 'number': return 1; case 'string': return 2; case 'undefined': return 3; default: return 4; } }
          function mix(v) { return (typeof v !== 'boolean' ? 1 : 0) + (typeof v === 'object' ? 2 : 0) + (typeof v === 'function' ? 4 : 0); }
@@ -130,5 +133,6 @@ fn typeof_tests_and_indexes_are_fast_rows() {
          print(t); print(is(3)); print(kind('s')); print(mix(null)); print(mix(undefined)); print(counted(5));",
     );
     assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
     assert!(crate::compiled::base_region::fast_rows(Op::Unary) > before, "no typeof fast row");
 }

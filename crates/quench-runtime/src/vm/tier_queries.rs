@@ -4,7 +4,7 @@
 //! below, each the heap's own tracked write (its barrier, its shape and store-watch invalidation).
 
 use super::Vm;
-use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionRecord, Heap, MemoryPolicy, Object, ObjectMut, ObjectRef, RootId, TableWords, WasmGcRecord};
+use crate::heap::{ArrayElements, ArrayObject, Cell, EnvironmentRecord, FunctionRecord, Heap, MemoryPolicy, Object, RootId, TableWords, WasmGcRecord};
 use crate::vm::engine_types::InstanceRecord;
 use crate::vm::wtf16::JsString;
 use crate::Value;
@@ -21,26 +21,10 @@ impl Vm {
     #[inline(always)]
     pub fn collection_due(&self) -> bool { self.heap.should_collect() }
 
-    /// Whether byte charges made a collection due (`Heap::byte_due`): what a back-edge poll
-    /// tests (DESIGN 4.7), so a poll services only debt that allocation in the loop made.
-    #[inline(always)]
-    pub fn byte_due(&self) -> bool { self.heap.byte_due() }
-
     /// The function record of `value`, a closure, native or bound function (`Heap::function`): a tier
     /// reads a callee's kind, environment and program through it.
     #[inline(always)]
     pub fn function_record(&self, value: Value) -> Option<&FunctionRecord> { self.heap.function(value) }
-
-    /// The value the builtin `path` names in the active realm: its global binding, then the member of it
-    /// (`Math`, then `Math.sqrt`). `None` where the realm lacks either. A builtin the closed world never
-    /// writes holds this value in every run, so a tier may take it at load (`Identity::Builtin`).
-    pub fn native_for_path(&self, path: crate::typed_ir::BuiltinPath) -> Option<Value> {
-        let global = self.own_property(self.realm.globals, path.global)?;
-        match path.member {
-            None => Some(global),
-            Some(member) => self.own_property(global, member),
-        }
-    }
 
     /// The heap as a tier reads it: queries only, no writer.
     #[inline(always)]
@@ -143,11 +127,11 @@ impl Vm {
     #[inline(always)]
     pub fn mark_prototype(&mut self, prototype: Value) { self.heap.mark_prototype(prototype) }
 
-    /// Admits the writes of `shape`'s `slot` as `writes` (`Heap::admit_slot_writes`), before a tier
+    /// Admits the writes of `shape`'s `slot` as `writes` (`Heap::admit_slot_writes_as`), before a tier
     /// stores raw words of that type.
     #[inline(always)]
-    pub fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
-        self.heap.admit_slot_writes(shape, slot, writes)
+    pub fn admit_slot_writes_as(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type, raw_double: bool) -> bool {
+        self.heap.admit_slot_writes_as(shape, slot, writes, raw_double)
     }
 
     /// The elements of the record array `value` for an in-place store of `stored`, unlogged
@@ -210,10 +194,6 @@ heap_reads! {
     fn property_get(object: &Object, slot: usize) -> Option<Value>;
     /// The store-watch word compiled code compares (`Heap::store_watch_word`).
     fn store_watch_word() -> usize;
-    /// The class space's base, which a direct object's granule is added to (`Heap::class_space_base`).
-    fn class_space_base() -> usize;
-    /// The class space's spill arena base (`Heap::native_spill_base`), which `JsStepHead::spill_base` takes.
-    fn native_spill_base() -> usize;
     /// The weight allocated since the last collection (`Heap::allocated_weight`).
     fn allocated_weight() -> usize;
     /// An object held as a record (`Heap::record_object_value`).
@@ -232,16 +212,12 @@ heap_reads! {
     fn live_array_records() -> *const ArrayObject;
     /// The live string records (`Heap::live_string_records`).
     fn live_string_records() -> *const JsString;
-    /// The allocation cursor of class cell region `region`, which an inline class cell claim bumps (`Heap::native_cell_cursor`).
-    fn native_cell_cursor(region: u32) -> usize;
-    /// The class header word of `value` when it names a live class cell (`Heap::live_class_header`).
-    fn live_class_header(value: Value) -> Option<u64>;
-    /// The receiver key of a live class cell's class (`Heap::live_class_key`): its class id OR'd with `CLASS_KEY`.
-    fn live_class_key(value: Value) -> Option<u32>;
+    /// The native object allocation cursor (`Heap::native_object_cursor`).
+    fn native_object_cursor() -> usize;
     /// The native array allocation cursor (`Heap::native_array_cursor`).
     fn native_array_cursor() -> usize;
-    /// A class cell region's mark blocks and their count (`Heap::native_class_mark_blocks`).
-    fn native_class_mark_blocks(region: u32) -> (*const u8, usize);
+    /// The native objects' mark blocks (`Heap::native_object_mark_blocks`).
+    fn native_object_mark_blocks() -> (*const u8, usize);
     /// The native functions' mark blocks (`Heap::native_function_mark_blocks`).
     fn native_function_mark_blocks() -> (*const u8, usize);
     /// The native arrays' mark blocks (`Heap::native_array_mark_blocks`).
@@ -258,8 +234,12 @@ heap_reads! {
     fn set_entries(value: Value) -> Option<&'a crate::heap::Entries<Value>>;
     /// Whether `value` is a symbol (`Heap::is_symbol`).
     fn is_symbol(value: Value) -> bool;
+    /// Whether `shape`'s `slot` holds raw doubles (`Heap::slot_holds_raw_doubles`).
+    fn slot_holds_raw_doubles(shape: u32, slot: usize) -> bool;
     /// A v128 cell's bytes (`Heap::v128`).
     fn v128(value: Value) -> Option<[u8; crate::wasm::V128_BYTES]>;
+    /// The object part of a function receiver (`Heap::function_receiver`).
+    fn function_receiver(value: Value) -> Option<&'a Object>;
     /// The object part of an array, function or builtin receiver (`Heap::held_other_receiver`).
     fn held_other_receiver(value: Value) -> Option<&'a Object>;
     /// Whether storing `stored` into the array `base` in place needs no store log (`Heap::array_store_unlogged`).
@@ -270,12 +250,18 @@ heap_reads! {
     fn is_map(value: Value) -> bool;
     /// The cell of a heap value (`Heap::get`).
     fn get(value: Value) -> Option<&'a Cell>;
-    /// The read view of an object (`Heap::object`): the cell-answerable reads, else its record.
-    fn object(value: Value) -> Option<ObjectRef<'a>>;
-    /// Property `slot` of the object view `object` (`Heap::property_get_ref`).
-    fn property_get_ref(object: ObjectRef<'_>, slot: usize) -> Option<Value>;
+    /// An object's record (`Heap::object`).
+    fn object(value: Value) -> Option<&'a Object>;
     /// An ordinary object's record (`Heap::ordinary_object`).
     fn ordinary_object(value: Value) -> Option<&'a Object>;
+    /// An object held in the record arena (`Heap::object_record`).
+    fn object_record(value: Value) -> Option<&'a Object>;
+    /// The record of arena id `record_id` (`Heap::object_record_by_id`).
+    fn object_record_by_id(record_id: u32) -> &'a Object;
+    /// The record arena's base, for a tier that addresses records in place (`Heap::object_record_base`).
+    fn object_record_base() -> Option<*const Object>;
+    /// The live record arena (`Heap::live_object_records`).
+    fn live_object_records() -> *const Object;
     /// The property value arena's base (`Heap::arena_values_base`).
     fn arena_values_base() -> *const Value;
     /// The native property values (`Heap::native_property_values`).
@@ -331,7 +317,14 @@ impl Vm {
     /// The storage span of the array `base`, its values and readable and writable lengths (`Heap::array_storage_span`).
     #[inline(always)]
     pub fn array_storage_span(&mut self, base: Value) -> Option<(std::ptr::NonNull<Value>, usize, usize)> { self.heap.array_storage_span(base) }
-    /// Proves the storage of the array `base` in `register` (`Heap::prove_array_storage`), for a row's element span (`proof_span`).
+    /// The raw double words of the array `base` (`Heap::array_double_span`), which a loop kernel
+    /// reads and writes as f64 elements.
+    #[inline(always)]
+    pub fn array_double_span(&mut self, base: Value) -> Option<(std::ptr::NonNull<u64>, usize, usize)> { self.heap.array_double_span(base) }
+    /// Widens the elements of the array `base` to tagged values (`Heap::widen_array_elements`).
+    #[inline(always)]
+    pub fn widen_array_elements(&mut self, base: Value) { self.heap.widen_array_elements(base) }
+    /// Proves the storage of the array `base` in `register` (`Heap::prove_array_storage`).
     #[inline(always)]
     pub fn prove_array_storage(&mut self, proofs: &mut crate::heap::ArrayStorageProofs, register: u16, base: Value) -> bool {
         self.heap.prove_array_storage(proofs, register, base)
@@ -366,15 +359,12 @@ impl Vm {
     /// The record of the environment `value`, for a store (`Heap::environment_mut`).
     #[inline(always)]
     pub fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> { self.heap.environment_mut(value) }
-    /// The exclusive view of the object `value`, for a store (`Heap::object_mut`).
+    /// The record of the object `value`, for a store (`Heap::object_mut`).
     #[inline(always)]
-    pub fn object_mut(&mut self, value: Value) -> Option<ObjectMut<'_>> { self.heap.object_mut(value) }
-    /// The record of `value` for a record-only edit (`Heap::object_record_mut`): a live class cell has none, so it answers `None`.
+    pub fn object_mut(&mut self, value: Value) -> Option<&mut Object> { self.heap.object_mut(value) }
+    /// The record of the object `value`, for a store of `stored` (`Heap::object_store_mut`).
     #[inline(always)]
-    pub fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> { self.heap.object_record_mut(value) }
-    /// The exclusive view of the object `value` for a store of `stored` (`Heap::object_store_mut`).
-    #[inline(always)]
-    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<ObjectMut<'_>> { self.heap.object_store_mut(value, stored) }
+    pub fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> { self.heap.object_store_mut(value, stored) }
     /// Charges `bytes` of payload growth to the collector's pacing (`Heap::charge_payload_growth`).
     #[inline(always)]
     pub fn charge_payload_growth(&mut self, bytes: usize) { self.heap.charge_payload_growth(bytes) }
@@ -415,11 +405,6 @@ impl<'a> FactWatch<'a> {
     #[inline(always)]
     pub fn subscribe_prototype_chain(&mut self, chain: PrototypeChain, code: &Rc<dyn DependentCode>) -> bool {
         self.heap.subscribe_prototype_chain(chain, code)
-    }
-    /// Retires `code` when cell `key` widens (`Dependencies::subscribe_cell`); `false` where the table is full.
-    #[inline(always)]
-    pub fn subscribe_cell(&mut self, key: crate::typed_ir::FactKey, code: &Rc<dyn DependentCode>) -> bool {
-        self.heap.dependencies_mut().subscribe_cell(key, code)
     }
     /// Retires `code` when a method cache names `atom` (`CodeReaders::subscribe`).
     #[inline(always)]

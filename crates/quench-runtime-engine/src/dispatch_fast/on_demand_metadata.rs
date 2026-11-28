@@ -4,6 +4,19 @@
 use crate::ext_traits::*;
 use super::*;
 
+#[quench_macros::ext(DispatchFastOnDemandMetadataVm)]
+impl Vm {
+    /// `LaneStack::note_site_callee` while a lane body may read the history: only the
+    /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
+    /// execution keeps no history, as V8's jitless mode allocates no feedback for an
+    /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
+    pub(crate) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
+        if self.tier_may_run(crate::compiled::admission::Tier::ANY) {
+            self.lane_stack.note_site_callee(link, target);
+        }
+    }
+}
+
 /// Whether the lane completes `call`, the general path's call of the innermost `frame`,
 /// itself: an async callee's promise settles on the general path
 /// (`PendingGeneralCall::completion`), and a caller the general path runs without a view
@@ -46,3 +59,30 @@ fn caller_loops(cx: *mut LaneContext, call: &PendingGeneralCall) -> bool {
     vm.programs.function_loops(program, vm.frames[call.caller].function)
 }
 
+/// A helper call to a callee the caller's code could call by its entry, which it compiled before: past
+/// `late_call_calls` the body specializes again and a calling loop region's code goes (`LoopTier::late_callee`),
+/// answered true so the call leaves the region. A settled site (`LaneContext::late_settled`) counts no more.
+pub(crate) fn record_late_call(cx: *mut LaneContext, ip: Ip, target: &ScriptCallTarget, argc: u16) -> bool {
+    // A loop region's direct call of another closure of the function it plans rebinds to it (`DirectCallee::bound`): the
+    // site's plan stands, so the call counts as no late callee.
+    if crate::compiled::direct_callee::rebind_closure(cx, ip, target, argc) { return false; }
+    if unsafe { (*cx).late_settled } == ip { return false; }
+    let vm = unsafe { vm(cx) };
+    // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
+    let function = match vm.lane_stack.top_frame() {
+        Some(activation) => activation.function(),
+        None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return false }; frame.function }
+    };
+    let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return false };
+    if !caller.owns_record(ip) { return false; }
+    if caller.note_late_call() {
+        // A callee still warming toward its body is called by its entry once it has one: count again until then.
+        if unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view).is_some_and(|own| own.warming()) { caller.recount_late_calls(); return false; }
+        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_none() { return false; }
+        caller.respecialize();
+        let (pc, region) = (unsafe { pc_in_view(caller.records(), ip) } as u32, unsafe { (*cx).region_payload } != 0);
+        return caller.loops.iter().filter(|site| region && (site.header..=site.backedge).contains(&pc))
+            .fold(false, |left, site| site.tier.borrow_mut().late_callee(site.tiers) | left);
+    } else if caller.late_calls_settled() { unsafe { (*cx).late_settled = ip } }
+    false
+}

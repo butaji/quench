@@ -13,7 +13,9 @@
 //! PromiseResolve, which observes nothing. The emit and stencil
 //! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
 //! its exact PC for the interpreter to suspend.
-use super::{CallFrame, Register, Stage, Step};
+use super::{CallFrame, Operation, Register, Stage, Step};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
 
 /// What suspends the activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +68,7 @@ pub struct Suspending<W> {
 impl<W> Suspending<W> {
     /// The suspension on `value` that resumes after this instruction, into `destination`.
     #[inline(always)]
-    pub fn after(effect: SuspendEffect, value: W, destination: Register) -> Self {
+    pub(crate) fn after(effect: SuspendEffect, value: W, destination: Register) -> Self {
         Self { effect, value, destination, delegated: None, again: false }
     }
 }
@@ -75,6 +77,34 @@ impl<W> Suspending<W> {
 /// `decode_suspend` reads its records through and a tier picks a suspension's handler by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SuspendRow { Await, Yield, YieldStar }
+
+/// The suspension row of `op` (`SuspendRow`); `None` for an opcode that suspends nothing.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub const fn suspend_row(op: Op) -> Option<SuspendRow> {
+    match op {
+        Op::Await => Some(SuspendRow::Await),
+        Op::Yield => Some(SuspendRow::Yield),
+        Op::YieldStar => Some(SuspendRow::YieldStar),
+        _ => None,
+    }
+}
+
+#[cfg(not(stencil_build))]
+impl<W, P> Operation<W, P> {
+    /// The suspension row of `instruction` (`decode_flow`); `None` for any other opcode.
+    pub(super) fn decode_suspend(instruction: WideInstruction) -> Option<Self> {
+        let kind = match suspend_row(instruction.op())? {
+            SuspendRow::Await => Suspension::Await,
+            SuspendRow::Yield => Suspension::Yield { conversion: YieldConversion::Resolve },
+            SuspendRow::YieldStar => {
+                let (state, next) = instruction.register_pair();
+                Suspension::YieldStar { iterator: instruction.register_c(), state, next }
+            }
+        };
+        Some(Self::Suspend { kind, destination: instruction.result_register(), value: instruction.register_b() })
+    }
+}
 
 /// The suspension `kind` of the value in `value`, resuming into `destination`: the row's
 /// conversion, then the frame's effect. Unresolved where the frame answers no call-out, or a
@@ -96,7 +126,7 @@ pub fn suspend<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, kind: Su
 /// `suspended` handed to the frame as the step's control; unresolved where the conversion left
 /// (`None`) or the frame cannot suspend.
 #[inline(always)]
-pub fn settle<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, suspended: Option<Suspending<S::Word>>)
+pub(super) fn settle<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, suspended: Option<Suspending<S::Word>>)
     -> Step<S::Word, F::Control> {
     suspended.and_then(|suspended| frame.suspend(stage, suspended)).map_or(Step::Unresolved, Step::Control)
 }
@@ -133,11 +163,3 @@ pub fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awa
     let object = frame.object_test(stage, awaited)?;
     stage.choose_leaving(object, #[inline(always)] |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }
-
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;

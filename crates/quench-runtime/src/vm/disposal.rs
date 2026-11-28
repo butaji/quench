@@ -40,6 +40,34 @@ pub(super) const fn disposal_native_length(native: Native) -> Option<f64> {
 }
 
 impl Vm {
+    pub(super) fn is_disposal_native(native: Native) -> bool {
+        matches!(
+            native,
+            Native::DisposableStack
+                | Native::AsyncDisposableStack
+                | Native::AsyncDisposableStackUse
+                | Native::AsyncDisposableStackAdopt
+                | Native::AsyncDisposableStackDefer
+                | Native::AsyncDisposableStackMove
+                | Native::AsyncDisposableStackDisposeAsync
+                | Native::AsyncDisposableStackDisposed
+                | Native::DisposableStackMove
+                | Native::DisposableStackDisposed
+                | Native::DisposableStackUse
+                | Native::DisposableStackAdopt
+                | Native::DisposableStackDefer
+                | Native::DisposableStackDispose
+                | Native::DisposableStackUseAsync
+                | Native::DisposableStackDisposeAsync
+                | Native::DisposableStackDisposeWithCompletion
+                | Native::DisposableStackDisposeAsyncWithCompletion
+                | Native::DisposableStackAsyncDisposalFulfilled
+                | Native::DisposableStackAsyncDisposalRejected
+                | Native::AsyncIteratorDispose
+                | Native::AsyncIteratorDisposeFulfilled
+        )
+    }
+
     /// DisposableStack and AsyncDisposableStack for the realm of `global`, whose
     /// `Object.prototype` is `object_prototype`.
     pub(super) fn install_disposable_stacks(
@@ -241,7 +269,7 @@ impl Vm {
         let constructor = self.native_value(native);
         let prototype_atom = self.prototype_atom();
         let candidate = self.constructor_prototype_value(p, new_target)?;
-        let prototype = if self.heap.object(candidate).is_some() {
+        let prototype = if self.object_data(candidate).is_some() {
             candidate
         } else {
             let realm = self
@@ -255,7 +283,7 @@ impl Vm {
             });
             let realm_constructor = self.get_property(p, realm, constructor_atom)?;
             let realm_prototype = self.get_property(p, realm_constructor, prototype_atom)?;
-            if self.heap.object(realm_prototype).is_some() {
+            if self.object_data(realm_prototype).is_some() {
                 realm_prototype
             } else {
                 self.own_property(constructor, prototype_atom)
@@ -277,6 +305,111 @@ impl Vm {
         )?;
         self.heap.release_root(root);
         Ok(stack)
+    }
+
+    pub(super) fn call_disposal_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if native == Native::DisposableStack {
+            return Err(JsError("DisposableStack constructor requires new".into()));
+        }
+        if native == Native::AsyncDisposableStack {
+            return Err(JsError("AsyncDisposableStack constructor requires new".into()));
+        }
+        if native == Native::AsyncDisposableStackDisposed {
+            self.require_async_stack(p, this)?;
+            return self.stack_disposed(this);
+        }
+        if native == Native::DisposableStackDisposed {
+            self.require_stack(p, this)?;
+            self.require_sync_stack(p, this)?;
+            return self.stack_disposed(this);
+        }
+        if native == Native::AsyncIteratorDispose {
+            return self.async_iterator_dispose(p, this);
+        }
+        if native == Native::AsyncIteratorDisposeFulfilled {
+            return Ok(Value::UNDEFINED);
+        }
+        if matches!(
+            native,
+            Native::AsyncDisposableStackUse
+                | Native::AsyncDisposableStackAdopt
+                | Native::AsyncDisposableStackDefer
+                | Native::AsyncDisposableStackMove
+        ) {
+            self.require_async_stack(p, this)?;
+        }
+        if native == Native::AsyncDisposableStackDisposeAsync {
+            return self.stack_dispose_async_native(p, this);
+        }
+        if native == Native::AsyncDisposableStackMove {
+            return self.stack_move(p, this, true);
+        }
+        if native == Native::DisposableStackMove {
+            self.require_sync_stack(p, this)?;
+            return self.stack_move(p, this, false);
+        }
+        if native == Native::AsyncDisposableStackUse {
+            self.require_open_stack(p, this)?;
+            return self.stack_use_async(p, this, args);
+        }
+        if native == Native::AsyncDisposableStackAdopt {
+            self.require_open_stack(p, this)?;
+            return self.stack_adopt(p, this, args, true);
+        }
+        if native == Native::AsyncDisposableStackDefer {
+            self.require_open_stack(p, this)?;
+            return self.stack_defer(p, this, args, true);
+        }
+        if native == Native::DisposableStackDispose {
+            self.require_sync_stack(p, this)?;
+            return self.stack_dispose(p, this);
+        }
+        if native == Native::DisposableStackDisposeAsync {
+            self.require_stack(p, this)?;
+            return self.stack_dispose_async(p, this);
+        }
+        if native == Native::DisposableStackDisposeWithCompletion {
+            self.require_stack(p, this)?;
+            let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return self.stack_dispose_with_completion(p, this, completion);
+        }
+        if native == Native::DisposableStackDisposeAsyncWithCompletion {
+            self.require_stack(p, this)?;
+            let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return self.stack_dispose_async_with_completion(p, this, completion);
+        }
+        if matches!(
+            native,
+            Native::DisposableStackAsyncDisposalFulfilled
+                | Native::DisposableStackAsyncDisposalRejected
+        ) {
+            let state = self.active_native_env().unwrap_or(Value::UNDEFINED);
+            if native == Native::DisposableStackAsyncDisposalRejected {
+                let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
+                self.add_async_disposal_error(p, state, reason)?;
+            }
+            return self.continue_async_disposal(p, state);
+        }
+        if matches!(
+            native,
+            Native::DisposableStackUse | Native::DisposableStackAdopt | Native::DisposableStackDefer
+        ) {
+            self.require_sync_stack(p, this)?;
+        }
+        self.require_open_stack(p, this)?;
+        match native {
+            Native::DisposableStackUse => self.stack_use(p, this, args),
+            Native::DisposableStackUseAsync => self.stack_use_async(p, this, args),
+            Native::DisposableStackAdopt => self.stack_adopt(p, this, args, false),
+            Native::DisposableStackDefer => self.stack_defer(p, this, args, false),
+            _ => Err(JsError("invalid disposal native".into())),
+        }
     }
 
     fn async_iterator_dispose(
@@ -335,7 +468,7 @@ impl Vm {
     }
 
     fn require_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
-        if self.heap.ordinary_view(stack).is_none() {
+        if self.heap.object_record(stack).is_none() {
             return Err(self.type_error(p, "DisposableStack receiver is invalid".into()));
         }
         let entries = self
@@ -851,150 +984,4 @@ impl Vm {
 
 fn is_nullish(value: Value) -> bool {
     value.is_null() || value.is_undefined()
-}
-
-/// Each disposal native's entry: a standalone function per native, named for what it does.
-pub(super) fn disposal_entry(native: Native) -> Option<native_table::NativeFn> {
-    let entry: native_table::NativeFn = match native {
-        Native::DisposableStack => disposable_stack_called,
-        Native::AsyncDisposableStack => async_disposable_stack_called,
-        Native::AsyncDisposableStackUse => async_stack_use,
-        Native::AsyncDisposableStackAdopt => async_stack_adopt,
-        Native::AsyncDisposableStackDefer => async_stack_defer,
-        Native::AsyncDisposableStackMove => async_stack_move,
-        Native::AsyncDisposableStackDisposeAsync => async_stack_dispose_async,
-        Native::AsyncDisposableStackDisposed => async_stack_disposed,
-        Native::DisposableStackMove => sync_stack_move,
-        Native::DisposableStackDisposed => sync_stack_disposed,
-        Native::DisposableStackUse => sync_stack_use,
-        Native::DisposableStackAdopt => sync_stack_adopt,
-        Native::DisposableStackDefer => sync_stack_defer,
-        Native::DisposableStackDispose => sync_stack_dispose,
-        Native::DisposableStackUseAsync => sync_stack_use_async,
-        Native::DisposableStackDisposeAsync => sync_stack_dispose_async,
-        Native::DisposableStackDisposeWithCompletion => sync_stack_dispose_with_completion,
-        Native::DisposableStackDisposeAsyncWithCompletion => sync_stack_dispose_async_with_completion,
-        Native::DisposableStackAsyncDisposalFulfilled => async_disposal_fulfilled,
-        Native::DisposableStackAsyncDisposalRejected => async_disposal_rejected,
-        Native::AsyncIteratorDispose => async_iterator_dispose_native,
-        Native::AsyncIteratorDisposeFulfilled => async_iterator_dispose_fulfilled,
-        _ => return None,
-    };
-    Some(entry)
-}
-
-fn disposable_stack_called(_vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(JsError("DisposableStack constructor requires new".into()))
-}
-
-fn async_disposable_stack_called(_vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(JsError("AsyncDisposableStack constructor requires new".into()))
-}
-
-fn async_stack_disposed(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_async_stack(p, this)?;
-    vm.stack_disposed(this)
-}
-
-fn sync_stack_disposed(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_stack(p, this)?;
-    vm.require_sync_stack(p, this)?;
-    vm.stack_disposed(this)
-}
-
-fn async_iterator_dispose_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.async_iterator_dispose(p, this)
-}
-
-fn async_iterator_dispose_fulfilled(_vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Ok(Value::UNDEFINED)
-}
-
-fn async_stack_use(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_async_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_use_async(p, this, args)
-}
-
-fn async_stack_adopt(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_async_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_adopt(p, this, args, true)
-}
-
-fn async_stack_defer(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_async_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_defer(p, this, args, true)
-}
-
-fn async_stack_move(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_async_stack(p, this)?;
-    vm.stack_move(p, this, true)
-}
-
-fn async_stack_dispose_async(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.stack_dispose_async_native(p, this)
-}
-
-fn sync_stack_move(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_sync_stack(p, this)?;
-    vm.stack_move(p, this, false)
-}
-
-fn sync_stack_use(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_sync_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_use(p, this, args)
-}
-
-fn sync_stack_adopt(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_sync_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_adopt(p, this, args, false)
-}
-
-fn sync_stack_defer(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_sync_stack(p, this)?;
-    vm.require_open_stack(p, this)?;
-    vm.stack_defer(p, this, args, false)
-}
-
-fn sync_stack_dispose(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_sync_stack(p, this)?;
-    vm.stack_dispose(p, this)
-}
-
-fn sync_stack_use_async(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_open_stack(p, this)?;
-    vm.stack_use_async(p, this, args)
-}
-
-fn sync_stack_dispose_async(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    vm.require_stack(p, this)?;
-    vm.stack_dispose_async(p, this)
-}
-
-fn sync_stack_dispose_with_completion(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_stack(p, this)?;
-    let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
-    vm.stack_dispose_with_completion(p, this, completion)
-}
-
-fn sync_stack_dispose_async_with_completion(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.require_stack(p, this)?;
-    let completion = args.first().copied().unwrap_or(Value::UNDEFINED);
-    vm.stack_dispose_async_with_completion(p, this, completion)
-}
-
-fn async_disposal_fulfilled(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    let state = vm.active_native_env().unwrap_or(Value::UNDEFINED);
-    vm.continue_async_disposal(p, state)
-}
-
-fn async_disposal_rejected(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    let state = vm.active_native_env().unwrap_or(Value::UNDEFINED);
-    let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
-    vm.add_async_disposal_error(p, state, reason)?;
-    vm.continue_async_disposal(p, state)
 }

@@ -92,8 +92,8 @@ pub fn decimal_int32_row<S: Stage>(stage: &mut S, wide: bool, units: S::Word, le
 
 /// `decimal_int32_row` on `Concrete` over the units at `units`, `length` of them, as an int32.
 #[cfg(not(stencil_build))]
-pub fn decimal_int32_at(wide: bool, units: u64, length: u64) -> Option<i32> {
-    let mut stage = super::Concrete::pure();
+pub(crate) fn decimal_int32_at(wide: bool, units: u64, length: u64) -> Option<i32> {
+    let mut stage = super::Concrete::new(std::ptr::null());
     let (ok, value) = decimal_int32_row(&mut stage, wide, units, length);
     ok.then_some(value as i32)
 }
@@ -101,7 +101,7 @@ pub fn decimal_int32_at(wide: bool, units: u64, length: u64) -> Option<i32> {
 /// The int32 `parseInt(text)` (radix 10) answers for the code units of `text`: the row on
 /// `Concrete` over a copy of them, for text not already flat.
 #[cfg(not(stencil_build))]
-pub fn decimal_int32(units: impl Iterator<Item = u16>) -> Option<i32> {
+pub(crate) fn decimal_int32(units: impl Iterator<Item = u16>) -> Option<i32> {
     let units: Vec<u16> = units.collect();
     decimal_int32_at(true, units.as_ptr() as u64, units.len() as u64)
 }

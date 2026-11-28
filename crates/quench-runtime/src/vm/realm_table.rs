@@ -38,11 +38,6 @@ impl<T> RealmTable<T> {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&Value, &T)> {
         self.0.iter().map(|(key, value)| (key, value))
     }
-
-    /// Keeps the entries `keep` accepts (`FxHashMap::retain`'s shape).
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&Value, &mut T) -> bool) {
-        self.0.retain_mut(|(key, value)| keep(key, value));
-    }
 }
 
 impl<T> std::ops::Index<&Value> for RealmTable<T> {

@@ -16,7 +16,6 @@ use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_table_ops::TableOp;
 use quench_runtime::wasm::conversion::ScalarConversionOperator as Conversion;
 use cranelift_codegen::ir::{self, MemFlagsData};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The bytes of one word of the callout's result.
 const WORD: u32 = size_of::<u64>() as u32;

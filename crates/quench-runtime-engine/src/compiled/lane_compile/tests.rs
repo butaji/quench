@@ -24,10 +24,9 @@ fn an_entry_leave_round_trips_and_resumes_at_the_first_record() {
 /// the first record.
 #[test]
 fn a_stub_entry_is_its_own_exit_kind_and_resumes_at_the_first_record() {
-    use super::{BodyEntry, LaneExit};
+    use super::{entry_cell::EntryCell, BodyEntry, LaneExit};
     use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
-    // The stub takes the lane body convention, whose arguments and results this test's C-convention call passes alike.
-    let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(crate::compiled::lane_body_abi::entry_stub()) };
+    let stub: BodyEntry = unsafe { std::mem::transmute::<usize, BodyEntry>(EntryCell::stub()) };
     // SAFETY: the stub reads none of its arguments.
     let returned = unsafe { stub(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
     assert_eq!(returned.status, LANE_BODY_NOT_ENTERED);
@@ -108,6 +107,7 @@ fn chain_dependencies_retire_at_their_own_prototypes_only() {
 /// registers, a status and a result word back, and neither a frame nor a register file to store to.
 #[test]
 fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
+    use super::{DirectCandidates, lane_unit};
     /// The CLIF instructions of the scalar entry's hot blocks, a loose bound on a call's cost.
     const HOT_INSTRUCTIONS: usize = 80;
     let program = quench_runtime::Engine::specialize("function fib(n){return n<2?n:fib(n-1)+fib(n-2);} fib(3);", "scalar-entry.js").unwrap();
@@ -117,13 +117,16 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     let atom = vm.intern_atom("fib");
     let callee = vm.own_property(vm.realm.globals, atom).unwrap();
     let target = vm.resolve_script_call_target(&program, callee).expect("fib is a lane call target");
-    let function = target.body.function;
+    let function = target.function;
     // SAFETY: a resolved target's view outlives its program.
-    let view = unsafe { &*target.body.view };
-    let body = program.function(function as usize);
-    let direct = crate::compiled::direct_callee::direct_callees_in_lane(&mut vm, view, function, &program, body);
-    assert!(body.instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).all(|(pc, _)| !direct[pc].is_empty()), "fib calls itself directly");
-    let (plan, _) = vm.plan_lane_method(&program, function, &|_| (0, 0), &direct, None, &|_, _, _, _| true).expect("fib plans");
+    let view = unsafe { &*target.view };
+    let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
+    for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
+        let site = crate::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
+        direct[pc].push(site);
+    }
+    let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_, _| None, &|_| (0, 0), &direct, &[],
+        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[], &|_, _, _, _| true).expect("fib plans");
     let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
     let clif = scalar.to_string();
     assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");

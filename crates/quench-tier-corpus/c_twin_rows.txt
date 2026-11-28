@@ -25,7 +25,6 @@ NumberOperation::Math math_sqrt
 NumberOperation::Extreme math_minmax
 NumberOperation::Imul math_imul
 NumberOperation::IntCase c_switch_dense
-NumberOperation::Power - Math.pow of a constant exponent: no benchmark op isolates it
 Operation::RequireObjectCoercible v_destructure_obj
 Operation::RequireIteratorResult - iterator result check: no benchmark op isolates it
 Operation::LogicalNot not_op
@@ -33,6 +32,8 @@ Operation::TypeofIndex typeof_op
 Operation::TypeofTest typeof_op
 Operation::TypeofString typeof_op
 Operation::IndexWrite arr_store_int
+Operation::AddSite - stencil row only: no opcode decodes to it
+Operation::NamingSite - stencil row only: no opcode decodes to it
 Operation::InstanceOf v_instanceof
 Operation::DirectArray - stencil guard: its cost is the guarded operation's
 Operation::ArrayLength arr_length
@@ -131,13 +132,23 @@ heap::LOAD_CHECKED_ROW v_let_block
 heap::STORE_CHECKED_ROW v_let_block
 heap::TYPEOF_STRING_ROW typeof_op
 heap::CALLEE_CAPTURE_ROW c_closure_read
+heap::INSTANCEOF_ROW v_instanceof
 heap::REALM_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::GLOBAL_READ_ROW v_global_var
 heap::GLOBAL_STORE_ROW v_global_var
 heap::CONSTANT_ROW - constant load; no kernel isolates it
 heap::APPEND_ROW arr_push
+heap::ADD_PACKED_ROW v_obj_add
+heap::ADD_ARENA_ROW v_obj_add
+heap::ADD_EITHER_ROW v_obj_add
+heap::THIS_ADD_PACKED_ROW v_new_point
+heap::THIS_ADD_ARENA_ROW v_new_point
+heap::THIS_ADD_EITHER_ROW v_new_point
 heap::FOR_IN_ROW v_for_in
+heap::NAME_EITHER_ROW - function naming; no kernel isolates it
+heap::NAME_ARENA_ROW - function naming; no kernel isolates it
 heap::IC_GET_ROW field_read
+heap::IC_GET_HOLDER_ROW v_proto_chain3_field
 heap::IC_SET_ROW field_store
 heap::IC_SET_INT_ROW field_store
 heap::ENV_ROW c_closure_read
@@ -149,8 +160,22 @@ heap::TYPED_INDEX_ROW typed_load
 heap::TYPED_STORE_ROW typed_store_f64
 heap::TYPED_LENGTH_ROW typed_length
 heap::IC_PROOF_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::IC_KNOWN_GET_ROW field_read
+heap::IC_KNOWN_SET_ROW field_store
+heap::IC_KNOWN_SET_INT_ROW field_store
+heap::IC_KNOWN_SET_ADMITTED_ROW field_store
+heap::IC_KNOWN_SET_INT_ADMITTED_ROW field_store
+heap::IC_KNOWN_GET_FLAT_ROW field_read
+heap::IC_KNOWN_SET_FLAT_ROW field_store
+heap::IC_KNOWN_SET_INT_FLAT_ROW field_store
+heap::IC_KNOWN_SET_FLAT_ADMITTED_ROW field_store
+heap::IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW field_store
 heap::DECLARED_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CAPTURE_IDENTITY_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::PROTOTYPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::SHAPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::SHAPE_FLAT_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
+heap::STORES_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CHAR_CODE_AT_ROW str_charcodeat
 heap::PARSE_INT_ROW parse_int
 heap::STAGED_REMAINDER int_mod

@@ -10,8 +10,15 @@ clz32 quench-bjit/stencils/numeric.rs:fn clz32_row(mut frame: Places) -> Out {
 ecma_whitespace quench-runtime/src/vm/date/legacy_parse.rs:ch.is_whitespace() || ch == '\u{feff}'
 ecma_whitespace quench-runtime/src/vm/eval.rs:&& (character == '\u{feff}' || character.is_whitespace())
 ecma_whitespace quench-runtime/src/vm/regexp.rs:} else if character.is_control() || character.is_whitespace() || character == '\u{FEFF}' {
+exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:const MAGIC: f64 = 6755399441055744.0;
+exact_int32 quench-runtime-engine/src/dispatch_fast/loop_kernel/run.rs:pub(crate) fn exact_int32(x: f64) -> Option<i32> {
 imul quench-runtime-engine/src/compiled/lane_region/known_branches.rs:Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
 imul quench-runtime-engine/src/compiled/object_slots/emit.rs:fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => entry.wrapping_sub(x.wrapping_mul(count as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Part::Linear { start, step } => last!($a, |k: usize| start.wrapping_add(step.wrapping_mul(k as i32))),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:Self::Linear { start, step } => start.wrapping_add(step.wrapping_mul(k as i32)),
+imul quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Multiply) => map(out, a, b, i32::wrapping_mul),
 increment quench-runtime-engine/src/dispatch_fast.rs:if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 increment quench-runtime/src/vm/dispatch/increment.rs:fn increment_delta(is_decrement: bool) -> f64 {
 increment quench-runtime/src/vm/dispatch/increment.rs:pub(in crate::vm) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
@@ -22,6 +29,15 @@ increment quench-runtime/src/vm/operations.rs:integer.checked_add(1)
 int32_tag quench-bjit/stencils/facade.rs:if self.0 & words::TAG_MASK == words::INT_TAG { Some(self.0 as u32 as i32) } else { None }
 int32_tag quench-bjit/stencils/facade.rs:} else if self.0 & words::TAG_MASK == words::INT_TAG {
 int32_tag quench-bjit/stencils/words.rs:x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => words!(|v: i32, x: i32| v.wrapping_add(x)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => words!(|v: i32, x: i32| v.wrapping_sub(x)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, false) => words!(|v: i32, x: i32| x.wrapping_sub(v)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => value.wrapping_sub(last_x),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Add, _) => entry.wrapping_add(x.wrapping_mul(count as i32)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, true) => entry.wrapping_sub(x.wrapping_mul(count as i32)),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:(NumberArithmetic::Subtract, false) => if count % 2 == 0 { entry } else { x.wrapping_sub(entry) },
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Add) => map(out, a, b, i32::wrapping_add),
+int32_wrapping_arith quench-runtime-engine/src/dispatch_fast/loop_kernel/recur.rs:WordOp::Arith(NumberArithmetic::Subtract) => map(out, a, b, i32::wrapping_sub),
 nan_box_tag quench-bjit/stencils/facade.rs:((self.0 >> words::TAG_SHIFT) as u32).wrapping_sub(words::FIRST_TAG_FIELD as u32) <= words::TAG_FIELD_SPAN as u32
 nan_box_tag quench-bjit/stencils/site_rows.rs:if !GATED && A == MEM && !is_int(value) && (value.wrapping_sub(FIRST_TAG) >> TAG_SHIFT) < hole::<HOLE_FOURTH>() as u32 as u64 {
 nan_box_tag quench-bjit/stencils/words.rs:pub(crate) fn is_double(x: u64) -> bool {

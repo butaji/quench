@@ -94,7 +94,7 @@ fn compile_native_unit(
         std::fs::write(path, object).map_err(|error| format!("quench AOT object write: {error}"))?;
     }
     let functions = program.function_count();
-    let native = quench_runtime::NativeJsProgram::publish(program).map_err(|error| format!("quench AOT publication: {error}"))?;
+    let native = quench_runtime::NativeJsProgram::compile_eager(program).map_err(|error| format!("quench AOT publication: {error}"))?;
     compilation.units.push(crate::NativeCompiledUnit { functions, object_bytes, object: path });
     Ok(native)
 }
@@ -338,7 +338,7 @@ impl Test262RuntimeHost {
         self.native_module_sources.clear();
         self.module_input_access = ModuleInputAccess::Filesystem;
         self.missing_module_input = None;
-        let mut compiler = quench_runtime::NativeJsCompiler::new().with_function_source_discovery()
+        let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery()
             .with_global_script_source_discovery("$262", "evalScript");
         let mut scripts = Vec::new();
         for script in harness {
@@ -388,7 +388,7 @@ impl Test262RuntimeHost {
                 prepared.as_ref().expect("native preparation").entry.clone()
             } else { match kind {
                 SourceKind::Script => Engine::specialize(source, name),
-                SourceKind::Module => Engine::specialize_module(source, name),
+                SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
             .map_err(|errors| compile_failure(&errors, CompilationSite::Entry))? };
@@ -716,7 +716,7 @@ mod tests {
                 let prepared = host.prepare_native_programs(&[], source, "linked-dynamic.js", SourceKind::Script).unwrap();
                 let graph = super::LinkedCasePrograms {
                     harness: vec![], modules: vec![],
-                    entry: NativeJsProgram::publish(prepared.entry).unwrap(),
+                    entry: NativeJsProgram::compile_eager(prepared.entry).unwrap(),
                     module_sources: vec![],
                 };
                 let result = host.execute_linked_programs(graph, |_, _| Ok::<_, NativeSourceError>(None));
@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
-        let program = super::Engine::specialize(r#"
+        let program = super::Engine::specialize_unspecialized(r#"
             function calculate(n = 8) {
                 let sum = 0;
                 for (let i = 0; i < n; i++) {
@@ -1013,7 +1013,7 @@ mod tests {
         "#, "region-continuations.js").unwrap();
         let module = quench_layers::engine::lower_native_js_module(&program, "regions").unwrap();
         quench_layers::engine::emit_native_module("regions", module.functions, module.data).unwrap();
-        let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
+        let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
         let mut runtime = super::Runtime::new(Test262RuntimeHost::new(super::ExecutionMode::NativeOnly));
         runtime.set_execution_mode(super::ExecutionMode::NativeOnly);
         runtime.execute_native(&native).unwrap();
@@ -1100,7 +1100,7 @@ mod tests {
         let source = "import { value } from './dep.mjs'; globalThis.saved = () => value; if (value !== 42) throw Error('bad dependency');";
         fs::write(directory.path().join("dep.mjs"), "export const value = harnessSeed;").unwrap();
         let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
-        let mut compiler = quench_runtime::NativeJsCompiler::new();
+        let mut compiler = quench_runtime::NativeJsCompiler::new(false);
         let harness = compiler.compile_script("const harnessSeed = 42;", "harness.js", Default::default()).unwrap();
         let program = compiler.compile_module(source, entry.to_str().unwrap()).unwrap();
         let dependencies = super::compile_native_dependencies(&mut host, &mut compiler, &program, entry.to_str().unwrap()).unwrap();

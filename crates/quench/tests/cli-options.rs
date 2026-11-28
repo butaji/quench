@@ -223,8 +223,7 @@ fn internal_options_match_node_without_source_in_native_js_and_ts() {
             .compile()
             .unwrap()
             .emit(&directory.join(extension), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node)
-            .unwrap()
-            .0;
+            .unwrap();
         let binary = directory.join(format!("native-{extension}"));
         support
             .link_audited(&inputs, &driver_path, &binary)

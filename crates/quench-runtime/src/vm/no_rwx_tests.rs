@@ -3,7 +3,6 @@
 
 use crate::Engine;
 use crate::test_host::TestHost;
-use crate::vm::EngineVm;
 use super::Vm;
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -285,7 +285,7 @@ impl<'v> JsonHeapBuilder<'v> {
             .alloc_object(Vm::empty_object(self.object_prototype));
         for (atom, value) in keys.zip(values) {
             let key = PropertyKey::string(atom);
-            let stored = match self.vm.heap.object(object).map(|data| data.shape()) {
+            let stored = match self.vm.object_data(object).map(|data| data.shape()) {
                 Some(shape) if self.vm.property_shape_slot(shape, key).is_none() => {
                     self.vm.create_shape_data_property(object, key, value, DEFAULT_DATA_ATTRIBUTES)
                 }

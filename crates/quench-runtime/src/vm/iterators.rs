@@ -182,7 +182,7 @@ impl Vm {
             }
             _ => return None,
         };
-        let shape = self.heap.object(source)?.shape();
+        let shape = self.object_data(source)?.shape();
         if self.collection_iteration_shape != Some(shape) {
             let symbol = self.iterator_symbol_key()?;
             if self.property_shape_slot(shape, symbol).is_some() {
@@ -420,7 +420,7 @@ impl Vm {
                 .insert((self.realm.globals, native), constructor);
             self.set_builtin_function_name(constructor, name)?;
             let function = self.native_value(Native::Function);
-            self.heap.object_mut(constructor)
+            self.object_data_mut(constructor)
                 .expect("function constructor")
                 .set_proto(function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -918,7 +918,7 @@ impl Vm {
         parent: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        self.heap.object_mut(prototype)
+        self.object_data_mut(prototype)
             .expect("async iterator prototype is an object")
             .set_proto(parent);
         for (symbol_name, native, function_name) in [

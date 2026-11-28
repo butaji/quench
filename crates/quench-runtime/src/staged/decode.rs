@@ -30,7 +30,6 @@ impl<'a> DecodeContext<'a> {
 
     /// Only the constants `constants`.
     #[cfg_attr(not(test), allow(dead_code))]
-    #[quench_macros::test_visible]
     pub(crate) const fn of_constants(constants: &'a [Constant]) -> Self {
         DecodeContext { constants, ..DecodeContext::EMPTY }
     }

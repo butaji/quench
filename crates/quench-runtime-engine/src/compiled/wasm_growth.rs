@@ -18,7 +18,6 @@ use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::staged::wasm_call::Call;
 use quench_runtime::staged::wasm_memory::Memory;
 use quench_runtime::staged::wasm_step::Step;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a step by itself may grow the memory: a memory growth, a reference call, or a step that
 /// may reach a VM callout. A direct call's growth is its callee's (`growing_functions`).

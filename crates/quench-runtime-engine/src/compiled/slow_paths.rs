@@ -16,7 +16,6 @@ quench_runtime::slow_paths! {
         ExceptionPayload => super::wasm_exception_stage::exception_payload_callout,
         ExceptionThrow => super::wasm_exception_stage::exception_throw_callout,
         SwitchedMemoryLength => super::wasm_instance_switch::switched_memory_length,
-        NumberPower => quench_runtime::staged::power::number_power,
         GcAllocate => super::wasm_gc_allocate::gc_allocate,
         TableAccepts => super::wasm_table_stage::compiled_table_accepts,
         TableOp => super::wasm_table_ops_stage::table_op_callout,

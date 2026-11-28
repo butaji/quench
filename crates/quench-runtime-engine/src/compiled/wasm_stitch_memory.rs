@@ -12,7 +12,6 @@ use crate::ext_traits::*;
 use super::{Planned, codes, row, slot};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_memory::Memory;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The rows of a bulk step on the frame's memory, or `None` for a step these rows do not run:
 /// `memory.grow`, a load or a store.

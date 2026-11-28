@@ -1,9 +1,10 @@
 use super::*;
 
-/// What a global name read finds (`Vm::global_name_read`): a value, an uninitialized lexical binding, or nothing
+/// What a global name read finds (`Vm::global_name_read`): a value, with the hint naming the
+/// global object's own data field that held it, an uninitialized lexical binding, or nothing
 /// the lane's read takes.
 pub enum GlobalNameRead {
-    Value(Value),
+    Value(Value, Option<FieldCache>),
     Uninitialized,
     Miss,
 }
@@ -11,6 +12,7 @@ pub enum GlobalNameRead {
 /// The receiver an inherited field entry's test reads (`Vm::inherited_receiver`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum InheritedReceiver {
+    Record,
     Function,
     Builtin,
 }
@@ -24,6 +26,9 @@ impl Vm {
     /// reads them.
     #[inline(always)]
     pub(super) fn inherited_receiver(&self, value: Value) -> Option<(&Object, InheritedReceiver)> {
+        if let Some(record_id) = value.direct_object_index() {
+            return Some((self.heap.object_record_by_id(record_id), InheritedReceiver::Record));
+        }
         if let Some(function) = self.heap.function(value) {
             return Some((&function.object, InheritedReceiver::Function));
         }
@@ -53,16 +58,23 @@ impl Vm {
             })
     }
 
-    /// A global name read: an initialized global lexical binding of the name, else the site's cached
-    /// field of the global object.
-    pub fn global_name_read(&mut self, atom: Atom, site: u16) -> GlobalNameRead {
+    /// A global name read as the lane takes it (`dispatch_fast::global_name_refresh_miss`):
+    /// an initialized global lexical binding of the name, else the global object's own data
+    /// field with the hint that names it, else the site's cached field.
+    pub fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
         let globals = self.realm.globals;
         if self.realm.global_lexical_declarations.contains(&atom) {
             return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
-                .map_or(GlobalNameRead::Uninitialized, GlobalNameRead::Value);
+                .map_or(GlobalNameRead::Uninitialized, |value| GlobalNameRead::Value(value, None));
         }
-        match self.cached_field_hit(globals, site) {
-            object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value),
+        if self.global_name_hintable(atom)
+            && let Some(hint) = self.own_data_field_hint::<false>(globals, atom)
+            && let Some(value) = self.record_field_entry_hit(hint, globals)
+        {
+            return GlobalNameRead::Value(value, Some(hint));
+        }
+        match self.cached_field_hit(code, globals, site) {
+            object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value, None),
             _ => GlobalNameRead::Miss,
         }
     }
@@ -112,17 +124,16 @@ impl Vm {
     }
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
-    pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<ObjectRef<'_>> {
+    pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
         let class = self.atom_class(atom);
-        // A class cell answers as its record did: its view is ordinary, and its shape is its class's.
-        if let Some(object) = self.heap.direct_object_view(value) {
+        if let Some(object) = self.heap.object_record(value) {
             return self.shape_answers(object, class, ReceiverKind::Ordinary);
         }
         if let Some(object) = self.heap.array(value) {
             if class.contains(AtomClass::ARRAY_INDEX) {
                 return None;
             }
-            return self.shape_answers(&**object, class, ReceiverKind::Exotic);
+            return self.shape_answers(object, class, ReceiverKind::Exotic);
         }
         if let Some(function) = self.heap.function(value) {
             return self.shape_property_lookup_function(function, atom, class);
@@ -154,7 +165,7 @@ impl Vm {
         function: &'a FunctionRecord,
         atom: Atom,
         class: AtomClass,
-    ) -> Option<ObjectRef<'a>> {
+    ) -> Option<&'a Object> {
         if atom == self.length_atom || class.contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
             return None;
         }
@@ -171,7 +182,7 @@ impl Vm {
         &self,
         cell: &'a Cell,
         class: AtomClass,
-    ) -> Option<ObjectRef<'a>> {
+    ) -> Option<&'a Object> {
         let kind = match cell {
             Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
@@ -189,11 +200,10 @@ impl Vm {
     /// object stores them like any other property.
     fn shape_answers<'a>(
         &self,
-        object: impl Into<ObjectRef<'a>>,
+        object: &'a Object,
         class: AtomClass,
         kind: ReceiverKind,
-    ) -> Option<ObjectRef<'a>> {
-        let object: ObjectRef<'a> = object.into();
+    ) -> Option<&'a Object> {
         let excluded = match kind {
             ReceiverKind::Ordinary => AtomClass::PRIVATE,
             ReceiverKind::Exotic => AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD,
@@ -234,7 +244,7 @@ impl Vm {
         let receiver = self.heap.object(object)?;
         let holder = self.heap.object(receiver.proto())?;
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
-        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get_ref(holder, entry.slot as usize))?
+        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get(holder, usize::from(entry.slot)))?
     }
 
     /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a

@@ -44,8 +44,9 @@ pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
     requested
 }
 
-/// Select native-only (`--aot`), the interpreter (`--no-jit`) or, by default, every tier, and remove the
-/// mode switch. The tier choice is the process's (`JitMode::set_process_mode`), the one mapping `quench` uses.
+/// Select native-only (`--aot`), the interpreter (`--no-jit`), one JIT tier alone (`--b-jit`,
+/// `--u-jit`, `--q-jit`) or, by default, every tier, and remove the mode switch. The tier choice is the
+/// process's (`JitMode::set_process_mode`), the one mapping `quench` uses.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
     let native = args.iter().any(|arg| arg == AOT_FLAG);
     args.retain(|arg| arg != AOT_FLAG);
@@ -55,7 +56,7 @@ pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMod
     if native { ExecutionMode::NativeOnly } else { jit.execution_mode() }
 }
 
-/// The name reports and logs give `mode`: `no-jit`, or `jit` (every tier), or `aot`.
+/// The name reports and logs give `mode`: `no-jit`, the tier alone that runs (`b-jit`, `u-jit`, `q-jit`) or `jit`, or `aot`.
 pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
     match mode {
         ExecutionMode::Interpreted => JitMode::Interp.name(),

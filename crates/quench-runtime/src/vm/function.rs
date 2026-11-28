@@ -113,8 +113,6 @@ impl Vm {
         // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
         self.materialize_deferred_lane();
         let mut caller = self.function_caller(function);
-        // The host's wrapper is no caller reflection hands out, as top-level code is none (`hides_host_wrapper`).
-        if self.hides_host_wrapper(caller) { return Ok(Value::NULL); }
         if caller.as_known_closure().is_some() {
             caller = self.known_closure_function(caller)?;
         }
@@ -136,22 +134,6 @@ impl Vm {
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
-    }
-
-    /// Whether `function` is the closure the host calls once to run a script (the CommonJS loader's wrapper,
-    /// `aot_facts::once_body`): legacy reflection (a `caller` read, a stack trace's `getFunction`) never hands it out, so no
-    /// code can call it again, and the facts solve its body as code that runs once per run.
-    pub(super) fn hides_host_wrapper(&self, function: Value) -> bool {
-        let (program, body) = match function.as_known_closure() {
-            Some((body, _)) => (self.active_program, body),
-            None => match self.heap.function(function).map(|record| record.kind) {
-                Some(FunctionKind::User(program, body)) => (program, body),
-                _ => return false,
-            },
-        };
-        self.programs.get(program).is_some_and(|code| {
-            code.host_calls_result_once && body != 0 && crate::compile::aot_facts::once_body(&code) == body
-        })
     }
 
     /// The function object a call-only closure (`Value::known_closure`) stands for, made when
@@ -302,12 +284,12 @@ impl Vm {
         self.set_property(env, self.runtime_atoms.bound_this, this)?;
         self.set_property(env, self.runtime_atoms.bound_args, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
-        self.heap.object_mut(function).expect("bound function has object storage").set_proto(prototype);
+        self.object_data_mut(function).expect("bound function has object storage").set_proto(prototype);
         let length_atom = self.length_atom;
         self.set_property_with_attributes(function, length_atom, Value::number(length), BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
         self.set_property_with_attributes(function, self.runtime_atoms.name, name, BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
         self.capture_function_name_for_atom(function, name_atom);
-        let shape_of = |vm: &Self, object: Value| vm.heap.object(object).map(|object| object.shape()).filter(|&shape| !vm.shape_is_dictionary(shape));
+        let shape_of = |vm: &Self, object: Value| vm.object_data(object).map(crate::heap::Object::shape).filter(|&shape| !vm.shape_is_dictionary(shape));
         self.bound_function_shape = shape_of(self, function).zip(shape_of(self, env));
         Ok(function)
     }
@@ -316,13 +298,12 @@ impl Vm {
     /// property's attributes and no getter (`Vm::plain_function_length`'s test): its value,
     /// read observing nothing. `None` for an accessor, an absent name or any other object.
     pub fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
-        let data = self.heap.object(object)?;
-        // record-only: side descriptors
+        let data = self.object_data(object)?;
         if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(data.shape(), atom)?;
-        self.heap.property_get_ref(data, slot).filter(|value| !self.is_accessor_pair(data.shape(), *value))
+        self.heap.property_get(data, slot).filter(|value| !self.is_accessor_pair(data.shape(), *value))
     }
 
     /// What a bound function of the target `target_root` holds is read from it (ECMA-262
@@ -411,6 +392,7 @@ impl Vm {
         mut receiver: Value,
         mut args: A,
     ) -> Option<Forwarded<A>> {
+        let mut through_call = false;
         for depth in 0..CALL_FORWARDING_DEPTH {
             match self.heap.function(callee) {
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
@@ -421,12 +403,13 @@ impl Vm {
                     (callee, receiver) = (target, this);
                 }
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
+                    through_call |= depth == 0;
                     callee = receiver;
                     receiver = args.shift();
                 }
                 record => {
                     let kind = record.map(|record| record.kind);
-                    return (depth != 0).then_some(Forwarded { callee, receiver, args, kind });
+                    return (depth != 0).then_some(Forwarded { callee, receiver, args, kind, through_call });
                 }
             }
         }
@@ -464,7 +447,7 @@ impl Vm {
     /// script can reach, so its elements never change. A call site may keep the words for a
     /// bound function it calls again (`LaneStack::bound_call`).
     pub fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
-        let data = self.heap.object(env)?;
+        let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
         // bound function (`bound_parts_layout`), found by name once per shape.
@@ -490,9 +473,9 @@ impl Vm {
             // holds the three slots; nothing deletes a bound function's internal properties.
             Some([target, this, args]) => unsafe {
                 (
-                    self.heap.property_get_unchecked_view(data, usize::from(target)),
-                    self.heap.property_get_unchecked_view(data, usize::from(this)),
-                    Some(self.heap.property_get_unchecked_view(data, usize::from(args))).filter(|list| !list.is_undefined()),
+                    self.heap.property_get_flat(data, usize::from(target)),
+                    self.heap.property_get_flat(data, usize::from(this)),
+                    Some(self.heap.property_get_flat(data, usize::from(args))).filter(|list| !list.is_undefined()),
                 )
             },
             None => (
@@ -516,8 +499,8 @@ fn native_function_source(name: &str) -> String {
     let symbol_member = property_name
         .strip_prefix("[Symbol.")
         .and_then(|name| name.strip_suffix(']'));
-    let source_name = if quench_regexp::identifier::is_identifier_name(property_name)
-        || symbol_member.is_some_and(quench_regexp::identifier::is_identifier_name)
+    let source_name = if oxc_syntax::identifier::is_identifier_name(property_name)
+        || symbol_member.is_some_and(oxc_syntax::identifier::is_identifier_name)
     {
         name
     } else {
@@ -534,6 +517,8 @@ pub struct Forwarded<A> {
     pub args: A,
     /// The callee's kind; `None` for a callee that is no function.
     pub kind: Option<FunctionKind>,
+    /// Whether the outermost layer was `Function.prototype.call`.
+    pub through_call: bool,
 }
 
 /// The arguments a forwarded call passes on (`Vm::forwarded_call`).

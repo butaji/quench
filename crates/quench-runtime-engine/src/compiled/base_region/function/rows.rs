@@ -3,14 +3,8 @@
 //! from the planned calls and the rest (`parts`).
 
 #[allow(unused_imports)]
-use quench_runtime::staged::AllocationAllocationExt;
-use crate::operand_class::{chooses_variant, operand_type, Site};
-use quench_runtime::compile::aot_facts::AotFacts;
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, CallRecordFormsExt};
-#[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The method call `instruction` at `pc` as a `Method` chain, its callee read into the scratch register past the
 /// function's own (`Sites::scratch`), where the call is a method call of a window of consecutive registers (`call_plan::method_shape`).
@@ -48,11 +42,7 @@ pub(crate) fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
 }
 
-/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`), each rule read off the staged
-/// operation the record decodes to: an owner step (`steps_on_owner`), a value step over registers and constants, an
-/// allocation the lane's allocator makes (`base_body::allocation_step`), or a call-out (`base_body::call_out_step`). Every
-/// other record, a constant load, a closure (which captures its frame's environment), an element define and a throw,
-/// makes its step as the general step does (`LaneHelper::Step`).
+/// The typed helper that makes `instruction`'s step, where one does (`Decoded::own_step`).
 fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper> {
     use crate::compiled::LaneHelper;
     let plain = instruction.without_return();
@@ -65,11 +55,14 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
         None => false,
     };
     if operands && instruction.result_flags() == 0 { return Some(LaneHelper::ValueStep); }
-    // An allocation the lane's allocator makes; a closure is the general step's, over its frame's environment.
-    if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[])
-        .is_some_and(|(_, allocation)| !matches!(allocation, quench_runtime::staged::Allocation::Closure { .. })) {
-        return Some(LaneHelper::AllocationStep);
+    // A closure captures its owner's binding environment, a frame's or an activation's (`base_body::closure_step`).
+    if instruction.result_flags() == 0 && quench_runtime::staged::makes_closure(plain.op()) { return Some(LaneHelper::ClosureStep); }
+    // An array literal's element define (`base_body::define_element_step`).
+    if instruction.result_flags() == 0 && matches!(quench_runtime::staged::Operation::<(), ()>::decode_literal(instruction, ()), Some(quench_runtime::staged::Operation::DefineElement { .. })) {
+        return Some(LaneHelper::DefineElementStep);
     }
+    // An allocation the lane's allocator makes (`base_body::allocation_step`).
+    if instruction.result_flags() == 0 && quench_runtime::staged::Allocation::decode(instruction, &[]).is_some() { return Some(LaneHelper::AllocationStep); }
     // Any other step the staged row makes as a call-out (`staged::CallOut`, not a decision a jump reads) is the VM's call-out
     // over the running frame (`base_body::call_out_step`).
     let call = quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
@@ -77,7 +70,7 @@ fn own_step(instruction: WideInstruction) -> Option<crate::compiled::LaneHelper>
         && call.is_some_and(|(call, _)| !matches!(call, quench_runtime::staged::CallOut::Decide { .. })) {
         return Some(LaneHelper::CallOutStep);
     }
-    None
+    (instruction.result_flags() == 0 && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst)).then_some(LaneHelper::ConstantStep)
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls
@@ -100,7 +93,7 @@ impl Sites<'_> {
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
-/// of an `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
+/// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
 pub(crate) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
     (sites.ending == Ending::Body && sites.scratch < quench_runtime::bytecode::REGISTER_MASK).then_some(())?;
     let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;
@@ -159,26 +152,22 @@ pub(crate) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: Wi
     What::Row(Decoded { completes: returning, ..row })
 }
 
-/// What the solver proves of each row's operands, where the row's instruction chooses its variant from them
-/// (`operand_class::chooses_variant`): the caller's instructions from the function's solve (`facts`), an inlined callee's
-/// from its own, its registers named back through the window it was inlined at (`InlinedCall::base`). A register outside
-/// that window, or a row of no such instruction, has no site.
-pub(crate) fn row_sites(facts: Option<&AotFacts>, program: &ResidualProgram, function: u32, origins: &[Origin], frames: &[InlinedCall],
-    rows: &[Decoded]) -> Vec<Option<Site>> {
-    origins.iter().zip(rows).map(|(origin, row)| {
-        let (owner, pc, base) = match *origin {
-            Origin::Caller(pc) => (function, pc, 0),
-            Origin::Inlined { frame, pc } => (frames[frame].target.function, pc, frames[frame].base),
-        };
-        if !chooses_variant(program.function(owner as usize).instruction_at(pc as usize)) {
-            return None;
-        }
-        let ty = |source: Option<Source>| match source {
-            Some(Source::Register(register)) => register.checked_sub(base).map_or(Type::ANY, |local| operand_type(facts, owner, pc, local)),
-            Some(Source::Constant(word) | Source::Value(word)) => Type::immediate(Value::from_bits(word)),
-            None => Type::ANY,
-        };
-        Some(Site::of([ty(row.a), ty(row.b)]))
+/// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs,
+/// and of the inlined callees' at the `widened` keys (`inlined_exit_key`).
+pub(crate) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: &[usize]) -> Vec<usize> {
+    let widens = |origin: &Origin| match origin {
+        Origin::Caller(pc) => widened.contains(&(*pc as usize)),
+        Origin::Inlined { frame, pc } => widened.contains(&inlined_exit_key(frames[*frame].call, *pc)),
+    };
+    origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
+}
+
+/// What each row's site saw of its operands: the caller's instructions' (`kinds`, from the region's
+/// header), none for the rows of an inlined callee.
+pub(crate) fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) -> Vec<Option<OperandKinds>> {
+    origins.iter().map(|origin| match origin {
+        Origin::Caller(pc) => kinds.get((*pc - region.header) as usize).copied(),
+        Origin::Inlined { .. } => None,
     }).collect()
 }
 

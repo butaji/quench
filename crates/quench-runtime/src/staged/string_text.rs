@@ -18,7 +18,7 @@ pub fn is_ecma_whitespace_char(character: char) -> bool {
 /// The ECMAScript WhiteSpace and LineTerminator code units that `trim` strips: the staged test
 /// (`strings::is_trim_space`) on `Concrete`.
 pub(crate) fn is_ecma_whitespace(unit: u16) -> bool {
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     super::strings::is_trim_space(&mut stage, super::builtins::UnitWidth::Wide, u64::from(unit))
 }
 
@@ -26,7 +26,7 @@ pub(crate) fn is_ecma_whitespace(unit: u16) -> bool {
 /// string, or wide units): the staged row (`strings::trim_bounds`) on `Concrete`, over the units in place.
 pub(crate) fn trim_range<T: Copy + Into<u16>>(units: &[T], from_start: bool, from_end: bool) -> Range<usize> {
     let width = if size_of::<T>() == 2 { super::builtins::UnitWidth::Wide } else { super::builtins::UnitWidth::Narrow };
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     let (start, end) = super::strings::trim_bounds(&mut stage, width, units.as_ptr() as u64, units.len() as u64, (from_start, from_end));
     start as usize..end as usize
 }
@@ -39,7 +39,7 @@ pub(crate) fn ascii_case_byte(byte: u8, upper: bool) -> u8 {
 /// Whether the ASCII case mapping changes any of `bytes`.
 pub(crate) fn ascii_case_changes(bytes: &[u8], upper: bool) -> bool {
     use super::Stage;
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     stage.case_changes_span(bytes.as_ptr() as u64, bytes.len() as u64, upper)
 }
 
@@ -54,7 +54,7 @@ pub(crate) fn ascii_case(bytes: &[u8], upper: bool, out: &mut [u8]) {
 /// proves they are writable and apart from `bytes`.
 pub(crate) fn ascii_case_raw(bytes: &[u8], upper: bool, out: *mut u8) {
     use super::Stage;
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     stage.case_span(out as u64, bytes.as_ptr() as u64, bytes.len() as u64, upper);
 }
 
@@ -68,7 +68,7 @@ pub(crate) fn pad_length(len: usize, target: usize) -> Option<usize> {
 /// end when `at_end` (`padEnd`), else at its start (`padStart`).
 pub(crate) fn pad_into<T: Copy>(out: &mut [T], text: &[T], fill: &[T], at_end: bool) {
     assert!(out.len() > text.len() && !fill.is_empty() && size_of::<T>() <= 2);
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     super::strings::pad_into_row(&mut stage, size_of::<T>() == 2, out.as_mut_ptr() as u64, out.len() as u64,
         text.as_ptr() as u64, text.len() as u64, fill.as_ptr() as u64, fill.len() as u64, at_end);
 }
@@ -77,6 +77,6 @@ pub(crate) fn pad_into<T: Copy>(out: &mut [T], text: &[T], fill: &[T], at_end: b
 /// byte writer of a `repeat` over flat ASCII units.
 pub(crate) fn repeat_into(out: &mut [u8], unit: &[u8]) {
     assert!(!unit.is_empty() && out.len() % unit.len() == 0);
-    let mut stage = super::Concrete::pure();
+    let mut stage = super::Concrete::new(std::ptr::null());
     super::strings::repeat_into_row(&mut stage, out.as_mut_ptr() as u64, out.len() as u64, unit.as_ptr() as u64, unit.len() as u64);
 }

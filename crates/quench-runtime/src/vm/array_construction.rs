@@ -62,7 +62,7 @@ impl Vm {
         }
         // This realm's `Array` has a non-writable, non-configurable `prototype` that is the realm's
         // Array.prototype, so the realm's intrinsic prototype is read with no lookup on the callee.
-        if self.realm_array_constructor(callee) && self.heap.object(self.array_proto).is_some() {
+        if self.realm_array_constructor(callee) && self.object_data(self.array_proto).is_some() {
             return self.array_with_prototype(self.array_proto, args);
         }
         self.array_construction_by(callee, args)
@@ -74,7 +74,7 @@ impl Vm {
     pub fn array_construction_by(&mut self, new_target: Value, args: &[Value]) -> Option<Value> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(new_target, prototype_atom)
-            .filter(|prototype| self.heap.object(*prototype).is_some())?;
+            .filter(|prototype| self.object_data(*prototype).is_some())?;
         self.array_with_prototype(prototype, args)
     }
 

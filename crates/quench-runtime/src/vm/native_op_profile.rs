@@ -5,8 +5,12 @@ use std::{collections::HashMap, sync::{Mutex, Once, atomic::{AtomicU64, Ordering
 
 static COUNTS: [AtomicU64; OPCODE_COUNT] = [const { AtomicU64::new(0) }; OPCODE_COUNT];
 static REPORT: Once = Once::new();
-/// The native own-field stores, by outcome: `[miss, hit]`.
-static STORES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+pub(super) enum StoreStorage { Arena, Inline, OtherRecord, NonRecord }
+impl StoreStorage {
+    const NAMES: [&str; 4] = ["arena", "inline", "other-record", "non-record"];
+}
+static STORES: [[AtomicU64; 2]; StoreStorage::NAMES.len()] =
+    [const { [const { AtomicU64::new(0) }; 2] }; StoreStorage::NAMES.len()];
 
 fn register_report() {
     REPORT.call_once(|| {
@@ -15,9 +19,9 @@ fn register_report() {
     });
 }
 
-pub(super) fn record_store(hit: bool) {
+pub(super) fn record_store(storage: StoreStorage, hit: bool) {
     register_report();
-    STORES[usize::from(hit)].fetch_add(1, Ordering::Relaxed);
+    STORES[storage as usize][usize::from(hit)].fetch_add(1, Ordering::Relaxed);
 }
 const SITE_SAMPLE_INTERVAL: u64 = 4096;
 const REPORTED_SITES: usize = 50;
@@ -49,10 +53,12 @@ pub(super) fn record_site(
 }
 
 extern "C" fn report() {
-    for (outcome, counter) in ["miss", "hit"].into_iter().zip(&STORES) {
-        let count = counter.load(Ordering::Relaxed);
-        if count != 0 {
-            eprintln!("QUENCH_NATIVE_STORE {outcome} {count}");
+    for (name, outcomes) in StoreStorage::NAMES.iter().zip(&STORES) {
+        for (outcome, counter) in ["miss", "hit"].into_iter().zip(outcomes) {
+            let count = counter.load(Ordering::Relaxed);
+            if count != 0 {
+                eprintln!("QUENCH_NATIVE_STORE {name} {outcome} {count}");
+            }
         }
     }
     let mut counts: Vec<_> = COUNTS.iter().enumerate()

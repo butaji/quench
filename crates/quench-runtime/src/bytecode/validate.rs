@@ -293,7 +293,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             ),
             FieldLayout::NumericIndexOperand => numeric_index_operand_in_bounds(value, bounds),
             FieldLayout::BinaryOperator => {
-                u32::from(value) <= crate::operator::BinaryOperator::Instanceof as u32
+                u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
             FieldLayout::FieldBase => match instruction.field_lookup() {
                 Some(super::FieldLookup::Site(site)) => site < bounds.field_sites,
@@ -344,13 +344,13 @@ fn immediate_domains_in_bounds(
             instruction.array_index() != super::ARRAY_INDEX_SENTINEL
         }
         super::ImmediateRole::BinaryOperator => {
-            instruction.binary_operator() <= crate::operator::BinaryOperator::Instanceof as u32
+            instruction.binary_operator() <= oxc_ast::ast::BinaryOperator::Instanceof as u32
         }
         super::ImmediateRole::AdditionOperator => {
-            instruction.binary_operator() == crate::operator::BinaryOperator::Addition as u32
+            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
         }
         super::ImmediateRole::MultiplicationOperator => {
-            instruction.binary_operator() == crate::operator::BinaryOperator::Multiplication as u32
+            instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
         }
         #[cfg(feature = "wasm")]
         super::ImmediateRole::WasmSimdOperator => {
@@ -429,7 +429,7 @@ fn immediate_domains_in_bounds(
             crate::wasm::integer::I32UnaryOperator::from_tag(instruction.imm()).is_some()
         }
         super::ImmediateRole::UnaryOperator => {
-            instruction.unary_operator() <= crate::operator::UnaryOperator::Void as u32
+            instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
                 || matches!(instruction.unary_operator(), super::UNARY_TO_STRING_PRIMITIVE | super::UNARY_ADD_OPERAND_STRING)
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
@@ -552,7 +552,7 @@ impl ResidualProgram {
 
     #[quench_macros::test_visible]
     pub(crate) fn validate(&self) -> Result<(), String> {
-        self.validate_call_sites()?;
+        if let Some(source) = &self.source { source.validate_call_sites()?; }
         // The compiled-source bytes a position may name: those of the kept text, after its
         // wrapper prefix. A program that keeps no text has none to bound them by.
         let source_end = self.source.as_ref().map(|source| source.base as usize + source.text.len());
@@ -1002,7 +1002,7 @@ function.plain_local_slots(&self.superinstructions)
                     Some(site) => (site.atoms.len(), true),
                     None => (0, false),
                 },
-                super::LiteralStep::Json(constant) => (0, matches!(self.constants.get(constant as usize), Some(super::Constant::String(_)))),
+                super::LiteralStep::Json(start) => (0, self.data_literal_text(start).is_some()),
             };
             if !valid || taken > depth {
                 return false;
@@ -1384,6 +1384,7 @@ mod tests {
 
     fn program(function: Function) -> ResidualProgram {
         ResidualProgram {
+            specialized: true,
             kind: crate::bytecode::ProgramKind::Script,
             module_requests: Vec::new(),
             module_imports: Vec::new(),
@@ -1391,7 +1392,8 @@ mod tests {
             declared_types: None,
             source_name: String::new(),
             source: None,
-            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
+            atoms: AtomTable::default(),
+            constants: vec![].into(),
             functions: vec![function.into()].into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),
@@ -1406,7 +1408,6 @@ mod tests {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
-            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy: None,
         }

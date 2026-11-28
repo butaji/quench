@@ -8,11 +8,12 @@ const BACKEND_COMPILER_SYMBOLS: &[&str] = &[
     "cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for",
 ];
 const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
-    "FunctionCompiler", "specialize_host_script", "specialize_with_private_names",
+    "FunctionCompiler", "specialize_host_script", "specialize_with_mode",
     "specialize_module_with_atom_prefix", "specialize_eval_with_context",
     "specialize_function_constructor",
 ];
-pub(in crate::native_link) const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
+const SYNTAX_FRONTEND_SYMBOLS: &[&str] = &["oxc_parser::", "oxc_semantic::"];
+const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
     "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
     "::step_wasm", "::js_tier_frame_entry",
 ];
@@ -27,8 +28,8 @@ pub(super) fn is_compiler_symbol(symbol: &str) -> bool {
     compiler_symbol_patterns(symbol).next().is_some()
 }
 
-pub(in crate::native_link) fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
-    BACKEND_COMPILER_SYMBOLS.iter().chain(crate::compile::call_sites::SYNTAX_FRONTEND_SYMBOLS).copied()
+fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
+    BACKEND_COMPILER_SYMBOLS.iter().chain(SYNTAX_FRONTEND_SYMBOLS).copied()
         .chain(JS_SOURCE_COMPILER_SYMBOLS.iter().copied().filter(|_| symbol.contains("quench_runtime")))
         .filter(|name| symbol.contains(name))
 }
@@ -56,21 +57,25 @@ pub(super) fn audit(inputs: &NativeImageInputs, executable: &Path, support: Nati
 }
 
 /// Refuse an execution-only image that still names the compiler or the interpreter. The
-/// mechanism's first line names its retention root. There is no override: a closed image that
-/// retains any of these does not link.
+/// mechanism's first line names its retention root; `QUENCH_AUDIT_WARN` publishes the image
+/// anyway, so its footprint can be measured while the roots are being cut.
 fn audit_retained_execution(symbols: &str, support: NativeImageSupport) -> Result<(), String> {
     if support.allows_dynamic_source() {
         return Ok(());
     }
     // Inspect whole demangled names: Rust types may contain spaces, and a required core generic
-    // emitted by the syntax front end does not itself retain a front-end operation.
+    // emitted by OXC does not itself retain an OXC operation.
     let retained = retained_execution_support(symbols);
     if retained.is_empty() {
         return Ok(());
     }
     let examples = retained.into_iter().map(|(mechanism, line)| format!("{mechanism}: {line}"))
         .collect::<Vec<_>>().join("\n");
-    Err(format!("native image retained compilation or interpretation support:\n{examples}"))
+    if std::env::var_os("QUENCH_AUDIT_WARN").is_none() {
+        return Err(format!("native image retained compilation or interpretation support:\n{examples}"));
+    }
+    eprintln!("warning: native image retained compilation or interpretation support:\n{examples}");
+    Ok(())
 }
 
 /// The exported semantic operations must be exactly the object's imports.

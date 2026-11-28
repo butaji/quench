@@ -54,14 +54,13 @@ bench-alloc-routes = ["bench-primitives"]
 verify-replay = []
 # Every tier threshold at its floor, so short programs (Test262) run compiled code; the
 # results must equal the interpreter's. Verification builds only.
+tier-stress = []
 
 [dependencies]
 quench-alloc = { path = "../quench-alloc" }
 object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
 serde_json = "1"
 quench-macros = { path = "../quench-macros" }
-# The opcode table: `bytecode.rs` expands its rows into `Op` (`with_opcode_table!`).
-quench-opcodes = { path = "../quench-opcodes" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = { version = "0.10", optional = true }
@@ -131,17 +130,6 @@ quench-layers = { path = "../quench-layers" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-# The AOT facts solver's closed-world tests: they reach the solver's items through `test-support`.
-[[test]]
-name = "staged_decoding"
-path = "tests/staged_decoding.rs"
-required-features = ["test-support"]
-
-[[test]]
-name = "aot_facts"
-path = "tests/aot_facts.rs"
-required-features = ["test-support"]
 
 [[example]]
 name = "native_publication"

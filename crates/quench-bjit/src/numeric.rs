@@ -108,8 +108,6 @@ pub enum Kind {
     Imul = library::IMUL,
     /// `Math.clz32` of one Number (`codes::CLZ32`).
     Clz32 = library::CLZ32,
-    /// `Math.pow` of two Numbers (`codes::POW`): a row for a constant exponent `SmallPower` names; any other leaves.
-    Pow = library::POW,
     /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
     AddNoOverflow = library::ADD_NO_OVERFLOW,
     /// `switch`'s case slot over dense int labels (`stencils/numeric.rs` `int_case_row`).

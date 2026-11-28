@@ -15,6 +15,7 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
     assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
     assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
+    assert!(std::mem::offset_of!(EntryCell, validity) as i32 == ENTRY_CELL.validity_offset);
     assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
     assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
@@ -24,6 +25,7 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, uses_this) as i32 == ENTRY_CELL.uses_this_offset);
 };
 
+pub(crate) use quench_runtime::vm::engine_types::EVIDENCE;
 
 
 
@@ -31,13 +33,20 @@ const _: () = {
 
 
 
+
+/// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
+/// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
+pub(crate) use quench_runtime::staged::layout_offsets::RAISED_RUN;
 
 #[quench_macros::ext(EntryCellOps1)]
 impl EntryCell {
-    /// A cell of an unpublished function, whose entry is `stub`, the engine's entry stub (`lane_body_abi::entry_stub`).
-    pub(crate) fn new(stub: usize) -> Self {
-        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),
-            proven_entry: Default::default(), proven_body: Default::default(), stub: std::cell::Cell::new(stub) };
+    /// The runs of the body that ended by an exception through a native caller, for tests.
+    #[cfg(test)]
+    pub(crate) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
+
+    pub(crate) fn new() -> Self {
+        let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),
+            proven_entry: Default::default(), proven_body: Default::default() };
         cell.unpublish();
         cell
     }
@@ -45,6 +54,25 @@ impl EntryCell {
     /// Records the function's facts, which its native callers admit a call by.
     pub(crate) fn set_facts(&self, facts: quench_runtime::staged::call::CellFacts) { self.facts.set(facts.word()) }
 
+    /// Starts the statistics of a newly specialized body.
+    pub(crate) fn reset_evidence(&self) { self.counters.set(0) }
+
+    /// Adds `runs` to one half (`shift` 0: leaves, `half_bits`: completions), saturating.
+    #[inline]
+    fn add_half(&self, shift: u32, runs: u64) -> u64 {
+        let word = self.counters.get();
+        let half = ((word >> shift) & EVIDENCE.half_mask()).saturating_add(runs).min(EVIDENCE.half_mask());
+        self.counters.set(word & !(EVIDENCE.half_mask() << shift) | half << shift);
+        half
+    }
+
+    /// Counts a leave; returns the leaves so far.
+    pub(crate) fn note_leave(&self) -> u64 { self.add_half(0, 1) }
+
+    /// Counts `runs` completions (a handler's run end counts one, a native caller's credit many);
+    /// returns the completions so far.
+    #[inline]
+    pub(crate) fn note_completions(&self, runs: u64) -> u64 { self.add_half(EVIDENCE.half_bits, runs) }
 }
 
 pub(crate) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;

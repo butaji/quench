@@ -12,11 +12,12 @@ use super::{analogue::Analogue, fresh, program};
 use crate::{
     config::Config,
     process::{self, Finished},
-    tiers::{AOT, INTERPRETER, launch},
+    tiers::INTERPRETER,
 };
 
 /// Each timed binary runs this many times; the fastest run is its time.
 const REPEATS: usize = 3;
+const COMPILE_OPTION: &str = "--build-aot";
 const OUTPUT_OPTION: &str = "-o";
 const C_COMPILER: &str = "cc";
 const CXX_COMPILER: &str = "c++";
@@ -26,6 +27,7 @@ const C_OPTIMIZATION: &str = "-O2";
 const C_LIBRARIES: &str = "-lm";
 const PROGRAM_NAME: &str = "program.js";
 const C_NAME: &str = "c";
+const AOT_NAME: &str = "aot";
 
 /// The directory the analogue's program and binaries are built in.
 fn scratch(config: &Config, row: &str) -> PathBuf {
@@ -86,6 +88,13 @@ fn compile_c(config: &Config, analogue: &Analogue, directory: &Path) -> Result<P
     Ok(binary)
 }
 
+/// The program compiled ahead of time by `compiler` into `directory`.
+fn compile_aot(config: &Config, compiler: &Path, program: &Path, directory: &Path) -> Result<PathBuf, String> {
+    let binary = directory.join(AOT_NAME);
+    checked(config.command(compiler).arg(COMPILE_OPTION).arg(program).arg(OUTPUT_OPTION).arg(&binary), "the AOT compile")?;
+    Ok(binary)
+}
+
 /// Runs `command` once, returning what it wrote and how long it took.
 fn timed(command: &mut Command) -> Result<(Finished, Duration), String> {
     let started = Instant::now();
@@ -107,15 +116,15 @@ fn best(config: &Config, program: &Path, arguments: &[String]) -> Result<Duratio
 }
 
 /// Measures `analogue`: the AOT binary's wall-clock time over C's, once its output matches the
-/// interpreter's. `host` is the interpreter.
-pub fn measure(config: &Config, analogue: &Analogue, host: &Path) -> Result<f64, String> {
+/// interpreter's. `host` is the interpreter, `compiler` the AOT-enabled `quench-node`.
+pub fn measure(config: &Config, analogue: &Analogue, host: &Path, compiler: &Path) -> Result<f64, String> {
     let directory = scratch(config, &analogue.row);
     fresh(&directory)?;
     let script = directory.join(PROGRAM_NAME);
     let text = program::compose(analogue, &config.jetstream)?;
     fs::write(&script, text).map_err(|error| format!("{}: {error}", script.display()))?;
     let c = compile_c(config, analogue, &directory)?;
-    let aot = PathBuf::from(launch(config, host, AOT, &script, &directory, &[])?.swap_remove(0));
+    let aot = compile_aot(config, compiler, &script, &directory)?;
     let expected = checked(config.command(host).arg(INTERPRETER).arg(&script), "the interpreter")?;
     let actual = process::run(&mut config.command(&aot))?;
     if actual.stdout != expected.stdout || actual.code != expected.code {

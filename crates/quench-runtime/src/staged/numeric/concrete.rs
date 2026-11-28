@@ -2,9 +2,6 @@
 //! operations are the interpreter's, as the stencils run them. Split from `numeric.rs` for its size.
 
 use super::*;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
 
 #[inline(always)]
 fn int32(word: u64) -> i32 { word as u32 as i32 }
@@ -100,11 +97,6 @@ impl NumericStage for super::super::Concrete {
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
-    #[cfg(not(stencil_build))]
-    #[inline(always)]
-    fn float_power(&mut self, base: u64, exponent: u64) -> u64 {
-        super::super::power::power(f64::from_bits(base), f64::from_bits(exponent)).to_bits()
-    }
     #[inline(always)]
     fn float_primitive(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
         super::super::math::float_primitive(operation, f64::from_bits(value)).to_bits()
@@ -142,13 +134,7 @@ impl NumericStage for super::super::Concrete {
     fn u32_to_f64(&mut self, value: u64) -> u64 { (i64::from(value as u32) as f64).to_bits() }
     #[inline(always)]
     fn to_int32(&mut self, number: u64, _miss: ()) -> Option<u64> {
-        // The stencil's `units::to_int32`. The runtime's `units` module (not in quench-staged) re-exports
-        // `value::number_to_i32` as `to_int32`, so the cargo flavor names that.
-        #[cfg(stencil_build)]
-        let int = crate::units::to_int32(f64::from_bits(number));
-        #[cfg(not(stencil_build))]
-        let int = crate::value::number_to_i32(f64::from_bits(number));
-        Some(u64::from(int as u32))
+        Some(u64::from(crate::units::to_int32(f64::from_bits(number)) as u32))
     }
     #[inline(always)]
     fn int_bitwise(&mut self, operation: NumberBitwise, left: u64, right: u64) -> u64 {

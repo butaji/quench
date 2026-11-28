@@ -25,19 +25,19 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &quench_runtime::dat
     let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
     if let Some(slot) = edges.get_mut(start) { *slot = None; }
     for (pc, instruction) in instructions.iter().enumerate() {
-        quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| {
-            let Some(slot) = edges.get_mut(target) else { return };
+        for target in successors(pc, *instruction).into_iter() {
+            let Some(slot) = edges.get_mut(target) else { continue };
             *slot = if target > pc { slot.map(|count| count + 1) } else { None };
-        });
+        }
     }
     // A latch whose loop's header is a test repeats it (`rotated_bodies`): the test's exit past the latch is one more
     // edge into its target, from before it.
     for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
         let Some(&test) = instructions.get(header) else { continue };
         if !quench_runtime::staged::meaning::means(test, quench_runtime::staged::meaning::Meaning::ConditionalJump) { continue; }
-        quench_runtime::bytecode::for_each_instruction_successor(header, test, |target| {
-            if let Some(slot) = edges.get_mut(target).filter(|_| target > latch) { *slot = slot.map(|count| count + 1); }
-        });
+        for target in successors(header, test).into_iter().filter(|&target| target > latch) {
+            if let Some(slot) = edges.get_mut(target) { *slot = slot.map(|count| count + 1); }
+        }
     }
     edges
 }
@@ -59,9 +59,5 @@ fn rotated_bodies(instructions: &[WideInstruction]) -> quench_runtime::dataflow:
 /// the entry's registers, read from the lane frame, hold there.
 pub(crate) fn entered_once(instructions: &[WideInstruction], start: usize, lowered: impl Fn(usize) -> bool) -> bool {
     instructions.iter().enumerate().filter(|(pc, _)| lowered(*pc))
-        .all(|(pc, instruction)| {
-            let mut enters_start = false;
-            quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target| enters_start |= target == start);
-            !enters_start
-        })
+        .all(|(pc, instruction)| successors(pc, *instruction).into_iter().all(|target| target != start))
 }

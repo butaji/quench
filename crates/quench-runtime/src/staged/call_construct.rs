@@ -72,19 +72,19 @@ pub(crate) fn admit_construct<S: Stage>(stage: &mut S, gate: ConstructGate<S::Wo
 #[inline(always)]
 pub fn concrete_admits_construct(calls: bool, constructs: bool, pending: bool) -> bool {
     let gate = ConstructGate { calls: u64::from(calls), constructs: u64::from(constructs), pending: u64::from(pending) };
-    admit_construct(&mut super::Concrete::pure(), gate, ()).is_some()
+    admit_construct(&mut super::Concrete::new(std::ptr::null()), gate, ()).is_some()
 }
 
 /// `admit_construct_run` on machine words.
 #[inline(always)]
 pub fn concrete_admits_construct_run(calls: bool, constructs: bool) -> bool {
-    admit_construct_run(&mut super::Concrete::pure(), u64::from(calls), u64::from(constructs), ()).is_some()
+    admit_construct_run(&mut super::Concrete::new(std::ptr::null()), u64::from(calls), u64::from(constructs), ()).is_some()
 }
 
 /// `guard_unpending` on machine words.
 #[inline(always)]
 pub fn concrete_unpending(pending: bool) -> bool {
-    guard_unpending(&mut super::Concrete::pure(), u64::from(pending), ()).is_some()
+    guard_unpending(&mut super::Concrete::new(std::ptr::null()), u64::from(pending), ()).is_some()
 }
 
 /// [[Construct]]'s value of a constructor that returned `value`: `value` where `object` (it is
@@ -105,13 +105,13 @@ pub(crate) fn complete_construct<S: Stage>(stage: &mut S, window: S::Word, value
 /// `construct_value` on machine words.
 #[inline(always)]
 pub fn concrete_construct_value(value: u64, receiver: u64, object: bool) -> u64 {
-    construct_value(&mut super::Concrete::pure(), value, receiver, object)
+    construct_value(&mut super::Concrete::new(std::ptr::null()), value, receiver, object)
 }
 
 /// `complete_construct` on machine words: `window` is the returning activation's register 0.
 #[inline(always)]
 pub fn concrete_complete_construct(window: u64, value: u64, object: bool) -> u64 {
-    complete_construct(&mut super::Concrete::pure(), window, value, object)
+    complete_construct(&mut super::Concrete::new(std::ptr::null()), window, value, object)
 }
 
 /// The completion of a skipped forwarding constructor (`Completion::Forwarder`): its receiver,
@@ -140,7 +140,7 @@ mod tests {
     fn the_completion_yields_an_object_else_the_receiver_in_the_context_word() {
         let mut words = [0_u64; frame::CONTEXT_WORDS + 2];
         let window = unsafe { words.as_mut_ptr().add(frame::CONTEXT_WORDS) } as u64;
-        let mut stage = super::super::Concrete::pure();
+        let mut stage = super::super::Concrete::new(std::ptr::null());
         super::super::call_keeping::enter_context(&mut stage, window, 11, 12, 13);
         assert_eq!(words[frame::CONTEXT_WORDS - frame::CONTEXT_THIS], 11);
         assert_eq!(words[frame::CONTEXT_WORDS - frame::CONTEXT_ENV], 12);

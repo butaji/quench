@@ -21,7 +21,6 @@ mod shared {
 }
 
 use shared::{NumberWord, Outcome};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What the compiled row returns: it left at its miss edge, or it defined an int32 or a binary64
 /// word, which it stored through its result pointer.
@@ -133,7 +132,7 @@ fn compiled_row(isa: &dyn cranelift_codegen::isa::TargetIsa, operation: NumberOp
     builder.switch_to_block(entry);
     let [left, right, result] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
+    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
     let [left, right] = [(left, kinds[0]), (right, kinds[1])].map(|(word, kind)| match kind {
         Domain::Int32 => (stage.narrow(word), kind),
         Domain::Float64 => (stage.f64_from_bits(word), kind),

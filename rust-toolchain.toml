@@ -5,4 +5,4 @@
 #   PATH="$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH"
 [toolchain]
 channel = "1.99.0"
-components = ["rustfmt", "clippy", "rust-src"]
+components = ["rustfmt", "clippy"]

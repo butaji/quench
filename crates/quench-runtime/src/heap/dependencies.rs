@@ -20,7 +20,7 @@
 //! global `prototype_layout_epoch`. A dependency object, or compiled code that took a fact read
 //! through a chain, may hold the same subjects (`Dependencies::hold_layouts`).
 
-use crate::typed_ir::FactKey;
+use crate::fact_stats::{self, FactKind};
 use crate::value::Value;
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
@@ -309,9 +309,6 @@ struct Table {
     /// dependencies and compiled code. A retirement takes them out (`Retired`) and retires
     /// them once it holds the table no longer, so code dropped then never finds it borrowed.
     layout_readers: crate::code_dependencies::CodeReaders,
-    /// Per fact cell key, the code that trusts the cell (`typed_ir::FactKey`). An edge that widens
-    /// the cell takes them out and retires them once the table is released (`Table::widen_cell`).
-    cell_key_readers: crate::code_dependencies::CellReaders,
     /// The cell last made for each chain, by its first subject and length: every proof about
     /// one chain shares it while it holds. A chain is its first prototype's links, so while no
     /// subject of the cell changed, the chain of that length from its first subject is the one
@@ -341,6 +338,9 @@ impl Table {
     /// Retires what read `subject`; what held its layout is given back to retire (`Retired`).
     fn retire(&mut self, subject: u32) -> Retired {
         let held = Retired(self.layout_readers.take(subject));
+        if !held.0.is_empty() {
+            fact_stats::retired(FactKind::Layout, u64::from(subject));
+        }
         self.retire_proofs(subject);
         held
     }
@@ -348,8 +348,9 @@ impl Table {
     fn retire_proofs(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
         if let Some(cells) = self.cell_readers.get_mut(subject as usize) {
-            for cell in std::mem::take(cells) {
-                cell.retire();
+            let held = std::mem::take(cells).into_iter().fold(false, |any, cell| cell.retire() | any);
+            if held {
+                fact_stats::retired(FactKind::Chain, u64::from(subject));
             }
         }
         if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {
@@ -396,16 +397,6 @@ impl Table {
             cell.retire();
         });
         Retired(self.layout_readers.take_all())
-    }
-
-    /// The code that trusts cell `key` (`cell_key_readers`), to retire once the table is released.
-    fn widen_cell(&mut self, key: FactKey) -> Retired {
-        Retired(self.cell_key_readers.take(key))
-    }
-
-    /// The code that trusts any cell, for an event no key names (`Dependencies::widen_all_cells`).
-    fn widen_all_cells(&mut self) -> Retired {
-        Retired(self.cell_key_readers.take_all())
     }
 
     /// Clears every proof of `kind`; the subjects that recorded a reader of it keep the
@@ -581,28 +572,6 @@ impl Dependencies {
         // SAFETY: as `table`: no reference to the table is live across this call.
         let table = unsafe { &mut *self.0.get() };
         subjects.iter().all(|subject| table.layout_readers.subscribe(*subject, dependency))
-    }
-
-    /// Makes `code` retire when cell `key` widens (`widen_cell`); `false` where the reader table is
-    /// full. Code that trusts a cell subscribes here at the cell's key, not per slot or class.
-    pub(crate) fn subscribe_cell(&mut self, key: FactKey, code: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
-        self.table_mut().cell_key_readers.subscribe(key, code)
-    }
-
-    /// An edge moved cell `key` up the lattice (a store outside the cell, a method slot write, a
-    /// global write, a length change, new code). Every reader is retired the same way in every
-    /// tier: records take their edge rewrite, compiled units retire. This is the natural transformation on code
-    /// as a presheaf over cells: the edge names the key, and the readers of that key retire.
-    /// The readers leave the table before they retire, so retiring never meets a borrow of it.
-    pub(crate) fn widen_cell(&mut self, key: FactKey) {
-        let retired = self.table_mut().widen_cell(key);
-        retired.retire();
-    }
-
-    /// `widen_cell` of every cell, for an event no key names: new code reaching the scopes (eval).
-    pub(crate) fn widen_all_cells(&mut self) {
-        let retired = self.table_mut().widen_all_cells();
-        retired.retire();
     }
 
     /// A cell of its own that holds while none of `subjects`, prototypes of any relation,

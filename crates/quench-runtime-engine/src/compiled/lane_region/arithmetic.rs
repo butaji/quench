@@ -9,8 +9,6 @@ use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
 use quench_runtime::staged::{Domain, NegativeZero, NumberOperation, Operation, Overflow};
-use quench_runtime::vm::global_facts::GlobalRead;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What a Number arithmetic step reads and writes: its result register and its operands.
 type Operands = (Register, [Operand; 2]);
@@ -20,7 +18,6 @@ impl Lowering<'_, '_> {
     /// is `exit`. `None` where an operand has no proof the lowering can make.
     pub(crate) fn arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         operation: NumberArithmetic, exit: ir::Block) -> Option<()> {
-        if self.fold_static(state, pc, instruction, Some(operation)) { return Some(()); }
         let operands = (instruction.result_register(), [instruction.operand_b(), instruction.operand_c()]);
         let words = if operation == NumberArithmetic::Divide { None } else { self.index_math(state, pc, instruction) };
         if let Some(range) = words {
@@ -35,131 +32,6 @@ impl Lowering<'_, '_> {
             self.checked_arithmetic(state, pc, operands, (operation, exit))?;
         }
         Some(())
-    }
-
-    /// The one fold point of the lane's static results. Number arithmetic (`operation` is `Some`): operands whose values are
-    /// exact (a constant, or a register whose fact or whole-program solve pins it to one integer) fold the operation to its
-    /// value, which the interpreter's own operator computes (`static_number_binary`). An identity the operands make exact
-    /// defines the destination as its other operand (`copy`): `x * 1`, `x / 1` and `x - 0` for any Number, and `x + 0`
-    /// only for an integer `x`, since `-0 + 0` is `+0`. A call (`operation` is `None`) of a Math function whose arguments
-    /// are exact folds to the value the runtime's own function returns (`fold_math_call`). Returns whether it defined the
-    /// destination; nothing else is emitted.
-    pub(crate) fn fold_static(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, operation: Option<NumberArithmetic>) -> bool {
-        if self.left_here { return false; }
-        let Some(operation) = operation else { return self.fold_math_call(state, pc, instruction) };
-        let destination = instruction.result_register();
-        let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        let known = [self.known_number(state, pc, left), self.known_number(state, pc, right)];
-        if let [Some(left_value), Some(right_value)] = known
-            && let Some(quench_runtime::bytecode::Constant::Number(value)) =
-                quench_runtime::vm::operations::static_number_binary(instruction.binary_operator(), left_value, right_value)
-        {
-            self.fold_constant(state, destination, Value::number(value));
-            return true;
-        }
-        let is = |index: usize, number: f64| known[index] == Some(number);
-        let other = match operation {
-            NumberArithmetic::Multiply if is(0, 1.0) => right,
-            NumberArithmetic::Multiply if is(1, 1.0) => left,
-            NumberArithmetic::Divide if is(1, 1.0) => left,
-            NumberArithmetic::Subtract if is(1, 0.0) => left,
-            NumberArithmetic::Add if is(1, 0.0) && self.is_integer(state, pc, left) => left,
-            NumberArithmetic::Add if is(0, 0.0) && self.is_integer(state, pc, right) => right,
-            _ => return false,
-        };
-        // The identity's other operand must be a register the lane already proves a Number.
-        let Some(register) = other.register_index().filter(|_| other.kind() == Some(OperandKind::Register)) else { return false };
-        if !state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return false; }
-        self.copy(state, destination, register);
-        true
-    }
-
-    /// The Number a constant operand holds, or the one integer a register is proved to hold before the unit instruction at
-    /// `pc` (`integer_range` pins it to a single value). `None` where the operand is not exactly known.
-    fn known_number(&self, state: &State, pc: usize, operand: Operand) -> Option<f64> {
-        match operand.kind()? {
-            OperandKind::Constant => super::super::facts::constant_number(&self.program.constants, operand),
-            OperandKind::Register => {
-                let range = self.integer_range(state, pc, operand.register_index()?)?;
-                (range.min == range.max).then_some(range.min as f64)
-            }
-            _ => None,
-        }
-    }
-
-    /// The Math call at `pc` of exact Number arguments (`fold_static`), folded to the value `concrete_math_call` returns: the
-    /// function the runtime runs for the native. The callee is the native its by-name read named (`GlobalRead::NativeMember`
-    /// or `NativeSlot`, as `intrinsic_calls` finds it), and the fold guards its identity and holds its holder, so the fold
-    /// leaves where the callee is another function. Returns whether it defined the destination.
-    fn fold_math_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call)
-            || instruction.returns_from_frame() || instruction.direct_eval() || instruction.parameter_eval()
-            || instruction.result_flags() != 0 || !self.holds_holders() { return false; }
-        let callee = instruction.register_b();
-        let Some(defined) = (0..pc).rev().find(|&at| self.unit.instructions[at].written_registers().any(|written| written == callee)) else { return false };
-        let (value, native, holder) = match self.global_reads.get(&defined) {
-            Some(GlobalRead::NativeMember { value, native, holder, .. } | GlobalRead::NativeSlot { value, native, holder, .. }) => (*value, *native, *holder),
-            _ => return false,
-        };
-        let Some(call) = quench_runtime::vm::number::math_call(native) else { return false };
-        let argc = quench_runtime::bytecode::ImmediateLayout::argument_count(instruction.imm());
-        if argc != call.arity() { return false; }
-        let window = quench_runtime::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-        let Some(args) = (0..argc).map(|index| self.exact_argument(state, pc, window + index)).collect::<Option<Vec<Value>>>() else { return false };
-        let Some(result) = quench_runtime::staged::call_native::concrete_math_call(call, &args) else { return false };
-        let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
-        self.hold_holder_any(state, exit, holder);
-        // The callee the solve proves is the Math builtin this call folds (`named_builtin`) is no compare of its identity.
-        if !self.named_builtin(defined).is_some_and(|expected| self.proves_builtin(pc, callee, expected)) {
-            let held = self.tagged(state, callee);
-            let same = self.is_identity(held, value);
-            emit_js_guard(&mut self.builder, same, exit);
-        }
-        self.fold_constant(state, instruction.result_register(), result);
-        true
-    }
-
-    /// The exact value of the argument in `register` before the unit instruction at `pc`: the one integer its range pins
-    /// (`integer_range`), or the constant the one load of the same block writes (`LoadConst`). `None` otherwise.
-    fn exact_argument(&self, state: &State, pc: usize, register: Register) -> Option<Value> {
-        if let Some(range) = self.integer_range(state, pc, register).filter(|range| range.min == range.max) {
-            return Some(Value::number(range.min as f64));
-        }
-        let at = (0..pc).rev().find(|&at| self.unit.instructions[at].written_registers().any(|written| written == register))?;
-        if ((at + 1)..pc).any(|later| self.blocks.get(later).is_some_and(|block| block.is_some())) { return None; }
-        let instruction = self.unit.instructions[at];
-        if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::LoadConst) { return None; }
-        super::super::facts::immediate(self.program.constants.get(instruction.constant_index())?)
-    }
-
-    /// Defines `destination` as the folded `value`: its constant word, with the fact of its one value. An int32 carries
-    /// its singleton range, so a later fold reads it as exact (`integer_range`).
-    fn fold_constant(&mut self, state: &mut State, destination: Register, value: Value) {
-        let ty = match value.as_int() {
-            Some(int) => Type::int(IntRange { min: i64::from(int), max: i64::from(int) }),
-            None => Type::immediate(value),
-        };
-        let constant = self.identity_constant(value);
-        self.define(state, destination, constant, RegisterFact::definition(ty, Representation::Tagged));
-    }
-
-    /// Whether `operand` is a register proved to hold an integer before the unit instruction at `pc`, or an integer
-    /// constant: an integer holds no negative zero.
-    fn is_integer(&self, state: &State, pc: usize, operand: Operand) -> bool {
-        match operand.kind() {
-            Some(OperandKind::Register) => operand.register_index().is_some_and(|register| self.integer_range(state, pc, register).is_some()),
-            Some(OperandKind::Constant) => super::super::facts::constant_number(&self.program.constants, operand)
-                .is_some_and(|number| number.fract() == 0.0 && number.is_finite()),
-            _ => false,
-        }
-    }
-
-    /// The integer range `register` is proved to hold before the unit instruction at `pc`: its current fact, narrowed by
-    /// the whole-program solve (`cell_before`) where both know it. `None` where neither proves an integer.
-    fn integer_range(&self, state: &State, pc: usize, register: Register) -> Option<IntRange> {
-        let fact = state.values[usize::from(register)].value.ty.int_range();
-        let solved = self.cell_before(pc, register).range();
-        fact.zip(solved).and_then(|(fact, solved)| fact.intersect(solved)).or(fact).or(solved)
     }
 
     /// Whether an operand is held as a binary64 or a wide integer, or is a constant that is no
@@ -183,7 +55,7 @@ impl Lowering<'_, '_> {
             NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
             NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) || self.truncated_through_int32_sum(state, pc, operands.0) => {
                 if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
-                    self.truncated_product(state, self.ranges.product_exact(pc), operands, exit);
+                    self.truncated_product(state, operands, exit);
                     return;
                 }
                 true
@@ -200,17 +72,12 @@ impl Lowering<'_, '_> {
     /// A product of int32 operands only whose ToInt32 is read (`truncated_through_sums`), neither
     /// factor known small: the exact 64-bit product, whose low 32 bits are that ToInt32 while the
     /// product's magnitude is under 2^52 (its double is then exact, and so are the chain's sums
-    /// of int32 constants). A larger product rounds as a double, and leaves. Where the unit's
-    /// ranges prove the exact product within that bound (`product_exact`), no test is made.
-    fn truncated_product(&mut self, state: &mut State, exact_proven: bool, (destination, [left, right]): Operands, exit: ir::Block) {
+    /// of int32 constants). A larger product rounds as a double, and leaves.
+    fn truncated_product(&mut self, state: &mut State, (destination, [left, right]): Operands, exit: ir::Block) {
         let left = self.operand_int(state, left, exit).expect("proved int32 operand");
         let right = self.operand_int(state, right, exit).expect("proved int32 operand");
-        let product = number_machine::int32_product(&mut emit(&mut self.builder), left, right);
-        if !exact_proven {
-            let exact = number_machine::product_exact(&mut emit(&mut self.builder), product);
-            emit_js_guard(&mut self.builder, exact, exit);
-        }
-        let low = number_machine::product_low_int32(&mut emit(&mut self.builder), product);
+        let (low, exact) = number_machine::truncated_int32_product(&mut emit(&mut self.builder), left, right);
+        emit_js_guard(&mut self.builder, exact, exit);
         self.set_int(state, destination, low);
     }
 

@@ -595,5 +595,17 @@ fn is_valid_group_name(name: &str) -> bool {
     let Some(decoded) = quench_regexp::decode_identifier_escapes(name) else {
         return false;
     };
-    quench_regexp::identifier::is_identifier_name(&decoded)
+    let mut chars = decoded.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    is_id_start(first) && chars.all(is_id_continue)
+}
+
+fn is_id_start(character: char) -> bool {
+    character.is_alphabetic() || matches!(character, '_' | '$')
+}
+
+fn is_id_continue(character: char) -> bool {
+    is_id_start(character) || character.is_numeric() || matches!(character, '\u{200C}' | '\u{200D}')
 }

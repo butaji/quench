@@ -6,26 +6,27 @@ use crate::ext_traits::*;
 use super::element_tests::SUM;
 use super::*;
 use cranelift_codegen::{dominator_tree::DominatorTree, flowgraph::ControlFlowGraph, loop_analysis::LoopAnalysis};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The blocks a loop region's hot path may span: the bounds test, the element and the sum, the
 /// fault poll and the loop's own test.
 const HOT_LOOP_BLOCKS: usize = 4;
 
 /// The region of `SUM`'s loop over a Float64Array, entered at its header as the loop tier enters it
-/// and how many registers the loop writes.
+/// (every register but the array holding the int32 it had), and how many registers the loop writes.
 fn sum_loop() -> (ir::Function, usize) {
     use quench_runtime::tier_surface::TypedArrayKind as Kind;
     let program = quench_runtime::Engine::specialize(SUM, "loop-shape.js").unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
         (instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc)
             .then(|| (instruction.jump_target() as usize, pc))).expect("the function has a loop");
     let written: BTreeSet<Register> = unit.instructions[header..=backedge].iter().flat_map(|instruction| writes(*instruction)).collect();
+    let entering: Vec<_> = (1..unit.registers).map(|register| (register, IntRange::FULL)).collect();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)))
+        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entering, &[], &[]), &[], &[],
+        Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Typed(Some(Kind::Float64)), true)
         .expect("the loop lowers");
     (region.function, written.len())
 }

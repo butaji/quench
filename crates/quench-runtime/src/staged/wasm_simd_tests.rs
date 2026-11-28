@@ -4,7 +4,7 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
-use super::wasm_simd::{Lanes, Native, NativeOp, Simd, SimdWasmSimdExt, WasmSimd, simd_of};
+use super::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd};
 use super::wasm_simd_rules::{NATIVE, native, simd};
 use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
@@ -13,9 +13,6 @@ use crate::bytecode::{InstructionField, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::wasm::simd::{SimdKernel, SimdOperator, bits_of, shuffle, value_of};
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
 
 const VECTORS: [u128; 7] = [
     0,
@@ -128,24 +125,24 @@ fn the_shuffle_is_the_interpreters() {
 fn the_table_names_each_vector_opcode() {
     let selector = SimdOperator::V128And.selector(0);
     assert_eq!(
-        simd_of(Op::WasmSimd, selector),
+        Simd::of(Op::WasmSimd, selector),
         Some(Simd::Operator { selector })
     );
-    assert_eq!(simd_of(Op::WasmSimd, u32::MAX), None);
-    assert_eq!(simd_of(Op::WasmSimdShuffle, 0), Some(Simd::Shuffle));
-    assert_eq!(simd_of(Op::WasmMemoryAddress, 0), Some(Simd::Address));
+    assert_eq!(Simd::of(Op::WasmSimd, u32::MAX), None);
+    assert_eq!(Simd::of(Op::WasmSimdShuffle, 0), Some(Simd::Shuffle));
+    assert_eq!(Simd::of(Op::WasmMemoryAddress, 0), Some(Simd::Address));
     let (load, store) = (MemoryLoad::V128Load as u32, MemoryStore::V128Store as u32);
-    assert_eq!(simd_of(Op::WasmMemoryLoad, load), Some(Simd::Load));
-    assert_eq!(simd_of(Op::WasmMemoryStore, store), Some(Simd::Store));
+    assert_eq!(Simd::of(Op::WasmMemoryLoad, load), Some(Simd::Load));
+    assert_eq!(Simd::of(Op::WasmMemoryStore, store), Some(Simd::Store));
     assert_eq!(
-        simd_of(Op::WasmMemoryLoad, MemoryLoad::I32Load as u32),
+        Simd::of(Op::WasmMemoryLoad, MemoryLoad::I32Load as u32),
         None
     );
     assert_eq!(
-        simd_of(Op::WasmMemoryStore, MemoryStore::I32Store as u32),
+        Simd::of(Op::WasmMemoryStore, MemoryStore::I32Store as u32),
         None
     );
-    assert_eq!(simd_of(Op::WasmI32Add, 0), None);
+    assert_eq!(Simd::of(Op::WasmI32Add, 0), None);
     assert_eq!(
         Step::of(Op::WasmSimdShuffle, 0),
         Some(Step::Simd(Simd::Shuffle))

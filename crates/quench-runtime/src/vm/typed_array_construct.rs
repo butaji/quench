@@ -1,5 +1,4 @@
 use super::*;
-#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 const BYTE_OFFSET_ARGUMENT: usize = 1;
 const LENGTH_ARGUMENT: usize = 2;
@@ -92,7 +91,7 @@ impl Vm {
                 }
                 let prototype = if let Some(root) = new_target_root {
                     let new_target = self.heap.root_value(root).unwrap();
-                    let native = typed_array_kind_native(kind);
+                    let native = kind.native();
                     self.native_constructor_prototype(p, new_target, native)?
                         .expect("typed array constructors have intrinsic prototypes")
                 } else {
@@ -267,7 +266,7 @@ impl Vm {
     }
 
     pub(super) fn typed_array_proto(&self, kind: TypedArrayKind) -> Value {
-        let native = typed_array_kind_native(kind);
+        let native = kind.native();
         if let Some(prototype) = self
             .realm
             .intrinsics
@@ -340,7 +339,7 @@ impl Vm {
             }
         }
         if constructor.is_undefined() {
-            let native = typed_array_kind_native(kind);
+            let native = kind.native();
             constructor = self.native_value(native);
         }
         if !self.is_constructable(constructor) {
@@ -352,7 +351,7 @@ impl Vm {
                 self.type_error(p, "typed array species result is not a typed array".into())
             );
         };
-        if typed_array_kind_is_bigint(kind) != typed_array_kind_is_bigint(target_kind) {
+        if kind.is_bigint() != target_kind.is_bigint() {
             return Err(self.type_error(p, "typed array species content type differs".into()));
         }
         self.validate_typed_array_result(p, target, minimum_length, false)?;
@@ -415,7 +414,7 @@ impl Vm {
         let length = self.array_like_length(p, object)?;
         let object = self.heap.root_value(source).unwrap();
         if length > 1
-            && let Some(shape) = self.heap.object(object).map(|object| object.shape())
+            && let Some(shape) = self.object_data(object).map(Object::shape)
         {
             // Prepare the derived lookup for repeated array-like element reads.
             // Getters still run normally; mutations select a new immutable shape.

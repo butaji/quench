@@ -2,18 +2,19 @@
 //! a symbol, linked by relocation into a process that did not compile it.
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::super::lane_region::{relocs, Completion, Coverage, ElementViews, lower};
+use super::super::lane_region::{relocs, Completion, Coverage, ElementViews, NO_ENTRY_FIELDS, lower};
 use super::*;
-use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode};
+use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use std::collections::BTreeMap;
 
 /// `source`'s function 1 lowered ahead and compiled to an image, with its caller registers.
 fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let program = quench_runtime::Engine::specialize(source, "ahead-image.js").unwrap();
-    let unit = lane_unit::unit(&program, None, 1, program.function(1), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+    let unit = lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
+        Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).unwrap();
@@ -64,7 +65,7 @@ fn write_image(image: &RelocatableCode, registers: usize) -> Vec<u8> {
     out.extend(&*image.code);
     out.extend((image.relocations.len() as u64).to_le_bytes());
     for relocation in &*image.relocations {
-        assert_eq!(relocation.kind, PatchKind::Abs8, "a symbol is an absolute word");
+        assert_eq!(relocation.kind, cranelift_codegen::binemit::Reloc::Abs8, "a symbol is an absolute word");
         out.extend((relocation.offset as u64).to_le_bytes());
         out.extend(relocation.namespace.to_le_bytes());
         out.extend(relocation.key.to_le_bytes());
@@ -94,7 +95,7 @@ fn read_image(file: &[u8]) -> (RelocatableCode, usize) {
     let code: Box<[u8]> = words.0[..length].into();
     words.0 = &words.0[length..];
     let relocations = (0..words.word()).map(|_| quench_runtime::vm::jit_backend::relocatable_code::Relocation {
-        offset: words.word() as usize, kind: PatchKind::Abs8,
+        offset: words.word() as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
         namespace: words.half(), key: words.half(), addend: words.word() as i64 }).collect();
     (RelocatableCode { code, relocations }, registers)
 }
@@ -141,10 +142,11 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
     for source in WIDER {
         let program = quench_runtime::Engine::specialize(source, "ahead-wider.js").unwrap();
         let id = program.function_count() - 1;
-        let unit = lane_unit::unit(&program, None, id as u32, program.function(id), &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+        let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Full, Completion::Body, ElementViews::Dense).expect(source);
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[],
+            Coverage::Full, Completion::Body, ElementViews::Dense, true).expect(source);
         let image = quench_runtime::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).expect(source);

@@ -10,30 +10,23 @@ pub use quench_bjit::c_twin::{CKernel, CTwin};
 use super::numeric::NumberOperation;
 use super::Operation;
 
-/// `trait NAME for TYPE, <GENERICS> as "LABEL" { Variant => twin, .. }`, its rows named `LABEL::Variant`: `twin` is `kernel(name)`,
+/// `impl TYPE, <GENERICS> as "LABEL" { Variant => twin, .. }`, its rows named `LABEL::Variant`: `twin` is `kernel(name)`,
 /// `none("reason")`, or `by(expr, rows)` for a variant whose payload decides it (`expr` over the variant's
 /// bindings, `rows` the twins it can take).
 macro_rules! row_twins {
-    (trait $name:ident $(<$($tgen:ident),*>)? for $type:ty $(, <$($generic:ident),*>)? as $label:literal {
+    (impl $type:ty $(, <$($generic:ident),*>)? as $label:literal {
         $($variant:ident $(($bound:ident))? $({ $($field:ident),* })? => $kind:ident($($what:tt)*),)*
     }) => {
-        /// The C twins of this type's rows, as an extension trait: quench-staged owns the type.
-        pub trait $name $(<$($tgen),*>)? {
+        impl $(<$($generic),*>)? $type {
             /// The C kernel this operation is measured against, or why none is.
-            fn c_twin(&self) -> CTwin;
-
-            /// Every row this type's operations make, by name, with its twin.
-            fn c_twin_rows() -> Vec<(&'static str, CTwin)>;
-        }
-
-        impl $(<$($generic),*>)? $name $(<$($tgen),*>)? for $type {
-            fn c_twin(&self) -> CTwin {
+            pub fn c_twin(&self) -> CTwin {
                 match self {
                     $(row_twins!(@pattern $variant $(($bound))? $({ $($field),* })?) => row_twins!(@twin $kind($($what)*)),)*
                 }
             }
 
-            fn c_twin_rows() -> Vec<(&'static str, CTwin)> {
+            /// Every row this type's operations make, by name, with its twin.
+            pub fn c_twin_rows() -> Vec<(&'static str, CTwin)> {
                 let mut rows = Vec::new();
                 $(rows.extend(row_twins!(@rows $label, $variant $kind($($what)*)));)*
                 rows
@@ -63,7 +56,7 @@ fn equality_twin(strict: bool) -> CTwin {
 }
 
 row_twins! {
-    trait NumberOperationCTwinsExt for NumberOperation as "NumberOperation" {
+    impl NumberOperation as "NumberOperation" {
         Arithmetic => kernel(int_add),
         Relation => kernel(cmp_int),
         RelationValue => kernel(cmp_dbl),
@@ -77,12 +70,11 @@ row_twins! {
         Extreme => kernel(math_minmax),
         Imul => kernel(math_imul),
         IntCase => kernel(c_switch_dense),
-        Power => none("Math.pow of a constant exponent: no benchmark op isolates it"),
     }
 }
 
 row_twins! {
-    trait OperationCTwinsExt<W, P> for Operation<W, P>, <W, P> as "Operation" {
+    impl Operation<W, P>, <W, P> as "Operation" {
         Move => kernel(c_locals_rotate),
         LoadConst => none("constant load: no benchmark op isolates it"),
         LoadLocalPlain => kernel(c_locals_rotate),
@@ -102,6 +94,8 @@ row_twins! {
         TypeofTest => kernel(typeof_op),
         TypeofString => kernel(typeof_op),
         IndexWrite => kernel(arr_store_int),
+        AddSite => none("stencil row only: no opcode decodes to it"),
+        NamingSite => none("stencil row only: no opcode decodes to it"),
         InstanceOf => kernel(v_instanceof),
         DirectArray => none("stencil guard: its cost is the guarded operation's"),
         ArrayLength => kernel(arr_length),
@@ -117,7 +111,6 @@ row_twins! {
         GuardDeclared => none("stencil guard: its cost is the guarded operation's"),
         GuardPrototype => none("stencil guard: its cost is the guarded operation's"),
         GuardShape => none("stencil guard: its cost is the guarded operation's"),
-        GuardClass => none("stencil guard: its cost is the guarded operation's"),
         GuardStores => none("stencil guard: its cost is the guarded operation's"),
         BackEdge => kernel(empty),
         IndexSetHelper => none("helper store: no benchmark op isolates it"),

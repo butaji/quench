@@ -35,7 +35,7 @@ fn function_code(function: ir::Function, level: super::super::jit_backend::Compi
     #[cfg(feature = "jit")]
     {
     let level = match level {
-        super::super::jit_backend::CompileLevel::Optimized if function.dfg.num_insts() > super::LANE_BACKTRACKING_MAX_INSTS =>
+        super::super::jit_backend::CompileLevel::Optimized | super::super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > super::LANE_BACKTRACKING_MAX_INSTS =>
             super::super::jit_backend::CompileLevel::Large,
         level => level,
     };

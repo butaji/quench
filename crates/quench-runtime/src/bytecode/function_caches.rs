@@ -21,12 +21,6 @@ pub struct FunctionCaches {
     /// The proven-argument masks of b-jit compiles by their seeds (declared and pinned Number registers, pinned int32
     /// registers), at most `PROVEN_ARGS_SEEDS` of them (`base_region::call_args::ProvenArgs`).
     pub proven_args: std::cell::RefCell<Vec<ProvenArgsEntry>>,
-    /// The call PCs that may replace this activation (`Function::permits_js_tail_call_at`), one bit per PC of
-    /// `code`: the decision is static per site, so a call reads its bit instead of scanning the handlers.
-    pub(crate) tail_sites: std::cell::OnceCell<Box<[u64]>>,
-    /// The method a forwarding constructor body calls on `this` (`Function::forwarded_this_method`), derived from its
-    /// records and constants alone; `None` for every other function.
-    pub(crate) forwarded_this: std::cell::OnceCell<Option<super::ForwardedThisMethod>>,
 }
 
 /// One seeding of `FunctionCaches::proven_args`: its Number registers, its int32 registers, the masks per PC.
@@ -86,11 +80,6 @@ impl Function {
             let value_bit = if value { flag.value_bit() } else { 0 };
             self.lazy_flags.set(bits | flag.known_bit() | value_bit);
         }
-    }
-
-    /// `forwarded_this_method` of this function, derived on its first ask and kept.
-    pub fn forwarded_this(&self, constants: &[super::Constant]) -> Option<super::ForwardedThisMethod> {
-        *self.caches().forwarded_this.get_or_init(|| self.forwarded_this_method(constants))
     }
 
     /// Whether the live register masks are derived (`RegisterMasks::for_collection`).

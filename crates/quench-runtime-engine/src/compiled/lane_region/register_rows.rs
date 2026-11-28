@@ -1,11 +1,9 @@
 //! The staged rows over registers, locals and `this`, lowered by their definitions alone: the
 //! lane decides by the row's data (`Operation::registers`, `uses_locals`, `leaves`), not by the
 //! opcode it decoded from.
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is a plain row whose registers this unit holds, and

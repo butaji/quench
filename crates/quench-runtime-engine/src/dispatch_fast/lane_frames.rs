@@ -195,13 +195,13 @@ impl LaneStack {
         debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
         let window = Registers(self.plain.registers.get());
         let packed = quench_runtime::staged::call_complete::frame_packed(
-            &mut quench_runtime::staged::Concrete::pure(), window.0.expose_provenance() as u64,
+            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), window.0.expose_provenance() as u64,
         );
         let side = quench_runtime::staged::call_complete::concrete_side_completion(packed);
         let side = side.sided.then(|| *self.sides.get_mut().last().expect("a sided header has its side record"));
         let returned = self.plain_frame(window, side, self.plain.program.get());
         quench_runtime::staged::protocol::pop_plain(
-            &mut quench_runtime::staged::Concrete::pure(), self.plain_frames_word() as u64, window.0.expose_provenance() as u64,
+            &mut quench_runtime::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.0.expose_provenance() as u64,
         );
         // The row named the header's caller window; a trampoline's header names its scratch
         // window, its record the real one, which the next plain activation's walk starts from.

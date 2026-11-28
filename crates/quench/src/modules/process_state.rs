@@ -662,6 +662,9 @@ pub(crate) fn shared_openssl() -> bool {
 // a zero origin when a performance module happens to be imported later.
 fn sample_performance_origins() -> Option<(f64, f64)> {
     use crate::modules::report_configuration_shared_vm::MICROS_PER_SECOND;
+    // The runtime's clock, which `QUENCH_DEV=virtual-clock` makes virtual as it does
+    // `performance.now`'s: a real origin under virtual readings went negative once the
+    // host's uptime passed the virtual clock's offset.
     let monotonic = quench_runtime::clock::monotonic_ns()?;
     let wall = quench_runtime::clock::system_now().duration_since(std::time::UNIX_EPOCH).ok()?;
     Some((monotonic, wall.as_secs_f64() * MICROS_PER_SECOND))

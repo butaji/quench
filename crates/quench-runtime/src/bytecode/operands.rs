@@ -22,7 +22,7 @@ pub enum OperandKind {
 }
 #[cfg(feature = "profile-aggregate")]
 impl OperandKind {
-    pub const COUNT: usize = Self::Local as usize + 1;
+    pub(crate) const COUNT: usize = Self::Local as usize + 1;
 }
 
 impl Operand {
@@ -62,7 +62,7 @@ impl Operand {
     }
 
     #[inline]
-    pub fn tag(self) -> u16 {
+    pub(crate) fn tag(self) -> u16 {
         self.0 >> Self::TAG_SHIFT
     }
 
@@ -95,7 +95,7 @@ impl FieldBase {
     }
 
     #[inline(always)]
-    pub fn local(value: u16) -> Option<Self> {
+    pub(crate) fn local(value: u16) -> Option<Self> {
         (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
     }
 

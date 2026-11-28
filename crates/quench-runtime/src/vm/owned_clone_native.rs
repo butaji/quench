@@ -20,7 +20,7 @@ impl Vm {
         let v = self.embedding_value(root)?;
         if self.error_is_error(v) {
             let proto = self
-                .heap.object(v)
+                .object_data(v)
                 .map(|o| o.proto())
                 .unwrap_or(Value::NULL);
             let mut kind = "Error";
@@ -310,7 +310,7 @@ impl Vm {
             .iter()
             .map(|r| self.embedding_value(*r))
             .collect::<Result<Vec<_>, _>>()?;
-        self.call_native_dispatch(
+        self.call_collection_native(
             &p,
             if map { Native::MapSet } else { Native::SetAdd },
             target,

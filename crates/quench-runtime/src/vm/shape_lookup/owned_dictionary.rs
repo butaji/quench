@@ -219,9 +219,9 @@ impl Vm {
         let Some(mut index) = self.shapes[shape as usize].lookup_index.take() else {
             return;
         };
-        let data = self.heap.object(object).expect("an owned dictionary has its object");
+        let data = self.object_data(object).expect("an owned dictionary has its object");
         let values: Vec<Value> = (index.pack().into_iter())
-            .map(|slot| self.heap.property_get_ref(data, slot as usize).unwrap_or(Value::DELETED))
+            .map(|slot| self.heap.property_get(data, slot as usize).unwrap_or(Value::DELETED))
             .collect();
         // The packed shape starts a chain of its own, so the shapes its adds made are garbage.
         let parent = provenance::metadata_transitions(&self.shapes, shape)

@@ -5,6 +5,7 @@
 //! one entry per receiver shape and key, direct-mapped, derived from shapes, so shape compaction clears it.
 
 use super::*;
+use crate::heap::Object;
 
 /// Entries of `Vm::in_presences`: a power of two, enough for the receiver shapes and keys a program's `in`s test.
 pub(crate) const IN_PRESENCES: usize = 64;
@@ -36,7 +37,7 @@ impl Vm {
     /// Remembers that `key in object` for the key `atom` was `present`, where `object` is a direct object of a
     /// layout a shape names exactly and so is each prototype on its chain (a dictionary's layout is its own).
     pub(super) fn remember_presence(&mut self, object: Value, atom: Atom, present: bool) {
-        let Some(receiver) = self.heap.direct_object_view(object) else { return };
+        let Some(receiver) = self.heap.object_record(object) else { return };
         let (shape, link, proto) = (receiver.exact_shape(), receiver.proto_link().bits(), receiver.proto());
         if self.shape_is_dictionary(receiver.shape()) {
             return;
@@ -47,13 +48,13 @@ impl Vm {
         if current_answer {
             return;
         }
-        let holder = self.heap.direct_object_view(proto).map_or(shape, |data| data.exact_shape());
+        let holder = self.heap.object_record(proto).map_or(shape, Object::exact_shape);
         // Every link to the chain's end is a record a shape names exactly, so the chain's cell covers all the answer
         // read.
         let mut current = proto;
         let mut depth = 0u8;
         while !current.is_null() {
-            let Some(data) = self.heap.direct_object_view(current) else { return };
+            let Some(data) = self.heap.object_record(current) else { return };
             if self.shape_is_dictionary(data.shape()) {
                 return;
             }

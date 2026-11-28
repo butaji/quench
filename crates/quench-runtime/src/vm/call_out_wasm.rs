@@ -3,7 +3,7 @@
 //! same reads: the tier's values for the operand registers, the running frame's for the rest.
 use super::*;
 use crate::bytecode::Register;
-use crate::staged::protocol_wasm::{WasmHostFieldsProtocolWasmExt, WasmHostStep, operands};
+use crate::staged::protocol_wasm::{WasmHostStep, operands};
 use super::wasm_table::copy_length_type;
 
 /// The value of register `register` the helper reads: the tier's value where `register` is one of
@@ -22,7 +22,7 @@ fn operand_reader(
 impl Vm {
     /// The Wasm `step` of its operand values (`first` is the first operand register's value,
     /// `second` the second's): the value it defines, if any.
-    pub(super) fn wasm_host_step(&mut self, _p: &ProgramRecord, _site: super::call_out::CallSite, step: WasmHostStep,
+    pub(super) fn wasm_host_step(&mut self, _p: &ResidualProgram, _site: super::call_out::CallSite, step: WasmHostStep,
         first: Option<Value>, second: Option<Value>) -> Result<Option<Value>, JsError> {
         let i = step.fields().instruction();
         let frame = self.own_frame();

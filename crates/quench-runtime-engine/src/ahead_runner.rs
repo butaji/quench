@@ -15,26 +15,20 @@ use crate::dispatch_fast::lane_roots::{LaneRoot, LaneStart};
 use quench_runtime::vm::dispatch_frame::{ExecutingProgram, PendingGeneralCall};
 #[cfg(not(feature = "jit"))]
 use quench_runtime::vm::engine_types::{ActivationShape, LaneInstruction, LaneOperand, Records, Registers, NO_CALL_LINK};
+#[cfg(not(feature = "jit"))]
 use quench_runtime::vm::ProgramId;
 
 /// `function`'s view of `code`, derived with this VM's facts (`Vm::entry_lane_view`,
-/// `Vm::view_any_in_lane` and `frame_state_in_lane`) and its program's solve (`program`).
+/// `Vm::view_any_in_lane` and `frame_state_in_lane`).
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, function: u32, code: &Function, constants: &[Value], kind: ProgramKind,
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
-    let facts = vm.programs.aot_facts(program);
-    let planned = vm.programs.planned_call_sites(program, function, crate::dispatch_fast::planned_calls::planned_arm_admits);
-    // A function's loops enter native code iff its predicted tier compiles it (design decision 4.9: the argmin,
-    // or the AOT mode's tier for an image, `ProgramStore::compiled_tier`), and a Cranelift tier and lane bodies run
-    // in this process: the load decides each loop's entry (`install_loop_sites`), not the run.
-    let loop_regions = vm.programs.compiled_tier(program, function)
-        && quench_runtime::vm::tier_policy::cranelift_runs() && crate::compiled::admission::lane_bodies_enrolled(vm);
-    let mut view = crate::dispatch_fast::derive_lane_view(program, function, code, constants, vm, kind, live, sites,
-        crate::compiled::admission::record_plan(loop_regions && quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
-        facts.as_deref(), planned);
+    let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
+        crate::compiled::admission::record_plan(vm.tier_may_run(crate::compiled::admission::Tier::ANY)),
+        vm.programs.reports_on_drop(), vm.host.proper_tail_calls(), vm.programs.tiers());
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
-    if image && !quench_runtime::vm::tier_policy::interprets_unimaged(vm.execution_mode) { view.admit_every_record(); }
+    if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
     view
 }
 
@@ -43,9 +37,9 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
 /// general loop.
 #[cfg(not(feature = "jit"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn view_in_lane<'a>(_vm: &Vm, _program: ProgramId, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(vm: &Vm, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
-    ahead_lane_view(code, constants)
+    ahead_lane_view(code, constants, vm.programs.tiers())
 }
 
 /// The lane view of an execution-only build: the body's own records, whose only entry is the
@@ -54,32 +48,38 @@ pub(crate) fn view_in_lane<'a>(_vm: &Vm, _program: ProgramId, _function: u32, co
 /// helpers read them (`body_calls::ends_run`, `push_passed_in_lane`, the general step); they
 /// carry no bytecode handler, since nothing dispatches them.
 #[cfg(not(feature = "jit"))]
-fn ahead_lane_view(function: &Function, constants: &[Value]) -> LaneView {
+fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static quench_runtime::vm::tier_policy::Tiers) -> LaneView {
     let count = function.code.len();
-    let records = Records::new(body_records(function, constants));
+    let records = Records::new(body_records(function, constants), false);
     let mut entries = vec![0u64; count.div_ceil(u64::BITS as usize)];
     if let Some(first) = entries.first_mut() { *first = 1; }
     let base = records.base();
     LaneView {
         records,
         entries: entries.into_boxed_slice(),
+        tiers,
         memory_register: None,
         activation: ActivationShape::of(function),
+        this_rows: true,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: Box::new([]),
         environment_window: None,
         returns_from_entry: false,
         loops: Box::new([]),
         loop_at_backedge: Box::new([]),
+        vector_regions: Box::new([]),
+        _loop_kernels: Box::new([]),
         start: std::cell::Cell::new(base),
         prologue: std::cell::UnsafeCell::new(Records::blank()),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
-        entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
+        entry: crate::compiled::entry_cell::EntryCell::new(),
         accumulator_registers: vec![crate::dispatch_fast::NO_ACCUMULATOR; count].into_boxed_slice(),
+        plain_backward_jump_sites: 0,
+        osr_rejections: None,
         field_records: Box::new([]),
-        proven_counters: Box::new([]),
-        planned_calls: Box::new([]),
+        name_records: Box::new([]),
+        int_speculating: Box::new([]),
     }
 }
 
@@ -134,7 +134,7 @@ impl Vm {
         let view = unsafe { &*view };
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
         let function = self.frames[*frame].function;
-        let entered = self.enter_lane_floor();
+        let entered = self.enter_lane_floor(code, program);
         let start = frame_start(self, code, program, *frame, view, pending, executing, inline_calls, entered.cell);
         let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| {

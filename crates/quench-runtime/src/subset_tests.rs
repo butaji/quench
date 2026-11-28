@@ -60,11 +60,17 @@ fn nested_super_initialization_preserves_caller_receivers() {
         new Captured();
       })();
     "#;
-    let host = TestHost::default();
-    let program = Engine::specialize(source, "nested-super.js")
+    for generic in [false, true] {
+        let host = TestHost::default();
+        let program = if generic {
+            Engine::specialize_unspecialized(source, "nested-super.js")
+        } else {
+            Engine::specialize(source, "nested-super.js")
+        }
         .unwrap();
-    Runtime::new(host.clone()).execute(&program).unwrap();
-    assert_eq!(*host.lines(), ["42", "true"]);
+        Runtime::new(host.clone()).execute(&program).unwrap();
+        assert_eq!(*host.lines(), ["42", "true"]);
+    }
 }
 
 #[test]
@@ -219,7 +225,7 @@ fn numeric_dispatch_class_is_data_derived_and_semantics_neutral() {
         program.write_binary(&path).unwrap();
         let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
-        let generic = Engine::specialize(&source, "numeric-tdz.js").unwrap();
+        let generic = Engine::specialize_unspecialized(&source, "numeric-tdz.js").unwrap();
         for program in [&program, &decoded, &generic] {
             let host = TestHost::default();
             let view = host.clone();
@@ -300,31 +306,36 @@ fn native_stack_scopes_are_ordered_truthful_and_unwind_safe() {
 #[test]
 fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
     const SOURCE: &str = "let touches=0;\nconst marker={get message(){touches++;throw 1},toString(){touches++;throw 2}};\nfunction handled(){throw marker}\ntry{handled()}catch(error){if(error!==marker||touches!==0)throw 'wrong throw effects'}\nfunction escaping(){\n  throw new Error('snapshot');\n}\nescaping();";
-    let program = Engine::specialize(SOURCE, "throw-snapshot.js").unwrap();
-    let mut runtime = Runtime::new(TestHost::default());
-    let error = runtime.execute(&program).unwrap_err();
-    let (file, line, column, text) = error.source_location().expect("escaping throw location");
-    assert_eq!(
-        (file, line, text),
-        (
-            "throw-snapshot.js",
-            6,
-            Some("  throw new Error('snapshot');")
-        )
-    );
-    assert!(column > 0 && column as usize <= text.unwrap().encode_utf16().count() + 1);
-    let expected = (file.to_owned(), line, column, text.map(str::to_owned));
-    let path =
-        std::env::temp_dir().join(format!("quench-throw-snapshot-{}.qbc", std::process::id()));
-    program.write_binary(&path).unwrap();
-    let restored = crate::ResidualProgram::read_binary(&path).unwrap();
-    std::fs::remove_file(path).unwrap();
-    let error = runtime.execute(&restored).unwrap_err();
-    let (file, line, column, text) = error.source_location().unwrap();
-    assert_eq!(
-        (file.to_owned(), line, column, text.map(str::to_owned)),
-        expected
-    );
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let program = compile(SOURCE, "throw-snapshot.js").unwrap();
+        let mut runtime = Runtime::new(TestHost::default());
+        let error = runtime.execute(&program).unwrap_err();
+        let (file, line, column, text) = error.source_location().expect("escaping throw location");
+        assert_eq!(
+            (file, line, text),
+            (
+                "throw-snapshot.js",
+                6,
+                Some("  throw new Error('snapshot');")
+            )
+        );
+        assert!(column > 0 && column as usize <= text.unwrap().encode_utf16().count() + 1);
+        let expected = (file.to_owned(), line, column, text.map(str::to_owned));
+        let path =
+            std::env::temp_dir().join(format!("quench-throw-snapshot-{}.qbc", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let restored = crate::ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let error = runtime.execute(&restored).unwrap_err();
+        let (file, line, column, text) = error.source_location().unwrap();
+        assert_eq!(
+            (file.to_owned(), line, column, text.map(str::to_owned)),
+            expected
+        );
+    }
 }
 
 #[test]
@@ -1159,7 +1170,7 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 #[test]
 fn nested_reads_past_their_primary_entries_keep_their_values() {
     // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
-    // entries and a string's own `length`: strings of
+    // entries and a string's own `length` (`nested_polymorphic_value_in_lane`): strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
     // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
@@ -1226,8 +1237,10 @@ print(out.join(" "));
 #[test]
 fn forwarding_constructors_keep_their_initializers_constant_fields() {
     // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
-    // whose initializers differ: C's `this.w = 1` stays 1 beside a defaulted parameter field.
-    // In a function, whose loops run in the lane. Node prints the same.
+    // whose initializers differ: the plan a forwarded construction records keeps which of
+    // its fields are constants (`record_forwarded_fields_in_lane`), so C's `this.w = 1` stays 1
+    // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
+    // prints the same.
     let source = r#"
 (function () {
 var Class = { create: function() { return function() { this.initialize.apply(this, arguments); }; } };

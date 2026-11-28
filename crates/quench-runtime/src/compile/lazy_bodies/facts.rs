@@ -50,7 +50,7 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions checked without their tree whose bodies may stream, which their
     /// compilation finds by reading their statements first (`statement_stream`).
     pub(in crate::compile) stream_candidates: FxHashSet<u32>,
-    pub(in crate::compile) native_source_requests: Option<Vec<crate::compile::NativeSourceKey>>,
+    pub(in crate::compile) native_source_requests: Option<(bool, Vec<crate::compile::NativeSourceKey>)>,
 }
 
 impl BodyFacts {
@@ -65,9 +65,9 @@ impl BodyFacts {
     }
 
     /// Whether a body's parse verdict stands for its check (`checked_by_parse`): not where every
-    /// body is checked (`checks_every_body`).
+    /// body is checked (`checks_every_body`), nor under `QUENCH_DEV=early-verify`.
     fn takes_parse_verdict(&self) -> bool {
-        !self.checks_every_body
+        !self.checks_every_body && !verify_early()
     }
 
     /// Checks one function the parser hands over before releasing its body
@@ -98,6 +98,9 @@ impl BodyFacts {
         } else {
             self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
         }
+        if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
+            eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
+        }
         if let Some(early) = early
             && self.takes_parse_verdict()
             && self.checked_by_parse(program, call_assignment_targets, in_function, early, true)
@@ -114,14 +117,26 @@ impl BodyFacts {
             return true;
         }
         let built = crate::compile::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
+        if verify_early() && early.is_some() && !built.diagnostics.is_empty() {
+            eprintln!("early-verify: parse sure but semantic reports at {}: {:?}", program.span.start, built.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
         if !built.diagnostics.is_empty() {
             self.failed = true;
             return true;
         }
         self.checked.push(program.span.start);
         let inner = self.compose_released(program, built.semantic.scoping());
-        if let Some(requests) = &mut self.native_source_requests {
-            requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), global_script_calls));
+        if verify_early()
+            && let Some(early) = early
+        {
+            let semantic = inner.bounded.then(|| crate::compile::first_call::free_names(program, built.semantic.scoping(), &inner.free, &|start| self.bounds_names(start))).flatten();
+            let tracked = parse_free_names(program, early, &|start| self.bounds_names(start));
+            if semantic.as_ref().map(|names| &names.1) != tracked.as_ref().map(|names| &names.1) {
+                eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
+            }
+        }
+        if let Some((specialized, requests)) = &mut self.native_source_requests {
+            requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
         self.add_facts(&built.semantic, program, in_function, &inner);
         true
@@ -254,6 +269,13 @@ impl BodyFacts {
             self.free_names.insert(start, names, crate::compile::first_call::alone_body_end(program));
         }
     }
+}
+
+/// Whether each checked body is checked both ways and the parse's verdict compared with the
+/// semantic analysis' (`QUENCH_DEV=early-verify`), instead of taking the parse's where it is sure.
+fn verify_early() -> bool {
+    static VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VERIFY.get_or_init(|| crate::trace::Dev::EarlyVerify.on())
 }
 
 /// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`

@@ -22,15 +22,10 @@
 use super::records::{ParallelRecordMarks, RecordId};
 use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
-    CollectionRecord, IteratorRecord, MarkBits, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
+    CollectionRecord, IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
-use super::class_space::{ClassCellMarks, cell_fields_at, extras_id_at, live_class_at};
-use super::extras_space::SharedExtras;
-use super::layouts;
-use super::dictionary_cell::dictionary_id_of;
-use super::spill::{SpillSpace, split_cell};
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use crate::vm::wtf16::JsString;
@@ -56,7 +51,7 @@ pub(super) struct ParallelMark<'a> {
 /// that table's order: the view field `$view` holds `$elem`'s records as `$field`'s space
 /// shares them. The struct's other fields and `new` are written here.
 macro_rules! parallel_mark_view {
-    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// The heap as workers see it while the mutator is stopped for one parallel round. `Cell`
         /// and records contain `Rc` and other `!Sync` payloads, so workers only borrow them and walk
         /// immutable edges: they may not clone or drop an `Rc`, mutate a cell or record, or retain
@@ -68,15 +63,6 @@ macro_rules! parallel_mark_view {
             properties: &'heap ValueArena,
             sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
             marks: &'heap [AtomicU64],
-            /// The class space's base: a direct object's stub names its record (`stub_record_at`), and a live
-            /// class cell is read in place (`live_class_at`).
-            class_base: usize,
-            /// The class cell regions' mark views (`ClassCellMarks`).
-            cells: ClassCellMarks<'heap>,
-            /// The spill arena a spilled cell's run is read from (`heap::spill`).
-            spill: &'heap SpillSpace,
-            /// The cell extras a marked cell traces (`ExtrasSpace::trace`), read-only during the round.
-            extras: SharedExtras<'heap>,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -93,17 +79,11 @@ macro_rules! parallel_mark_view {
                 reads_closures: bool,
                 projection_function: Option<u32>,
             ) -> Self {
-                let class_base = heap.class_space.base;
-                let (cells, spill) = heap.class_space.parallel_marks();
                 Self {
                     slots: &heap.slots,
                     properties: &heap.properties,
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
-                    class_base,
-                    cells,
-                    spill,
-                    extras: SharedExtras(&heap.extras),
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -289,36 +269,29 @@ impl<'heap> ParallelMarkView<'heap> {
             return;
         };
         let kind = match reference {
-            HeapReference::ObjectRecord(granule) => {
-                let (strings, small_strings) = (self.strings, self.small_strings);
-                let mark_leaf = |child: Value, work: &mut Vec<Value>, last_proto: &mut PushedProtos| match child.heap_reference() {
-                    Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
-                    Some(HeapReference::ArrayRecord(array)) => {
-                        self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
-                    }
-                    _ => false,
-                };
-                if let Some(class) = live_class_at(self.class_base, granule) {
-                    if !self.cells.mark_if_new(granule) {
-                        return;
-                    }
-                    // SAFETY: this view just marked the cell, and no worker writes a cell's fields during the round.
-                    let cell = unsafe { cell_fields_at(self.class_base, granule) };
-                    let (fields, run, table) = if layouts::class_is_dictionary(class) {
-                        // A dictionary cell's edges are its table's; its slot 0 is the dictionary word.
-                        (&[][..], &[][..], Some(self.properties.dictionary(dictionary_id_of(cell[0]))))
-                    } else {
-                        let spill = layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class)));
-                        // SAFETY: as `cell_fields_at`, and the arena is read-only during the round.
-                        let (fields, run) = split_cell(cell, self.spill, spill);
-                        (fields, run, None)
-                    };
-                    let extras = self.extras.0.get(extras_id_at(self.class_base, granule));
-                    Heap::cell_children_marking(value, class, fields, run, table, extras, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
-                } else {
-                    // No live class cell: a dead granule, which holds nothing to trace.
+            HeapReference::ObjectRecord(id) => {
+                if !self.objects.mark_if_new(id) {
                     return;
                 }
+                // SAFETY: this view just marked the occupied record.
+                let object = unsafe { self.objects.get(id) };
+                let (strings, small_strings) = (self.strings, self.small_strings);
+                Heap::object_children_marking(
+                    value,
+                    object,
+                    properties,
+                    |child, work, last_proto| match child.heap_reference() {
+                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
+                        Some(HeapReference::ArrayRecord(array)) => {
+                            self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
+                        }
+                        _ => false,
+                    },
+                    work,
+                    &mut object_roots,
+                    trace_kind,
+                    last_proto,
+                );
                 self.note_marked_key(value, batch);
                 CellKind::Object
             }

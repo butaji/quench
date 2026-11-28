@@ -63,7 +63,7 @@ fn run() -> Result<bool, String> {
         }
     }
     if paths.is_empty() {
-        return Err("usage: run [--no-jit|--aot] [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
+        return Err("usage: run [--no-jit|--b-jit|--u-jit|--aot] [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
     }
     let mut files = Vec::new();
     for path in paths {

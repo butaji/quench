@@ -102,6 +102,8 @@ Choose an execution tier with a flag. Every mode must print the same output:
 | ----------- | ---------------------------------------------------- |
 | *(default)* | Interpreter, tiering up to the native tiers when hot |
 | `--no-jit`  | Interpreter only                                     |
+| `--b-jit`   | Copy-and-patch baseline JIT                          |
+| `--u-jit`   | Cranelift optimizing JIT                             |
 
 ## How it works
 

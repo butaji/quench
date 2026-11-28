@@ -925,9 +925,9 @@ mod module_tests {
     #[test]
     fn native_module_key_keeps_language_in_its_compile_goal() {
         let source = "export const value: number = 1;";
-        let mut compiler = crate::NativeJsCompiler::new();
-        let javascript = crate::NativeSourceKey::new("same-name", &[crate::STATIC_MODULE_GOAL, source]).unwrap();
-        let typed = crate::NativeSourceKey::new("same-name", &[crate::STATIC_TYPESCRIPT_MODULE_GOAL, source]).unwrap();
+        let mut compiler = crate::NativeJsCompiler::new(true);
+        let javascript = crate::NativeSourceKey::new("same-name", &["specialized", crate::STATIC_MODULE_GOAL, source]).unwrap();
+        let typed = crate::NativeSourceKey::new("same-name", &["specialized", crate::STATIC_TYPESCRIPT_MODULE_GOAL, source]).unwrap();
         assert!(compiler.compile_source(&javascript).is_err());
         assert!(compiler.compile_source(&typed).is_ok());
     }

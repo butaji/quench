@@ -12,9 +12,9 @@ use crate::value::{
 const CONSTANT_UPPER_WORDS: [u64; 4] = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_DELETED];
 const FIRST_CONSTANT_CODE: u64 = NARROW_HEAP_FAMILIES as u64;
 /// A bit mask's complement in the low word: the upper word of a value.
-pub const UPPER_WORD: u64 = !(u32::MAX as u64);
+pub(super) const UPPER_WORD: u64 = !(u32::MAX as u64);
 /// The word a value that has no narrow form (a Number, a wide reference) yields.
-pub const NOT_NARROW: u64 = u64::MAX;
+pub(super) const NOT_NARROW: u64 = u64::MAX;
 
 /// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
 #[inline(always)]
@@ -45,12 +45,13 @@ fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     stage.select(fits, integer, refused)
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
 /// reference whose index fits, or a constant; `NOT_NARROW` for any other value, which the
 /// store leaves to the general path. A `fact` that proves an int32 selects the integer arm
 /// alone: the tag test and the reference arm are not emitted. Each form computes only its own arm.
 #[inline(always)]
-pub fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
+pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
     if fact.is_subtype(Type::INT32) { return integer_form(stage, value); }
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
@@ -68,7 +69,7 @@ pub fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Wo
 
 /// `narrow` where it is a narrow form; `None` (leaving at `miss`) where it is `NOT_NARROW`.
 #[inline(always)]
-pub fn storable_form<S: Stage>(stage: &mut S, narrow: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn storable_form<S: Stage>(stage: &mut S, narrow: S::Word, miss: S::Miss) -> Option<S::Word> {
     let storable = stage.ne_imm(narrow, NOT_NARROW);
     stage.guard(storable, miss)?;
     Some(narrow)
@@ -78,7 +79,7 @@ pub fn storable_form<S: Stage>(stage: &mut S, narrow: S::Word, miss: S::Miss) ->
 /// (`inline`): its narrow form, or `None` (leaving at `miss`) where it has none. A flat slot takes
 /// the value whole, and its word here is zero.
 #[inline(always)]
-pub fn packed_form<S: Stage>(stage: &mut S, inline: S::Cond, value: S::Word, fact: Type, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn packed_form<S: Stage>(stage: &mut S, inline: S::Cond, value: S::Word, fact: Type, miss: S::Miss) -> Option<S::Word> {
     // A stencil has no stack to call a shared arm out of, and the narrow form is pure: it computes the form
     // and selects. Any other stage runs only the arm taken.
     #[cfg(stencil_build)]

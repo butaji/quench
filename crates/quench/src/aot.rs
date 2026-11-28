@@ -10,14 +10,14 @@ pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceVie
 pub(crate) use assets::ModuleAssetState;
 mod graph;
 mod host_operations;
-mod core_rest;
 mod image;
 pub use graph::{DependencyGraph, GraphRequirement};
 mod variant;
 mod compiler;
+mod builtin_families;
 pub(crate) mod prefix;
 mod strict;
-use quench_runtime::native_link::image_dump;
+pub(crate) mod image_dump;
 pub use compiler::{ImageHost, SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 pub use quench_runtime::native_link::NativeImageInputs;
 
@@ -126,7 +126,7 @@ pub fn execute_native_process_entry_restored(
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_restored(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     let execution = runtime.execute_native_from_snapshot(std::rc::Rc::new(bootstrap), program, |host, reader| host.read_snapshot(reader));
     finish_native(runtime, program, execution)
 }
@@ -157,8 +157,19 @@ pub fn saved_wait(saved: &'static [SavedWait]) -> Option<(usize, &'static SavedW
 /// the process's whole memory map; the program runs on a thread of its own
 /// (`shared_run::run_node_worker`). The exit flushes std's buffered output as std's does.
 pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'static) -> ! {
-    quench_runtime::host::begin_process();
-    image_dump::begin(node_dump_request());
+    // SAFETY: plain system calls on the standard descriptors, before any thread starts.
+    unsafe {
+        let mut descriptors = [0, 1, 2].map(|fd| libc::pollfd { fd, events: 0, revents: 0 });
+        if libc::poll(descriptors.as_mut_ptr(), 3, 0) >= 0 {
+            for descriptor in descriptors {
+                if descriptor.revents & libc::POLLNVAL != 0 {
+                    libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                }
+            }
+        }
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+    image_dump::begin();
     let status = match crate::host::process_start::begin_main().and_then(|()| crate::shared_run::run_node_worker(run)) {
         Ok(status) => status,
         Err(error) => {
@@ -167,21 +178,6 @@ pub fn run_image_process(run: impl FnOnce() -> Result<u8, String> + Send + 'stat
         }
     };
     std::process::exit(i32::from(status))
-}
-
-/// The environment a Node image's start refuses to adopt its dump under: a configuration the dump
-/// was not made in (the dump run removes these, `image::dump_saved_waits`).
-const ADOPTION_VARIABLES: [&str; 2] = ["QUENCH_TRACE", "NODE_OPTIONS"];
-
-/// Whether this Node start may map its dump: it names none of `ADOPTION_VARIABLES`, and it is not
-/// itself a dump run.
-fn node_may_adopt() -> bool {
-    ADOPTION_VARIABLES.iter().chain(&[image_dump::DUMP_VARIABLE]).all(|name| std::env::var_os(name).is_none())
-}
-
-/// The dump request this Node process was started with, which its environment names.
-fn node_dump_request() -> Option<image_dump::DumpRequest> {
-    std::env::var(image_dump::DUMP_VARIABLE).ok().and_then(|value| image_dump::DumpRequest::parse(&value))
 }
 
 /// Continues a linked entry from `wait`, the saved run `index`: its writes before the wait are
@@ -195,16 +191,14 @@ pub fn resume_native_process_entry(
         prefix::replay(descriptor, bytes);
     }
     type Rest = (crate::shared_run::EntryRuntime, quench_runtime::NativeJsProgram);
-    let adopted = if node_may_adopt() { image_dump::adopt(index) } else { None };
-    if let Some(root) = adopted {
+    if let Some(root) = image_dump::adopt(index) {
         // SAFETY: the dump's root is the `Rest` its run leaked, mapped back at its address.
         // Kept in place: moving the runtime out of its box would copy it whole.
         let mut rest = unsafe { Box::from_raw(root.cast::<Rest>()) };
         let (runtime, entry) = &mut *rest;
-        runtime.note_adopted();
         drop(program);
         runtime.host_mut().adopt_process(host);
-        runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
+        runtime.set_memory_policy(crate::shared_run::select_memory_policy());
         crate::host::resident_pages::phase_peak("saved wait mapped");
         let execution = runtime.resume_restored();
         crate::host::resident_pages::phase_peak("saved wait resumed");
@@ -212,7 +206,7 @@ pub fn resume_native_process_entry(
     }
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new_at_rest(host), crate::shared_run::Teardown::ProcessExit);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     crate::host::resident_pages::phase_peak("saved wait runtime made");
     let restored = runtime.restore_native_at_rest(std::rc::Rc::new(wait.rest), &program, |host, reader| host.read_snapshot(reader));
     if restored.is_ok() && image_dump::requested_wait().is_some() {
@@ -230,7 +224,7 @@ fn execute_native_with_teardown(
     let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(support.execution_mode());
-    runtime.set_memory_policy(crate::shared_run::select_memory_policy(true));
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
     let execution = match bootstrap {
         Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
         None => runtime.execute_native_deferred_jobs(program),

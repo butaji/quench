@@ -1220,11 +1220,9 @@ impl Vm {
             calendar.to_string(),
         );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
-        // An ordinary object's view: a class cell (`object_record` named only ordinary objects).
         let is_plain_time = self
             .heap_reads()
-            .object(partial)
-            .filter(|_| partial.direct_object_index().is_some())
+            .object_record(partial)
             .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
             || self.heap_reads().array(partial).is_some()
@@ -1277,7 +1275,7 @@ impl Vm {
             } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
                     && !self.heap_reads().is_string(value)
-                    && value.direct_object_index().is_none()
+                    && self.heap_reads().object_record(value).is_none()
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
@@ -1912,7 +1910,7 @@ impl Vm {
         value: Value,
         options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
-        if value.direct_object_index().is_some() || self.heap_reads().is_function_value(value) {
+        if self.heap_reads().object_record(value).is_some() || self.heap_reads().is_function_value(value) {
             return self.temporal_zoned_date_time_property_bag(p, value, options);
         }
         match self.heap_reads().get(value).cloned() {

@@ -1,5 +1,3 @@
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::{
     Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
     ConstructArguments, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, RegisterWindow, ResultLayout, SET_THIS_REGISTER,

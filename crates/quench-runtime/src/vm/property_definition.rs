@@ -175,12 +175,11 @@ impl Vm {
             if let Some(defined) = self.define_exotic_index(p, object, atom, descriptor)? {
                 return Ok(defined);
             }
-            // The arguments-object flag is record data.
             if self.heap.array(object).is_some()
                 && atom == self.length_atom
                     && !self
-                        .heap.object(object)
-                        .is_some_and(|object| object.is_arguments_object())
+                        .object_data(object)
+                        .is_some_and(Object::is_arguments_object)
                 {
                     return self.define_array_length(p, object, descriptor);
                 }
@@ -200,8 +199,8 @@ impl Vm {
                 );
             }
             if self
-                .heap.object(object)
-                .is_some_and(|object| object.is_module_namespace())
+                .object_data(object)
+                .is_some_and(Object::is_module_namespace)
             {
                 let Some(current) = self.module_namespace_value(p, object, atom)? else {
                     return Ok(false);

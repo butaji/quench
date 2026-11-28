@@ -7,6 +7,7 @@
 use super::value::{is_direct_string, length_value};
 use super::region::Region;
 use super::Stage;
+use crate::Value;
 use crate::vm::wtf16::native_string as form;
 
 /// The record of the flat string `value` names among the string records at `record_base`, with
@@ -43,7 +44,7 @@ pub fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word
 /// is the wide one, and whether it is a prefix. A row that addresses the units itself, not through
 /// `unit_words`, takes `flat_record`.
 #[inline(always)]
-pub fn unit_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+pub(crate) fn unit_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Cond, S::Cond, S::Cond)> {
     let is_string = is_direct_string(stage, value);
     stage.guard(is_string, miss)?;
@@ -72,7 +73,7 @@ pub fn unit_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word
 /// are its buffer's (`APPEND_UNITS_OFFSET` into its `Rc`'s value), which any other form reads from
 /// its own record instead, so no load leaves memory a form owns.
 #[inline(always)]
-pub fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond, prefix: S::Cond) -> (S::Word, S::Word) {
+pub(crate) fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond, prefix: S::Cond) -> (S::Word, S::Word) {
     let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
     let shared_units = stage.add_imm(pointer, form::shared_units_offset());
     let buffer = stage.select(prefix, shared_units, record);
@@ -89,16 +90,16 @@ pub fn unit_words<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond, pref
 /// A flat string's units as the words a row reads: the address of the first, how many there
 /// are, and whether each is two bytes (one) or one (zero).
 #[derive(Clone, Copy)]
-pub struct FlatString<W> {
-    pub units: W,
+pub(crate) struct FlatString<W> {
+    pub(crate) units: W,
     pub length: W,
-    pub wide: W,
+    pub(crate) wide: W,
 }
 
 /// The flat string `value` names among the string records at `record_base`: its units, length
 /// and width, read from its record (`flat_record`), or `None` (leaving at `miss`) where that leaves.
 #[inline(always)]
-pub fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
     let (record, short, wide, prefix) = unit_record(stage, record_base, value, miss)?;
     let (units, length) = unit_words(stage, record, short, prefix);
@@ -111,7 +112,7 @@ pub fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word
 /// (`flat_record`), as an int32 word: `None` (leaving at `miss`) where `flat_record` leaves or
 /// for a length past int32.
 #[inline(always)]
-pub fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let (record, short, _, prefix) = unit_record(stage, record_base, value, miss)?;
     // Every form keeps the words of the shared layout inside the record, so each is read and the
     // form selects.
@@ -161,15 +162,75 @@ pub fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word)
 /// string (among the string records at `strings`): `None` (leaving at `miss`) for any other value
 /// or a form neither row reads.
 #[inline(always)]
-pub fn length_of<S: Stage>(stage: &mut S, (arrays, strings): (S::Word, S::Word), value: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn length_of<S: Stage>(stage: &mut S, (arrays, strings): (S::Word, S::Word), value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let array = super::value::is_direct_array(stage, value);
     stage.choose_leaving(array, #[inline(always)] |stage| super::elements::array_length(stage, arrays, value, miss), #[inline(always)] |stage| string_length(stage, strings, value, miss))
 }
 
+/// The interpreter's `string_length` of the string `value` among the records at `record_base`:
+/// `None` for a form the row does not read, which the caller reads through the string's units.
+#[inline(always)]
+pub(crate) fn concrete_string_length(record_base: *const crate::vm::wtf16::JsString, value: Value) -> Option<Value> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    string_length(&mut stage, record_base as u64, value.to_bits(), ()).map(Value::from_bits)
+}
 
+/// The interpreter's `length_of` of `value`, among the array records at `arrays` and the string
+/// records at `strings`.
+#[inline(always)]
+pub(crate) fn concrete_length_of(arrays: *const crate::heap::ArrayObject, strings: *const crate::vm::wtf16::JsString, value: Value) -> Option<Value> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    length_of(&mut stage, (arrays as u64, strings as u64), value.to_bits(), ()).map(Value::from_bits)
+}
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::heap::Heap;
+    use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
+
+    /// The string row of `value` on the heap's own records.
+    fn length(heap: &Heap, value: Value) -> Option<Value> {
+        concrete_string_length(heap.string_record_base()?, value)
+    }
+
+    #[test]
+    fn the_row_reads_the_length_of_every_flat_form_through_the_record() {
+        let mut heap = Heap::new();
+        let long = "k".repeat(SHORT_ASCII_CAPACITY + 5);
+        let forms = [
+            (heap.alloc_string(JsString::from_str("")), 0),
+            (heap.alloc_string(JsString::from_str("hello")), 5),
+            (heap.alloc_string(JsString::from_str(&long)), long.len()),
+        ];
+        for (value, units) in forms {
+            assert_eq!(length(&heap, value), Some(Value::length(units)), "the length of a {units}-unit string");
+        }
+        // A UTF-16 string is held shared (`Repr::Shared`, so a rope can flatten in place), never
+        // as a flat `Wide` record, so the row leaves for it and the caller reads its units.
+        let wide = heap.alloc_string(JsString::from_units(&[0x61, 0x20ac]));
+        assert_eq!(length(&heap, wide), None, "a UTF-16 string has no flat record");
+        assert_eq!(length(&heap, Value::integer(3)), None, "no string");
+    }
+
+    #[test]
+    fn a_slice_leaves() {
+        let mut heap = Heap::new();
+        let base = heap.alloc_string(JsString::from_str(&"s".repeat(SHORT_ASCII_CAPACITY * 3)));
+        let sliced = heap.string(base).unwrap().substring(1..40);
+        let slice = heap.alloc_string(sliced);
+        assert_eq!(length(&heap, slice), None);
+    }
+
+    /// The row's only operands are the record bases: it names no per-site hole.
+    #[test]
+    fn the_row_has_no_per_site_hole() {
+        let mut stage = crate::staged::trace::Trace::default();
+        let (base, value) = (stage.constant(0), stage.constant(1));
+        string_length(&mut stage, base, value, ());
+        assert!(stage.holes.is_empty(), "{:?}", stage.holes);
+    }
+}
 
 /// Whether `===` of two heap words that `generic::decide` left open compares contents: one family, and a
 /// direct string or a legacy cell (a BigInt). Any other open pair is unequal.
@@ -200,7 +261,3 @@ pub fn short_strings_equal<S: Stage>(stage: &mut S, record_base: S::Word, [left,
     let first = same_word(stage, 0);
     Some((1..form::RECORD_SIZE / 8).fold(first, |equal, word| { let same = same_word(stage, word); stage.all(equal, same) }))
 }
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;

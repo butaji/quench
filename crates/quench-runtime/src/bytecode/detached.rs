@@ -59,6 +59,7 @@ impl ResidualProgram {
             }
         }).collect();
         DetachedProgram(ResidualProgram {
+            specialized: self.specialized,
             kind: self.kind,
             module_requests: Vec::new(),
             module_imports: Vec::new(),
@@ -66,12 +67,8 @@ impl ResidualProgram {
             declared_types: None,
             source_name: String::new(),
             source: None,
-            record: super::ProgramRecord {
-                atoms: AtomTable::from_rcs(&names),
-                constants: self.constants.iter().map(Constant::detached).collect::<Vec<_>>().into(),
-                call_sites: self.call_sites.clone(),
-                call_pcs: self.call_pcs.clone(),
-            },
+            atoms: AtomTable::from_rcs(&names),
+            constants: self.constants.iter().map(Constant::detached).collect::<Vec<_>>().into(),
             functions: slots.into(),
             cache_sites: self.cache_sites.clone(),
             method_sites: self.method_sites.iter().cloned().collect::<Vec<_>>().into(),
@@ -90,7 +87,6 @@ impl ResidualProgram {
             closure_reads: None,
             wasm_lazy: None,
             load_encoding: Default::default(),
-            host_calls_result_once: false,
         })
     }
 }

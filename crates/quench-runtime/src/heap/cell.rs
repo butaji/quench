@@ -18,7 +18,6 @@ mod modes;
 mod prototype_values;
 mod shape_id;
 mod snapshot;
-pub(crate) use snapshot::{read_extras, write_extras};
 mod typed_array_kind;
 mod wasm_fields;
 mod array_object;
@@ -34,24 +33,18 @@ mod native_kinds;
 mod object_layout;
 #[cfg(test)]
 mod object_payload_tests;
-mod extras_api;
 mod object_state;
-pub(crate) use object_state::trace_extras;
 mod object_storage;
 pub use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
-pub use typed_array_kind::{
-    TYPED_ARRAYS, TypedArrayKind, TypedArrayKindTypedArrayKindExt, TypedArrayRow, typed_array_kind_integer_signed,
-    typed_array_kind_is_bigint, typed_array_kind_is_float, typed_array_kind_is_waitable, typed_array_kind_name,
-    typed_array_kind_native,
-};
+pub use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use typed_array_kind::for_each_typed_array;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 #[allow(unused_imports)]
 pub use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 #[allow(unused_imports)]
 pub use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 #[quench_macros::test_visible]
 pub(crate) use global_values::new_table;
 
@@ -66,7 +59,6 @@ static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// The current `PROTOTYPE_LAYOUT_EPOCH`.
 #[inline(always)]
-#[quench_macros::test_visible]
 pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
@@ -107,7 +99,7 @@ pub(crate) fn note_intrinsic_change() {
 /// list of another length does not compile.
 macro_rules! natives {
     ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u16)]
         pub enum Native {
             $( $(#[$meta])* $variant, )*
@@ -708,7 +700,6 @@ impl std::fmt::Debug for WasmObjectSlot {
 
 /// What a Wasm host function runs: an embedder operation, or a JavaScript callable
 /// imported through the `WebAssembly` namespace.
-#[quench_macros::test_visible]
 #[derive(Clone, Debug)]
 pub(crate) enum WasmHostTarget {
     Host(crate::WasmHostFunctionId),
@@ -718,7 +709,6 @@ pub(crate) enum WasmHostTarget {
     JsEmscriptenMemcpy(Box<WasmHostMemcpyTarget>),
 }
 
-#[quench_macros::test_visible]
 #[derive(Clone, Debug)]
 pub(crate) struct WasmHostMemcpyTarget {
     pub(crate) function: Value,
@@ -867,18 +857,6 @@ impl InlineObjectHeader {
     /// No receiver's header: an unplanned entry's, which no construction reads.
     pub(crate) const EMPTY: Self = Self { layout: 0 };
 
-    /// The header a construction of `fields` values of `proto` and `shape` allocates with: inline
-    /// storage while they fit the inline slots, else an arena run. The one rule a construct plan
-    /// (`ConstructPlan::derive_header`) and an ahead image's layout id (`Symbol::ClassLayout`) both take.
-    pub fn for_fields(proto: Value, shape: u32, fields: usize) -> Self {
-        if fields <= INLINE_PROPERTY_COUNT { Self::of(proto, shape) } else { Self::of_run(proto, shape) }
-    }
-
-    /// The layout id the header's words intern to: the header word of every object allocated from it.
-    #[inline] pub fn layout_id(self) -> u32 {
-        self.layout
-    }
-
     pub fn of(proto: Value, shape: u32) -> Self {
         Self::of_storage(proto, ValueVec::inline_property_storage(shape))
     }
@@ -1020,27 +998,26 @@ impl ProtoLink {
         self.0
     }
 
-    /// The class id (layout id) of a class cell of region `region` linked here, of exact shape `shape`, with no
-    /// flags (`heap::layouts::intern_class`). The one a construction of more fields than inline storage held makes,
-    /// which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
-    pub fn class(self, shape: u32, region: u32) -> u32 {
-        super::layouts::intern_class(shape, self, 0, region)
+    /// The layout id of an ordinary object linked here whose exact shape is `shape` and whose
+    /// values are a plain arena run: no flag, no storage-form bit (`header_word`). It is the one
+    /// representation of the class a construction of more fields than inline storage holds
+    /// makes, which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
+    pub fn arena_layout(self, shape: u32) -> u32 {
+        super::layouts::intern(header_word(self.0, shape))
     }
 
-    /// The window link naming the ordinary object whose stub granule is `granule`; `None` past the
-    /// object window, where the object's link is an overflow link (`heap::prototypes`). The link
-    /// carries the granule itself, the same bits as the object's direct `Value`.
+    /// The window link naming object record `id`; `None` past the object window, where the
+    /// record's link (if it is a prototype) is an overflow link (`heap::prototypes`).
     #[inline(always)]
-    pub(crate) fn object_granule_link(granule: u32) -> Option<Self> {
-        ((granule as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + granule))
+    pub(crate) fn object_record(id: u32) -> Option<Self> {
+        ((id as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + id))
     }
 
-    /// The stub granule of the ordinary object this link names in its window, if it names one. A
-    /// reader that needs the record id takes the header hop (`Heap::object_record_by_granule`).
+    /// The object record this link names, if it names one.
     #[inline(always)]
-    pub fn object_granule(self) -> Option<u32> {
+    pub fn object_record_id(self) -> Option<u32> {
         // The object range starts at a power of two above its own power-of-two span, so a
-        // link in it holds the granule in its low bits: a mask, which addresses the granule
+        // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
         // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
         let span = OBJECT_PROTO_WINDOW as u32;
@@ -1085,7 +1062,7 @@ const _: () = assert!(
 const _: () = assert!(OBJECT_INLINE_STORAGE == crate::value_vec::INLINE_FORM);
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
-pub struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
+struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
 
 impl Default for DisplacedInline {
     fn default() -> Self {
@@ -1108,6 +1085,8 @@ pub enum PlainPropertyStorage {
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
 /// from the authoritative storage declarations; native code checks the object and extras
 /// representation bits before using any offset below.
+pub(super) const NATIVE_OBJECT_RECORD_SIZE: usize = std::mem::size_of::<Object>();
+pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object>();
 /// Where a record keeps its layout id; the header words are in the layout's table entry
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
 /// `NATIVE_OBJECT_AUXILIARY_OFFSET` within it.
@@ -1118,7 +1097,7 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 /// An object's two header words as its layout's entry holds them (`heap::layouts`): the
 /// auxiliary word low, `meta` high.
 #[inline(always)]
-pub(crate) const fn header_word(meta: u32, auxiliary: u32) -> u64 {
+const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);
@@ -1140,12 +1119,12 @@ pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
 
 const _: () =
-    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= std::mem::size_of::<Object>());
+    assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
 const _: () = assert!(
-    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= std::mem::size_of::<Object>()
+    NATIVE_OBJECT_AUXILIARY_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE
 );
 const _: () =
-    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= std::mem::size_of::<Object>());
+    assert!(NATIVE_OBJECT_PAYLOAD_OFFSET + std::mem::size_of::<u64>() <= NATIVE_OBJECT_RECORD_SIZE);
 const _: () = assert!(
     NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET + std::mem::size_of::<u32>()
         <= std::mem::size_of::<ObjectExtras>()
@@ -1278,7 +1257,7 @@ enum PrototypeLookupState {
 /// forwards its fields, so `extras.arena_start` and the rest read as before.
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
-pub(crate) struct ObjectExtras {
+struct ObjectExtras {
     head: ObjectExtrasHead<DisplacedInline, super::ArrayElements>,
     prototype_lookup: PrototypeLookupState,
     /// What has been recorded about the object's properties beside its shape; bits are set
@@ -1886,10 +1865,6 @@ pub(crate) struct RegExpMeta {
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
     pub(crate) matcher: RegExpMatcher,
-    /// The static frequency of the literal site that made this record (`CallGraph::regexp_site_frequency`); 0 for a
-    /// pattern built at run time, which no static site makes. Added to the shared matcher when it is attached
-    /// (`Vm::regexp_matcher`).
-    pub(crate) static_frequency: u64,
 }
 
 /// A RegExp's compiled matcher, or none yet: a RegExp restored from a snapshot compiles its

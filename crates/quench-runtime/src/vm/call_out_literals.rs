@@ -2,7 +2,7 @@
 //! the interpreter's own helper for its opcode.
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
-use crate::bytecode::{PropertyDefinitionMode, Register};
+use crate::bytecode::Register;
 use crate::staged::protocol_literals::LiteralStep;
 
 impl Vm {
@@ -132,7 +132,6 @@ impl Vm {
             LiteralStep::DefinePropertyRecord { mode, value } => {
                 let frame = self.own_frame();
                 let value = self.read(frame, value);
-                let mode = PropertyDefinitionMode::from_word(mode).expect("a decoded definition mode is a catalog mode");
                 let descriptor = PropertyDescriptorRecord::for_definition(mode, value);
                 self.define_property_or_throw(p, target, second, descriptor)
             }

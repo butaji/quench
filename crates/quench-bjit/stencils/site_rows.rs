@@ -4,7 +4,7 @@
 
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::codes::{MEM, FIELD_ROW, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
-use crate::heap_rows::{context_word, payload, word_at};
+use crate::heap_rows::{context_word, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH, LAST_HOLE};
@@ -19,7 +19,7 @@ use crate::typed_ir::Type;
 /// in hole 1.
 #[inline(always)]
 fn field_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A, payload);
+    let mut stage = StencilStage::from_hole(HOLE_A);
     let mut places = Places::new::<D, MEM, MEM>(s);
     let step = step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::LoopEntry), receiver_read());
     let word = match step {
@@ -35,7 +35,7 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
 #[inline(always)]
 fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
     let mut places = Places::new::<D, MEM, MEM>(s);
     let read = Operation::FieldGetHost { object, atom: 0, site: 0 };
     let step = step_property_of::<{ op_kind::FIELD_GET_HOST }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteRead { chained: CHAIN }), read);
@@ -82,7 +82,7 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let receiver = hole64::<HOLE_A>();
     let link = (receiver >> HELD_LINK_AT) as u32;
     let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
-    let mut stage = StencilStage::from_hole(HOLE_B, payload);
+    let mut stage = StencilStage::from_hole(HOLE_B);
     let mut places = Places::new::<D, MEM, MEM>(s);
     let mut frame = PlannedPlaces { places: &mut places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held), receiver: None };
     let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0), destination: DEST };
@@ -98,7 +98,7 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
 #[inline(always)]
 fn live_row(s: S) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);
-    let held = matches!(step_of::<{ op_kind::GUARD_LIVE }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, Operation::GuardLive), Step::Value(_));
+    let held = matches!(step_of::<{ op_kind::GUARD_LIVE }, _, _>(&mut StencilStage::from_hole(0), &mut frame, Operation::GuardLive), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
@@ -109,14 +109,14 @@ fn live_row(s: S) -> Out {
 fn realm_row(s: S) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let guard = Operation::GuardRealm { expected: hole64::<HOLE_B>() };
-    let held = matches!(step_of::<{ op_kind::GUARD_REALM }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, guard), Step::Value(_));
+    let held = matches!(step_of::<{ op_kind::GUARD_REALM }, _, _>(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Taken(frame.s) }
 }
 
 /// The destination takes the word of hole 1: the staged `LoadConst` of that untyped constant.
 #[inline(always)]
 fn constant_row<const D: u8>(s: S) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A, payload(&s));
+    let mut stage = StencilStage::from_hole(HOLE_A);
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let constant = Constant::untyped(crate::Value::from_bits(hole64::<HOLE_A>()));
     let stepped = step_of::<{ op_kind::LOAD_CONST }, _, _>(&mut stage, &mut frame, Operation::LoadConst { destination: DEST, constant });

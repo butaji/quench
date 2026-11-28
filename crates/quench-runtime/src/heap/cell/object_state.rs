@@ -1,32 +1,6 @@
-//! The object record's state: its brand, structured-serialization policy, and boxed and stack data.
+//! The object record's state: its brand, structured-serialization policy, boxed and stack data, and its constant marks.
 
 use super::*;
-
-/// The values an object's extras hold, which its sweep and marking trace: the boxed primitive, the function realm
-/// and the captured stack's roots. A record traces its extras through `Object::visit_extras_roots`; a live class
-/// cell's extras trace through `ExtrasSpace::trace`.
-#[inline(never)]
-pub(crate) fn trace_extras(extras: &ObjectExtras, mut visit: impl FnMut(Value)) {
-    let Some(extras) = extras.rare() else { return };
-    if let Some(value) = extras.boxed_primitive {
-        visit(value);
-    }
-    if let Some(realm) = extras.function_realm {
-        visit(realm);
-    }
-    match extras.stack_data.as_ref() {
-        Some(StackData::Captured { records, .. }) => {
-            for record in records {
-                record.visit_roots(&mut visit);
-            }
-        }
-        Some(StackData::CallSite(record)) => {
-            record.visit_roots(&mut visit);
-        }
-        Some(StackData::Formatted(value)) => visit(*value),
-        None => {}
-    }
-}
 
 impl Object {
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -61,7 +35,7 @@ impl Object {
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
     #[inline]
     pub(crate) fn boxed_primitive(&self) -> Option<Value> {
-        self.extras()?.boxed_primitive()
+        self.extras()?.rare()?.boxed_primitive
     }
 
     pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
@@ -86,15 +60,34 @@ impl Object {
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
-    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) {
-        if let Some(extras) = self.extras() {
-            trace_extras(extras, visit);
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
+
+    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
+        if let Some(value) = extras.boxed_primitive {
+            visit(value);
+        }
+        if let Some(realm) = extras.function_realm {
+            visit(realm);
+        }
+        match extras.stack_data.as_ref() {
+            Some(StackData::Captured { records, .. }) => {
+                for record in records {
+                    record.visit_roots(&mut visit);
+                }
+            }
+            Some(StackData::CallSite(record)) => {
+                record.visit_roots(&mut visit);
+            }
+            Some(StackData::Formatted(value)) => visit(*value),
+            None => {}
         }
     }
 
     #[quench_macros::test_visible]
     #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras().is_some_and(ObjectExtras::prototype_marked)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
     #[quench_macros::test_visible]
@@ -103,17 +96,18 @@ impl Object {
             // A prototype's elements answer its dependents' reads: no proof replaces them.
             super::array_proofs::retire_array_storage_proofs();
             self.note_global_layout_change();
-            self.extras_mut().set_prototype_setup();
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
         }
     }
 
     pub(crate) fn prototype_lookup_ready(&self) -> bool {
-        self.extras().is_some_and(ObjectExtras::prototype_ready)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
     }
 
     pub(crate) fn prepare_prototype_lookup(&mut self) {
         if self.was_used_as_prototype() {
-            self.extras_mut().prepare_prototype();
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Ready;
         }
     }
 
@@ -132,11 +126,42 @@ impl Object {
     /// storage (`ValueVec::EXOTIC_ACCESS`).
     #[inline(always)]
     pub(crate) fn ordinary_shape(&self) -> u32 {
-        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM)
+        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM | crate::value_vec::CONSTANT_FORM)
     }
 
+    /// Whether code holds this object's values as constants (`value_vec::CONSTANT_FORM`).
+    #[inline(always)]
+    pub(crate) fn holds_constant_mark(&self) -> bool {
+        self.aux() & crate::value_vec::CONSTANT_FORM != 0
+    }
+
+    /// Marks this object's values as held by code (`value_vec::CONSTANT_FORM`): until the bit
+    /// clears, every raw-word guard misses it and its stores go through the VM, which clears
+    /// it (`note_constant_write`). The caller subscribes its reader under `exact_shape`, which
+    /// the mark leaves unchanged.
+    pub(crate) fn mark_constant(&mut self) {
+        self.set_aux(self.aux() | crate::value_vec::CONSTANT_FORM);
+    }
+
+    /// A write to one of this object's values, or a change of its layout or storage: where
+    /// code holds its values (`holds_constant_mark`), that code retires, by the object's exact
+    /// shape as it subscribed (`watch_prototype_values`), and the mark clears, so later stores
+    /// take every fast path again. One test of the header word otherwise.
+    #[inline(always)]
+    pub(crate) fn note_constant_write(&mut self) {
+        if self.holds_constant_mark() {
+            self.clear_constant_mark();
+        }
+    }
+
+    #[inline(never)]
+    pub(super) fn clear_constant_mark(&mut self) {
+        prototype_values::retire(self.exact_shape());
+        self.set_aux(self.aux() & !crate::value_vec::CONSTANT_FORM);
+    }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
+        self.note_constant_write();
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
         self.note_global_layout_change();
@@ -161,14 +186,14 @@ impl Object {
     }
     #[inline(always)]
     pub(super) fn brand(&self) -> ObjectBrand {
-        self.extras().map_or(ObjectBrand::Ordinary, ObjectExtras::brand)
+        self.extras().and_then(ObjectExtras::rare).map_or(ObjectBrand::Ordinary, |rare| rare.brand)
     }
     #[inline(always)]
     pub(super) fn element_facts(&self) -> ElementFacts {
-        self.extras().map_or(ElementFacts(0), ObjectExtras::element_facts)
+        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
     }
     pub(super) fn mark_element_fact(&mut self, bit: u8) {
-        self.extras_mut().mark_element_fact(bit);
+        self.extras_mut().element_facts.0 |= bit;
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta() & VALUE_VEC_INTEGRITY_BITS, 0);

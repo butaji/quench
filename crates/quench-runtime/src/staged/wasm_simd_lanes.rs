@@ -19,7 +19,7 @@ const Q15_ROUNDING: i64 = 1 << 14;
 
 /// `width`-bit lane mask, as a v128 value.
 #[inline(always)]
-pub const fn lane_mask(width: u32) -> u128 {
+pub(crate) const fn lane_mask(width: u32) -> u128 {
     u128::MAX >> (u128::BITS - width)
 }
 
@@ -37,13 +37,13 @@ const fn lanes_of(width: u32) -> u32 {
 
 /// Lane `index` of `bits`, `width` bits wide, zero-extended.
 #[inline(always)]
-pub fn lane(bits: u128, width: u32, index: u8) -> u64 {
+pub(crate) fn lane(bits: u128, width: u32, index: u8) -> u64 {
     ((bits >> (width * u32::from(index))) & lane_mask(width)) as u64
 }
 
 /// `bits` with lane `index` set to the low `width` bits of `value`.
 #[inline(always)]
-pub fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
+pub(crate) fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
     let shift = width * u32::from(index);
     let mask = lane_mask(width);
     (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
@@ -51,7 +51,7 @@ pub fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
 
 /// The `width`-bit lane `bits` holds, read as two's complement and sign-extended.
 #[inline(always)]
-pub fn signed(bits: u64, width: u32) -> i64 {
+pub(crate) fn signed(bits: u64, width: u32) -> i64 {
     let shift = u64::BITS - width;
     ((bits << shift) as i64) >> shift
 }
@@ -322,7 +322,7 @@ fn relaxed_dot(left: u128, right: u128) -> u128 {
 
 /// `indices`' sixteen bytes select from `bits`; an index of 16 or more selects zero.
 #[inline(always)]
-pub fn swizzle(bits: u128, indices: u128) -> u128 {
+pub(crate) fn swizzle(bits: u128, indices: u128) -> u128 {
     let mut result = 0;
     let mut index = 0;
     while index < 16 {
@@ -336,7 +336,7 @@ pub fn swizzle(bits: u128, indices: u128) -> u128 {
 
 /// `left` and `right`'s bytes, `left` first, selected by `indices` (each taken modulo 32).
 #[inline(always)]
-pub fn shuffle(left: u128, right: u128, indices: u128) -> u128 {
+pub(crate) fn shuffle(left: u128, right: u128, indices: u128) -> u128 {
     let mut result = 0;
     let mut index = 0;
     while index < 16 {
@@ -403,13 +403,9 @@ fn convert_lanes(bits: u128, operator: Conversion, source: u32, result: u32) -> 
 
 /// The operator list is `wasm_lists.rs`'s `simd_operator_list!`, which the runtime and the b-jit both expand;
 /// this module expands it into the enum below.
-#[cfg(stencil_build)]
 #[path = "wasm_lists.rs"]
 mod wasm_lists;
-#[cfg(stencil_build)]
 pub(crate) use wasm_lists::simd_operator_list;
-#[cfg(not(stencil_build))]
-pub(crate) use crate::wasm_lists::simd_operator_list;
 
 /// The enum and its tag lookup, generated from the operator list: the discriminants are the list's
 /// order, from zero.
@@ -425,7 +421,7 @@ macro_rules! define_simd_operators {
 
             /// The operator whose tag is `tag`, in a const context (a row's OP folds to it).
             #[inline(always)]
-            pub const fn from_tag(tag: u32) -> Option<Self> {
+            pub(crate) const fn from_tag(tag: u32) -> Option<Self> {
                 let mut index = 0;
                 while index < Self::ALL.len() {
                     if Self::ALL[index] as u32 == tag {
@@ -439,7 +435,7 @@ macro_rules! define_simd_operators {
             /// The operator on `left` and `right` (a scalar's bits in the low bits), with `lane` its
             /// lane immediate (zero for an operator without one): the result's bits.
             #[inline(always)]
-            pub fn bits(self, left: u128, right: u128, lane: u8) -> u128 {
+            pub(crate) fn bits(self, left: u128, right: u128, lane: u8) -> u128 {
                 match self {
                     $(Self::$name => {
                         let ($a, $b, $l) = (left, right, lane);

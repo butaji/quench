@@ -101,6 +101,7 @@ def main():
     ap.add_argument("--work", default=None)
     ap.add_argument("--node", default="node")
     ap.add_argument("--bun", default="bun")
+    ap.add_argument("--no-aot", action="store_true", help="skip the AOT vs C rows (no image links)")
     ap.add_argument("--base", default=None, help="LABEL=PATH of a second Quench build shown beside the first")
     a = ap.parse_args()
     work = os.path.abspath(a.work or tempfile.mkdtemp(prefix="board-"))
@@ -124,7 +125,7 @@ def main():
     hello = os.path.join(work, "hello.exe")
     subprocess.run(["cc", "-O2", "-o", hello, hello_c], capture_output=True)
     start_q = {}
-    for i, (label, q) in enumerate(builds):
+    for i, (label, q) in enumerate(builds if not a.no_aot else []):
         empty_image = os.path.join(work, f"empty{i}.aot")
         ok = subprocess.run([q, "compile", empty, "-o", empty_image], capture_output=True, env=env).returncode == 0
         start_q[label] = measure([empty_image], None, env, max(a.runs, 5))[2] if ok else None
@@ -156,7 +157,7 @@ def main():
         c = c_engine(bench, work)
         ca = measure(c[0], c[1], None, a.runs) if c else (None, None, None, "no analogue")
         size_c = os.path.getsize(c[0][0]) if c else None
-        for i, (label, q) in enumerate(builds):
+        for i, (label, q) in enumerate(builds if not a.no_aot else []):
             image = os.path.join(work, f"{bench}{i}.aot")
             compiled = subprocess.run([q, "compile", program, "-o", image], capture_output=True, env=env).returncode == 0
             qa = measure([image], js_score, env, a.runs) if compiled else (None, None, None, "not built")

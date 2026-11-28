@@ -1295,7 +1295,7 @@ impl Vm {
     }
 
     fn temporal_plain_time_fields(&self, value: Value) -> Option<DateTimeFields> {
-        let object = self.heap_reads().object(value)?;
+        let object = self.object_data(value)?;
         let mut prototype = object.proto();
         let mut branded = false;
         while !prototype.is_null() {
@@ -1303,7 +1303,7 @@ impl Vm {
                 branded = true;
                 break;
             }
-            prototype = self.heap_reads().object(prototype)?.proto();
+            prototype = self.object_data(prototype)?.proto();
         }
         if !branded {
             return None;

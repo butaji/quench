@@ -1,7 +1,7 @@
-//! Per-opcode compiled differential: each family of opcodes runs in a hot loop under the default JIT mode
+//! Per-opcode BaseJIT differential: each family of opcodes runs in a hot loop under `--b-jit`
 //! (loop regions built from stencils, every instruction lowered by a row, a helper step or a
 //! leave) and in the interpreter, and the two must end identically. The interpreter is the
-//! semantic source, so a difference is a compiled-tier bug. The families are the opcode groups of the
+//! semantic source, so a difference is a b-jit bug. The families are the opcode groups of the
 //! bytecode: numeric, relational and branch rows, element and field access, iteration, spread,
 //! classes and private names, closures and calls, exceptions (caught in the function, escaping it),
 //! `typeof`, `instanceof` and `in`, block scopes, control flow, generators and
@@ -187,8 +187,8 @@ fn run(source: &str, mode: ExecutionMode) -> String {
 }
 
 #[test]
-fn every_opcode_family_ends_compiled_as_the_interpreter_does() {
-    JitMode::default().set_process_mode();
+fn every_opcode_family_ends_in_b_jit_as_the_interpreter_does() {
+    JitMode::BaseOnly.set_process_mode();
     let mut divergent = Vec::new();
     for (family, body) in FAMILIES {
         let source = program(body);
@@ -197,7 +197,7 @@ fn every_opcode_family_ends_compiled_as_the_interpreter_does() {
         assert!(interpreted.contains('|'), "{family} did not run to its digest: {interpreted}");
         let compiled = run(&source, ExecutionMode::Compiled);
         if interpreted != compiled {
-            divergent.push(format!("{family}:\n  interpreter {interpreted}\n  compiled {compiled}"));
+            divergent.push(format!("{family}:\n  interpreter {interpreted}\n  b-jit {compiled}"));
         }
     }
     assert!(divergent.is_empty(), "{} of {} families diverge\n{}", divergent.len(), FAMILIES.len(), divergent.join("\n"));

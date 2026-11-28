@@ -11,11 +11,10 @@
 //! (`IntRanges::in_bounds`), where each tested it per iteration.
 //!
 //! The comparison is the entry's, so a failed one is the entry's own exact-PC leave: the
-//! interpreter runs the loop, which tests every access. There is one compiled body: no checked twin
-//! and no second version. A loop whose body may change an array's length (a step the solve reports
-//! as resizing, `Lowering::may_resize`) keeps a version only where each such step is itself checked
-//! by a version of an entry inside the loop (`IntRanges::settled_versions`); otherwise it has none
-//! and tests its accesses where they are made.
+//! interpreter runs the loop, which tests every access. A loop that can change an array's length
+//! (any instruction `Model::disturbs_lengths`) keeps its per-access tests, and one that a previous
+//! body left at its entry (`generic`) compiles again without versioning: a bound that exceeds its
+//! array on most entries repays no guard.
 //!
 //! The words never wrap: a counter and a bound are int32, a scale is an int32 register or constant,
 //! and a base is an int32 or an index word of `IntRange::EXACT`, so `base + counter * scale` stays
@@ -29,10 +28,7 @@ use quench_runtime::staged::Stage;
 #[path = "loop_versions/plan.rs"] pub(crate) mod plan;
 #[path = "loop_versions/hoists.rs"] pub(crate) mod hoists;
 #[path = "loop_versions/inductions.rs"] pub(crate) mod inductions;
-#[path = "loop_versions/affine_reach.rs"] pub(crate) mod affine_reach;
 pub(crate) use plan::{Nest, Resolved, Shape};
-use affine_reach::Linears;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's
 /// entering edge.
@@ -62,13 +58,6 @@ pub(crate) enum Reach {
     Counted { bound: Register, low: i64, base: Option<Term>, scale: Option<Term> },
     /// Every index in `0..=ceiling`, whatever the loop does (a mask or a range of the index).
     Ranged { ceiling: i64 },
-    /// Every index between the floor and the ceiling of an index range the analysis proves (`Lowering::index_ends`): each
-    /// floor form is at least 0 and each ceiling form is below the array's length on the loop's entering edge.
-    Affine { floor: Linears, ceiling: Linears },
-    /// `start + by * j` for the step's count `j` over the loop's trips left: `bound - counter` of them, where `counter`
-    /// steps once per trip at the latch. `j` is `1..=trips` where the access reads the register after its step, and
-    /// `0..trips` where it reads a copy made before it (`plan::Step`).
-    Stepped { counter: Register, bound: Register, start: Register, by: i64, copied: bool },
 }
 
 /// An access whose indices the entry of the loop at `header` proves within the access's array.
@@ -127,11 +116,12 @@ impl Lowering<'_, '_> {
         self.hoist_bounds(state, header);
         // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
         self.hoist_scalar_calls(state, header);
-        self.hoist_arrays(state, header);
+        self.hoist_arrays(state, header, false);
         self.hoist_strings(state, header);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
         self.hoist_reads(state, header);
+        self.hoist_arrays(state, header, true);
         self.version_loops(state, header);
         self.start_inductions(state, header);
         self.hoist_constructions(header);
@@ -141,7 +131,7 @@ impl Lowering<'_, '_> {
     /// of the array they index, on its entering edge: leaves at the header where it passes the
     /// array's length (a bound that leaves no iteration to test passes).
     fn version_loops(&mut self, state: &mut State, header: usize) {
-        let mut compared: Vec<(Register, Reach)> = Vec::new();
+        let mut compared: Vec<(ArraySource, Reach)> = Vec::new();
         let mut exit = None;
         let versions: Vec<Version> = self.ranges.versioned().iter().copied().filter(|version| version.header == header).collect();
         for version in versions {
@@ -166,8 +156,6 @@ impl Lowering<'_, '_> {
                 let ceiling = self.raw_const(Lane::I64, ceiling);
                 self.raw_compare(Relation::UnsignedLess, ceiling, length)
             }
-            Reach::Affine { floor, ceiling } => self.affine_within(state, length, (floor, ceiling), exit),
-            Reach::Stepped { counter, bound, start, by, copied } => self.stepped_within(state, length, [counter, bound, start], (by, copied), exit),
             Reach::Counted { bound, low, base, scale } => {
                 let bound = self.entry_register(state, bound, exit);
                 let low = self.raw_const(Lane::I64, low);
@@ -186,24 +174,6 @@ impl Lowering<'_, '_> {
             }
         };
         emit_js_guard(&mut self.builder, proved, exit);
-    }
-
-    /// The test of a stepped reach (`Reach::Stepped`): the register's two ends over the trips left, `bound - counter`,
-    /// which the progression lies between, are both within `length`; a loop with no trip left passes.
-    fn stepped_within(&mut self, state: &mut State, length: ir::Value, [counter, bound, start]: [Register; 3], (by, copied): (i64, bool),
-        exit: ir::Block) -> ir::Value {
-        let (start, counter, bound) = (self.entry_register(state, start, exit), self.entry_register(state, counter, exit), self.entry_register(state, bound, exit));
-        let trips = self.raw_binary(Binary::Sub, bound, counter);
-        let (first, last) = if copied { (self.raw_const(Lane::I64, 0), self.raw_binary_imm(Binary::Add, trips, -1)) } else { (self.raw_const(Lane::I64, 1), trips) };
-        let step = self.raw_const(Lane::I64, by);
-        let ends = [first, last].map(|count| {
-            let scaled = self.raw_binary(Binary::Mul, count, step);
-            self.raw_binary(Binary::Add, start, scaled)
-        });
-        let inside = ends.map(|index| self.raw_compare(Relation::UnsignedLess, index, length));
-        let within = self.raw_binary(Binary::And, inside[0], inside[1]);
-        let empty = self.raw_compare(Relation::SignedLessEqual, bound, counter);
-        self.raw_binary(Binary::Or, empty, within)
     }
 
     /// `base + counter * scale` and `counter * scale`, in words.

@@ -21,6 +21,7 @@
 //! declaration shadows the name (`note_global_shadowed`), either of which retires it.
 
 use crate::code_dependencies::{CodeReaders, DependentCode};
+use crate::fact_stats::{self, FactKind};
 use std::rc::Rc;
 
 /// How often a global cell was written since it was created: written at most once, its value
@@ -158,8 +159,15 @@ pub fn subscribe_global_value(fact: GlobalFact, code: &Rc<dyn DependentCode>) ->
 pub fn note_global_write(table: u32, cell: GlobalCell) {
     with_table(table, |held| {
         let (cells, index) = held.cells(cell);
-        cells.note_write(index);
+        if cells.note_write(index) {
+            fact_stats::retired(FactKind::Global, global_fact_id(table, index));
+        }
     });
+}
+
+/// The fact-stats id of a global cell of `table`, or (`u32::MAX`) of its global object's layout.
+fn global_fact_id(table: u32, slot: u32) -> u64 {
+    u64::from(table) << u32::BITS | u64::from(slot)
 }
 
 /// A global lexical declaration may shadow a property of the global object of `table`: every
@@ -189,7 +197,9 @@ pub fn subscribe_global_layout(fact: GlobalLayoutFact, code: &Rc<dyn DependentCo
 fn note_global_layout(table: u32) {
     with_table(table, |held| {
         held.layout_epoch = held.layout_epoch.wrapping_add(1);
-        held.layout.retire(LAYOUT_OWNER);
+        if held.layout.retire(LAYOUT_OWNER) {
+            fact_stats::retired(FactKind::Global, global_fact_id(table, u32::MAX));
+        }
     });
 }
 
@@ -223,35 +233,10 @@ impl GlobalValues {
     }
 }
 
-impl super::ObjectExtras {
-    /// This global object's table (`global_values`), made on first use.
-    pub(crate) fn global_values_table(&mut self) -> u32 {
-        self.rare_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
-    }
-
-    /// The table code that read this global object's values made, if any (`Object::global_values`).
-    #[inline]
-    pub(crate) fn global_values(&self) -> Option<u32> {
-        self.rare()?.global_values.as_ref().map(|values| values.table)
-    }
-
-    /// The value-write notes of `Object::note_value_write`, for a live cell whose class is `object` and whose extras
-    /// these are: a marked prototype's readers retire, and a global object's table notes the write.
-    pub(crate) fn note_value_write(&mut self, object: &super::Object, slot: usize) {
-        if self.prototype_marked() {
-            super::prototype_values::retire(object.exact_shape());
-            self.watch.note_slot_write(slot);
-        }
-        if let Some(values) = self.rare_mut_existing().and_then(|rare| rare.global_values.as_mut()) {
-            values.note_slot_write(slot);
-        }
-    }
-}
-
 impl super::Object {
     /// This global object's table (`global_values`), made on first use.
     pub(crate) fn global_values_table(&mut self) -> u32 {
-        self.extras_mut().global_values_table()
+        self.extras_mut().rare_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
     }
 
     /// The table code that read this global object's values made, if any.
@@ -272,13 +257,14 @@ impl super::Object {
     /// Whether code holds what this object's slots hold, so a raw store that skips
     /// `note_value_write` must not write them: a prototype's or a read global object's.
     pub(crate) fn observes_value_writes(&self) -> bool {
-        self.was_used_as_prototype() || self.global_values().is_some()
+        self.holds_constant_mark() || self.was_used_as_prototype() || self.global_values().is_some()
     }
 
     /// A write to slot `slot` of this object: what it offers its inheritors, or as a global
     /// object by name, may change.
     #[inline(always)]
     pub(crate) fn note_value_write(&mut self, slot: usize) {
+        self.note_constant_write();
         if self.was_used_as_prototype() {
             super::prototype_values::retire(self.exact_shape());
             if let Some(extras) = self.extras() {

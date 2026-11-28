@@ -6,7 +6,6 @@ use quench_runtime::vm::global_facts::ReceiverLink;
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The cache site of the last read of `instruction`'s lookup, whose slots the value comes from;
 /// `None` for a lookup with a sink.
@@ -24,7 +23,7 @@ fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Op
 /// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
 fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     agreed_slot_type(program, fields, instruction)
-        .filter(|ty| *ty == Type::INT32 || super::number_domains::is_double(*ty) || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
+        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY || *ty == Type::NULLABLE_DIRECT_OBJECT)
 }
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
@@ -40,7 +39,7 @@ fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction:
 /// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
 /// proves Number once and keeps the double view, so its arithmetic takes the double operation.
 pub(crate) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    agreed_slot_type(program, fields, instruction).is_some_and(super::number_domains::is_double)
+    agreed_slot_type(program, fields, instruction) == Some(Type::NUMBER)
 }
 
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): its last read's slots
@@ -66,28 +65,6 @@ impl Lowering<'_, '_> {
         instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NamedFieldAccess))
     }
 
-    /// Whether the field read `instruction` is keyed by classes alone: every cache site it reads proves only class-keyed loads
-    /// (`NativeFieldLoad::class`), so its plan starts from the live class cell and reads no record (`plan_receiver`).
-    pub(crate) fn class_keyed_read(&self, instruction: WideInstruction) -> bool {
-        let Some((links, _)) = self.field_chain(instruction) else { return false };
-        !links.is_empty() && links.iter().all(|&(_, site)| site_loads(self.fields, site)
-            .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.class.is_some())))
-    }
-
-    /// Whether the body makes named field reads, and every reached named access is a class-keyed read (`class_keyed_read`).
-    /// Then no receiver's record is read at entry: the class cell is the whole guard of each read.
-    pub(crate) fn class_keyed_reads(&self, instructions: &[WideInstruction]) -> bool {
-        let mut reads = false;
-        for (pc, instruction) in instructions.iter().enumerate() {
-            if !self.facts.reached(pc) || !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NamedFieldAccess) { continue; }
-            if !matches!(crate::compiled::decoded(*instruction), Some(quench_runtime::staged::Operation::GetField { .. })) || !self.class_keyed_read(*instruction) {
-                return false;
-            }
-            reads = true;
-        }
-        reads
-    }
-
     /// The entry facts of a body that never looks at the receiver's record: no object, no
     /// shape, no arena.
     pub(crate) fn absent_receiver(&mut self) -> LaneReceiver {
@@ -100,6 +77,10 @@ impl Lowering<'_, '_> {
         receiver
     }
 
+    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when
+    /// the closed program gives the field one value: the field is read once here as data and
+    /// required to hold it, so a changed prototype fails the guard and leaves to the shared
+    /// body. False, emitting nothing, otherwise.
     /// The read at `pc` of a native member of a Stable global (`GlobalRead::NativeMember`), folded
     /// to the function it held: the holder's values are a dependency (`hold_holder`), so a write
     /// to one retires this code rather than each run re-reading the member.
@@ -157,14 +138,9 @@ impl Lowering<'_, '_> {
         }
         match (cell, live_cell) {
             (_, Some((register, object))) => {
-                // The receiver the solve proves is the builtin its global load names is that global's value in every run, so the
-                // live compare with the cell is no guard.
-                let named = super::native_calls::definition_before(self.unit, pc, register).and_then(|defined| self.named_builtin(defined));
-                if !named.is_some_and(|expected| self.proves_builtin(pc, register, expected)) {
-                    let bits = self.tagged(state, register);
-                    let same = self.is_identity(bits, object);
-                    emit_js_guard(&mut self.builder, same, exit);
-                }
+                let bits = self.tagged(state, register);
+                let same = self.is_identity(bits, object);
+                emit_js_guard(&mut self.builder, same, exit);
             }
             (Some(cell), None) if held_cell => self.hold_global(state, exit, cell.fact, (cell.global, cell.realm_offset)),
             _ => {}
@@ -175,17 +151,15 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
-    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when the closed world gives the
-    /// field one value (`AotFacts::dominated_root_store`, keyed by the name): the field's holder is still guarded, since
-    /// the value does not say which object holds it, but the value is the fact's, with no compare. False, emitting nothing,
-    /// otherwise.
     pub(crate) fn fold_frozen_field(&mut self, state: &mut State, read: (quench_runtime::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(quench_runtime::staged::division::FROZEN_FIELD) { return false; }
-        let Some(frozen) = self.vm.facts.and_then(|facts| facts.dominated_root_store(quench_runtime::typed_ir::FactKey::AnyField(first.0))) else { return false };
-        if self.field_value(state, read, &[first], HeldRead::default(), exit).is_none() { return false; }
-        let value = self.identity_constant(frozen.value);
-        self.define(state, destination, value, RegisterFact::definition(Type::immediate(frozen.value), Representation::Tagged));
+        let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
+        let Some(actual) = self.field_value(state, read, &[first], HeldRead::default(), exit) else { return false };
+        let same = self.is_identity(actual, expected);
+        emit_js_guard(&mut self.builder, same, exit);
+        let value = self.identity_constant(expected);
+        self.define(state, destination, value, RegisterFact::definition(Type::immediate(expected), Representation::Tagged));
         true
     }
 
@@ -197,16 +171,12 @@ impl Lowering<'_, '_> {
         let held = known.filter(|field| single && field.ty != Type::ANY).map(|field| field.ty);
         let ty = match held {
             Some(ty) => ty,
-            None => {
-                let domain = field.filter(|_| single).and_then(|(owner, atom)| self.fixed_slot_domain(pc, owner, atom));
-                self.prove_held_slot(state, instruction, (value, known.is_none()), (domain, exit))
-            }
+            None => self.prove_held_slot(state, instruction, (value, known.is_none()), exit),
         };
         // A fused chain can consume an existing first-slot proof, but its guest
         // result names the final slot. Do not retain a new anonymous intermediate
         // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| single)
-            && let Some(owner) = self.owner_word(state, owner) {
+        if let Some((owner, atom)) = field.filter(|_| single) {
             let read = FieldValue { owner, atom, value, ty };
             match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
                 Some(field) => *field = read,
@@ -253,22 +223,16 @@ impl Lowering<'_, '_> {
     /// once here, leaving through `exit` where it fails, so no later use tests it again; a Number
     /// is left untyped, as `define_read_value` proves it where only Number operations read it.
     fn prove_held_slot(&mut self, state: &mut State, instruction: WideInstruction, (value, fresh): (ir::Value, bool),
-        (domain, exit): (Option<Type>, ir::Block)) -> Type {
+        exit: ir::Block) -> Type {
         let Some(ty) = held_slot_type(self.program, self.fields, instruction) else { return Type::ANY };
-        // The slot's settled domain (`fixed_slot_domain`) is the type every read yields, so the test is no guard.
-        let proven = domain.is_some_and(|domain| domain.is_subtype(ty));
         if fresh && (self.division().folds(BindingTime::Site) || self.closed_typed_read(instruction)) && self.reads_covered_slots(state, instruction) {
             self.hold_stable(state, exit);
         } else if ty == Type::INT32 {
-            if !proven {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, exit);
-            }
+            let integer = is_int_tagged(&mut self.builder, value);
+            emit_js_guard(&mut self.builder, integer, exit);
         } else if ty == Type::DIRECT_OBJECT_FAMILY {
-            if !proven {
-                let object = quench_runtime::staged::value::is_direct_object(&mut emit(&mut self.builder), value);
-                emit_js_guard(&mut self.builder, object, exit);
-            }
+            let object = quench_runtime::staged::value::is_direct_object(&mut emit(&mut self.builder), value);
+            emit_js_guard(&mut self.builder, object, exit);
         } else {
             return Type::ANY;
         }
@@ -279,7 +243,7 @@ impl Lowering<'_, '_> {
     /// (`NativeFieldLoad::closed_typed`): the closed world's field type, which the image's slot
     /// dependencies hold (`ahead_images::guard_dependencies`), retiring it where a store widens one.
     fn closed_typed_read(&self, instruction: WideInstruction) -> bool {
-        self.vm.facts.is_some() && self.helpers.links()
+        self.vm.closed.is_some() && self.helpers.links()
             && last_read_site(self.program, instruction).and_then(|last| site_loads(self.fields, last))
                 .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.closed_typed()))
     }
@@ -293,4 +257,28 @@ impl Lowering<'_, '_> {
     }
 }
 
+impl Lowering<'_, '_> {
+    /// Whether the loop field `field`, whose first read is `instruction`, is carried as a raw
+    /// double: every read and store site names the one own slot of one shape, whose arena words
+    /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
+    /// through the slot the entry projected and its reads take the carried word, boxing nothing.
+    pub(crate) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &quench_runtime::dataflow::BitSet) -> bool {
+        let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
+        let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
+            Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),
+            _ => None,
+        };
+        let Some(slot) = raw_slot(cache_site) else { return false };
+        let reads = field.reads.iter().all(|pc| match self.unit.instructions[*pc].field_lookup() {
+            Some(FieldLookup::Atom { cache_site, .. }) => raw_slot(cache_site) == Some(slot),
+            _ => false,
+        });
+        reads && field.stores.iter().all(|store| {
+            let instruction = self.unit.instructions[*store];
+            raw_slot(instruction.cache_site_index()) == Some(slot)
+                && self.facts.before(*store, instruction.register_a(), &self.unit.instructions, boundaries,
+                    &self.program.constants, &writes, self.native_calls).is_subtype(Type::NUMBER)
+        })
+    }
+}
 

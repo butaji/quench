@@ -86,7 +86,7 @@ impl Vm {
     /// proof is not recorded.
     fn steady_layouts_proven(&mut self, proto: Value, receiver_shape: u32, symbol: Value, native: Native) -> Option<bool> {
         let realm = self.realm.globals;
-        let prototype = self.heap.object(proto)?;
+        let prototype = self.object_data(proto)?;
         let prototype_shape = prototype.shape();
         // The layout last proven here is kept last, where the search starts: a program's
         // steady string method calls meet it at the first compare.
@@ -118,9 +118,9 @@ impl Vm {
     /// Whether the prototype `proto`'s values at `method_slot` and `exec_slot` are `native` of
     /// this realm and the builtin `exec`.
     fn builtin_values_at(&mut self, proto: Value, method_slot: usize, exec_slot: usize, native: Native) -> Option<bool> {
-        let prototype = self.heap.object(proto)?;
-        let method = self.heap.property_get_ref(prototype, method_slot)?;
-        let exec = self.heap.property_get_ref(prototype, exec_slot)?;
+        let prototype = self.object_data(proto)?;
+        let method = self.heap.property_get(prototype, method_slot)?;
+        let exec = self.heap.property_get(prototype, exec_slot)?;
         let realm = self.realm.globals;
         let method_is_builtin = matches!(
             self.heap.function(method),

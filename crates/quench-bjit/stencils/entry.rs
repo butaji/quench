@@ -30,10 +30,8 @@ unsafe extern "C" {
 }
 
 /// The thunk around a call of the row chain: saves rbp, rbx, r12-r15, takes the context in r13 and the register file
-/// in r12 (the row convention), runs `$pre`, calls the chain through `$call`, runs `$post` and returns (status, word):
-/// the chain leaves them in (rdx, rax). The status goes to eax and the word to both rcx and rdx, so one return
-/// serves both conventions a body is entered under: the body convention (`BODY_CALL_CONV`, Cranelift `tail`, whose
-/// second return register is rcx) and SysV (rdx). The pad (`sub rsp, 8`) keeps the stack
+/// in r12 (the row convention), runs `$pre`, calls the chain through `$call`, runs `$post` and returns (status, word)
+/// as the lane body ABI's (eax, rdx): the chain leaves them in (rdx, rax). The pad (`sub rsp, 8`) keeps the stack
 /// 16-byte aligned at the call, as the six pushes and the return address leave it 8 off. Written once for every entry.
 macro_rules! thunk {
     ([$($pre:literal),*], $call:literal, [$($post:literal),*] $(, $($binding:tt)*)?) => {
@@ -55,9 +53,7 @@ macro_rules! thunk {
             "pop r12",
             "pop rbx",
             "pop rbp",
-            "mov rcx, rax",
-            "mov rax, rdx",
-            "mov rdx, rcx",
+            "xchg rax, rdx",
             "ret"
             $(, $($binding)*)?
         )

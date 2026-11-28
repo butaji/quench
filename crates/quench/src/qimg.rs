@@ -1,7 +1,6 @@
-//! The JIT image file: `quench compile app.js -o app.qimg` runs the entry once with recording on
-//! and writes the entry path plus the images of every program that ran compiled; `quench app.qimg
-//! [args]` stages those images and runs the stored entry. An executable is not made here: a
-//! non-`.qimg` `-o` is the linked image `aot::cli` builds, and nothing here embeds a runtime.
+//! The explicit ahead-of-time pair: `quench compile app.js -o app.qimg` runs the entry
+//! once with recording on and writes the entry path plus the images of every program that run
+//! compiled; `quench app.qimg [args]` stages those images and runs the stored entry.
 //! Nothing is looked up by name or loaded implicitly. A program whose fingerprint differs from
 //! its image simply gets no image (`AheadImages::is_of`) and runs as usual.
 
@@ -11,30 +10,72 @@ use std::{process::ExitCode, sync::Mutex};
 
 use crate::host::NodeHost;
 
-/// Extension that routes a command line to [`run`], and the only output name [`compile`] accepts.
+/// Extension that routes a command line to [`run`].
 pub const EXTENSION: &str = ".qimg";
 const LENGTH_BYTES: usize = std::mem::size_of::<u32>();
+/// Ends an executable `compile` wrote: the runtime, the image file, its length, then this.
+const TRAILER_MAGIC: &[u8; 8] = b"QUENCHX\0";
+const PAYLOAD_LENGTH_BYTES: usize = std::mem::size_of::<u64>();
+const TRAILER_BYTES: usize = PAYLOAD_LENGTH_BYTES + TRAILER_MAGIC.len();
+const EXECUTABLE_MODE: u32 = 0o755;
 
 /// The staged image file, process-wide: the entry runs on a worker thread (`run_shared_cli`), not the one that read the file.
 static STAGED: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
-/// Refuses an output name that is not an image file name, before anything is recorded or written.
-fn check_name(out: &str) -> Result<(), String> {
-    if out.ends_with(EXTENSION) { Ok(()) } else { Err(format!("{out}: qimg writes only {EXTENSION} image files")) }
+/// The payload length a trailer states, or `None` where it is not one.
+fn payload_length(trailer: &[u8]) -> Option<u64> {
+    let (length, magic) = trailer.split_at_checked(PAYLOAD_LENGTH_BYTES)?;
+    (magic == TRAILER_MAGIC).then(|| u64::from_le_bytes(length.try_into().expect("length bytes")))
 }
 
-/// Writes `file` as the image file `out`.
+/// The image file appended to the running executable, if `compile` made it; only its end is read.
+fn embedded() -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut exe = std::fs::File::open(std::env::current_exe().ok()?).ok()?;
+    let mut trailer = [0; TRAILER_BYTES];
+    exe.seek(SeekFrom::End(-(TRAILER_BYTES as i64))).ok()?;
+    exe.read_exact(&mut trailer).ok()?;
+    let length = payload_length(&trailer)?;
+    exe.seek(SeekFrom::End(-((TRAILER_BYTES as u64 + length) as i64))).ok()?;
+    let mut payload = vec![0; usize::try_from(length).ok()?];
+    exe.read_exact(&mut payload).ok()?;
+    Some(payload)
+}
+
+/// This executable without anything `compile` appended to it.
+fn bare_runtime() -> Result<Vec<u8>, String> {
+    let mut exe = std::fs::read(std::env::current_exe().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let payload = exe.len().checked_sub(TRAILER_BYTES).and_then(|at| payload_length(&exe[at..]));
+    if let Some(length) = payload { exe.truncate(exe.len() - TRAILER_BYTES - length as usize); }
+    Ok(exe)
+}
+
+/// Writes `file` as `out`: an image file for a `.qimg` name, otherwise an executable (this
+/// runtime with the image file appended, which `route` finds at start).
 fn write_output(out: &str, file: Vec<u8>) -> Result<(), String> {
-    check_name(out)?;
-    std::fs::write(out, file).map_err(|error| format!("{out}: {error}"))
+    let written = if out.ends_with(EXTENSION) { file } else {
+        let mut exe = bare_runtime()?;
+        let length = file.len() as u64;
+        exe.extend(file);
+        exe.extend(length.to_le_bytes());
+        exe.extend(TRAILER_MAGIC);
+        exe
+    };
+    std::fs::write(out, written).map_err(|error| format!("{out}: {error}"))?;
+    #[cfg(unix)]
+    if !out.ends_with(EXTENSION) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(out, std::fs::Permissions::from_mode(EXECUTABLE_MODE)).map_err(|error| format!("{out}: {error}"))?;
+    }
+    Ok(())
 }
 
-/// `compile <entry.js> -o <out.qimg> [entry args]`: writes the image file, run with `quench <out>.qimg`.
+/// `compile <entry.js> -o <out> [entry args]`: `<out>.qimg` is an image file (run with
+/// `quench <out>.qimg`), any other name an executable.
 pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
-    let (entry, rest) = arguments.split_first().ok_or("usage: quench compile <entry.js> -o <out.qimg>")?;
-    let flag = rest.iter().position(|argument| argument == "-o").ok_or("compile needs -o <out.qimg>")?;
+    let (entry, rest) = arguments.split_first().ok_or("usage: quench compile <entry.js> -o <out>")?;
+    let flag = rest.iter().position(|argument| argument == "-o").ok_or("compile needs -o <out>")?;
     let (before, [_, out, after @ ..]) = rest.split_at(flag) else { return Err("-o needs a file name".into()); };
-    check_name(out)?;
     let entry_args = before.iter().chain(after).cloned();
     let entry = std::fs::canonicalize(entry).map_err(|error| format!("{entry}: {error}"))?;
     let entry = entry.to_string_lossy().into_owned();
@@ -50,7 +91,7 @@ pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
 }
 
 /// `[options] <x>.qimg [args]`: stage the image file's programs, then run its entry under `options`
-/// (the mode flags, as `--no-jit`, which precede a script).
+/// (the mode flags, as `--b-jit`, which precede a script).
 pub fn run(options: &[String], image: &str, arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     let file = std::fs::read(image).map_err(|error| format!("{image}: {error}"))?;
     run_file(options, image, &file, arguments)
@@ -76,9 +117,10 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
     for images in AheadImages::unbundle(&staged).unwrap_or_default() { runtime.load_ahead_images(images); }
 }
 
-/// The image command line, if it is one: `[options] <x>.qimg ...`.
+/// The image command line, if it is one: an executable with an embedded image, or `[options] <x>.qimg ...`.
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
-    // Options (`--no-jit`) may precede the image, as they precede a script.
+    if let Some(payload) = embedded() { return Some(run_file(&[], "this executable", &payload, arguments.iter().cloned())); }
+    // Options (`--b-jit`, `--no-jit`) may precede the image, as they precede a script.
     let at = arguments.iter().position(|argument| !argument.starts_with("--"))?;
     let (options, [image, rest @ ..]) = arguments.split_at(at) else { return None };
     image.ends_with(EXTENSION).then(|| run(options, image, rest.iter().cloned()))

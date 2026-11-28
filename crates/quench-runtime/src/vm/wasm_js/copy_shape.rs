@@ -3,13 +3,10 @@
 //! binding, proved on its bytecode, so any spelling of the helper is recognized and no source
 //! text or name decides it.
 
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use crate::bytecode::{Atom, FieldBase, FieldLookup, Operand, OperandKind, Register, RETURN_REGISTER};
 use crate::staged::{Arguments, CallOperation, Callee, DecodeContext, Invocation, NumberOperation, Operation, Receiver};
 use crate::vm::operations::NumberArithmetic;
-#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// What a register or a frame local holds in a candidate helper body, as the walk proves it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -243,7 +240,6 @@ impl Vm {
     /// over one captured binding `V` (`copy_within_capture`). The binding is named by its capture's depth
     /// and slot in the owner's environment, never by name. The capture location is retained; the view itself
     /// is deliberately re-read on every call because Emscripten replaces it after `WebAssembly.Memory.grow()`.
-    #[quench_macros::test_visible]
     pub(in crate::vm) fn emscripten_memcpy_view_capture(
         &self,
         function: Value,

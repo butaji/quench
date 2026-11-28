@@ -16,7 +16,7 @@ pub use native::{
 };
 
 /// The syntax context used when compiling source. Script and Module use
-/// their parse goals; contextual Eval requires an active guest activation.
+/// their OXC parse goals; contextual Eval requires an active guest activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceKind {
     Script,
@@ -60,7 +60,7 @@ impl<'a> ExecutionRequest<'a> {
 }
 
 impl Engine {
-    /// Compile a source unit through the single source-to-residual boundary.
+    /// Compile a source unit through the single OXC-to-residual boundary.
     pub fn compile(request: ExecutionRequest<'_>) -> Result<ResidualProgram, Vec<Diagnostic>> {
         match request.kind {
             SourceKind::Script => Self::specialize(request.source, request.name),
@@ -81,7 +81,6 @@ impl Engine {
 /// The process status of an entry whose top-level await never settled.
 pub const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 
-#[quench_macros::test_visible]
 pub struct Runtime<H: Host> {
     vm: Vm,
     host: std::marker::PhantomData<fn() -> H>,
@@ -89,18 +88,13 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
-
-    /// What a start that adopted its build's dump redraws: the per-process state a dump must not fix, today the
-    /// `Math.random` seed (`Vm::reseed_random`).
-    pub fn note_adopted(&mut self) { self.vm.reseed_random(); }
     /// A runtime that runs only code its image archived: it installs no JIT or source routes.
     pub fn new_static(host: H) -> Self { Self { vm: Vm::new_static(host), host: std::marker::PhantomData } }
     /// A static runtime that installs only the intrinsic families `builtins` names: an image
     /// whose program reaches none of a family's intrinsics keeps its realm objects, install
-    /// time and (through the table's `None` entries) its installer code out. `execution` names
-    /// the engine entries the image's closed world reaches; the others are `None` and drop out.
-    pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable, execution: &'static crate::ExecutionTable) -> Self {
-        Self { vm: Vm::new_static_with_builtins(host, builtins, execution), host: std::marker::PhantomData }
+    /// time and (through the table's `None` entries) its installer code out.
+    pub fn new_static_with_builtins(host: H, builtins: &'static crate::BuiltinTable) -> Self {
+        Self { vm: Vm::new_static_with_builtins(host, builtins), host: std::marker::PhantomData }
     }
     /// A runtime only ever restored from one saved at rest (`restore_native_at_rest` of a
     /// `snapshot_at_rest`): it never installs its host.
@@ -109,16 +103,21 @@ impl<H: Host> Runtime<H> {
     /// it never installs its host, compiles source or runs the JIT, so a binary that makes
     /// only such runtimes links none of them.
     pub fn new_restored(host: H) -> Self { Self { vm: Vm::new_restored(host), host: std::marker::PhantomData } }
-    /// The tier the load-time policy picks for each function of the program this runtime runs (`ProgramStore::predicted_tiers`).
-    pub fn predicted_tiers(&self) -> Vec<crate::vm::tier_policy::PredictedTier> {
-        self.vm.programs.predicted_tiers(crate::vm::ProgramId::MAIN).map(|tiers| tiers.to_vec()).unwrap_or_default()
-    }
+    /// What this runtime's tiers did, counted whatever diagnostics are on.
+    pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
     /// Takes `images` (compiled ahead from this runtime's program) as its functions' first bodies.
     pub fn load_ahead_images(&mut self, images: crate::AheadImages) { self.vm.load_ahead_images(images); }
     /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode); if mode == crate::ExecutionMode::Compiled { self.vm.enable_lane_methods(); }
+    }
+
+    /// Compile each Wasm module whole at its first call under [`crate::ExecutionMode::Compiled`],
+    /// instead of starting it in the interpreter and compiling it once it runs long: a
+    /// conformance run uses it to exercise every module's compiled code.
+    pub fn compile_wasm_eagerly(&mut self) {
+        self.vm.compile_wasm_eagerly();
     }
 
     /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
@@ -226,7 +225,7 @@ impl<H: Host> Runtime<H> {
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<(), JsError> {
         self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))?;
-        self.vm.execute_restored(program.residual()).map(drop).map_err(JsError::from)
+        self.vm.execute_restored(program.residual()).map(drop)
     }
 
     /// Run precompiled global Scripts before a native entry in the same realm.
@@ -309,33 +308,6 @@ impl<H: Host> Runtime<H> {
         self.vm.write_snapshot(|host, writer| write_host(crate::host::host_ref_as::<H>(host), writer)).map_err(|error| error.0)
     }
 
-    /// Installs the realm and binds `program`'s native code without running it: the state a
-    /// closed-world image builds once, dumps (`image_dump`) and resumes with `execute_restored`.
-    /// The realm is `program`'s, as `build_snapshot` installs it.
-    #[cfg(feature = "native-execution")]
-    pub fn install_native_at_rest(&mut self, program: &crate::NativeJsProgram) -> Result<(), JsError> {
-        program.residual().validate_unless_proven().map_err(JsError::validation)?;
-        self.vm.initialize_for_snapshot(program.residual())?;
-        self.vm.install_native_main(program)?;
-        self.vm.forget_spare_await_state();
-        self.vm.collect_now(program.residual());
-        Ok(())
-    }
-
-    /// Collects a closed world's realm down to what `program` and `roots` reach (C5 D3), after
-    /// `install_native_at_rest` and before the state is dumped. The entry is the image's whole
-    /// program: a core build has no units (`compile_closed`).
-    pub fn collect_closed_world(&mut self, program: &crate::ResidualProgram, roots: crate::RealmRoots<'_>, resume: Option<&crate::vm::activation::FrameRecord>) -> Result<(), JsError> {
-        self.vm.collect_for_image(program, &[], roots, resume)
-    }
-
-    /// Resumes a build's input chain (C5 D1c): the captured frames run again, and the parked native
-    /// call at their top is performed through the ordinary call path, delivering its result to the
-    /// top frame (`Vm::resume_chain`).
-    pub fn resume_input_chain(&mut self, chain: Box<crate::vm::activation::FrameRecord>) -> Result<(), JsError> {
-        self.vm.resume_chain(chain)
-    }
-
     /// The running runtime as a snapshot, where nothing runs and nothing waits but host
     /// sources (an event loop about to wait for input), which `restore_snapshot` makes again
     /// with `entry` as the program whose run it continues; `write_host` writes the host's state.
@@ -411,9 +383,8 @@ impl<H: Host> Runtime<H> {
         self.vm.restore_native_snapshot(snapshot, program, |host, reader| read_host(crate::host::host_as::<H>(host), reader))
     }
 
-    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`). Its error is the run's
-    /// exit: a `Captured` one is the chain an input edge stopped at (`Vm::resume_chain` resumes it).
-    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), crate::vm::exit::Exit> {
+    /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
+    pub fn execute_restored(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.vm.execute_restored(program).map(drop)
     }
 
@@ -791,20 +762,37 @@ mod tests {
     use super::*;
     use crate::test_host::TestHost;
 
+    #[test]
+    fn a_restored_runtime_adopts_the_process_tier_enrollment_again() {
+        let program = Engine::specialize("1;", "restore-tier.js").unwrap();
+        let mut builder = Runtime::new(TestHost::default());
+        let snapshot = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        let mut restored = Runtime::new(TestHost::default());
+        restored.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(restored.vm.methods_enrolled_in_lane(), "the mode enrolls the lane-body tier");
+        restored.restore_snapshot(std::rc::Rc::new(snapshot), &program, |_, _| Ok(())).unwrap();
+        assert_eq!(restored.execution_mode(), crate::ExecutionMode::Compiled);
+        assert!(restored.vm.methods_enrolled_in_lane(), "a restore carries the realm, not the tier enrollment");
+    }
+
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
-        let compile = Engine::specialize;
-        let host = TestHost::default().with_test262();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        let program = compile(source, "regression.js").unwrap();
-        if let Err(error) = runtime.execute(&program) {
-            panic!(
-                "{} (output: {:?})",
-                runtime.format_error(&program, &error),
-                view.lines().as_slice(),
-            );
+        for (mode, compile) in [
+            ("specialized", Engine::specialize as fn(&str, &str) -> _),
+            ("unspecialized", Engine::specialize_unspecialized),
+        ] {
+            let host = TestHost::default().with_test262();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            let program = compile(source, "regression.js").unwrap();
+            if let Err(error) = runtime.execute(&program) {
+                panic!(
+                    "{mode}: {} (output: {:?})",
+                    runtime.format_error(&program, &error),
+                    view.lines().as_slice(),
+                );
+            }
+            assert_eq!(view.lines().as_slice(), expected, "{mode}");
         }
-        assert_eq!(view.lines().as_slice(), expected);
     }
 
     #[test]
@@ -2252,18 +2240,22 @@ print('abc'.replace(/b/g,(value,index,input)=>{calls++;$262.gc();return value+in
 var namedGets=0,ng={get z(){namedGets++;$262.gc();return '\ud800';}}, custom={flags:'',exec(){return {0:'b',length:1,index:1,groups:ng};}};
 print(RegExp.prototype[Symbol.replace].call(custom,'abc','$<z>$<z>')==='a\ud800\ud800c' && namedGets===2);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "string-growth.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-string-growth-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            Runtime::new(host).execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 15]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "string-growth.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-string-growth-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 15]);
+            }
         }
     }
 
@@ -2274,18 +2266,22 @@ for(var pair of cases){var expected=Array.isArray(pair[1])?new Date(...pair[1]).
 var calls=0,hint,source={ [Symbol.toPrimitive](h){calls++;hint=h;$262.gc();return "1997-03-08 1:1:1.01";}};print(Date.parse(source)===Date.parse(cases[0][0]) && calls===1 && hint==="string");print(new Date(source).getTime()===Date.parse(cases[0][0]) && calls===2 && hint==="default");
 var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e){print(e===reason);}
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "date-parse.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-date-parse-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            Runtime::new(host).execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 109]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "date-parse.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-date-parse-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 109]);
+            }
         }
     }
 
@@ -2349,43 +2345,51 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                     .map(|(_, source)| crate::host::ModuleSource::text(format!("task20-module-source-fixtures/{file}"), *source)))
             })
         };
-        let compile = Engine::specialize;
-        let program = compile(source, "module-source-probe.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-module-source-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(modules(host));
-            runtime.execute(&program).unwrap();
-            let mut expected = vec!["true"; 32];
-            expected.push("done");
-            assert_eq!(output.lines().as_slice(), expected.as_slice());
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "module-source-probe.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-module-source-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(modules(host));
+                runtime.execute(&program).unwrap();
+                let mut expected = vec!["true"; 32];
+                expected.push("done");
+                assert_eq!(output.lines().as_slice(), expected.as_slice());
+            }
         }
-        let compile = Engine::specialize_module;
-        let program = compile(
-            "import source x from './task20-module-source-fixtures/leaf.mjs';print('unexpected root execution');",
-            "module-source-root.mjs",
-        ).unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-module-source-root-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(modules(host));
-            let error = runtime.execute(&program).unwrap_err();
-            assert!(
-                runtime
-                    .format_error(&program, &error)
-                    .starts_with("SyntaxError:")
-            );
-            assert!(output.lines().is_empty());
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
+            let program = compile(
+                "import source x from './task20-module-source-fixtures/leaf.mjs';print('unexpected root execution');",
+                "module-source-root.mjs",
+            ).unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-module-source-root-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(modules(host));
+                let error = runtime.execute(&program).unwrap_err();
+                assert!(
+                    runtime
+                        .format_error(&program, &error)
+                        .starts_with("SyntaxError:")
+                );
+                assert!(output.lines().is_empty());
+            }
         }
     }
 
@@ -2416,19 +2420,23 @@ print((function(){'use strict';try{eval('let:42');return false;}catch(e){return 
 try{Function('let: let x=3;');print(false);}catch(e){print(e instanceof SyntaxError);}
 print(Function('var let=2; let.foo=3; let( );') instanceof Function);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "let-label.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-let-label-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 44]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "let-label.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-let-label-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 44]);
+            }
         }
     }
 
@@ -2468,21 +2476,25 @@ print(Function('var let=2; let.foo=3; let( );') instanceof Function);
 }
 checkDisposal().then(()=>print('done'), e=>{print('unexpected');print(e);});
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "disposal-fallback.js").unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-disposal-fallback-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            let mut expected = vec!["true"; 35];
-            expected.push("done");
-            assert_eq!(output.lines().as_slice(), expected.as_slice());
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "disposal-fallback.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-disposal-fallback-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                let mut expected = vec!["true"; 35];
+                expected.push("done");
+                assert_eq!(output.lines().as_slice(), expected.as_slice());
+            }
         }
     }
 
@@ -2497,19 +2509,23 @@ print(eval('"a"+"b"')==='ab');print((0,eval)('"a"+"b"')==='ab');
 var padded='"\\u{'+'0'.repeat(65536)+'1234}"';print(eval(padded)==='\u1234');print((0,eval)(padded)==='\u1234');
 for(var source of ['"\\u{}"','"\\u{110000}"','"\\xG0"']){try{eval(source);print(false);}catch(e){print(e instanceof SyntaxError);}}
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "eval-literals.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-eval-literals-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 49]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "eval-literals.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-eval-literals-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 49]);
+            }
         }
     }
 
@@ -2525,18 +2541,22 @@ var reason={};try{Math.atanh({valueOf(){throw reason;}});print(false);}catch(e){
 for(var value of [1n,Symbol('value')]){try{Math.atanh(value);print(false);}catch(e){print(e instanceof TypeError);}}
 var d=Object.getOwnPropertyDescriptor(Math,'atanh');print(Math.atanh.length===1 && Math.atanh.name==='atanh' && d.writable && !d.enumerable && d.configurable);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "atanh.js").unwrap();
-        let path = std::env::temp_dir().join(format!("quench-atanh-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 35]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "atanh.js").unwrap();
+            let path = std::env::temp_dir().join(format!("quench-atanh-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 35]);
+            }
         }
     }
 
@@ -2562,19 +2582,23 @@ var count=0, shadowProxy=new Proxy(target,{has(t,k){if(k==='qq_shadow')count++;r
 Object.setPrototypeOf(globalThis,target);print(eval('qq_plain')===undefined);print((0,eval)('qq_plain')===undefined);print(Function('return qq_plain')()===undefined);
 Object.setPrototypeOf(globalThis,old);try{qq_plain;print(false);}catch(e){print(e instanceof ReferenceError);}print(typeof qq_plain==='undefined');
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "global-proxy.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-global-proxy-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 34]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "global-proxy.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-global-proxy-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 34]);
+            }
         }
     }
 
@@ -2603,19 +2627,23 @@ for(var global of [globalThis,foreign]){
 }
 print(Symbol.prototype!==foreign.Symbol.prototype && Symbol!==foreign.Symbol);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "symbol-descriptor.js").unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-symbol-descriptor-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 47]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "symbol-descriptor.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-symbol-descriptor-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 47]);
+            }
         }
     }
 
@@ -2637,19 +2665,23 @@ var o=JSON.parse('{"__proto__":47}');print(Object.getPrototypeOf(o)===Object.pro
 for(var source of ['({__proto__(){return 53;},__proto__:null})','({__proto__:null,*__proto__(){yield 59;}})']){var o=eval(source),f=Function('return '+source)();print(Object.getPrototypeOf(o)===null && Object.getPrototypeOf(f)===null && Object.hasOwn(o,'__proto__') && Object.hasOwn(f,'__proto__'));}
 try{Function('return {__proto__:null,"__proto__":null}');print(false);}catch(e){print(e instanceof SyntaxError);}
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "object-proto.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-object-proto-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 39]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "object-proto.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-object-proto-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 39]);
+            }
         }
     }
 
@@ -2677,19 +2709,23 @@ try{0+proxy;print(false);}catch(e){print(e instanceof TypeError && log.length===
 var log=[], reason={}, date=new Date(0);Object.defineProperty(date,Symbol.toPrimitive,{get(){log.push('hook');$262.gc();throw reason;}});
 try{0+date;print(false);}catch(e){print(e===reason && log.join('|')==='hook');}
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "date-primitive.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-date-primitive-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(output.lines().as_slice(), &["true"; 32]);
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "date-primitive.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-date-primitive-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.lines().as_slice(), &["true"; 32]);
+            }
         }
     }
 
@@ -2721,35 +2757,39 @@ var value=Reflect.construct(Error,['foreign'],Target);print(Object.getPrototypeO
 var value=Reflect.construct(TypeError,['foreign'],Target.bind(null));print(Object.getPrototypeOf(value)===foreignType);
 var cause={}, E=Error;Error=function(){throw 'replaced';};try{null.x;}catch(e){print(e instanceof TypeError);}Error=E;
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "error-construction-order.js").unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-error-construction-order-{}",
-            std::process::id()
-        ));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "error-construction-order.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-error-construction-order-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -2772,23 +2812,27 @@ assignment(kept,0);binding(kept);nested(kept,0);exhausted(kept);abrupt(kept);clo
 function* suspended(first){let value;[value]=[9];yield first===kept;const [other]=[4];return first===kept && value===9 && other===4;}
 const generator=suspended(kept);print(generator.next().value);print(generator.next().value);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "destructuring-live-parameters.js").unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-destructure-live-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            Runtime::new(host).execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "true", "true", "true", "true", "true", "true", "true", "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "destructuring-live-parameters.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-destructure-live-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -2811,106 +2855,110 @@ try {var [x=(()=>{throw reason;})()]=iterator;}catch(e){print(e===reason && clos
 var log=[], count=0, iterable={[Symbol.iterator](){return this;},get next(){log.push('next');return function(){count++;return {done:count>2,value:count};};},return(){log.push('return');return {};}};
 var [a,b]=iterable; print(a===1 && b===2 && log.join('|')==='next|return');
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "destructuring-completion.js").unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-destructuring-completion-{}",
-            std::process::id()
-        ));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "array-spread:true",
-                    "call-spread:true",
-                    "for-of:true",
-                    "destructure:true",
-                    "rest:true",
-                    "array-from:true",
-                    "map:true",
-                    "set:true",
-                    "weak-map:true",
-                    "weak-set:true",
-                    "typed-array:true",
-                    "typed-from:true",
-                    "yield-star:true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "destructuring-completion.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-destructuring-completion-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "array-spread:true",
+                        "call-spread:true",
+                        "for-of:true",
+                        "destructure:true",
+                        "rest:true",
+                        "array-from:true",
+                        "map:true",
+                        "set:true",
+                        "weak-map:true",
+                        "weak-set:true",
+                        "typed-array:true",
+                        "typed-from:true",
+                        "yield-star:true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -2932,28 +2980,32 @@ async function check(){
 }
 check();
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "generator-completion.js").unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-generator-completion-{}",
-            std::process::id()
-        ));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "generator-completion.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-generator-completion-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -2985,40 +3037,44 @@ function sloppy(){return sloppy.caller;}
 function outer(){class Caller {static value=sloppy();} return Caller.value;}
 print(outer()===null);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "static-field-context.js").unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-static-field-context-{}",
-            std::process::id()
-        ));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "first|last",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "static-field-context.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-static-field-context-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "first|last",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -3060,49 +3116,53 @@ class Names {
 }
 print(Names.plain.name==='plain'); print(Names[symbol].name==='[slot]'); print(Names.read()==='#secret'); print(new Names()[symbol].name==='[slot]');
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "auto-accessors.js").unwrap();
-        let path =
-            std::env::temp_dir().join(format!("quench-auto-accessors-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "key|before|x|computed|41|after",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true",
-                    "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "auto-accessors.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-auto-accessors-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "key|before|x|computed|41|after",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -3139,28 +3199,32 @@ for(var f of functions) f(f);
 function shadow(arguments) { print(shadow.arguments[0] === 47); }
 shadow(47);
 "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "function-arguments.js").unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-function-arguments-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        for program in [program, decoded] {
-            let host = TestHost::default().with_test262();
-            let output = host.clone();
-            let mut runtime = Runtime::new(host);
-            runtime.execute(&program).unwrap();
-            assert_eq!(
-                output.lines().as_slice(),
-                &[
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                    "true", "true"
-                ]
-            );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "function-arguments.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-function-arguments-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = TestHost::default().with_test262();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.lines().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true"
+                    ]
+                );
+            }
         }
     }
 
@@ -4166,25 +4230,29 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             print(typeof accessor.get); print(typeof accessor.set); print(accessor.enumerable);
             print(typeof own.get); print(typeof own.set); print(own.enumerable);
         "#;
-        let compile = Engine::specialize;
-        let program = compile(source, "definition-modes.js").unwrap();
-        let path = std::env::temp_dir()
-            .join(format!("quench-definition-modes-{}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path);
-        std::fs::remove_file(path).unwrap();
-        let decoded = decoded.unwrap();
-        let host = TestHost::default().with_test262();
-        let output = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime.execute(&decoded).unwrap();
-        assert_eq!(
-            output.lines().as_slice(),
-            &[
-                "0", "42", "43", "44", "true", "false", "true", "function", "function",
-                "false", "function", "function", "true"
-            ]
-        );
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "definition-modes.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-definition-modes-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path);
+            std::fs::remove_file(path).unwrap();
+            let decoded = decoded.unwrap();
+            let host = TestHost::default().with_test262();
+            let output = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.execute(&decoded).unwrap();
+            assert_eq!(
+                output.lines().as_slice(),
+                &[
+                    "0", "42", "43", "44", "true", "false", "true", "function", "function",
+                    "false", "function", "function", "true"
+                ]
+            );
+        }
     }
 
     #[test]
@@ -5102,12 +5170,13 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("cyclic-module-graph/{name}"), *source)))
             })
         };
-        let compile = Engine::specialize_module;
-        let view = TestHost::default().with_test262();
-        let mut runtime = Runtime::new(modules(view.clone()));
-        let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(view.lines().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
+            let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(view.lines().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+        }
     }
 
     #[test]
@@ -5201,14 +5270,15 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             })
                 .with_module_sources(|module: &crate::ModuleSource| { module.name == "<source>" })
         };
-        let compile = Engine::specialize_module;
-        let view = TestHost::default().with_test262();
-        let mut runtime = Runtime::new(modules(view.clone()));
-        let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
-        runtime
-            .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
-            .unwrap();
-        assert_eq!(view.lines().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
+            let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
+            runtime
+                .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
+                .unwrap();
+            assert_eq!(view.lines().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
+        }
     }
 
     #[test]
@@ -5248,18 +5318,22 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 Ok(Some(crate::host::ModuleSource::text("integrity-dependency.mjs", DEPENDENCY)))
             })
         };
-        let compile = Engine::specialize_module;
-        let view = TestHost::default().with_test262();
-        let mut runtime = Runtime::new(modules(view.clone()));
-        let program = compile(SOURCE, "integrity-namespace.mjs").unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(
-            view.lines().as_slice(),
-            &[
-                "true", "true", "false", "true", "42", "43", "43", "43", "44", "44", "true",
-                "false", "43", "true", "false"
-            ]
-        );
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
+            let program = compile(SOURCE, "integrity-namespace.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(
+                view.lines().as_slice(),
+                &[
+                    "true", "true", "false", "true", "42", "43", "43", "43", "44", "44", "true",
+                    "false", "43", "true", "false"
+                ]
+            );
+        }
     }
 
     #[test]
@@ -5326,21 +5400,25 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 Ok(Some(crate::host::ModuleSource::text("ordered-namespace.mjs", DEPENDENCY)))
             })
         };
-        let compile = Engine::specialize_module;
-        let view = TestHost::default().with_test262();
-        let mut runtime = Runtime::new(modules(view.clone()));
-        let program = compile(SOURCE, "namespace-order.mjs").unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(
-            view.lines().as_slice(),
-            &[
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\",\"Symbol(Symbol.toStringTag)\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"2\",\"10\",\"z\",\"a\"]",
-            ]
-        );
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
+            let program = compile(SOURCE, "namespace-order.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(
+                view.lines().as_slice(),
+                &[
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\",\"Symbol(Symbol.toStringTag)\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"2\",\"10\",\"z\",\"a\"]",
+                ]
+            );
+        }
     }
 
     #[test]
@@ -9888,19 +9966,33 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
     }
 
     #[test]
-    fn specialized_reads_of_prototype_fields_lower_to_field_reads() {
+    fn generic_reference_matches_specialized_output() {
         let source = "var proto = { answer: 41 }; var other = Object.create({ answer: 1 }); var object = Object.create(proto); object.add = function(value) { return value + 1; }; function read(value) { return value.answer; } print(read(object) + read(other) + object.add(1));";
-        let host = TestHost::default().with_test262();
-        let mut runtime = Runtime::new(host);
-        let program = Engine::specialize(source, "specialized.js").unwrap();
-        assert!(program.cache_sites.get() > 0);
-        assert!(program.functions.iter().any(|function| {
+        let optimized_host = TestHost::default().with_test262();
+        let optimized_view = optimized_host.clone();
+        let mut optimized = Runtime::new(optimized_host);
+        let optimized_program = Engine::specialize(source, "optimized.js").unwrap();
+        assert!(optimized_program.specialized);
+        assert!(optimized_program.cache_sites.get() > 0);
+        assert!(optimized_program.functions.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|instruction| instruction.op() == crate::bytecode::Op::GetField)
         }));
-        runtime.execute(&program).unwrap();
+        optimized.execute(&optimized_program).unwrap();
+
+        let generic_host = TestHost::default().with_test262();
+        let generic_view = generic_host.clone();
+        let mut generic = Runtime::new(generic_host);
+        let generic_program = Engine::specialize_unspecialized(source, "generic.js").unwrap();
+        assert!(!generic_program.specialized);
+        generic.execute(&generic_program).unwrap();
+
+        assert_eq!(
+            optimized_view.lines().as_slice(),
+            generic_view.lines().as_slice()
+        );
     }
 
     #[test]

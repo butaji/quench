@@ -6,7 +6,7 @@ the median of the timed repetitions is kept, and a structure's time is the geome
 its ten cases. Peak RSS comes from wait4 on that process. Every engine's checksum and verify
 values must equal C's for the same n.
 
-usage: run.py [--engines c,node,bun,q-no-jit,q-default] [--ds btree,...]
+usage: run.py [--engines c,node,bun,q-no-jit,q-b-jit,q-default] [--ds btree,...]
               [--scale 1.0] [--reps 2] [--warmup 1] [--quench PATH] [--tag NAME]
 Writes results/<tag>.jsonl (one line per cell) and prints a per-structure table.
 """
@@ -41,7 +41,7 @@ def command(engine, ds, quench):
     if engine == "bun":
         return ["bun", "driver.mjs"], SUITE / ds / "bun"
     mode = engine[2:]
-    flags = {"no-jit": ["--no-jit"], "default": []}[mode]
+    flags = {"no-jit": ["--no-jit"], "b-jit": ["--b-jit"], "default": []}[mode]
     return [quench, *flags, *JSFLAGS, "driver.mjs"], SUITE / ds / "node"
 
 
@@ -86,7 +86,7 @@ def geomean(xs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engines", default="c,node,bun,q-no-jit,q-default")
+    ap.add_argument("--engines", default="c,node,bun,q-no-jit,q-b-jit,q-default")
     ap.add_argument("--ds", default=",".join(SIZES))
     ap.add_argument("--cases", default="")
     ap.add_argument("--scale", type=float, default=1.0)

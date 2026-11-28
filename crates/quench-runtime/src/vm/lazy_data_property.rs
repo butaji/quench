@@ -154,7 +154,7 @@ impl Vm {
     fn lazy_data_accessor(&self, holder: Value, key: PropertyKey) -> Option<Value> {
         // A lazy data property's accessor is its getter and its setter, so a holder whose
         // shape holds no such accessor, and no indexed descriptor, has none.
-        if let Some(object) = self.heap.object(holder)
+        if let Some(object) = self.object_data(holder)
             && !object.has_indexed_descriptors()
             && !self.shape_may_have_accessor_pairs(object.shape())
         {
@@ -313,7 +313,7 @@ impl Vm {
         &self,
         holder: Value,
     ) -> impl Iterator<Item = (PropertyKey, Value)> + '_ {
-        let object = self.heap.object(holder);
+        let object = self.object_data(holder);
         let named = object
             .into_iter()
             .flat_map(|object| self.shape_entries(object.shape()))
@@ -400,14 +400,6 @@ impl Vm {
             self.materialize_lazy_group(p, group)?;
         }
         Ok(())
-    }
-
-    /// The initializer of `holder`'s pending lazy member `key`: the function its materialization runs.
-    pub(super) fn lazy_initializer(&self, holder: Value, key: PropertyKey) -> Option<Value> {
-        let group = self.lazy_data_group(holder, key)?;
-        (self.lazy_group_state(group) == GroupState::Pending)
-            .then(|| self.heap.environment_slot(group, GroupSlot::Initializer as usize))
-            .flatten()
     }
 
     fn materialize_lazy_group(&mut self, p: &ResidualProgram, group: Value) -> Result<(), JsError> {
@@ -627,16 +619,4 @@ impl Vm {
             }
         }
     }
-}
-
-/// The entry of the lazy data property accessor.
-pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
-    match native {
-        Native::LazyDataProperty => Some(lazy_data_property_native),
-        _ => None,
-    }
-}
-
-fn lazy_data_property_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.lazy_data_property_access(p, this, args)
 }

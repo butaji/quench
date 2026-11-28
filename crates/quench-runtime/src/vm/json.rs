@@ -1684,8 +1684,7 @@ impl Vm {
         }
         let object = self.json_object();
         self.with_call_roots([object], |vm| {
-            vm.heap.ensure_cell_extras(object);
-            if let Some(mut data) = vm.heap.object_mut(object) {
+            if let Some(data) = vm.object_data_mut(object) {
                 data.set_proto(Value::NULL);
                 data.set_raw_json();
             }
@@ -1707,7 +1706,7 @@ impl Vm {
 
     pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let is_raw = self.heap.object(value).is_some_and(|object| object.is_raw_json());
+        let is_raw = self.object_data(value).is_some_and(Object::is_raw_json);
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
@@ -2138,7 +2137,7 @@ impl Vm {
         value: Value,
         w: &mut JsonWriter,
     ) -> JsonStep {
-        let is_array = if self.heap.ordinary_view(value).is_some() {
+        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
             false
         } else if let Some(array) = self.heap.array(value) {
             // An arguments object is an ordinary object to IsArray, so it serializes as one.
@@ -2172,7 +2171,7 @@ impl Vm {
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
-        if !self.heap.object(value).is_some_and(|object| object.is_raw_json()) {
+        if !self.object_data(value).is_some_and(Object::is_raw_json) {
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;
@@ -2281,34 +2280,6 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
             | C::WasmHostFunction { .. },
         ) => JsonForm::Omitted,
     }
-}
-
-/// The JSON natives' entry: each of `JSON.parse`, `JSON.stringify`, `JSON.rawJSON` and
-/// `JSON.isRawJSON` runs its own function, and any other native is left to the next family.
-pub(super) fn entry(native: Native) -> Option<super::native_table::NativeFn> {
-    match native {
-        Native::JsonParse => Some(json_parse_native),
-        Native::JsonStringify => Some(json_stringify_native),
-        Native::JsonRawJson => Some(json_raw_json_native),
-        Native::JsonIsRawJson => Some(json_is_raw_json_native),
-        _ => None,
-    }
-}
-
-fn json_parse_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.json_parse(p, args)
-}
-
-fn json_stringify_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.json_stringify(p, args)
-}
-
-fn json_raw_json_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.json_raw_json(p, args)
-}
-
-fn json_is_raw_json_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.json_is_raw_json(args)
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ fn handler(start: u32, end: u32, target: u32) -> crate::bytecode::Handler {
 
 /// `code` after `forward_move_sources`, as one function of `registers` registers under `handlers`.
 fn forwarded_in(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::Handler>) -> Vec<Instr> {
-    let mut program = crate::Engine::specialize("", "copies-forward.js").unwrap();
+    let mut program = crate::Engine::specialize_unspecialized("", "copies-forward.js").unwrap();
     let function = &mut program.functions[0];
     function.code = code;
     function.registers = registers;
@@ -39,7 +39,7 @@ fn forwarded(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
 
 /// `code` after `coalesce_distant_producer_moves` runs to a fixed point under `handlers`.
 fn coalesced_in(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::Handler>) -> Vec<Instr> {
-    let mut program = crate::Engine::specialize("", "copies-coalesce.js").unwrap();
+    let mut program = crate::Engine::specialize_unspecialized("", "copies-coalesce.js").unwrap();
     let function = &mut program.functions[0];
     function.code = code;
     function.registers = registers;

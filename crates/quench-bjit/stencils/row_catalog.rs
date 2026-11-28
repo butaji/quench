@@ -169,6 +169,13 @@ macro_rules! catalog {
     CALLEE_CAPTURE_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(c_closure_read) = Heap::CalleeCapture,
     // Value 26 is unused: the numbering has always left it free.
     reserve 1,
+    /// A fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
+    /// frame slot named by the value operand's offset above the destination's in hole 0 is walked along its prototype chain
+    /// for the link above `HELD_LINK_AT` in hole 1, whose low half is the constructor operand's frame offset; hole 2 is the
+    /// constructor's identity, which the slot must hold, else the row leaves. A hit writes the boolean to the destination and
+    /// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
+    /// the helper step after the row.
+    INSTANCEOF_ROW: uses(Unread, Unread, Unread, Never) twin: kernel(v_instanceof) = Heap::Instanceof,
     /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
     /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
     REALM_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Realm,
@@ -184,21 +191,33 @@ macro_rules! catalog {
     /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
     /// leaves through EXIT0 into it.
     APPEND_ROW: uses(Unread, Src, Unread, Never) twin: kernel(arr_push) = Heap::Append,
-    /// The class-keyed add (`add::class_add`): the value operand (hole 1) joins the live class cell of the object
-    /// register at the frame offset hole 2 carries, by the class transition holes 0 and 2 carry (`ADD_AFTER_AT`,
-    /// the before-key low, the after-class high; the slot below `ADD_SLOT_BITS`). A hit continues at TAKEN.
-    ADD_CLASS_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::AddClass,
+    /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
+    /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
+    /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid out
+    /// after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
+    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Packed, this: false },
+    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Arena, this: false },
+    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_obj_add) = Heap::Add { form: Form::Either, this: false },
+    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Packed, this: true },
+    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Arena, this: true },
+    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) twin: kernel(v_new_point) = Heap::Add { form: Form::Either, this: true },
     /// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
     /// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
     /// miss leaves through EXIT0 into it.
     FOR_IN_ROW: uses(Unread, Unread, Unread, Never) twin: kernel(v_for_in) = Heap::ForIn,
-    /// The shape-keyed inline-cache rows (`ic_rows.rs`), for the non-cell receivers a shape key names: a read of the
-    /// receiver's own flat slot, and a store of a Number into it, whose slot type is `ANY` or `NUMBER` (`IC_SET_ROW`)
-    /// or `INT32` (`IC_SET_INT_ROW`). A prototype-held read is `IC_GET_HELD_CLASS_ROW` (class-keyed) or `HELD_ROW`.
+    /// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
+    /// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
+    /// `ADD_SLOT_BITS`), moving from the before-layout to the after-layout hole 0 carries as an add's does, where it
+    /// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
+    /// step laid out after the row; a miss leaves through EXIT0 into it.
+    NAME_EITHER_ROW: uses(Unread, Unread, Unread, Never) twin: none("function naming; no kernel isolates it") = Heap::Name { form: Form::Packed | Form::Either },
+    NAME_ARENA_ROW: uses(Unread, Unread, Unread, Never) twin: none("function naming; no kernel isolates it") = Heap::Name { form: Form::Arena },
+    /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
+    /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
+    /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
     IC_GET_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcGet,
-    // The shape-keyed prototype-held read is retired (no producer; the class-keyed held row takes its place): the numbering keeps it free.
-    reserve 1,
+    IC_GET_HOLDER_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field),
     IC_SET_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: false },
     IC_SET_INT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSet { int: true },
     /// A read (`ENV_ROW`) and a store (`ENV_SET_ROW`) of a local slot the running activation's environment window holds
@@ -231,16 +250,24 @@ macro_rules! catalog {
     TYPED_INDEX_ROW: uses(Float, Unread, Src, Kept) x TYPED_KINDS twin: kernel(typed_load) = Heap::TypedIndex(k) => k,
     TYPED_STORE_ROW: uses(Unread, Src, Src, Kept) x TYPED_KINDS twin: kernel(typed_store_f64) = Heap::TypedStore(k) => k,
     TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) twin: kernel(typed_length) = Heap::TypedLength,
-    /// The receiver proof (`ic_rows.rs`): leaves unless the object register at hole 0 is a direct object, after an access's miss.
+    /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
+    /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
     IC_PROOF_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::IcProof,
-    // The known-receiver rows (a receiver the body proved an object) are retired: the numbering keeps their values free.
-    reserve 10,
-    /// The class-keyed rows (`ic_rows.rs`, `entry::class_key_cell`): the own field, the held field and the own store of
-    /// a live class cell whose class key (`class | CLASS_KEY`) hole 2 names, the field index at hole 3 (the shape rows'
-    /// holes, with the key in the shape's). `IC_GET_HELD_CLASS_ROW`'s holder cell granule is hole 4.
-    IC_GET_CLASS_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcGetClass,
-    IC_GET_HELD_CLASS_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(v_proto_chain3_field) = Heap::IcHeldClass,
-    IC_SET_CLASS_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcSetClass,
+    IC_KNOWN_GET_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcKnownGet,
+    IC_KNOWN_SET_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: false, admitted: false },
+    IC_KNOWN_SET_INT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: true, admitted: false },
+    /// `IC_KNOWN_SET_ROW` of a store the region's entry admitted (`base_region::proofs`): no run-level stores test, the entry
+    /// test (`STORES_ROW`) having held and no call since.
+    IC_KNOWN_SET_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: false, admitted: true },
+    IC_KNOWN_SET_INT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: true, admitted: true },
+    /// `IC_KNOWN_GET_ROW` / `IC_KNOWN_SET_ROW` of a receiver whose entry proved its exact shape and flat form (`SHAPE_FLAT_ROW`,
+    /// `base_region::proofs`): the slot at its byte offset in the arena run, with no compare of the auxiliary word. The
+    /// flat set's holes are the admitted row's (`ADMITTED`) or the stores test's (`IC_KNOWN_SET_FLAT_ROW`) plus the offset.
+    IC_KNOWN_GET_FLAT_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcKnownGetFlat,
+    IC_KNOWN_SET_FLAT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: false, admitted: false },
+    IC_KNOWN_SET_INT_FLAT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: false },
+    IC_KNOWN_SET_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: false, admitted: true },
+    IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: true },
     /// A declared parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a word
     /// whose language its tag alone decides, in the mask of hole 1 (`shared_words::language`), where the mask
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
@@ -249,16 +276,21 @@ macro_rules! catalog {
     /// (byte offset in hole 1) holds exactly the word of hole 2 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
     /// through EXIT0 with nothing written.
     CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::CaptureIdentity,
-    // The shape-and-link entry test's value is retired: the numbering keeps it free.
-    reserve 1,
-    /// A live class cell's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct object whose
-    /// live class cell's class is hole 1 (`guard::class`), which fixes the exact shape and prototype link. A hit continues at
-    /// NEXT; a miss leaves through EXIT0 with nothing written.
-    CLASS_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Class,
-    // The loop-receiver shape entry tests' values are retired: the numbering keeps them free.
-    reserve 2,
-    // The entry test that the run stores specialized is retired: the numbering keeps its value free.
-    reserve 1,
+    /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
+    /// object of the exact shape in hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), the record
+    /// found in the payload's object record table (`guard::prototype`). A hit continues at NEXT; a miss leaves through
+    /// EXIT0 with nothing written.
+    PROTOTYPE_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Prototype,
+    /// A loop-invariant receiver's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
+    /// object of the exact shape in hole 1 (its record found in the payload's object record table, `guard::shape`). A hit
+    /// continues at NEXT; a miss leaves through EXIT0 with nothing written.
+    SHAPE_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Shape,
+    /// `SHAPE_ROW` of a receiver whose flat form the entry checks too: the auxiliary word is the shape in hole 1 with no
+    /// storage-form bit (`guard::shape` at `Form::Arena`), so its values are the arena run's.
+    SHAPE_FLAT_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::ShapeFlat,
+    /// A region's entry test that the run stores specialized (`JS_STEP_STORES_SPECIALIZED`, `slot_store::store_admitted`):
+    /// a hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
+    STORES_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Stores,
     /// `String.prototype.charCodeAt` of a flat string (hole 1: the receiver's frame slot) at an int32 index in range (hole 2):
     /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
     /// nothing written, to the call's own step.
@@ -287,9 +319,9 @@ macro_rules! catalog {
     STAGED_LOOSE_NE: uses(Unread, Src, Src, Never) twin: kernel(eq_undef_null),
     STAGED_STRICT_EQ: uses(Unread, Src, Src, Never) twin: kernel(eq_int),
     STAGED_STRICT_NE: uses(Unread, Src, Src, Never) twin: kernel(eq_int),
-    /// An empty object (`EMPTY_OBJECT_ROW`, a region 1 class cell) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its
-    /// kind's cursor and captured template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent
-    /// run, a missing template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
+    /// An empty object (`EMPTY_OBJECT_ROW`) or zero-length array (`EMPTY_ARRAY_ROW`) bumped from its kind's record cursor
+    /// and template (`heap_rows::empty_row`): the destination (hole 0) takes the new reference. A spent run, a missing
+    /// template or a destination that cannot hold a reference leaves through EXIT0 with nothing written.
     EMPTY_OBJECT_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_obj_add),
     EMPTY_ARRAY_ROW: uses(Dst, Unread, Unread, Never) twin: kernel(v_array_push_grow),
     ]
@@ -356,8 +388,6 @@ macro_rules! catalog {
     IMUL twin: kernel(math_imul),
     /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
     CLZ32 twin: kernel(math_clz32),
-    /// `Math.pow` of two Numbers (`NumberOperation::Power`): a product for a constant exponent `SmallPower` names.
-    POW twin: none("Math.pow of a constant exponent: no benchmark op isolates it"),
     /// `switch`'s case slot (`NumberOperation::IntCase`): the slot of the first operand among the labels from the
     /// second's immediate to the maximum at hole 3, an int32 into the destination. Never leaves.
     INT_CASE twin: kernel(c_switch_dense),

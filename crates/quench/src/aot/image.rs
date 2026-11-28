@@ -3,7 +3,6 @@
 
 use super::cli::{BOOTSTRAP_WORKER_OPTION, WAIT_WORKER_OPTION};
 use super::{CompiledSources, DependencyGraph, NativeSupport, SourceManifest};
-use quench_runtime::native_link::image_dump::{self, Dump, UNDUMPED};
 use quench_runtime::native_link::{NativeImageInputs, NativeLinkAudit};
 use serde_json::{json, Value};
 use std::{
@@ -35,12 +34,11 @@ pub(super) fn compile_sources(
     manifest.compile_closed(&source, file.kind)
 }
 
-/// Stage the host services, saved runs and bootstrap an image links: a core image links none
-/// (its start state is dumped once it is linked, `core_rest`); a Node image takes the operation
-/// table its program can reach and a snapshot of the builtins it names. Returns the image inputs,
-/// the operations an image that starts from a saved heap keeps, and its saved runs
-/// (`dump_saved_waits`). A `strict` image whose entry reads a process input runs it from the
-/// startup snapshot alone (`RESTORED`).
+/// Stage the host services, saved runs and bootstrap an image links: a core image links none,
+/// a Node image takes the operation table its program can reach and a snapshot of the builtins
+/// it names. Returns the image inputs, the operations an image that starts from a saved heap
+/// keeps, and its saved runs (`dump_saved_waits`). A `strict` image whose entry reads a process
+/// input runs it from the startup snapshot alone (`RESTORED`).
 pub(super) fn stage_image(
     core: bool,
     strict: bool,
@@ -53,7 +51,7 @@ pub(super) fn stage_image(
 ) -> Result<(NativeImageInputs, Option<BTreeSet<u32>>, Vec<SavedWait>), String> {
     if core {
         report["unlinked_host_operations"] = json!(0);
-        core_memory_policy(&inputs.catalog())?;
+        report["bootstrap"] = json!({"status": "not_required", "reason": "Variant::Core runs on the runtime's own host"});
         return Ok((inputs, None, Vec::new()));
     }
     // A program whose build-time runs wait for input before reading any resumes the run whose
@@ -75,7 +73,7 @@ pub(super) fn stage_image(
     });
     fs::OpenOptions::new().append(true).open(inputs.catalog())
         .and_then(|mut catalog| catalog.write_all(format!("{}const MAKES_CODE: bool = {};\nconst RUNS_WASM: bool = {};\nconst RESTORED: bool = {restored};\nconst REACHES_INTL: bool = {};\n",
-            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), NODE_REACHES_INTL).as_bytes()))
+            resumes_at_rest(&saved, lane_opcodes.as_deref()), makes_code(graph), runs_wasm(graph), reaches_intl(graph)).as_bytes()))
         .map_err(|error| error.to_string())?;
     // An image that starts from a saved heap (a saved run's, or the startup snapshot's) starts
     // from the operations that heap holds, and the builders of the builtins its program may
@@ -119,15 +117,6 @@ pub(super) fn stage_image(
         heaps.iter().flat_map(|heap| heap.0.iter().copied()).chain(lazy).chain(builders).chain(bindings).collect()
     });
     Ok((inputs, held, saved))
-}
-
-/// Writes a core image's memory policy into its catalog. A closed image is memory-first by its
-/// kind, and its allocator serves no small requests (only the throughput policy's does). The
-/// image reads these constants and no environment at run time.
-fn core_memory_policy(catalog: &Path) -> Result<(), String> {
-    fs::OpenOptions::new().append(true).open(catalog)
-        .and_then(|mut file| file.write_all(b"const MEMORY_POLICY: quench_runtime::MemoryPolicy = quench_runtime::MemoryPolicy::MemoryFirst;\nconst ALLOCATOR_SERVES_SMALL: bool = false;\n"))
-        .map_err(|error| error.to_string())
 }
 
 /// The worker: runs the native entry's residual `program` with the build-time gate armed
@@ -225,36 +214,165 @@ fn resumes_at_rest(saved: &[SavedWait], lane_opcodes: Option<&[u16]>) -> String 
     format!("static RESUMES_AT_REST: &[quench::aot::SavedWait] = &[{runs}];\nconst RESUME_ONLY: bool = {};\nfn install_lanes() {{ {lanes} }}\n", !saved.is_empty())
 }
 
-/// The statics and thread-locals a Node image's dump never carries beyond the runtime's
-/// (`image_dump::UNDUMPED`): the host process's own state, which the environment sets.
-const HOST_UNDUMPED: &[&[&str]] = &[
+/// The statics and thread-locals a dump of a saved run never carries (`image_dump::finish`):
+/// the process's own (the standard library's, the allocator's, its signal, memory-policy and
+/// page-release state, its clocks and trace switches, which the environment sets) and
+/// libraries' thread pools and caches of the build machine's time zone. Each is a crate root
+/// and module names under it, as v0 symbols spell them.
+const UNDUMPED: &[&[&str]] = &[
+    &["std"], &["core"], &["alloc"], &["quench_alloc"],
     &["quench", "shared_run"], &["quench", "allocator_policy"], &["quench", "host", "resident_pages"],
     &["quench", "host", "process_start"], &["quench", "modules", "process_signals_state"],
+    &["quench_runtime", "trace"], &["quench_runtime", "clock"], &["quench_runtime", "vm", "date", "local_zone"],
+    &["tracing_core"], &["parking_lot_core"], &["crossbeam_epoch"], &["rayon_core"], &["chrono"],
 ];
 
-/// Dumps each saved run of the linked Node `image` (`image_dump::dump_image`), each under its
-/// answers' environment and named by the environment (`DUMP_VARIABLE`); none where any cannot be
-/// dumped, which `report` names.
-pub(super) fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<Dump> {
-    let answers: Vec<Vec<(String, String)>> = saved.iter().map(|wait| wait.answers.iter().filter_map(|(question, answer)| match question {
-        super::prefix::Question::Environment(name, value) if *answer => Some((name.clone(), value.clone())),
-        _ => None,
-    }).collect()).collect();
-    let undumped: Vec<&[&str]> = UNDUMPED.iter().chain(HOST_UNDUMPED.iter()).copied().collect();
-    let prepare = |run: &mut Command, index: usize, path: &Path| {
-        crate::host::startup_snapshot::neutralize_native_bootstrap_environment(run);
-        for name in super::ADOPTION_VARIABLES {
-            run.env_remove(name);
+/// The crate root and the identifiers after it of a Rust symbol (v0 or legacy mangling).
+fn rust_path(symbol: &str) -> Option<(String, String)> {
+    let take_ident = |bytes: &[u8], at: &mut usize| -> Option<String> {
+        let start = *at;
+        while *at < bytes.len() && bytes[*at].is_ascii_digit() {
+            *at += 1;
         }
-        for (name, value) in &answers[index] {
-            run.env(name, value);
+        let length: usize = std::str::from_utf8(&bytes[start..*at]).ok()?.parse().ok()?;
+        if bytes.get(*at) == Some(&b'_') {
+            *at += 1;
         }
-        run.env(image_dump::DUMP_VARIABLE, format!("{index}:{}", path.display()));
+        let ident = std::str::from_utf8(bytes.get(*at..*at + length)?).ok()?.to_owned();
+        *at += length;
+        Some(ident)
     };
-    match image_dump::dump_image(image, work, saved.len(), &undumped, &prepare) {
-        Ok(dumps) => {
-            report["dump"] = json!({"status": "prepared", "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes(), "arena_bytes": dump.arena_bytes(), "copied_bytes": dump.copied_bytes(), "regions": dump.regions.len()})).collect::<Vec<_>>()});
-            dumps.into_iter().map(|(dump, _)| dump).collect()
+    let bytes = symbol.as_bytes();
+    if let Some(rest) = symbol.strip_prefix("_ZN") {
+        let mut at = 0;
+        let crate_name = take_ident(rest.as_bytes(), &mut at)?;
+        return Some((crate_name, rest[at..].to_owned()));
+    }
+    let mut at = 2;
+    if !symbol.starts_with("_R") {
+        return None;
+    }
+    loop {
+        match *bytes.get(at)? {
+            b'N' => at += 2,
+            b'M' | b'X' | b'Y' => {
+                at += 1;
+                if bytes.get(at) == Some(&b's') {
+                    while *bytes.get(at)? != b'_' {
+                        at += 1;
+                    }
+                    at += 1;
+                }
+            }
+            b'C' => {
+                at += 1;
+                if bytes.get(at) == Some(&b's') {
+                    while *bytes.get(at)? != b'_' {
+                        at += 1;
+                    }
+                    at += 1;
+                }
+                let crate_name = take_ident(bytes, &mut at)?;
+                return Some((crate_name, symbol[at..].to_owned()));
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Whether a dump carries the static or thread-local `symbol` (`UNDUMPED`).
+fn dumped_symbol(symbol: &str) -> bool {
+    let Some((crate_name, rest)) = rust_path(symbol) else { return false };
+    !UNDUMPED.iter().any(|path| path[0] == crate_name && path[1..].iter().all(|ident| rest.contains(&format!("{}{ident}", ident.len()))))
+}
+
+/// Dumps each saved run of the linked image at `image`, which still has its symbol table
+/// (`image_dump`); none where any cannot be dumped, which `report` names.
+pub(super) fn dump_saved_waits(image: &Path, saved: &[SavedWait], work: &Path, report: &mut Value) -> Vec<super::image_dump::Dump> {
+    use object::{Object, ObjectSection, ObjectSymbol};
+    let dumped = (|| -> Result<(Vec<super::image_dump::Dump>, Value), String> {
+        let bytes = fs::read(image).map_err(|error| error.to_string())?;
+        let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
+        // The thread-local segment: its initial image and its block's size below the thread pointer.
+        let elf = object::read::elf::ElfFile64::<object::Endianness>::parse(&*bytes).map_err(|error| error.to_string())?;
+        use object::read::elf::ProgramHeader;
+        let endian = elf.endian();
+        let header = elf.elf_program_headers().iter().find(|header| header.p_type(endian) == object::elf::PT_TLS).ok_or("the image has no thread-local segment")?;
+        let (tls_offset, tls_file, tls_memory, tls_align) = (header.p_offset(endian), header.p_filesz(endian), header.p_memsz(endian), header.p_align(endian).max(1));
+        let block = tls_memory.next_multiple_of(tls_align);
+        let mut keep_statics = Vec::new();
+        let mut keep_tls = Vec::new();
+        for symbol in file.symbols() {
+            if symbol.size() == 0 || !symbol.name().is_ok_and(dumped_symbol) {
+                continue;
+            }
+            match symbol.kind() {
+                object::SymbolKind::Tls => keep_tls.push((block - symbol.address(), block - symbol.address() - symbol.size())),
+                object::SymbolKind::Data => {
+                    let writable = symbol.section_index().and_then(|index| file.section_by_index(index).ok()).is_some_and(|section| {
+                        matches!(section.flags(), object::SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_WRITE) != 0)
+                    });
+                    if writable {
+                        keep_statics.push((symbol.address(), symbol.address() + symbol.size()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let initial = |address: u64, length: usize| -> Vec<u8> {
+            let mut out = vec![0u8; length];
+            for section in file.sections() {
+                let (start, size) = (section.address(), section.size());
+                if address >= start && address + length as u64 <= start + size {
+                    if let Ok(data) = section.data() {
+                        if let Some(slice) = data.get((address - start) as usize..(address - start) as usize + length) {
+                            out.copy_from_slice(slice);
+                        }
+                    }
+                }
+            }
+            out
+        };
+        let tls_initial = |below: u64, length: usize| -> Vec<u8> {
+            let offset = block - below;
+            (0..length as u64).map(|index| {
+                let at = offset + index;
+                if at < tls_file { bytes[(tls_offset + at) as usize] } else { 0 }
+            }).collect()
+        };
+        let mut dumps = Vec::new();
+        let mut summary = Vec::new();
+        for (index, wait) in saved.iter().enumerate() {
+            let dump_run = |raw_path: &Path| -> Result<Vec<u8>, String> {
+                let mut run = Command::new(image);
+                crate::host::startup_snapshot::neutralize_native_bootstrap_environment(&mut run);
+                for name in ["QUENCH_DEV", "QUENCH_TRACE", "NODE_OPTIONS"] {
+                    run.env_remove(name);
+                }
+                for (question, answer) in &wait.answers {
+                    if let (super::prefix::Question::Environment(name, value), true) = (question, answer) {
+                        run.env(name, value);
+                    }
+                }
+                run.env(super::image_dump::DUMP_VARIABLE, format!("{index}:{}", raw_path.display()))
+                    .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+                quench_runtime::native_link::checked_output(&mut run, "image dump")?;
+                fs::read(raw_path).map_err(|error| error.to_string())
+            };
+            // Twice: a word that differs between the runs is an address of the run's own
+            // (`image_dump::finish`).
+            let raw = dump_run(&work.join(format!("dump-{index}.raw")))?;
+            let again = dump_run(&work.join(format!("dump-{index}.again")))?;
+            let dump = super::image_dump::finish(&raw, &again, &keep_statics, &keep_tls, &initial, &tls_initial)?;
+            summary.push(json!({"raw_bytes": raw.len(), "page_bytes": dump.runs.iter().map(|run| run.1.len()).sum::<usize>()}));
+            dumps.push(dump);
+        }
+        Ok((dumps, json!(summary)))
+    })();
+    match dumped {
+        Ok((dumps, summary)) => {
+            report["dump"] = json!({"status": "prepared", "runs": summary});
+            dumps
         }
         Err(error) => {
             report["dump"] = json!({"status": "unavailable", "diagnostic": error});
@@ -356,7 +474,17 @@ fn runs_wasm(graph: &DependencyGraph) -> bool {
     makes_code(graph) || graph.requirements.iter().any(|requirement| matches!(requirement, super::GraphRequirement::Wasm { .. }))
 }
 
-/// A Node image links the Intl and Temporal layer. Its realm is not closed yet (the closed world of
-/// `ReachableRealm` is computed over the core realm), so the layer is kept for every Node image:
-/// the locale and Intl entries are reached through names and spellings the graph cannot bound.
-const NODE_REACHES_INTL: bool = true;
+/// Whether the program can reach Intl or Temporal, so its image links that layer
+/// (`quench_runtime::install_intl`). Their entries are reached only through the `Intl` and
+/// `Temporal` globals and the locale-sensitive methods (`toLocale*` on every prototype and
+/// `localeCompare`), by name. Host code calls none of them. So the layer links where the program
+/// makes code (`makes_code`), names either global, spells a locale method's name anywhere in its
+/// source, reads a member by a non-literal key (`dynamic_reflective_sites`: the key may be any
+/// name), or writes an escape that could spell a name the text does not show; and wherever its
+/// support links the layer (`DependencyGraph::needs_intl`).
+fn reaches_intl(graph: &DependencyGraph) -> bool {
+    const SPELLINGS: &[&[u8]] = &[b"Intl", b"Temporal", b"toLocale", b"localeCompare", b"\\u", b"\\x"];
+    graph.needs_intl() || makes_code(graph) || !graph.dynamic_reflective_sites.is_empty()
+        || ["Intl", "Temporal"].iter().any(|name| graph.global_names.contains(*name))
+        || graph.files.values().any(|file| SPELLINGS.iter().any(|spelling| file.bytes.windows(spelling.len()).any(|window| window == *spelling)))
+}

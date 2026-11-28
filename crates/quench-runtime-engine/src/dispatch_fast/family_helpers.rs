@@ -3,19 +3,17 @@
 //! frame and declines, before any effect, where the general step decides. A declined row runs the general step
 //! (`lane_body_step`) from its PC; a completed one skips the frame bookkeeping and base refreshes, which only
 //! guest code or an allocation need. The arm is the one `Vm::step` runs (`write_binary_result`), so both paths
-//! share their semantics. The planner admits a row only where its site's operand class makes a decline rare
-//! (`function::direct_admits`).
+//! share their semantics. The planner admits a row only where its site's feedback makes a decline rare
+//! (`function::feedback_admits`).
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::LANE_CALL_COMPLETED;
 use quench_runtime::vm::field_cache::FieldCacheProbe;
-use crate::operand_class::OperandClass;
+use super::operand_feedback::{OperandClass, OperandKinds};
 use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, Operand};
 use quench_runtime::staged::{DecodeContext, Operation};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The staged operation the packed helper runs directly, decoded from `instruction`, where it has a direct arm.
 pub(crate) fn direct_operation(instruction: WideInstruction) -> Option<Operation<(), ()>> {
@@ -27,12 +25,11 @@ pub(crate) fn covers(instruction: WideInstruction) -> bool {
     direct_operation(instruction).is_some()
 }
 
-/// Whether the planner admits the direct run of the packed instruction `words` (`Step::Helper` rows carry them): a
-/// binary operator whose site's operands the solver does not type `Any` (`class`, `operand_class::OperandClass`), an
-/// element access (its arm declines to the general step at any element but a dense or typed one, so every access is
-/// admitted), a field access whose cache site is filled (`fields`, `Known::fields`; with none, as an image's body
+/// Whether the site's feedback admits the direct run of the packed instruction `words` (`Step::Helper` rows
+/// carry them): a binary operator whose operands are not of an unseen kind, an element access that met a dense
+/// or typed element, a field access whose cache site is filled (`fields`, `Known::fields`; with none, as an image's body
 /// lowered before any run, the arm's cache probe decides), and the pure unary queries. Other rows decline the direct run.
-pub(crate) fn admits(words: [u64; 2], class: Option<OperandClass>, fields: Option<&dyn Fn(u16) -> bool>) -> bool {
+pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option<&dyn Fn(u16) -> bool>) -> bool {
     let Ok(imm) = u32::try_from(words[1]) else { return false };
     let Some(instruction) = WideInstruction::from_words(words[0], imm) else {
         return false;
@@ -41,8 +38,8 @@ pub(crate) fn admits(words: [u64; 2], class: Option<OperandClass>, fields: Optio
         return false;
     };
     match operation {
-        Operation::Binary { .. } => class.is_some_and(|class| class != OperandClass::Any),
-        Operation::ElementRead { .. } | Operation::ElementWrite { .. } => true,
+        Operation::Binary { .. } => site.is_some_and(|site| site.class() != OperandClass::Any),
+        Operation::ElementRead { .. } | Operation::ElementWrite { .. } => site.is_some_and(OperandKinds::element_admitted),
         Operation::GetField { lookup: FieldLookup::Atom { cache_site, .. }, .. } => fields.is_none_or(|filled| filled(cache_site)),
         Operation::SetField { .. } => fields.is_none_or(|filled| filled(instruction.cache_site_index())),
         Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } => true,
@@ -63,8 +60,8 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
     let instruction = raw.without_return();
     let operation = direct_operation(instruction)?;
     // SAFETY: the running lane's context; the VM, frame and program are the ones `lane_in_place` dispatches.
-    let (vm, frame) = unsafe { (&mut *(*cx).vm, (*cx).frame()) };
-    if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, instruction, value, base) }; }
+    let (vm, frame, program) = unsafe { (&mut *(*cx).vm, (*cx).frame(), &*(*cx).code) };
+    if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, program, instruction, value, base) }; }
     if !vm.lane_stack.activations().is_empty() || !unsafe { (*cx).leaf.call }.is_null() {
         return None;
     }
@@ -76,7 +73,7 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
         Operation::ElementRead { base, key, .. } => element_read(vm, frame, instruction, base, key),
         Operation::ElementWrite { value, base, key, .. } => element_write(vm, frame, value, base, key),
         Operation::GetField { lookup: FieldLookup::Atom { atom, base, cache_site }, .. } =>
-            get_field(vm, frame, instruction, (atom, base, cache_site)),
+            get_field(vm, program, frame, instruction, (atom, base, cache_site)),
         Operation::LogicalNot { destination, source } => query(vm, frame, (destination, source), Vm::logical_not),
         Operation::TypeofIndex { destination, source } => query(vm, frame, (destination, source), Vm::typeof_index_value),
         _ => false,
@@ -102,14 +99,14 @@ fn binary(vm: &mut Vm, frame: usize, instruction: WideInstruction, left: Operand
     true
 }
 
-/// An element read of a present dense element or a typed array's number (`element_read_fast`), written to the
+/// An element read of a present dense element or a typed array's number (`element_read_kind`), written to the
 /// result register as the interpreter's `step_index_get` writes it. A key that is not a register declines.
 fn element_read(vm: &mut Vm, frame: usize, instruction: WideInstruction, base: Register, key: Operand) -> bool {
     let Some(key) = key.register_index() else {
         return false;
     };
     let (object, key) = (vm.read(frame, base), vm.read(frame, key));
-    let Some(value) = vm.element_read_fast(object, key) else {
+    let Some((value, _)) = vm.element_read_kind(object, key) else {
         return false;
     };
     vm.write(frame, instruction.result_register(), value);
@@ -129,7 +126,7 @@ fn element_write(vm: &mut Vm, frame: usize, value: Register, base: Register, key
 /// A named read of an object's own or prototype-held data field the cache site holds (`cached_field_hit`), the
 /// interpreter's `GetField` Atom arm without its getter, private-name and frame cases, which decline. A miss
 /// declines before the general read, which then probes the site again.
-fn get_field(vm: &mut Vm, frame: usize, instruction: WideInstruction,
+fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
     (atom, base, cache_site): (Atom, FieldBase, u16)) -> bool {
     if base.local_index().is_some() || vm.is_private_name(atom) {
         return false;
@@ -142,7 +139,7 @@ fn get_field(vm: &mut Vm, frame: usize, instruction: WideInstruction,
         return false;
     }
     vm.prepare_named_function_info_lookup(object, atom);
-    let FieldCacheProbe::Hit(value) = vm.cached_field_hit(object, cache_site) else {
+    let FieldCacheProbe::Hit(value) = vm.cached_field_hit(p, object, cache_site) else {
         return false;
     };
     vm.write(frame, instruction.result_register(), value);
@@ -150,12 +147,12 @@ fn get_field(vm: &mut Vm, frame: usize, instruction: WideInstruction,
 }
 
 /// A store to an own data field the site's entry holds (`cached_field_store_hit`, the interpreter's first `set_field_cached` arm) of a register's object or the fixed `this` (`fixed_this_in_lane`), in the innermost window, as the general step (`native_frames::in_innermost_frame`).
-unsafe fn set_field(cx: *mut LaneContext, instruction: WideInstruction, value: Register, base: Option<Register>) -> Option<u64> {
+unsafe fn set_field(cx: *mut LaneContext, p: &ResidualProgram, instruction: WideInstruction, value: Register, base: Option<Register>) -> Option<u64> {
     Some(super::native_frames::in_innermost_frame(cx, || {
         // SAFETY: the running lane's context, its innermost body's state installed.
         let (vm, r) = unsafe { (&mut *(*cx).vm, (*cx).registers) };
         let object = match base { Some(base) => Some(r.get(base)), None => unsafe { super::fixed_this_in_lane(cx, r) } };
-        if object.is_some_and(|object| vm.cached_field_store_hit(object, instruction.atom_index(), r.get(value), instruction.cache_site_index())) { LANE_CALL_COMPLETED } else { crate::compiled::LANE_CALL_MISSED }
+        if object.is_some_and(|object| vm.cached_field_store_hit(p, object, instruction.atom_index(), r.get(value), instruction.cache_site_index())) { LANE_CALL_COMPLETED } else { crate::compiled::LANE_CALL_MISSED }
     })).filter(|status| *status == LANE_CALL_COMPLETED)
 }
 

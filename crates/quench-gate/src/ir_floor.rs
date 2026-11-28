@@ -8,7 +8,7 @@
 //! - `records`: the records the interpreter dispatches per iteration (callgrind's entries into lane
 //!   handlers). It only shrinks: an op that dispatches more records than recorded fails, so the
 //!   allowance can never grow by splitting work into more records.
-//! - `default` and `aot`: each mode's ceiling, ratcheted like the interpreter's (shrink-only, a
+//! - `b-jit` and `default` (the shipped mode): each mode's ceiling, ratcheted like the interpreter's (shrink-only, a
 //!   count at or under the budget makes the budget the ceiling); a count past it fails.
 
 use std::{collections::BTreeMap, fs};
@@ -45,8 +45,8 @@ pub fn parse(text: &str) -> BTreeMap<String, Floor> {
 }
 
 const HEADER: &str = "# C floor (quench-gate step `ir-budget`, `crates/quench-gate/src/ir_floor.rs`): C-shaped code runs as C.
-# op records default aot, per loop iteration. The interpreter's floor is C + records x 6 (dispatch and
-# decode); records only shrink. The default and AOT ceilings ratchet down toward the op's budget (C parity: max(C + 1, 1.25x C),
+# op records b-jit default, per loop iteration. The interpreter's floor is C + records x 6 (dispatch and
+# decode); records only shrink. b-jit and default-mode ceilings ratchet down toward the op's budget (C parity: max(C + 1, 1.25x C),
 # ir_budget.txt). Not edited by hand.
 ";
 
@@ -72,6 +72,8 @@ pub fn write(config: &Config, before: &str, rows: &BTreeMap<String, Floor>) -> R
 /// The layer that owns a handler's instructions, by the first name part it holds (the thread
 /// ownership of `/mnt/project-files/rebalance/plan-2026-11-18b.md`).
 const OWNERS: &[(&str, &str)] = &[
+    ("loop_kernel", "Specialize u-jit on facts"),
+    ("LoopKernel", "Specialize u-jit on facts"),
     ("jit code", "Specialize u-jit on facts"),
     ("{closure", "Cut calls and frames to C"),
     ("regexp", "Cut builtin library code to C"),
@@ -157,7 +159,7 @@ pub fn interpreter(ops: &[Op], c: &BTreeMap<String, f64>, floors: &mut BTreeMap<
     (table, grown)
 }
 
-/// The JIT modes' check (`index` 0 default, 1 AOT) against each op's `budgets` entry (the budget
+/// The JIT tiers' check (`index` 0 b-jit, 1 default) against each op's `budgets` entry (the budget
 /// `ir_budget.txt` holds, C parity: max(C + 1, 1.25x C)): a count past its ceiling fails; a drop lowers the ceiling (a
 /// run of every op) toward the budget; a missing one is filled.
 pub fn jit(index: usize, mode: &str, measured: &[(String, f64, &[(String, f64)])], c: &BTreeMap<String, f64>, budgets: &BTreeMap<String, f64>, floors: &mut BTreeMap<String, Floor>, every_op: bool) -> (String, Vec<String>) {

@@ -322,7 +322,7 @@ pub(super) fn pairwise_add(value: u128, width: u32, sign: Signedness) -> WasmVal
 }
 /// `i32x4.dot_i16x8_s`: each i32 lane the wrapping sum of its signed i16 pairs' products,
 /// computed in i32 as the operator is defined, so the kernel stays a few instructions where
-/// the operator's row inlines it.
+/// the vector region inlines it.
 #[inline(always)]
 pub(super) fn dot(left: u128, right: u128) -> WasmValue {
     // x86-64 always has SSE2, whose `pmaddwd` is exactly this operation: each i32 lane the

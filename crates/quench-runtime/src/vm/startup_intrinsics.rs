@@ -185,12 +185,12 @@ impl Vm {
 
     /// `holder`'s current shape and slot values.
     fn sealed_holder(&self, holder: Value) -> Option<SealedHolder> {
-        let object = self.heap.object(holder)?;
+        let object = self.object_data(holder)?;
         let shape = object.shape();
         let values = (0..self.shapes[shape as usize].storage_len())
             .map(|slot| {
                 self.heap
-                    .property_get_ref(object, slot)
+                    .property_get(object, slot)
                     .unwrap_or(Value::UNDEFINED)
             })
             .collect();
@@ -200,11 +200,11 @@ impl Vm {
     /// Whether sealed holder `index` is still in its sealed shape with its sealed values.
     fn holder_unchanged(&self, index: usize) -> bool {
         let sealed = &self.startup_intrinsics.holders[index];
-        self.heap.object(sealed.holder).is_some_and(|object| {
+        self.object_data(sealed.holder).is_some_and(|object| {
             object.shape() == sealed.shape
                 && sealed.values.iter().enumerate().all(|(slot, value)| {
                     self.heap
-                        .property_get_ref(object, slot)
+                        .property_get(object, slot)
                         .unwrap_or(Value::UNDEFINED)
                         == *value
                 })
@@ -305,7 +305,7 @@ impl Vm {
     }
 
     fn own_shape_keys(&self, holder: Value) -> Vec<PropertyKey> {
-        self.heap.object(holder)
+        self.object_data(holder)
             .map(|object| self.shape_keys(object.shape()))
             .unwrap_or_default()
     }
@@ -313,7 +313,7 @@ impl Vm {
     /// `holder`'s own shape-held property `key`, read without allocating.
     fn slot_property(&self, holder: Value, key: PropertyKey) -> Option<SlotProperty> {
         let (_, slot) = self.object_property_slot(holder, key)?;
-        let object = self.heap.object(holder)?;
+        let object = self.object_data(holder)?;
         let attributes = self.slot_attributes(object, slot)?;
         let value = self.slot_data_value(object, slot).unwrap_or(Value::UNDEFINED);
         Some(SlotProperty { value, attributes })
@@ -335,9 +335,9 @@ impl Vm {
                 attributes.configurable = true;
                 self.set_property_attributes(holder, key, attributes);
             }
-        let extensible = self.heap.object(holder).is_some_and(|object| object.is_extensible());
+        let extensible = self.object_data(holder).is_some_and(Object::is_extensible);
         if !extensible {
-            self.heap.object_mut(holder)
+            self.object_data_mut(holder)
                 .expect("sealed intrinsic holder")
                 .set_extensible(true);
         }
@@ -347,7 +347,7 @@ impl Vm {
             vm.define_own_property_record(p, holder, key, record)
         });
         if !extensible {
-            self.heap.object_mut(holder)
+            self.object_data_mut(holder)
                 .expect("sealed intrinsic holder")
                 .set_extensible(false);
         }

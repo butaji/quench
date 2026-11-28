@@ -14,6 +14,8 @@ pub(crate) trait AtomPrefix {
     fn find(&self, name: &str) -> Option<Atom>;
     /// The prefix's names, which the compiled program reads until its host adopts it.
     fn table(&self) -> AtomTable;
+    /// Whether the host runs specialized programs, which a program extending it follows.
+    fn specialized(&self) -> bool;
     /// Optional producer-owned obligations; ordinary execution prefixes retain none.
     fn native_source_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
     fn native_global_script_calls(&self) -> &[(String, String)] { &[] }
@@ -38,6 +40,10 @@ impl AtomPrefix for NoAtomPrefix {
 
     fn table(&self) -> AtomTable {
         AtomTable::default()
+    }
+
+    fn specialized(&self) -> bool {
+        false
     }
 }
 

@@ -4,9 +4,9 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{Edges, EmitFrame, FRAME};
-use super::tag_proofs::{decides_flat_strings, state_flat};
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
-    register_offset, Emit, JsStepDispatch, LaneHelper, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
+    register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
+use crate::compiled::object_slots::inline_storage;
 use quench_runtime::vm::global_facts::GlobalSlot;
 use super::{RegisterFact, Representation, Type};
 use quench_runtime::bytecode::Register;
@@ -15,7 +15,6 @@ use quench_runtime::staged::store::bound_full_store;
 use quench_runtime::Value;
 use cranelift_codegen::ir;
 use quench_runtime::staged::{flow::FlowStage, Stage};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.
@@ -93,14 +92,8 @@ pub(crate) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {
     let answer = decide_answer(frame, stage, operands, operator);
-    // A strict equality decides every pair (`comparison_decision`: its `strict_equal` is never absent), so its answer is never
-    // `DELETED` and no leave is made. Two flat strings under an operator the helper answers for strings (`decides_flat_strings`) are a Boolean too.
-    let strict = matches!(quench_runtime::vm::operations::equality_operator(operator), Some((true, _)));
-    let flat_pair = decides_flat_strings(operator) && operands.iter().all(|&register| state_flat(&*frame.state, register));
-    if !strict && !flat_pair {
-        let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
-        emit_js_guard(stage.builder, decided, miss);
-    }
+    let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
+    emit_js_guard(stage.builder, decided, miss);
     (answer, RegisterFact::definition(Type::language(quench_runtime::ValueType::Boolean), Representation::Tagged))
 }
 
@@ -151,20 +144,27 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
     (stage.constant(0), RegisterFact::canonical())
 }
 
-/// The address of the global's slot `cell` names: the global object's class cell at its granule (`cell_at_granule`),
-/// and the field the slot word addresses in it (`class_slot_address`, inline or spilled). The layout, realm and slot
-/// type are the dependencies the lowering took, so nothing here tests the cell.
-fn global_slot_address(stage: &mut Emit<'_, '_>, cell: GlobalSlot) -> ir::Value {
-    let granule = stage.constant(u64::from(cell.granule));
-    let class_cell = quench_runtime::staged::object::cell_at_granule(stage, granule);
-    let slot = stage.constant(u64::from(cell.slot));
-    quench_runtime::staged::entry::class_slot_address(stage, class_cell, slot)
+/// The projection of the global object's arena run behind its extras, and the object's tagged
+/// word: its record by id, the realm and the layout proved by dependencies the lowering took.
+/// The block's proof of it, where an earlier access made one (`LocalProofs::global`), is reused.
+fn global_layout(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
+    -> Option<(CheckedObject, ir::Value)> {
+    let bits = stage.constant(cell.global.to_bits());
+    if let Some((kept, len)) = frame.state.proofs.global && kept.fact() == fact && len == cell.storage_len { return Some((kept, bits)); }
+    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
+    let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
+    let inline = inline_storage(stage.builder, address);
+    let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
+    let layout = CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?;
+    frame.state.proofs.global = Some((layout, cell.storage_len));
+    Some((layout, bits))
 }
 
 /// The tagged word of the global's slot `held` names, read live under the layout the lowering holds.
-pub(crate) fn global_slot_read(_frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), _miss: ir::Block)
+pub(crate) fn global_slot_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
     -> Option<ir::Value> {
-    let address = global_slot_address(stage, held.0);
+    let (layout, _) = global_layout(frame, stage, held, miss)?;
+    let address = layout.arena_address(stage.builder, held.0.slot, miss)?;
     Some(stage.load_u64(quench_runtime::staged::Region::ObjectSlots.mutable(), address, 0))
 }
 
@@ -179,11 +179,11 @@ pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let ty = frame.state.values[usize::from(source)].value.ty;
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
     if !ty.is_subtype(cell.ty) { return None; }
-    let address = global_slot_address(stage, cell);
+    let (layout, bits) = global_layout(frame, stage, held, miss)?;
+    let address = layout.arena_address(stage.builder, cell.slot, miss)?;
     #[cfg(test)]
     quench_runtime::vm::call_out::counts::bump(&quench_runtime::vm::call_out::counts::DIRECT_GLOBAL_STORES);
-    // The record of the store gate is the global's class cell granule (`StagedRecordSpace::Class`).
-    let record = stage.constant(u64::from(cell.granule));
+    let record = stage.and_imm(bits, u64::from(u32::MAX));
     // A Number is immediate, so the row stores it with no gate and cannot leave.
     if ty.is_subtype(Type::NUMBER) {
         return bound_full_store(stage, record, address, (value, ty), miss);
@@ -197,5 +197,7 @@ pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     site_step(frame, stage, frame.call_out?, false, None)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(done);
+    // The VM's store may have moved the property arena.
+    frame.state.proofs.global = None;
     Some(())
 }

@@ -51,13 +51,17 @@ fn run(compiled: bool, ty: quench_runtime::WasmType, initial: quench_runtime::Wa
     .unwrap();
     let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     if compiled {
+        vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     }
     let instance = vm.instantiate_wasm_module(&module).unwrap();
-    let program = vm.programs.find_shared(&module.program).expect("registered Wasm program");
     let result = vm.invoke_wasm(&instance, 0, &[]).unwrap().expect("a result");
     if compiled {
-        let artifact = vm.programs.wasm_tier(program, 0).expect("compiled Wasm root");
+        let artifact = vm
+            .programs
+            .find_shared(&module.program)
+            .and_then(|program| vm.programs.compiled(program).flatten())
+            .expect("compiled program");
         assert_eq!(artifact.native_entries(0), Some(1));
     }
     (result, vm.wasm_global(&instance, 0).unwrap())

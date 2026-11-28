@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::getters::{lane_read_getter, GetterMemo, LaneGetterAnswer};
+use super::getters::{lane_read_getter, set_getter_hint, GetterMemo, LaneGetterAnswer};
 use quench_runtime::staged::call_getter::step_getter_answer_of;
 use quench_runtime::staged::Concrete;
 use super::proxy_traps::{get_trap_call, keyed_trap_atom, owe_invariants, set_trap_call};
@@ -42,7 +42,7 @@ impl AccessorCall {
             quench_runtime::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_getter_after_miss(object, atom, index)?,
         };
         let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Site(site) };
-        Some(step_getter_answer_of(&mut Concrete::pure(), &mut answer, getter, object))
+        Some(step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, object))
     }
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: the interpreter's getter
@@ -54,6 +54,45 @@ impl AccessorCall {
             return Err(exit(ip));
         }
         lane_read_getter(self.cx, r, ip, i, getter, base)
+    }
+
+    /// What the getter the site cached answers for `base` (`step_getter_answer_of`), made the record's
+    /// hint where the getter returns an own field of its receiver; any other getter moves the record
+    /// to `get_field_getter_miss` for good.
+    ///
+    /// # Safety
+    /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
+    pub(crate) unsafe fn hold_getter_hint(&self, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
+        let vm = unsafe { vm(self.cx) };
+        let site = vm.field_cache_index(i.c);
+        let getter = vm.cached_field_getter(base, i.imm(), site)?;
+        let mut answer = LaneGetterAnswer { cx: self.cx, memo: GetterMemo::Off };
+        let value = step_getter_answer_of(&mut Concrete::new(std::ptr::null()), &mut answer, getter, base)?;
+        let slot = self
+            .getter_field_slot(getter, base)
+            .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
+        if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
+            requicken(ip, protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
+        }
+        Some(value)
+    }
+
+    /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
+    /// by the field cache entry its record answers with.
+    fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
+        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
+        let vm = unsafe { vm(self.cx) };
+        (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
+        // SAFETY: a `CallEntry::Reads` target of the running program.
+        let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of(&target) }? else {
+            return None;
+        };
+        let entry = vm.field_cache_entry(cache);
+        let receiver = vm.heap_reads().object_record_by_id(base.direct_object_index()?);
+        (quench_runtime::bytecode::FieldBase(field_base) == quench_runtime::bytecode::FieldBase::THIS
+            && entry.holder == NO_FIELD_HOLDER
+            && entry.receiver == receiver.exact_shape())
+        .then_some(entry.slot)
     }
 
     /// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`
@@ -130,12 +169,12 @@ impl AccessorCall {
     /// the running program's does. `None` for a trap the lane does not activate.
     pub(crate) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
         if let Some(target) = script_target_in_lane(self.cx, trap) {
-            return (!target.body.forwards()).then_some((target, false));
+            return (!target.forwards()).then_some((target, false));
         }
         let vm = unsafe { vm(self.cx) };
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
-        (target.body.entry.activates() && !target.body.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
+        (target.entry.activates() && !target.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
     }
 
     /// The activation of the trap `target` (`trap_target`) called on `handler` with
@@ -229,7 +268,7 @@ impl AccessorCall {
             return None;
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;
-        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.body.forwards())?;
+        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.forwards())?;
         let this = call_this_in_lane(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };

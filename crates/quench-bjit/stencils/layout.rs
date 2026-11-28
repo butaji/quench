@@ -32,7 +32,7 @@ pub(crate) mod property_buffer;
 
 /// The flat string forms' heads and offsets (`string_form`), the runtime's `native_string` reads the same.
 #[path = "../../quench-runtime/src/staged/string_form.rs"]
-pub mod string_form;
+pub(crate) mod string_form;
 
 /// The field cache entry's stored words and their empty values.
 #[path = "../../quench-runtime/src/staged/field_cache_layout.rs"]

@@ -102,7 +102,7 @@ pub(crate) mod float_layout;
 pub(crate) mod typed_ir {
     pub(crate) use super::int_range::IntRange;
     pub(crate) use super::lattice::{Type, TypeKind, language_bit};
-    pub(crate) use super::representation::{Representation, repr};
+    pub(crate) use super::representation::Representation;
     pub(crate) use super::binding::{BindingTime, Division, Proof};
 }
 
@@ -154,7 +154,7 @@ pub(crate) mod heap {
     /// The object layout table (`heap::layouts`) at its fixed address (`LAYOUT_TABLE_BASE`).
     pub(crate) mod layouts {
         /// Distinct headers the table holds (`heap::layouts::LAYOUT_CAPACITY`).
-        pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
+        const LAYOUT_CAPACITY: usize = 1 << 22;
         /// `heap::layouts::word`: the header word of the interned layout `id`.
         #[inline(always)]
         pub(crate) fn word(id: u32) -> u64 {

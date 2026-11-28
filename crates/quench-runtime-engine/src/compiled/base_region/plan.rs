@@ -5,7 +5,6 @@ use quench_bjit::numeric::supernodes::Node;
 use quench_bjit::{padded_holes, HOLES};
 use super::super::LaneHelper;
 use super::call_plan::ChainRead;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -113,7 +112,7 @@ pub(crate) struct Planned {
     /// Set for a row that leaves the function or completes it: it jumps to its leave row.
     pub(crate) stop: Option<Stop>,
     /// The call record the row reads (`CallRecord`), which the code must not outlive.
-    pub(crate) owned: Vec<crate::compiled::OwnedCallRecord>,
+    pub(crate) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
     pub(crate) cold: bool,
     /// The holes that name a symbol the loader resolves, each with its symbol (`CallPart::symbols`).
@@ -146,6 +145,19 @@ impl Planned {
         self
     }
 
+    /// The run with `next`'s parts laid out after its own at the same PC: `next`'s own parts (`Branch::Part`) shift past them.
+    pub(crate) fn then_run(&mut self, mut next: Planned) {
+        let shift = self.pre.len() + 1 + self.post.len();
+        let (pre, post) = (std::mem::take(&mut next.pre), std::mem::take(&mut next.post));
+        self.owned.append(&mut next.owned);
+        self.post.extend(pre.into_iter().chain(std::iter::once(next)).chain(post).map(|mut part| {
+            if let Some(Branch::Part(index)) = &mut part.branch {
+                *index += shift;
+            }
+            part
+        }));
+    }
+
     pub(crate) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
         Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }
@@ -171,12 +183,14 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet | Heap::IcGetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [object, upper, key, slot, 0] }
-        // A held class read names the holder cell's granule in hole 4 (`ic_rows::class_get_row`).
-        Heap::IcHeldClass => { let (key, slot, holder) = IcEntry::words(decoded.ic); [object, upper, key, slot, holder] }
-        // A class store takes no atom: the key names the cell, and the field index follows it.
-        Heap::IcSetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [base, a_hole, key, slot, 0] }
-        Heap::IcSet { .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), shape, offset] }
+        Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        // An admitted store takes no atom test, so its shape is hole 2 (`slot_store::own_flat_known`) and the offset hole 3.
+        Heap::IcKnownSet { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
+        Heap::IcKnownGetFlat => { let ic = decoded.ic.unwrap_or_default(); [object, upper, 0, ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic >> u32::BITS, 0, 0] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
@@ -197,6 +211,10 @@ pub(crate) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         // A narrow element decodes through the upper-word table (`elements::record_element`).
         Heap::Index => return padded_holes([dst_hole, a_hole, b_hole, 0, quench_runtime::value::NarrowLayout::upper_words() as u64]),
         Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
+        Heap::Instanceof => {
+            let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
+            [dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT, b_hole | link << numeric::site_bits::HELD_LINK_AT, decoded.hole]
+        }
         _ => [dst_hole, a_hole, b_hole],
     }))
 }
@@ -240,7 +258,8 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
 /// A site read's or store's run with its inline-cache row (`Decoded::ic`) ahead of it: the row's
 /// hit, the shape it holds, continues at the next instruction; a miss, or a destination that
 /// cannot hold the word, falls to the site row behind it, which the entry tables answer, and then
-/// to the proof that the receiver is a direct object (`proof_row`).
+/// to the proof that the receiver is a direct object (`proofs`), which the receiver stays while its register
+/// holds it. A receiver every path proved takes the row that only compares its shape (`Decoded::proven`).
 fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole)]: [(Place, u64); 2], mut site: Planned) -> Result<Planned, String> {
     let Some(_) = decoded.ic.filter(|_| matches!(heap, Heap::Site | Heap::SiteStore)) else { return Ok(site) };
     let receiver = if heap == Heap::Site { a_hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
@@ -253,21 +272,25 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         }
         return Ok(site);
     }
-    // A typed object read's destination is checked a direct object on the site row's path as well:
+    // A typed object read's destination is proved a direct object on the site row's path as well (`proofs::typed_object`):
     // the fast row delivers a word the slot's dependency holds to be one, but the site row delivers any word, so the
     // proof leaves unless it is a direct object. The destination is a frame slot (`repr::keep_typed_reads`).
     let delivered = (heap == Heap::Site && decoded.typed.is_some_and(|dependency| dependency.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY))
         .then(|| proof_row(dst_hole, pc)).transpose()?;
     let int = decoded.slot.is_some_and(|ty| ty.is_subtype(quench_runtime::typed_ir::Type::INT32));
-    // A class-keyed entry takes the class rows, which test the live cell's class themselves.
-    let ic = match (heap, decoded.ic) {
-        (Heap::Site, Some(IcEntry::Class { holder: Some(_), .. })) => Heap::IcHeldClass,
-        (Heap::Site, Some(IcEntry::Class { holder: None, .. })) => Heap::IcGetClass,
-        (_, Some(IcEntry::Class { .. })) => Heap::IcSetClass,
-        (Heap::Site, _) => Heap::IcGet,
-        (_, _) => Heap::IcSet { int },
+    let ic = match (heap, decoded.proven, decoded.flat) {
+        (Heap::Site, false, _) => Heap::IcGet,
+        (Heap::Site, true, false) => Heap::IcKnownGet,
+        (Heap::Site, true, true) => Heap::IcKnownGetFlat,
+        (_, false, _) => Heap::IcSet { int },
+        (_, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+        (_, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
     };
-    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
+    // A known get whose slot the fact store proved a Number (`Decoded::typed`, kept by `repr::keep_typed_reads`)
+    // takes the row variant that delivers to its pinned double untested: its entry flag cleared. An object slot
+    // has no such variant: its destination is a direct object by the dependency alone (`proofs::typed_object`).
+    let untested = ic == Heap::IcKnownGet && decoded.typed.is_some_and(|dependency| dependency.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER)) && matches!(dst, Place::PinF(_));
+    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: !untested };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
     let mut fast = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
     fast.exits = vec![Exit::Ahead(1)];
@@ -345,7 +368,7 @@ pub(crate) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 }
 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
-/// its `variant`; a backward jump takes the poll row the layout's ending names.
+/// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
 pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     planned_row(decoded, layout, pc, (general, variant), helpers)
 }
@@ -368,12 +391,8 @@ fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
         if let Some(step) = decoded.declines(a) {
             return plan_step(&Decoded::step(step, None), layout, pc, helpers);
         }
-        return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
-    }
-    // `Math.pow` is the leaf call, whatever its operands' places: a constant operand is read from its own place
-    // (`steps::leaf_operands`), so no `Math.pow` keeps the row for a constant exponent that is no `SmallPower`.
-    if decoded.kind == Kind::Pow && let Some(operands) = steps::leaf_operands(layout, decoded, helpers) {
-        return steps::leaf_plan(decoded, layout, pc, operands, helpers);
+        let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
+        return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
     }
     // A frame slot the int32 proof holds reads as the int32 its low bits hold, with no tag test (`proven_int_operands`).
     // A kind whose library holds no MemInt row for that operand keeps the tested read.
@@ -384,6 +403,13 @@ fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
         return Ok(planned);
     }
     number_plan(decoded, layout, pc, (general, variant, helpers), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
+}
+
+/// The run's stores test before a store the proofs re-admit (`Decoded::recheck`), a mid-body guard: a miss leaves at the
+/// store's PC with nothing written, as a failed store guard does (`Exit::Spilling`), and a hit falls into the store.
+fn stores_guard(pc: u32) -> Result<Planned, String> {
+    let row = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    Ok(Planned::single(base_rows::stencil(row)?, padded_holes([0, 0, 0]), None, Some(pc)))
 }
 
 /// The plan of a number row: a jump that polls the interrupt on a backward edge, or the chosen arithmetic row.

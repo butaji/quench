@@ -511,17 +511,6 @@ pub(crate) struct Program {
     classes: Box<[StringClass]>,
     capture_count: usize,
     register_count: usize,
-    /// The pattern's facts about where matches start and how a search finds them, derived
-    /// once in `Program::compile` and read by every search, interpreted or native.
-    facts: RowFacts,
-    /// The program's native search once it is hot (`native::NativeSlot`).
-    native: NativeSlot,
-}
-
-/// The facts of a program's rows that the pattern fixes at compile time (its edges): where a
-/// match can start, what finds the start, and the shortcut runs a pattern of one shape takes.
-/// Built once from the instructions and the pattern; no search derives any of them.
-struct RowFacts {
     /// Where matches can start; `None` where any position can.
     starts: Option<MatchStarts>,
     /// How an ASCII subject's scan finds the next of `starts`' units; derived from them once
@@ -556,6 +545,8 @@ struct RowFacts {
     class_run: Option<Box<ClassRun>>,
     /// The whole-subject test a pattern of one unit repeat between anchors is (`anchored_run_of`).
     anchored_run: Option<AnchoredRun>,
+    /// The program's native search once it is hot (`native::NativeSlot`).
+    native: NativeSlot,
     /// The test of the atomic repeat a run begins with, where a failed run from a start fails
     /// from every start up to the end of the units it passes (`possessive::restart_skip`).
     restart_skip: Option<UnitTest>,
@@ -1328,28 +1319,16 @@ impl Program {
                 && *length > 0
                 && compiler.instructions[..prefix.len()].iter().all(|instruction| matches!(instruction, Inst::Unit(_)))
         });
-        // `class_run` reads the instructions before `possessive::mark` rewrites the repeats it
-        // scans; the rest read them after.
         let class_run = class_run_of(&compiler.instructions, &compiler.sets, capture_count);
         possessive::mark(&mut compiler.instructions, &compiler.sets);
         let restart_skip = possessive::restart_skip(&compiler.instructions, anchored || !prefix.is_empty());
         let inner_literal = possessive::run_then_literal(&compiler.instructions, &compiler.sets, anchored || !prefix.is_empty());
-        let facts = RowFacts {
-            scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
-            starts: starts.map(MatchStarts::from),
-            prefix: Prefix::of(&prefix),
-            lookahead: if prefix.is_empty() { Lookahead::of(expr, flags) } else { None },
-            entry,
-            anchored,
-            anchored_first: anchored.then(|| anchored_first_units(expr, flags)).flatten().map(|units| Box::new(MatchSet::from(units))),
-            literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
+        Some(Self {
             class_run,
-            anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             restart_skip,
             inner_literal,
-        };
-        Some(Self {
             sets: scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions),
+            anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
@@ -1358,19 +1337,27 @@ impl Program {
             classes: compiler.classes.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
-            facts,
+            anchored,
+            anchored_first: anchored.then(|| anchored_first_units(expr, flags)).flatten().map(|units| Box::new(MatchSet::from(units))),
+            scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
+            starts: starts.map(MatchStarts::from),
+            literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
+            lookahead: if prefix.is_empty() { Lookahead::of(expr, flags) } else { None },
+            prefix: Prefix::of(&prefix),
+            entry,
         })
     }
 
+    /// Whether a match can only start at the subject's start (`Starts::only_at_start`), so a
+    /// search tries that one position and scans for nothing.
     /// Whether a search from `start` finds no match because of the anchor alone: an
     /// anchored pattern begins only at the subject's start, and only with one of its
     /// `anchored_first` units (`first`, the subject's unit there, `None` past its end), as
     /// `find` rejects before a run.
     pub(crate) fn anchor_excludes(&self, start: usize, first: Option<u32>) -> bool {
-        self.facts.anchored
+        self.anchored
             && (start != 0
                 || self
-                    .facts
                     .anchored_first
                     .as_ref()
                     .is_some_and(|units| first.is_none_or(|first| !units.contains(first))))
@@ -1381,7 +1368,7 @@ impl Program {
     /// that unit nor an edge there, as `next_start` finds for a one-position search. Only an
     /// ASCII unit is decided, as it is one whole code point whichever units the program reads.
     pub(crate) fn start_excludes(&self, start: usize, length: usize, first: Option<u32>) -> bool {
-        let Some(starts) = &self.facts.starts else {
+        let Some(starts) = &self.starts else {
             return false;
         };
         if starts.at_start && start == 0 {
@@ -1395,13 +1382,13 @@ impl Program {
     }
 
     pub(crate) fn anchored_at_start(&self) -> bool {
-        self.facts.anchored
+        self.anchored
     }
 
     /// Whether every ASCII search starts by finding `literal` as the program's prefix
     /// (`next_start`).
     pub(crate) fn searches_prefix(&self, literal: &[u8]) -> bool {
-        matches!(&self.facts.prefix, Some(Prefix::Exact(prefix)) if prefix.needle() == literal)
+        matches!(&self.prefix, Some(Prefix::Exact(prefix)) if prefix.needle() == literal)
     }
 
     #[inline(always)]
@@ -1481,7 +1468,7 @@ impl Program {
         let start = self.next_start(text, first, search.last)?;
         // An anchored search has the one start, which a first unit outside the anchored
         // pattern's first units fails before a run.
-        if let Some(units) = &self.facts.anchored_first {
+        if let Some(units) = &self.anchored_first {
             if start >= text.len() || !units.contains(text.unit(start)) {
                 return None;
             }
@@ -1498,7 +1485,7 @@ impl Program {
         sticky: bool,
         captures: impl FnOnce(&[usize], &mut Vec<Option<Range<usize>>>) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
-        if let (Some(length), Some(_)) = (self.facts.literal_length, text.bytes()) {
+        if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };
             return self.next_start(text, first, last).map(|start| Found {
                 start,
@@ -1517,7 +1504,7 @@ impl Program {
     /// past the prefix the scan of an ASCII subject has matched there (`entry`).
     #[inline(always)]
     fn entry<T: Text + ?Sized>(&self, text: &T, start: usize) -> (u32, usize) {
-        match (self.facts.entry, text.bytes()) {
+        match (self.entry, text.bytes()) {
             (Some(pc), Some(_)) => (pc, start + pc as usize),
             _ => (0, start),
         }
@@ -1545,7 +1532,7 @@ impl Program {
     /// tokenizer tries each token pattern at the same position, and most refuse it).
     #[inline(always)]
     pub(crate) fn refuses_start(&self, bytes: &[u8], at: usize) -> bool {
-        match &self.facts.starts {
+        match &self.starts {
             Some(starts) if !starts.at_start && !starts.at_end => bytes.get(at).is_none_or(|unit| !starts.units.table.contains(*unit)),
             _ => false,
         }
@@ -1555,7 +1542,7 @@ impl Program {
     /// next one, or past the units the run's leading atomic repeat took (`restart_skip`).
     #[inline(always)]
     fn next_candidate<T: Text + ?Sized>(&self, text: &T, failed: usize) -> usize {
-        match self.facts.restart_skip {
+        match self.restart_skip {
             Some(test) => self.run_end(test, text, failed, text.len()) + 1,
             None => failed + 1,
         }
@@ -1567,16 +1554,16 @@ impl Program {
             return None;
         }
         // An anchored pattern starts at the subject's start or nowhere, whatever its prefix.
-        if self.facts.anchored {
+        if self.anchored {
             return (from == 0).then_some(0);
         }
-        if let (Some(prefix), Some(bytes)) = (&self.facts.prefix, text.bytes()) {
+        if let (Some(prefix), Some(bytes)) = (&self.prefix, text.bytes()) {
             return prefix.find(bytes, from, last);
         }
-        if let (Some((run, literal)), Some(bytes)) = (self.facts.inner_literal, text.bytes()) {
+        if let (Some((run, literal)), Some(bytes)) = (self.inner_literal, text.bytes()) {
             return self.inner_literal_start(bytes, (run, literal), from, last);
         }
-        if let (Some(lookahead), Some(bytes)) = (&self.facts.lookahead, text.bytes()) {
+        if let (Some(lookahead), Some(bytes)) = (&self.lookahead, text.bytes()) {
             // Each start the scan finds must also hold the units the match's next units can be.
             let mut from = from;
             for _ in 0..LOOKAHEAD_SCAN_MISSES {
@@ -1593,7 +1580,7 @@ impl Program {
             // one bit-parallel pass over the rest tests every position at once.
             return lookahead.find(bytes, from, last);
         }
-        match &self.facts.starts {
+        match &self.starts {
             None => Some(from),
             Some(starts) if let Some(bytes) = text.bytes() => self.next_scanned_start(bytes, from, last),
             Some(starts) => (from..=last).find(|position| starts.admits(text, *position)),
@@ -1603,7 +1590,7 @@ impl Program {
     /// `next_start` in an ASCII subject's `bytes`, from the scan for `starts`' units.
     #[inline(always)]
     fn next_scanned_start(&self, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
-        match &self.facts.starts {
+        match &self.starts {
             None => Some(from),
             Some(starts) => {
                 // A start right here, as in a run of matches, needs no scan; a start at the
@@ -1617,7 +1604,7 @@ impl Program {
                         (starts.at_start && from == 0) || (starts.at_end && from == bytes.len());
                     return edge.then_some(from);
                 }
-                Self::scan_start_bytes(starts, self.facts.scan, bytes, from, last)
+                Self::scan_start_bytes(starts, self.scan, bytes, from, last)
             }
         }
     }

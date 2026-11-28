@@ -4,6 +4,7 @@
 use super::*;
 use crate::code_dependencies::PublishedCode;
 use crate::vm::engine_types::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
+use crate::vm::tier_events::Event;
 
 /// Code that names callees by identity: a published body, or a body's plan whose code still
 /// compiles (`PendingLaneMethod`), whose `watch` the poll reads. Both hold their callees
@@ -31,10 +32,11 @@ impl NativeCallBinding {
     /// Whether the code still stands after a collection that kept the callees `live` names. Function
     /// bindings depend on the owned program definition, not a particular closure locator; realm/reset
     /// retirement still uses this inventory for every binding kind.
+    /// A rebound site's closure may be gone and its locator reused: it is unbound first (`BoundClosure::unbind_dead`).
     fn stands(&self, live: &impl Fn(Value) -> bool) -> bool {
         match self {
-            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::engine_calls::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
-            Self::Region(region) => stands(region.upgrade(), |region| region.calls.names_dead(live)),
+            Self::Published(method) => stands(method.upgrade(), |method| { method.direct.iter().for_each(|direct| direct.bound.unbind_dead(live)); crate::vm::engine_calls::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor)) }),
+            Self::Region(region) => stands(region.upgrade(), |region| { region.calls.direct.iter().for_each(|direct| direct.bound.unbind_dead(live)); region.calls.names_dead(live) }),
             Self::Pending { watch, callees } => stands(watch.upgrade().filter(|watch| watch.is_published()), |_| callees.iter().any(|callee| !live(*callee))),
         }
     }
@@ -67,6 +69,32 @@ impl ProgramStore {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
     }
 
+    /// Counts a compile of `key`'s function from the entry it starts at (the function's own, or
+    /// one loop's: each has its own count); whether the bound `max` on them allows it.
+    pub fn admit_lane_compile(&self, key: &LaneKey, max: u8) -> bool {
+        let mut compiles = self.lane_compiles.borrow_mut();
+        let count = compiles.entry((key.0, key.1, key.2)).or_insert(0);
+        let admitted = *count < max;
+        *count = count.saturating_add(u8::from(admitted));
+        admitted
+    }
+
+    /// Whether a compile of `site`'s function from its entry is still within `max`
+    /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
+    pub fn compiles_left_in_lane(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
+        self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
+    }
+
+    /// The IR size of `site`'s last lane plan, if one was made.
+    pub fn planned_lane_ir(&self, site: &(u32, u32, Option<u32>)) -> Option<usize> {
+        self.lane_plan_ir.borrow().get(site).copied()
+    }
+
+    /// Records that `site`'s lane plan made `ir` IR instructions.
+    pub fn note_planned_lane_ir(&self, site: (u32, u32, Option<u32>), ir: usize) {
+        self.lane_plan_ir.borrow_mut().insert(site, ir);
+    }
+
     /// Records `published` as the body of `key`.
     pub fn note_installed_lane(&self, key: LaneKey, published: &Rc<PublishedLaneMethod>) {
         self.lane_installed.borrow_mut().insert(key, Rc::downgrade(published));
@@ -91,6 +119,8 @@ impl ProgramStore {
             return None;
         }
         if calls { self.native_call_bindings.borrow_mut().push(NativeCallBinding::Published(Rc::downgrade(&published))); }
+        self.tier_events.record(Event::Published);
+        self.tier_events.add(Event::Inlined, method.inlined.len());
         Some(published)
     }
 

@@ -4,11 +4,7 @@
 //! remembered, and pacing planned from the live count.
 
 use super::*;
-use super::class_space::{ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace};
-use super::extras_space::ExtrasSpace;
-use super::cell::{ObjectExtras, read_extras, write_extras};
 use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
-use crate::value::Value;
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
@@ -26,10 +22,7 @@ impl Heap {
                 }
             }
         }
-        // The class cells (regions 1..) follow, each with its header and fields, so a Value naming one restores unchanged.
-        writer.u64s(&super::layouts::snapshot_words());
-        write_class_cells(writer, &self.class_space)?;
-        write_extras_space(writer, &self.extras)?;
+        write_records(writer, &self.object_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.array_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.function_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.promise_records, |writer, record| record.write_snapshot(writer))?;
@@ -49,7 +42,7 @@ impl Heap {
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         // Every small string was written out above: each is kept as its text.
         write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
-        self.properties.write_snapshot(writer);
+        self.properties.write_snapshot(writer, self.tracked_runs());
         self.roots.write_snapshot(writer);
         self.write_sparse_arrays(writer);
         Ok(())
@@ -106,11 +99,7 @@ impl Heap {
                 heap.free_slots += 1;
             }
         }
-        if !super::layouts::restore_words(&reader.u64_iter()?.collect::<Vec<u64>>()) {
-            return Err(SnapshotError("snapshot class ids taken by this process".into()));
-        }
-        read_class_cells(reader, &mut heap)?;
-        read_extras_space(reader, &mut heap)?;
+        read_records(reader, &mut heap.object_records, Object::read_snapshot)?;
         read_records(reader, &mut heap.array_records, ArrayObject::read_snapshot)?;
         read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
@@ -140,6 +129,9 @@ impl Heap {
     /// prototype proofs only when a prototype dies, instead of at every collection.
     fn register_restored_prototypes(&mut self) {
         let mut prototypes = Vec::new();
+        self.object_records.for_each_live(|id, object| {
+            if object.was_used_as_prototype() { prototypes.push(Value::direct_object(id)); }
+        });
         self.array_records.for_each_live(|id, array| {
             if array.was_used_as_prototype() { prototypes.push(Value::direct_array(id)); }
         });
@@ -155,14 +147,6 @@ impl Heap {
         self.collection_records.for_each_live(|id, collection| {
             if collection.object.was_used_as_prototype() { prototypes.push(Value::direct_collection(id)); }
         });
-        // Every ordinary object is a class cell, so the cell prototypes are the live cells whose extras carry the mark.
-        let mut granules = Vec::new();
-        self.class_space.for_each_live_granule(|granule| granules.push(granule));
-        for granule in granules {
-            if self.live_cell(granule).was_used_as_prototype() {
-                prototypes.push(Value::direct_object(granule));
-            }
-        }
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.cell.as_ref().and_then(Cell::object).is_some_and(Object::was_used_as_prototype) {
                 prototypes.push(Value::heap(index as u32));
@@ -188,6 +172,7 @@ impl Heap {
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live
+            + self.object_records.live_count()
             + self.array_records.live_count()
             + self.function_records.live_count()
             + self.promise_records.live_count()
@@ -215,84 +200,6 @@ impl Heap {
     pub(crate) fn restored_root(&self, slot: u32, generation: u32) -> Option<RootId> {
         self.roots.restored_root(slot, generation)
     }
-}
-
-/// Writes the class cells of regions `1..` (`read_class_cells`), each record with its granule's local id.
-fn write_class_cells(writer: &mut Writer, space: &ClassSpace) -> SnapshotResult<()> {
-    // The spill arena first: a spilled cell's spill word names its run by offset in it.
-    let (words, free) = space.spill.snapshot_parts();
-    writer.values(words);
-    writer.len(free.len());
-    for list in free {
-        writer.u32s(list);
-    }
-    let regions = &space.regions;
-    write_records(writer, &regions.1, |writer, cell: &ClassCell1| Ok(write_cell(writer, cell.header, &cell.fields)))?;
-    write_records(writer, &regions.2, |writer, cell: &ClassCell2| Ok(write_cell(writer, cell.header, &cell.fields)))?;
-    write_records(writer, &regions.3, |writer, cell: &ClassCell3| Ok(write_cell(writer, cell.header, &cell.fields)))?;
-    write_records(writer, &regions.4, |writer, cell: &ClassCell4| Ok(write_cell(writer, cell.header, &cell.fields)))?;
-    write_records(writer, &regions.5, |writer, cell: &ClassCell5| Ok(write_cell(writer, cell.header, &cell.fields)))
-}
-
-/// Writes the cell extras (`read_extras_space`): the entries, each as `write_extras` writes one, then the free ids.
-fn write_extras_space(writer: &mut Writer, space: &ExtrasSpace) -> SnapshotResult<()> {
-    let (entries, free) = space.snapshot_parts();
-    writer.len(entries.len());
-    for extras in entries {
-        write_extras(writer, extras)?;
-    }
-    writer.u32s(free);
-    Ok(())
-}
-
-/// Reads the cell extras `write_extras_space` wrote, entry 0 (`NO_EXTRAS`) first, so the cells' ids name them again.
-fn read_extras_space(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
-    let count = reader.len()?;
-    let entries = (0..count).map(|_| read_extras(reader)).collect::<SnapshotResult<Vec<ObjectExtras>>>()?;
-    let free = reader.u32s()?;
-    heap.extras = ExtrasSpace::from_snapshot(entries, free);
-    Ok(())
-}
-
-/// A class cell's header, then each of its fields, as the snapshot keeps them.
-fn write_cell(writer: &mut Writer, header: u64, fields: &[Value]) {
-    writer.u64(header);
-    for &field in fields {
-        writer.value(field);
-    }
-}
-
-/// Reads one cell region's records (`read_records`): each cell's header, then its `$fields` fields.
-macro_rules! read_cell_region {
-    ($reader:expr, $region:expr, $cell:ident, $fields:literal) => {
-        read_records($reader, &mut $region, |reader| {
-            let header = reader.u64()?;
-            let mut fields = [Value::DELETED; $fields];
-            for field in fields.iter_mut() {
-                *field = reader.value()?;
-            }
-            Ok($cell { header, fields })
-        })?
-    };
-}
-
-/// Reads the class cells `write_class_cells` wrote, into regions `1..` at their granules. The space is reserved
-/// first, since a cell lives in it.
-fn read_class_cells(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
-    if !heap.class_space.ensure_reserved() {
-        return Err(SnapshotError("snapshot class cells without a class space".into()));
-    }
-    let words = reader.values()?;
-    let lists = reader.len()?;
-    let free = (0..lists).map(|_| reader.u32s()).collect::<SnapshotResult<Vec<Vec<u32>>>>()?;
-    heap.class_space.spill = super::spill::SpillSpace::from_snapshot(words, free);
-    let regions = &mut heap.class_space.regions;
-    read_cell_region!(reader, regions.1, ClassCell1, 1);
-    read_cell_region!(reader, regions.2, ClassCell2, 3);
-    read_cell_region!(reader, regions.3, ClassCell3, 7);
-    read_cell_region!(reader, regions.4, ClassCell4, 15);
-    read_cell_region!(reader, regions.5, ClassCell5, 31);
-    Ok(())
 }
 
 fn write_records<T, const CAPACITY: usize, const HOLE: usize>(
@@ -354,7 +261,7 @@ mod tests {
         assert_eq!(registered.len(), 2);
         assert!(registered.contains(&prototype) && registered.contains(&record_prototype) && !registered.contains(&plain));
         for value in [prototype, record_prototype] {
-            assert!(restored.object(value).and_then(|object| object.watched_subject()).is_some());
+            assert!(restored.object(value).and_then(Object::watched_subject).is_some());
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");

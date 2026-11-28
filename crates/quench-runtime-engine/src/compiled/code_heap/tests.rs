@@ -1,7 +1,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{Block, Chunk, CodeHeap, CodeMemory, Views, CHUNK_BYTES, CODE_GRANULE, REGION_CHUNKS};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 fn chunk(heap: &CodeHeap, block: Block) -> Chunk {
     heap.regions[block.region as usize].chunks[block.chunk()]

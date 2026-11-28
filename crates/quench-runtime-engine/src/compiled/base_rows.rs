@@ -11,6 +11,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
+use quench_runtime::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
 
@@ -19,7 +20,6 @@ use quench_bjit::Stencil;
 /// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
 use quench_bjit::catalog;
 use quench_bjit::numeric::row_names;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
 /// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.
@@ -76,7 +76,7 @@ pub(crate) enum Heap {
     Store,
     /// `Index` and `Store` of a typed array of the planned `TypedArrayKind` (its discriminant) the loop's entry viewed:
     /// the array's entry words are at the record offset in hole 1 (a read) or hole 0 (a store). The entry proved the
-    /// kind, so the row, one per kind, tests none.
+    /// kind (`LoopTier::select`), so the row, one per kind, tests none.
     TypedIndex(u8),
     TypedStore(u8),
     /// A typed array's `length`: the count its entry words hold (offset in hole 1), an int32.
@@ -101,6 +101,12 @@ pub(crate) enum Heap {
     CharCodeAt,
     /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
     ParseInt,
+    /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
+    /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
+    /// direct reference of the new record. Planned as the fast arm of the instruction's helper step
+    /// (`base_region::steps::allocation_arm`); its exit 0 is that helper step.
+    EmptyObject,
+    EmptyArray,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
@@ -114,19 +120,20 @@ pub(crate) enum Heap {
     /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
     /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
     IcSet { int: bool },
-    /// `IcGet` of a class-keyed entry (`ic_rows::class_get_row`): the field at hole 3 (a field index) of the live class cell
-    /// the receiver (hole 0's upper half) is, whose class key hole 2 holds; a miss leaves as `IcGet`'s.
-    IcGetClass,
-    /// `IcGetClass` of a held field: the holder cell's granule at hole 4 names the cell the field is read from.
-    IcHeldClass,
-    /// The store of a Number (hole 1) into the field at hole 3 of the live class cell the object register (hole 0) is, whose
-    /// class key is hole 2 (`ic_rows::class_set_value`), where the class space's store gate admits it.
-    IcSetClass,
-    /// The class-keyed add (`add::class_add`): hole 0 holds the before-key (low) and after-class (high), hole 2 the slot and the
-    /// object register's frame offset; the value is hole 1. A hit continues at TAKEN.
-    AddClass,
+    /// `IcGet` and `IcSet` of a receiver every path proved a direct object (`base_region::proofs`): one compare
+    /// of its auxiliary word with the entry's shape proves the shape and flat plain values (holes as theirs).
+    IcKnownGet,
+    /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
+    /// (`base_region::proofs`), so the row tests nothing of its own.
+    IcKnownSet { int: bool, admitted: bool },
+    /// `IcKnownGet` of a receiver whose entry proved its shape and flat form (`ShapeFlat`, `base_region::proofs`): the
+    /// arena slot at hole 3 (its byte offset), no compare; hole 2 is zero and unread.
+    IcKnownGetFlat,
+    /// `IcKnownSet` of a receiver whose entry proved its shape and flat form: the flat slot's byte offset follows the
+    /// atom (hole 3) where not `admitted`, else is hole 2; no shape is compared (holes as the stencil reads them).
+    IcKnownSetFlat { int: bool, admitted: bool },
     /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
-    /// runs after its site row (`plan::ic_plan`).
+    /// runs after its site row, so the receiver is proved one on every edge out of the access.
     IcProof,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
@@ -166,9 +173,18 @@ pub(crate) enum Heap {
     /// depth-0 capture at the slot of hole 0 (its byte offset in hole 1) holds the word of hole 2, else the entry leaves
     /// with nothing written.
     CaptureIdentity,
-    /// The entry test of a live class cell (`base_region::link::entry_rows`): the register at hole 0 holds a direct object
-    /// whose live class cell's class is the one in hole 1 (`guard::class`), else the entry leaves with nothing written.
-    Class,
+    /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
+    /// leaves with nothing written.
+    Prototype,
+    /// The entry test of a loop-invariant receiver (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object of the exact shape in hole 1 (`guard::shape`), else the entry leaves with nothing written.
+    Shape,
+    /// `Shape` whose object is also in the flat form (`guard::shape` at `Form::Arena`): its values are the arena run's.
+    ShapeFlat,
+    /// The entry test that the run stores specialized (`base_region::link::entry_rows`, `guard::stores`): else the entry
+    /// leaves with nothing written.
+    Stores,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
@@ -197,6 +213,11 @@ pub(crate) enum Heap {
     /// holds a value whose tag decides its index, the entry of the table of result strings at hole 2 written to
     /// the register at hole 0, else the row leaves into the helper step after it.
     TypeofString,
+    /// The fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
+    /// register at hole 0's upper half is walked along its prototype chain for the `prototype` link the code holds (hole 1's
+    /// upper half, beside the constructor register's offset), where the constructor register holds exactly the identity of
+    /// hole 2, a boolean written to the register at hole 0's lower half, else the row leaves into the helper step after it.
+    Instanceof,
     /// The fast arm of `Unary`'s `typeof` test: whether (or, where `negated`, whether not) that index is
     /// `index` (hole 2), as a boolean.
     TypeofIs { index: u8, negated: bool },
@@ -222,15 +243,30 @@ pub(crate) enum Heap {
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
     Append,
+    /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
+    /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
+    /// activation's receiver, by the transition holes 0 and 2 carry (`numeric::site_bits::ADD_AFTER_AT`,
+    /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
+    /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
+    /// into the helper step after the row, or the leave a guarded row makes.
+    Add { form: Form, this: bool },
     /// The fast arm of `ForInNext` (`staged::iteration::for_in_next`): the for-in state in the frame slot of
     /// hole 1 yields its next key to the slot of hole 0 where its memo proves the snapshot current, else the row
     /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
     ForIn,
+    /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
+    /// whose offset hole 2 carries (`numeric::site_bits::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
+    /// hole 2 names, moving between the shapes of hole 0 (`numeric::site_bits::ADD_AFTER_AT`), where it holds the empty
+    /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
+    Name { form: Form },
     /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the
     /// register operands the planner names (`steps::fast_arm`), its destination a frame slot, which a miss leaves for the
     /// helper step after the row. A hit continues at TAKEN.
     Staged(u8),
 }
+
+/// The storage forms an add row exists for, in the order of the catalog's add rows (packed, arena, either).
+pub(crate) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -259,21 +295,28 @@ impl Heap {
         matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
     }
 
+    /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
+    /// fields and array views) or tables a helper may move: not the activation's `this` and local
+    /// slots, which every run reads live, and the rows that read no heap.
+    pub(crate) fn reads_snapshot(self) -> bool {
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+    }
+
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(crate) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Class | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
+    /// Whether the row's result is a tagged word whatever the registers around it hold: a value
+    /// the activation holds, not a Number the region proved.
     /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
     pub(crate) fn yields_double(self) -> bool {
         matches!(self, Heap::TypedIndex(_))
     }
 
-    /// Whether the row's result is a tagged word whatever the registers around it hold: a value
-    /// the activation holds, not a Number the region proved.
     pub(crate) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::CharCodeAt | Heap::ParseInt)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 
@@ -296,17 +339,17 @@ pub(crate) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
 /// variant over every payload its arms tell apart, so a variant whose code is not a catalog row fails here.
 #[cfg(test)]
 mod catalog_tests {
-    use super::{Heap, library};
+    use super::{FORMS, Heap, library};
 
     /// Every variant, with each payload value its arms distinguish: every typed kind, every staged code, every flag and form.
     fn every_variant() -> Vec<Heap> {
         let mut all = vec![
             Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
             Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
-            Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::IcGet, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
-            Heap::Declared, Heap::CaptureIdentity, Heap::Class, Heap::Held, Heap::ThisHeld, Heap::Realm,
-            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::GlobalRead,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
         all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
@@ -314,6 +357,16 @@ mod catalog_tests {
         for flag in [false, true] {
             all.push(Heap::IcSet { int: flag });
             all.push(Heap::TypeofIs { index: 0, negated: flag });
+            for admitted in [false, true] {
+                all.push(Heap::IcKnownSet { int: flag, admitted });
+                all.push(Heap::IcKnownSetFlat { int: flag, admitted });
+            }
+        }
+        for form in FORMS {
+            all.push(Heap::Name { form });
+            for this in [false, true] {
+                all.push(Heap::Add { form, this });
+            }
         }
         all
     }

@@ -22,9 +22,7 @@ impl Vm {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Boolean), prototype);
-        self.heap.ensure_cell_extras(prototype);
-        self.heap
-            .object_mut(prototype)
+        self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::FALSE);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;

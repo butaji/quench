@@ -1,8 +1,6 @@
 //! The cell enum: every heap cell's variant and the methods that name, count and visit them.
 
 use super::*;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
@@ -202,7 +200,7 @@ impl Cell {
         Some(match self {
             Self::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
             Self::ArrayBuffer { .. } => "ArrayBuffer",
-            Self::TypedArray { object, .. } => typed_array_kind_name(object.native.kind()),
+            Self::TypedArray { object, .. } => object.native.kind().name(),
             Self::DataView { .. } => "DataView",
             Self::WeakMap { .. } => "WeakMap",
             Self::WeakSet { .. } => "WeakSet",

@@ -1,11 +1,8 @@
 //! Memory layout and scalar access rules. Heap ownership stays in the VM.
 
-use super::{WasmTrap, WasmValue};
+use super::{WasmTrap, WasmType, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
-use crate::staged::wasm_memory::{
-    memory_load_direct_op, memory_store_direct_op, memory_store_from_direct_op,
-};
 use std::ops::Range;
 
 /// One linear memory's backing store. The memory type decides the variant:
@@ -58,7 +55,6 @@ const _: () = assert!(super::V128_BYTES <= HOST_PAGE);
 const RESERVATION_HINT: usize = 1 << 30;
 
 impl LinearBytes {
-    #[quench_macros::test_visible]
     pub(crate) fn heap(bytes: Vec<u8>) -> Self {
         Self {
             repr: LinearRepr::Heap(bytes),
@@ -95,7 +91,6 @@ impl LinearBytes {
     }
 
     /// The reservation's base and size when the memory is guarded.
-    #[quench_macros::test_visible]
     pub(crate) fn guard(&self) -> Option<(*mut u8, usize)> {
         match self.repr {
             LinearRepr::Reserved { base, .. } => Some((base, GUARDED_RESERVATION)),
@@ -211,7 +206,6 @@ impl std::ops::DerefMut for MemoryGuard<'_> {
 }
 
 impl MemoryStorage {
-    #[quench_macros::test_visible]
     pub(crate) fn new(bytes: LinearBytes, shared: bool) -> Self {
         if shared {
             Self::Shared(std::sync::Arc::new(SharedMemory::new(bytes)))
@@ -367,6 +361,10 @@ pub(crate) fn checked_range(
     Ok(start..end)
 }
 
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
 /// The page size of a Wasm memory as a shift, from the one list the b-jit codes also read.
 macro_rules! page_bits_const {
     ($bits:literal) => {
@@ -375,7 +373,101 @@ macro_rules! page_bits_const {
 }
 wasm_page_bits!(page_bits_const);
 
-pub use super::memory_ops::*;
+/// The `MemoryLoad` enum, its discriminants the list's order (`wasm_lists.rs`).
+macro_rules! define_memory_loads {
+    ($($name:ident $family:ident),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u32)]
+        pub enum MemoryLoad { $($name,)* }
+        impl MemoryLoad {
+            const ALL: &'static [Self] = &[$(Self::$name,)*];
+        }
+    };
+}
+memory_load_list!(define_memory_loads);
+
+/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
+/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
+macro_rules! loads {
+    ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
+        impl MemoryLoad {
+            pub const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
+                match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
+            }
+            #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            /// The value of a vector load of the zero-extended lane `word` (its `width` bytes, the
+            /// staged lane load), the widening, splatting or zeroing the load's own semantics.
+            #[inline(always)]
+            pub(crate) fn vector_of_word(self, word: u64) -> WasmValue {
+                match self {
+                    $(Self::$scalar)|+ => unreachable!("a scalar load has an access"),
+                    $(Self::$name => {
+                        let $value = word as $word;
+                        $result
+                    },)+
+                }
+            }
+        }
+    }
+}
+loads! { word;
+    scalar {
+        I32Load, i32; I64Load, i64; F32Load, u32; F64Load, u64;
+        I32Load8S, i8; I32Load8U, u8; I32Load16S, i16; I32Load16U, u16;
+        I64Load8S, i8; I64Load8U, u8; I64Load16S, i16; I64Load16U, u16; I64Load32S, i32; I64Load32U, u32;
+    }
+    vector {
+        V128Load, u128 => WasmValue::V128(word as u128);
+        V128Load8x8S, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load8x8U, u64 => super::simd::SimdOperator::I16x8ExtendLowI8x16U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load16x4S, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load16x4U, u64 => super::simd::SimdOperator::I32x4ExtendLowI16x8U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load32x2S, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4S.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load32x2U, u64 => super::simd::SimdOperator::I64x2ExtendLowI32x4U.apply(WasmValue::V128(u128::from(word)), None, 0);
+        V128Load8Splat, u8 => super::simd::SimdOperator::I8x16Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load16Splat, u16 => super::simd::SimdOperator::I16x8Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load32Splat, u32 => super::simd::SimdOperator::I32x4Splat.apply(WasmValue::I32(word as i32), None, 0);
+        V128Load64Splat, u64 => super::simd::SimdOperator::I64x2Splat.apply(WasmValue::I64(word as i64), None, 0);
+        V128Load32Zero, u32 => WasmValue::V128(u128::from(word));
+        V128Load64Zero, u64 => WasmValue::V128(u128::from(word));
+    }
+}
+
+impl MemoryLoad {
+    pub(crate) fn read_atomic(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
+        if !address.is_multiple_of(self.width() as u64) {
+            return Err(WasmTrap::UnalignedAtomic);
+        }
+        self.read(bytes, address)
+    }
+}
+
+/// The stores of the scalar rows run `staged::wasm_memory`'s access (`Access::of_store`); the
+/// vector store is `staged::wasm_memory_vector::store_vector`.
+macro_rules! stores {
+    (scalar { $($scalar:ident, $swidth:ty, $variant:ident;)+ } vector { $($name:ident, $word:ty;)+ }) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u32)]
+        pub enum MemoryStore { $($scalar,)+ $($name,)+ }
+        impl MemoryStore {
+            const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
+            pub const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
+                match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
+            }
+            #[inline(always)] pub const fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
+            #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+        }
+    }
+}
+stores! {
+    scalar {
+        I32Store, i32, I32; I64Store, i64, I64; F32Store, u32, F32; F64Store, u64, F64;
+        I32Store8, i8, I32; I32Store16, i16, I32; I64Store8, i8, I64; I64Store16, i16, I64; I64Store32, i32, I64;
+    }
+    vector { V128Store, u128; }
+}
 
 /// The direct opcode for a scalar access, when the memory has a prologue
 /// binding register and the access can use the direct memory32 form.
@@ -383,10 +475,10 @@ pub(super) fn direct_access(
     operator: &wasmparser::Operator<'_>,
 ) -> Option<(crate::bytecode::Op, wasmparser::MemArg)> {
     MemoryLoad::from_wasm(operator)
-        .and_then(|(load, memarg)| Some((memory_load_direct_op(load)?, memarg)))
+        .and_then(|(load, memarg)| Some((load.direct_op()?, memarg)))
         .or_else(|| {
             MemoryStore::from_wasm(operator)
-                .and_then(|(store, memarg)| Some((memory_store_direct_op(store)?, memarg)))
+                .and_then(|(store, memarg)| Some((store.direct_op()?, memarg)))
         })
 }
 
@@ -514,7 +606,7 @@ impl super::Lowering<'_> {
         let offset = u32::try_from(memarg.offset).map_err(|_| {
             crate::Diagnostic::unsupported(self.name, "Wasm memory32 offset out of range")
         })?;
-        if memory_store_from_direct_op(op).is_some() {
+        if MemoryStore::from_direct_op(op).is_some() {
             let value = self.pop()?;
             let address = self.pop()?;
             self.emit(op, value, memory, address, offset)?;

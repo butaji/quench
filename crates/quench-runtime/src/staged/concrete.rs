@@ -2,63 +2,21 @@
 
 use super::{Stage, Table};
 use super::region::Access;
-use super::spans::UnitSpan;
-use super::StagedRecordSpace;
-
-mod glue;
-pub use glue::{concrete_over_arena, concrete_over_vm};
-
-// Host hooks (spec 4.4): the runtime defines each `#[unsafe(no_mangle)]` in `concrete/glue.rs`. They take
-// raw pointers and words, so the stage names no heap or VM type; `heap` is the `Heap` the stage was `over`.
-unsafe extern "Rust" {
-    fn quench_staged_arena_values_base(heap: *const ()) -> u64;
-    fn quench_staged_class_space_base(heap: *const ()) -> u64;
-    fn quench_staged_spill_base(heap: *const ()) -> u64;
-    fn quench_staged_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
-    fn quench_staged_held_store_unlogged(heap: *const (), space: StagedRecordSpace, record_id: u32, value: u64) -> bool;
-    fn quench_staged_owner_table_bases(heap: *const ()) -> [u64; 3];
-    fn quench_staged_published(watch: u64) -> bool;
-    fn quench_staged_fill_registers(top: *mut u64, count: usize, undefined: u64);
-    fn quench_staged_copy_arguments(top: *mut u64, arguments: *const u64, count: u16);
-    fn quench_staged_find_span(text: UnitSpan<u64>, needle: UnitSpan<u64>, from: u64) -> (bool, u64);
-    fn quench_staged_rfind_span(text: UnitSpan<u64>, needle: UnitSpan<u64>, from: u64) -> (bool, u64);
-    fn quench_staged_span_equal_at(text: UnitSpan<u64>, needle: UnitSpan<u64>, start: u64) -> bool;
-}
 
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
 pub struct Concrete {
-    /// The heap's table bases, read once by `over`: the property arena's values (`Table::PropertyValues`)
-    /// and the class space's base (`Table::ClassSpace`). Zero in a `pure` stage.
-    tables: [u64; 2],
-    /// The heap whose tables and store barrier the stage reads; null in a `pure` stage.
-    heap: *const (),
+    tables: [u64; 1],
+    /// The heap whose store barrier `store_gate` reads; null where no store runs.
+    heap: *const crate::heap::Heap,
 }
 
 impl Concrete {
-    /// The stage over `heap`: the one heap-bearing constructor. Every table base a stage reads is taken
-    /// from `heap` here, so no stage holds a base of its own. A stage that reads an object record, a
-    /// property run, a slot owner table or the store barrier is over its heap.
     #[inline(always)]
-    pub fn over<H>(heap: *const H) -> Self {
-        let heap = heap.cast::<()>();
-        // SAFETY: the caller's heap is live.
-        Self { tables: unsafe { [quench_staged_arena_values_base(heap), quench_staged_class_space_base(heap)] }, heap }
+    pub fn new(property_values: *const crate::Value) -> Self {
+        Self { tables: [property_values as u64], heap: std::ptr::null() }
     }
-
-    /// A stage over one property arena's base, for a read of a record the caller holds, inside a heap operation
-    /// that has split the heap's borrow (so no `&Heap` exists). It reads `Table::PropertyValues` only; the
-    /// class space and the store barrier are the heap's, and reading either asserts (`table`).
-    #[inline(always)]
-    pub fn over_arena_values(values: u64) -> Self {
-        Self { tables: [values, 0], heap: std::ptr::null() }
-    }
-
-    /// A stage with no heap, for a row set that reads only the words it is given (numbers, units, bytes,
-    /// tags, frame words) and never a heap table: `table` asserts that no heap table is read.
-    #[inline(always)]
-    pub fn pure() -> Self { Self { tables: [0; 2], heap: std::ptr::null() } }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
     #[inline(always)]
@@ -74,6 +32,17 @@ impl Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut T).write_unaligned(value) }
     }
 
+    /// `storing` over the running VM's heap.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub fn storing_in(vm: &crate::vm::Vm) -> Self { Self::storing(&raw const vm.heap) }
+
+    /// The stage of stores into `heap`'s objects.
+    #[inline(always)]
+    pub(crate) fn storing(heap: *const crate::heap::Heap) -> Self {
+        // SAFETY: the caller's heap is live.
+        Self { tables: [unsafe { (*heap).arena_values_base() } as u64], heap }
+    }
 }
 
 crate::projection!(Concrete => Concrete);
@@ -155,14 +124,6 @@ impl Stage for Concrete {
     // place, as the row's other arms make their words.
     fn box_number(&mut self, number: super::Float64<u64>) -> u64 { crate::Value::number_inline(f64::from_bits(number.word())).to_bits() }
     #[inline(always)]
-    // A stored double's own bits (decision 4.1): no read-side canonicalization.
-    fn box_raw_number(&mut self, number: super::Float64<u64>) -> u64 { number.word() }
-    #[inline(always)]
-    // A float bit entry: `Value::from_float_bits64`, every NaN made canonical (decision 4.1).
-    fn canonical_float(&mut self, bits: u64) -> u64 { crate::Value::from_float_bits64(bits).to_bits() }
-    #[inline(always)]
-    fn raw_number(&mut self, bits: u64) -> u64 { crate::Value::from_bits(bits).as_number().map_or(bits, f64::to_bits) }
-    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
@@ -184,8 +145,8 @@ impl Stage for Concrete {
             // SAFETY: the window at `top` holds `registers` words, none live, and the `count` arguments lie
             // outside it (`protocol::fill_window`): the interpreter's own fill and argument copy.
             super::Passed::Window { arguments, count } if prefix.is_empty() => unsafe {
-                quench_staged_fill_registers(top as *mut u64, usize::from(registers), undefined);
-                quench_staged_copy_arguments(top as *mut u64, arguments as *const u64, count.min(registers));
+                crate::vm::fill_registers(top as *mut crate::Value, usize::from(registers), crate::Value::from_bits(undefined));
+                crate::vm::copy_arguments(top as *mut crate::Value, arguments as *const crate::Value, count.min(registers));
             },
             _ => super::fill_by_rows(self, top, undefined, prefix, passed, registers),
         }
@@ -210,76 +171,58 @@ impl Stage for Concrete {
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
     #[inline(always)]
-    fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
-        !self.heap.is_null() && unsafe { quench_staged_store_unlogged(self.heap, space, record_id as u32, value) }
+        !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
-    fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
+    fn held_store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
-        !self.heap.is_null() && unsafe { quench_staged_held_store_unlogged(self.heap, space, record_id as u32, value) }
+        !self.heap.is_null() && unsafe { (*self.heap).held_store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
     fn immediate_store_open(&mut self) -> bool {
-        // Old records keep no reference counts, so an immediate store needs no barrier log.
-        true
+        if self.heap.is_null() {
+            // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
+            return !crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: a stage that stores holds its live heap.
+        unsafe { (*self.heap).immediate_store_unlogged() }
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
         // SAFETY: the operand is the address of a live watch (`staged::holder::concrete_holder_read`).
-        unsafe { quench_staged_published(watch) }
+        unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }
     }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {
         match table {
+            Table::PropertyValues => self.tables[0],
             // A static's address: no field to load.
             Table::Layouts => crate::heap::layouts::table_base() as u64,
-            // The heap's bases, taken once by `over` (or `concrete_over_arena`): a pure stage holds none of them, and an
-            // arena's base is never null (a `Vec`'s pointer, dangling when empty, is not).
-            Table::PropertyValues => {
-                debug_assert!(self.tables[0] != 0, "the property arena is read by a stage over an arena or a heap");
-                self.tables[0]
-            }
-            Table::ClassSpace => {
-                debug_assert!(!self.heap.is_null(), "the class space is read by a stage over its heap");
-                self.tables[1]
-            }
-            // Read live, never cached in `tables`: a store row's spill can move the arena within a run.
-            Table::SpillBase => {
-                debug_assert!(!self.heap.is_null(), "the spill arena is read by a stage over its heap");
-                // SAFETY: a stage that reads the spill arena holds its live heap (`over`).
-                unsafe { quench_staged_spill_base(self.heap) }
-            }
-            // The owner tables are the heap's: a stage that reads them is a store's (`storing`).
-            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => {
-                debug_assert!(!self.heap.is_null(), "a slot owner table is read by a stage that holds its heap");
-                // SAFETY: a stage that reads the owner tables holds its live heap (`store_gate`).
-                let [chains, owners, types] = unsafe { quench_staged_owner_table_bases(self.heap) };
-                match table {
-                    Table::SlotChains => chains,
-                    Table::ChainOwners => owners,
-                    _ => types,
-                }
-            }
         }
+    }
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
+        super::object::walk_prototypes_loop(self, records, object, target, max_depth)
     }
     /// The tuned forward search of `vm::wtf16::search` (memchr, the block filter, memmem).
     #[inline(always)]
-    fn find_span(&mut self, text: UnitSpan<u64>, needle: UnitSpan<u64>, from: u64) -> (bool, u64) {
-        // SAFETY: the hook reads the two live spans the caller holds for the call.
-        unsafe { quench_staged_find_span(text, needle, from) }
+    fn find_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).find(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
     }
     /// The tuned reverse search: memrchr or memmem's reverse search for ASCII, `Units::rfind` otherwise.
     #[inline(always)]
-    fn rfind_span(&mut self, text: UnitSpan<u64>, needle: UnitSpan<u64>, from: u64) -> (bool, u64) {
-        // SAFETY: as `find_span`.
-        unsafe { quench_staged_rfind_span(text, needle, from) }
+    fn rfind_span(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, from: u64) -> (bool, u64) {
+        let found = super::spans::concrete_units(text).rfind(super::spans::concrete_units(needle), from as usize);
+        (found.is_some(), found.map_or(u64::MAX, |index| index as u64))
     }
     /// Slice equality of the units from `start`.
     #[inline(always)]
-    fn span_equal_at(&mut self, text: UnitSpan<u64>, needle: UnitSpan<u64>, start: u64) -> bool {
-        // SAFETY: as `find_span`.
-        unsafe { quench_staged_span_equal_at(text, needle, start) }
+    fn span_equal_at(&mut self, text: super::spans::UnitSpan<u64>, needle: super::spans::UnitSpan<u64>, start: u64) -> bool {
+        let start = start as usize;
+        super::spans::concrete_units(text).slice(start..start + needle.length as usize) == super::spans::concrete_units(needle)
     }
     /// memcpy of the units.
     #[inline(always)]

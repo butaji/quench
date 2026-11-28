@@ -14,7 +14,7 @@ use crate::ext_traits::*;
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_flow::Flow;
-use quench_runtime::staged::wasm_instance::{Instance, InstanceWasmInstanceExt};
+use quench_runtime::staged::wasm_instance::Instance;
 use quench_runtime::staged::wasm_memory::{Access, Memory};
 use quench_runtime::staged::wasm_operation::{Operand, WasmOperation};
 use quench_runtime::staged::wasm_step::Step;
@@ -408,8 +408,12 @@ pub(crate) use quench_runtime::vm::engine_types::World;
 
 pub(crate) use quench_runtime::vm::engine_types::IndirectSite;
 
-/// The stitched code of `function`, with the code offset and hole value of every absolute word whose value `symbolic`
-/// names (an image's symbol, which its World gave as that value): the words a loader fills (`aot_image::wasm`).
+pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
+    stitch_naming(function, params, returns, world, &|_| false).map(|(code, _)| code)
+}
+
+/// `stitch`, with the code offset and hole value of every absolute word whose value `symbolic` names (an
+/// image's symbol, which its World gave as that value): the words a loader fills (`aot_image::wasm`).
 pub(crate) fn stitch_naming(function: &Function, params: usize, returns: bool, world: &World<'_>, symbolic: &dyn Fn(u64) -> bool)
     -> Option<(Vec<u8>, Vec<(usize, u64)>)> {
     let instructions: Vec<WideInstruction> =
@@ -506,7 +510,6 @@ pub(crate) mod wasm_stitch_tail;
 #[path = "wasm_stitch_instance.rs"]
 pub(crate) mod wasm_stitch_instance;
 use self::wasm_stitch_instance::instance_op;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[path = "wasm_stitch_indirect.rs"]
 pub(crate) mod indirect;
 

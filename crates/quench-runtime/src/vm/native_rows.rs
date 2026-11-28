@@ -225,6 +225,13 @@ pub(super) fn row_name(native: Native) -> Option<&'static str> {
     NATIVE_ROWS.iter().find(|row| row.native == native).map(|row| row.name)
 }
 
+/// The Array native a `%TypedArray%.prototype` callback runs, if `native` is one.
+pub(super) fn shared_array_native(native: Native) -> Option<Native> {
+    NATIVE_ROWS.iter().find_map(|row| match row.length {
+        Length::SameAs(twin) if row.native == native => Some(twin),
+        _ => None,
+    })
+}
 
 /// The rows a compiled lane runs inline by name (`LANE_METHOD`).
 pub fn lane_method(name: &str) -> Option<NativeRow> {
@@ -301,11 +308,6 @@ pub(super) const ARRAY_STATIC_METHODS: &[(&str, Native)] = &ARRAY_CONSTRUCTOR_RO
 pub(super) const STRING_METHODS: &[(&str, Native, f64)] = &STRING_PROTOTYPE_ROWS;
 /// `Math`'s functions, in installation order.
 pub(super) const MATH_FUNCTIONS: &[(&str, Native)] = &MATH_ROWS;
-
-/// The Math function named `name` (`Math.name`), where a row names one.
-pub fn math_function(name: &str) -> Option<Native> {
-    MATH_FUNCTIONS.iter().find(|(text, _)| *text == name).map(|&(_, native)| native)
-}
 
 /// Each native's row flags by discriminant: the union of the flags of the rows that name it.
 const NATIVE_FLAGS: [u8; Native::COUNT as usize] = {

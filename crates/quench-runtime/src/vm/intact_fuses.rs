@@ -83,12 +83,11 @@ impl Vm {
     /// The slot where `holder` keeps `fuse`'s intrinsic as an own data property, if it does.
     fn fuse_slot(&self, fuse: IntactFuse, holder: Value) -> Option<usize> {
         let (key, native) = self.fuse_property(fuse)?;
-        let data = self.heap.object(holder)?;
+        let data = self.object_data(holder)?;
         let slot = self.property_shape_slot(data.shape(), key)?;
         // A getter-only accessor keeps its getter in the slot, as the fuse's intrinsic; a
         // data property holds its value there.
         let getter = matches!(IntactFuse::SPEC[fuse as usize].0, FuseKey::SpeciesSymbol);
-        // record: slot_attributes takes the record
         let holds = if getter {
             !self.shape_is_dictionary(data.shape()) && self.shape_slot_attributes(data.shape(), slot).is_some_and(ShapeAttributes::slot_getter)
         } else {
@@ -97,7 +96,7 @@ impl Vm {
         if !holds {
             return None;
         }
-        let value = self.heap.property_get_ref(data, slot)?;
+        let value = self.heap.property_get(data, slot)?;
         self.is_current_realm_native(value, native).then_some(slot)
     }
 

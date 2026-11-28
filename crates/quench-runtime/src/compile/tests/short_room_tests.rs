@@ -31,7 +31,7 @@ fn a_replay_short_of_reserved_site_room_runs_unrewritten_code_and_later_replays_
     assert_eq!(run(&short), run(&normal));
 }
 
-/// Atoms numbered from zero, as a host's do.
+/// Atoms numbered from zero, for programs that run specialized, as a host's do.
 struct SpecializedAtoms;
 
 impl crate::compile::AtomPrefix for SpecializedAtoms {
@@ -46,6 +46,9 @@ impl crate::compile::AtomPrefix for SpecializedAtoms {
     }
     fn table(&self) -> crate::bytecode::AtomTable {
         crate::bytecode::AtomTable::default()
+    }
+    fn specialized(&self) -> bool {
+        true
     }
 }
 
@@ -69,6 +72,7 @@ fn an_evals_kept_records_take_their_rewrites_on_first_read_as_the_load_would_hav
         let at_load = at_load.unwrap();
         assert!(deferred.rewrite_ranges.kept_pending, "{source}");
         assert!(!at_load.rewrite_ranges.kept_pending, "{source}");
+        at_load.prime_loop_decoding();
         for index in 0..deferred.functions.len() {
             assert_eq!(deferred.functions[index].record().is_some(), index == 0, "function {index} of {source}");
         }

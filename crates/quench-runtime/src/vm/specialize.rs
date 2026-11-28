@@ -17,19 +17,21 @@
 use crate::bytecode::{ControlFlowLayout, Function, Op, ResidualProgram};
 pub(crate) use crate::typed_ir::Division;
 
-/// Whether this division knows every input of `op`, so its generating extension may
-/// residualize the instruction's meaning beyond a call to the semantic entry. A free const fn
-/// (`Division` belongs to quench-staged, and an inherent impl cannot live here).
-pub(crate) const fn division_folds_instruction(division: Division, op: Op) -> bool {
-    let times = op.input_binding_times();
-    let mut index = 0;
-    while index < times.len() {
-        if !division.folds(times[index]) {
-            return false;
+impl Division {
+    /// Whether this division knows every input of `op`, so its generating
+    /// extension may residualize the instruction's meaning beyond a call to
+    /// the semantic entry.
+    pub(crate) const fn folds_instruction(self, op: Op) -> bool {
+        let times = op.input_binding_times();
+        let mut index = 0;
+        while index < times.len() {
+            if !self.folds(times[index]) {
+                return false;
+            }
+            index += 1;
         }
-        index += 1;
+        true
     }
-    true
 }
 
 pub(crate) use super::specializer::Specializer;
@@ -77,7 +79,7 @@ fn static_successor(
 ) -> Option<usize> {
     let op = instruction.op();
     // merge: HEAD's decoded Jump match is the derivation's JUMP_ROW test.
-    if op as u16 != crate::staged::JUMP_ROW || !division_folds_instruction(division, op) {
+    if op as u16 != crate::staged::JUMP_ROW || !division.folds_instruction(op) {
         return None;
     }
     let stops_here = function.parameter_end_pc != 0 && function.parameter_end_pc as usize == pc;
@@ -169,10 +171,10 @@ mod tests {
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).unwrap();
             let times = op.input_binding_times();
-            assert!(division_folds_instruction(Division::Online, op), "{op:?}: online folds every input");
+            assert!(Division::Online.folds_instruction(op), "{op:?}: online folds every input");
             let reads_site = times.contains(&BindingTime::Site);
             assert_eq!(
-                division_folds_instruction(Division::Offline, op),
+                Division::Offline.folds_instruction(op),
                 !reads_site,
                 "{op:?}: offline folds exactly the site-free instructions"
             );
@@ -195,10 +197,10 @@ mod tests {
 
     #[test]
     fn feedback_sites_and_static_facts_are_classified_from_the_opcode_table() {
-        assert!(!division_folds_instruction(Division::Offline, Op::GetField), "field lookups carry an inline-cache site");
-        assert!(!division_folds_instruction(Division::Offline, Op::CallMethod), "method calls carry a method site");
+        assert!(!Division::Offline.folds_instruction(Op::GetField), "field lookups carry an inline-cache site");
+        assert!(!Division::Offline.folds_instruction(Op::CallMethod), "method calls carry a method site");
         for op in [Op::Jump, Op::Move, Op::LoadConst, Op::Return, Op::Binary] {
-            assert!(division_folds_instruction(Division::Offline, op), "{op:?} is decided by the program alone");
+            assert!(Division::Offline.folds_instruction(op), "{op:?} is decided by the program alone");
         }
         assert_eq!(Op::LoadConst.input_binding_times()[3], BindingTime::Static);
         assert_eq!(Op::LoadLocal.input_binding_times()[3], BindingTime::Location);
@@ -206,7 +208,7 @@ mod tests {
 
         #[test]
     fn instruction_sites_fold_operands_and_continuations_once() {
-        let program = crate::Engine::specialize(
+        let program = crate::Engine::specialize_unspecialized(
             "function f(x) { if (x) return 1; return x + 2; } f(3);",
             "sites.js",
         )
@@ -230,7 +232,7 @@ mod tests {
 
     #[test]
     fn forward_jumps_are_computed_and_backward_jumps_keep_their_entry() {
-        let program = crate::Engine::specialize(
+        let program = crate::Engine::specialize_unspecialized(
             "let s = 0; for (let i = 0; i < 4; i++) { s += i ? 1 : 2; } s;",
             "jumps.js",
         )

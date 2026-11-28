@@ -116,7 +116,7 @@ impl Program {
     }
 
     fn is_class_run(&self) -> bool {
-        self.facts.class_run.is_some()
+        self.class_run.is_some()
     }
 
     /// The bounds of each match of a scan from `first`, in order, passed to `found`: each
@@ -124,12 +124,12 @@ impl Program {
     /// search runs in one workspace, taken once; a literal or class-run pattern needs none.
 
     pub(crate) fn find_all_bounds<T: Text + ?Sized>(&self, text: &T, first: usize, mut found: impl FnMut(Range<usize>)) {
-        if let (Some(run), Some(bytes)) = (self.facts.class_run.as_deref(), text.bytes()) {
+        if let (Some(run), Some(bytes)) = (self.class_run.as_deref(), text.bytes()) {
             if bytes.len() < SHORT_RUN_SUBJECT {
                 return run.each_run(bytes, first, found);
             }
         }
-        let mut workspace = ((self.facts.literal_length.is_none() && !self.is_class_run()) || text.bytes().is_none()).then(take_workspace);
+        let mut workspace = ((self.literal_length.is_none() && !self.is_class_run()) || text.bytes().is_none()).then(take_workspace);
         let mut at = first;
         loop {
             let range = match &mut workspace {
@@ -203,7 +203,7 @@ impl Program {
     /// `None` where the pattern or subject is another kind.
     #[inline(always)]
     pub(super) fn anchored_run_found<T: Text + ?Sized>(&self, text: &T, first: usize) -> Option<Option<Found>> {
-        let (run, Some(_)) = (self.facts.anchored_run.as_ref()?, text.bytes()) else {
+        let (run, Some(_)) = (self.anchored_run.as_ref()?, text.bytes()) else {
             return None;
         };
         let length = text.len();
@@ -216,7 +216,7 @@ impl Program {
     /// `None` where the pattern or subject is another kind, or the start scan was wrong.
     #[inline(always)]
     pub(super) fn class_run_found<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool) -> Option<Option<Found>> {
-        let (test, Some(_)) = (self.facts.class_run.as_deref()?.test, text.bytes()) else {
+        let (test, Some(_)) = (self.class_run.as_deref()?.test, text.bytes()) else {
             return None;
         };
         let last = if sticky { first } else { text.len() };

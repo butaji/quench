@@ -5,7 +5,6 @@
 use crate::ext_traits::*;
 use std::collections::BTreeMap;
 use super::{field_path, FieldPath, FieldReceiver, FieldSite, Register, RegisterSet, WideInstruction};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether the receiver is read through a name the loop stores, so it changes in the loop:
 /// the callee's read stays, and native code checks the callee after it (`InlineGuard::AtRead`).

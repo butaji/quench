@@ -32,25 +32,6 @@ impl ProgramStore {
                 _ => writer.bool(false),
             }
         }
-        // Every recorded class, the main program's included: its header and the prototype its planned arms resolve from
-        // (`Vm::record_class_edge`). The main program's entry is not written, so its classes are recorded here.
-        let recorded = self.recorded_classes();
-        writer.len(recorded.len());
-        for (id, class, header, prototype) in recorded {
-            writer.u32(id.raw());
-            writer.u32(class);
-            writer.u32(header);
-            writer.value(prototype);
-        }
-        // Every closure cell written, the main program's included: a restored program's body finds the closure its creation edge
-        // wrote, so the closure it holds is the one a restored call enters (`Vm::install_restored_main`).
-        let closures = self.recorded_closures();
-        writer.len(closures.len());
-        for (id, body, closure) in closures {
-            writer.u32(id.raw());
-            writer.u32(body);
-            writer.value(closure);
-        }
         writer.len(global_eval_programs.len());
         for (source, program) in global_eval_programs {
             source.text.write_snapshot(writer);
@@ -73,12 +54,6 @@ impl ProgramStore {
         for _ in 0..count {
             programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
-        let recorded = read_list(reader, |reader| {
-            Ok((ProgramId::from_raw(reader.u32()?), reader.u32()?, reader.u32()?, reader.value()?))
-        })?;
-        let closures = read_list(reader, |reader| {
-            Ok((ProgramId::from_raw(reader.u32()?), reader.u32()?, reader.value()?))
-        })?;
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the
         // hash and the units. The hash is derived from the text, so the snapshot keeps the text.
         #[allow(clippy::mutable_key_type)]
@@ -90,8 +65,6 @@ impl ProgramStore {
         .collect();
         let mut store = Self::default();
         store.programs = programs;
-        store.restored_classes = recorded;
-        store.restored_closures = closures;
         store.global_eval_programs = global_eval_programs;
         store.reclaim_passes = reader.u64()?;
         store.unchecked_reclaimable = reader.len()?;
@@ -120,20 +93,8 @@ impl ProgramEntry {
             views_in_lane: _,
             raw_masks: _,
             js_entry_facts: _,
-            // Derived from the residual program on first use, as `ProgramEntry::new` leaves them.
-            aot_facts: _,
-            call_graph: _,
-            predicted_tiers: _,
-            selectors: _,
-            class_method_vectors: _,
-            class_headers: _,
-            construct_sites: _,
-            // Written by the program-store snapshot (`ProgramStore::write_snapshot`), not per entry.
-            closure_cells: _,
-            class_prototypes: _,
-            planned_targets: _,
-            planned_registered: _,
-            lane_loops: _,
+            lane_deferred: _,
+            compiled: _,
             jit_tiers: _,
             scope,
             origin,
@@ -271,18 +232,7 @@ impl ProgramEntry {
             views_in_lane: super::LaneViews::default(),
             raw_masks: Default::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
-            aot_facts: std::cell::OnceCell::new(),
-            call_graph: std::cell::OnceCell::new(),
-            predicted_tiers: std::cell::OnceCell::new(),
-            construct_sites: std::cell::OnceCell::new(),
-            selectors: std::cell::OnceCell::new(),
-            class_method_vectors: Default::default(),
-            class_headers: std::cell::OnceCell::new(),
-            class_prototypes: Default::default(),
-            closure_cells: std::cell::OnceCell::new(),
-            planned_targets: Default::default(),
-            planned_registered: std::cell::Cell::new(false),
-            lane_loops: super::zeroed_counts(functions),
+            lane_deferred: super::zeroed_counts(functions),
             residual,
             wasm_signatures: None,
             constants: constants.into(),
@@ -295,6 +245,7 @@ impl ProgramEntry {
             root_bindings: std::cell::OnceCell::new(),
             root_constants: Default::default(),
             module,
+            compiled: None,
             jit_tiers: JitTierManager::default(),
             scope,
             origin,

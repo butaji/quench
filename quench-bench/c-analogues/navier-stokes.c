@@ -20,10 +20,9 @@ static void set_bnd(int b, double *x) {
     x[i] = b == 2 ? -x[i + rowSize] : x[i + rowSize];
     x[i + (height + 1) * rowSize] = b == 2 ? -x[i + height * rowSize] : x[i + height * rowSize];
   }
-  /* The JS source's b===1 edge loop tests `i <= height` after the first loop left i past width, so it never runs. */
-  for (int j = 1; j <= height && b != 1; j++) {
-    x[j * rowSize] = x[1 + j * rowSize];
-    x[(width + 1) + j * rowSize] = x[width + j * rowSize];
+  for (int j = 1; j <= height; j++) {
+    x[j * rowSize] = b == 1 ? -x[1 + j * rowSize] : x[1 + j * rowSize];
+    x[(width + 1) + j * rowSize] = b == 1 ? -x[width + j * rowSize] : x[width + j * rowSize];
   }
   int maxEdge = (height + 1) * rowSize;
   x[0] = 0.5 * (x[1] + x[rowSize]);
@@ -159,7 +158,7 @@ int main(int argc, char **argv) {
     if (++nsFrameCounter == 15) {
       int result = 0;
       for (int i = 7000; i < 7100; i++) result += (int)(dens[i] * 10);
-      if (result != 74) { fprintf(stderr, "checksum failed %d\n", result); return 1; }
+      if (result != 77) { fprintf(stderr, "checksum failed %d\n", result); return 1; }
     }
   }
   clock_gettime(CLOCK_MONOTONIC, &b);

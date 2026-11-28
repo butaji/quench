@@ -13,20 +13,20 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
         if instruction.op().class().eq(&Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u32, storage_len: names.len(),
-                storage: None, ty, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None }]))
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
+                storage: None, ty, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let atoms = quench_runtime::bitset::BitSet::default();
     let facts = match invalidation {
         Some(invalidation) => VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation, constants: &[],
-            shape_stable: &|_| false, names: None, root_constant: &|_| None }), ..VmFacts::STATIC },
+            instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC },
         None => VmFacts::STATIC,
     };
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-    let unit = super::super::lane_unit::unit(&program, None, 1, function, &|_, _| Vec::new(), &|_, _| None, &|_| None).unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        facts, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Prefix, Completion::Body, ElementViews::Dense)
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true)
         .unwrap().function
 }
 

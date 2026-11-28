@@ -215,7 +215,6 @@ impl WasmGcRecord {
 /// that finds 0 takes the VM's slow path. It is a copy, so it is kept coherent by its writers:
 /// a row is written with the body the instance publishes for the function, and an instance's
 /// publication rewrites the rows that name it (`WasmTableElements::refresh_bodies`).
-#[quench_macros::test_visible]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct TableTarget {
@@ -236,7 +235,6 @@ impl TableTarget {
         body: 0,
     };
     /// The row of the null reference.
-    #[quench_macros::test_visible]
     pub(crate) const NULL: Self = Self {
         signature: CanonicalSignature::NULL,
         ..Self::FOREIGN

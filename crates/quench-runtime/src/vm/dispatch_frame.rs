@@ -1,7 +1,5 @@
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt};
 use super::*;
-use crate::staged::frame_arm::{FrameArm, GeneralArm};
+use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
 mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
@@ -10,7 +8,38 @@ mod materialized_stops;
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
-#[quench_macros::test_visible]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_cursors_leave_interpreter_decoding_cold() {
+        let program = crate::Engine::specialize(
+            "var n = 3; while (n > 0) n--; throw n;", "native-cursor.js",
+        ).unwrap();
+        let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+        for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
+            vm.set_execution_mode(mode);
+            let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
+            assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
+            assert!(cursor.lane.is_null() && cursor.back_edges.is_none(),
+                "linked code must not prepare an interpreter lane");
+        }
+
+        let mut interpreter = Vm::new(crate::test_host::TestHost::default());
+        interpreter.initialize_for_snapshot(&program).unwrap();
+        program.prime_loop_decoding();
+        let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
+        assert!(!cursor.decoded.is_null(), "an interpreted loop still expands its dispatch cache");
+        let error = interpreter.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct GeneralCodeCursor {
     program: ProgramId,
@@ -21,12 +50,30 @@ pub struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     pub(super) lane: *const crate::vm::engine_types::LaneView,
-    /// Whether a view-less JavaScript activation may still gain its function's view at a back edge
-    /// (`note_back_edge`); false once it has.
-    back_edges: bool,
+    /// The loop work the activation did in the general path while it may still gain a view
+    /// (`note_back_edge`); `None` once it cannot.
+    back_edges: Option<HotLoop>,
 }
 
-#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
+/// A view-less JavaScript activation's loops so far (`Vm::note_back_edge`).
+#[derive(Clone, Copy)]
+struct HotLoop {
+    /// Its back edges taken.
+    taken: u16,
+    /// The instructions those back edges spanned, and the span at which the loop has repaid
+    /// a view of the whole function (`LANE_VIEW_LOOP_PAYBACK` per instruction).
+    work: u32,
+    due: u32,
+}
+
+impl HotLoop {
+    fn of(function: &crate::bytecode::Function) -> Self {
+        let instructions = u32::try_from(function.code.len()).unwrap_or(u32::MAX);
+        Self { taken: 0, work: 0, due: instructions.saturating_mul(LANE_VIEW_LOOP_PAYBACK) }
+    }
+}
+
+use crate::vm::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub struct PendingGeneralCall {
     pub caller: usize,
@@ -60,16 +107,16 @@ pub struct RecoveredCalls {
 /// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
-pub struct LaneHandoff {
+pub struct LaneExit {
     pub executing: ExecutingProgram,
     pub raised: Option<JsError>,
 }
 
 /// Where a general loop resumes its entry frame other than at its PC: after a lane run
-/// (`LaneHandoff`), or with the transition its linked native body already made there
+/// (`LaneExit`), or with the transition its linked native body already made there
 /// (`Vm::complete_pushed_call`), which the loop consumes as if its own entry had made it.
 pub(super) enum GeneralResume {
-    Lane(LaneHandoff),
+    Lane(LaneExit),
     #[cfg(feature = "native-execution")]
     Native(crate::vm::engine_types::JsNativeStep),
 }
@@ -152,14 +199,7 @@ impl GeneralCodeCursor {
 }
 
 impl Vm {
-    /// Whether function `function` of `program`, the program `id`, runs decoded (`tier_policy::decodes_wide`), from the
-    /// program's call graph. Asked once per function, at its first interpreted entry.
-    fn runs_decoded(&self, id: ProgramId, program: &ResidualProgram, function: u32) -> bool {
-        self.programs.call_graph(id).is_some_and(|graph| crate::vm::tier_policy::decodes_wide(&graph, program, function))
-    }
-
     /// A code cursor for `function`, with its lane view where the lane runs.
-    #[quench_macros::test_visible]
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,
@@ -177,7 +217,7 @@ impl Vm {
         // loop reads its packed code there, without a second, expanded copy.
         let lane_runs_wasm = !view.is_null() && program.kind == crate::bytecode::ProgramKind::Wasm;
         let decoded = if interprets && !lane_runs_wasm {
-            function_code.decoded.on_entry(&function_code.code, &function_code.wide, || self.runs_decoded(program_id, program, function))
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide)
         } else {
             None
         };
@@ -188,16 +228,25 @@ impl Vm {
             wide: function_code.wide.as_ptr(),
             decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
-            // A JavaScript activation deferred its view; a back edge derives it where the function's predicted tier compiles it.
-            back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm && self.programs.compiled_tier(program_id, function),
+            // A JavaScript activation deferred its view; a loop that turns hot derives it.
+            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
+                .then(|| HotLoop::of(function_code)),
         }
     }
 
-    /// Takes a backward jump of `cursor`'s activation in the general path: a view-less activation
-    /// derives its function's lane view now, which the lane enters at the loop's next instruction.
+    /// Counts a backward jump of `cursor`'s activation in the general path over `span`
+    /// instructions; at `HOT_LOOP_BACK_EDGES` of them, once their spans repay a view
+    /// (`HotLoop`), its function's lane view is derived, which the lane enters at the loop's
+    /// next instruction.
     #[inline(always)]
-    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
-        if std::mem::take(&mut cursor.back_edges) {
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor, span: usize) {
+        let Some(hot) = cursor.back_edges.as_mut() else {
+            return;
+        };
+        hot.taken = hot.taken.saturating_add(1);
+        hot.work = hot.work.saturating_add(u32::try_from(span).unwrap_or(u32::MAX));
+        if hot.taken >= HOT_LOOP_BACK_EDGES && hot.work >= hot.due {
+            cursor.back_edges = None;
             cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
     }
@@ -477,10 +526,10 @@ impl Vm {
             decoded: if !view.is_null() && p.kind == crate::bytecode::ProgramKind::Wasm {
                 std::ptr::null()
             } else {
-                body.decoded.on_entry(&body.code, &body.wide, || self.runs_decoded(self.active_program, p, id)).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
+                body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
             },
             lane: view,
-            back_edges: false,
+            back_edges: None,
         }
     }
 
@@ -491,11 +540,11 @@ impl Vm {
     pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const crate::vm::engine_types::LaneView {
         let program = self.active_program;
         let runs_in_lane = (Self::FRAME_ENTRY_LANE_RUNS || self.programs.ahead_images(program, p).is_some())
-            && !self.tier_may_run(crate::vm::tier_policy::Tier::ANY);
+            && !self.tier_may_run(crate::jit_mode::Tier::ANY);
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(program, p)
-            || !self.programs.call_may_derive_in_lane(program, id)
+            || !self.programs.call_may_derive_in_lane(program, id, false, false)
         {
             return std::ptr::null();
         }
@@ -511,10 +560,6 @@ impl Vm {
         result: Result<FrameOutcome, JsError>,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
-        // A captured run took its frames into its chain (`capture_chain_parked`): none is left to retire.
-        if result.as_ref().is_err_and(JsError::is_captured) {
-            return result;
-        }
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         match result? {
@@ -537,7 +582,7 @@ impl Vm {
                 ))
             }
             FrameOutcome::Suspend(suspended @ Suspended::Await { .. }, _) => {
-                Ok(FrameOutcome::Suspend(suspended, Some(FrameRecord::capture(frame))))
+                Ok(FrameOutcome::Suspend(suspended, Some(frame)))
             }
             FrameOutcome::Suspend(Suspended::Yield { .. }, _) => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -578,7 +623,7 @@ impl Vm {
         parent: Value,
         this: Value,
         context: CallContext,
-    ) -> Result<Box<FrameRecord>, JsError> {
+    ) -> Result<Box<Frame>, JsError> {
         self.unstarted_frame_with(p, id, parent, this, &[], context)
     }
 
@@ -591,11 +636,11 @@ impl Vm {
         this: Value,
         args: &[Value],
         context: CallContext,
-    ) -> Result<Box<FrameRecord>, JsError> {
+    ) -> Result<Box<Frame>, JsError> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         let mut frame = self.frames.pop().expect("the activation pushed a frame");
         frame.with_objects = self.with_stack.split_off(frame.with_base);
-        Ok(FrameRecord::capture(frame))
+        Ok(frame)
     }
 
     /// `activate_user_frame` for a function whose static layout describes its whole
@@ -1067,11 +1112,11 @@ impl Vm {
             return Ok(None);
         };
         let anchor = self
-            .heap.object(template.anchor)
+            .object_data(template.anchor)
             .expect("arguments template anchor is an object");
         let iterator = self
             .heap
-            .property_get_ref(anchor, template.iterator_slot)
+            .property_get(anchor, template.iterator_slot)
             .expect("arguments template has an iterator method");
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
         properties[template.length_slot] = Value::number(args.len() as f64);
@@ -1079,7 +1124,7 @@ impl Vm {
             callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
         } else {
             self.heap
-                .property_get_ref(anchor, template.callee_slot)
+                .property_get(anchor, template.callee_slot)
                 .expect("arguments template has a callee accessor")
         };
         properties[template.iterator_slot] = iterator;
@@ -1095,17 +1140,14 @@ impl Vm {
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
         if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
-            self.heap.ensure_cell_extras(arguments);
-            self.heap
-                .object_mut(arguments)
+            self.object_data_mut(arguments)
                 .expect("arguments object is an array")
                 .set_arguments_object();
             self.heap
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        self.heap.ensure_cell_extras(arguments);
-        if let Some(mut object) = self.heap.object_mut(arguments) {
+        if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
         let length = self.length_atom;
@@ -1206,17 +1248,17 @@ impl Vm {
             return;
         }
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
-        let Some(object) = self.heap.object(arguments) else {
+        let Some(object) = self.object_data(arguments) else {
             return;
         };
         let proto = object.proto();
-        let Some(iterator_method) = self.heap.property_get_ref(object, iterator_slot) else {
+        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
         let (_, expose_callee) = key;
         if !expose_callee {
-            let Some(thrower) = self.heap.property_get_ref(object, callee_slot) else {
+            let Some(thrower) = self.heap.property_get(object, callee_slot) else {
                 return;
             };
             properties[callee_slot] = thrower;
@@ -1391,19 +1433,12 @@ impl Vm {
     /// stopped as `stop` says (returned where `None`), and its result is the call's value; any
     /// other frame ends its scopes and goes back to the pool, its value unchanged. True where a
     /// generator's step finished, which may have allocated.
-    pub fn retire_returned_frame(&mut self, mut completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
+    pub fn retire_returned_frame(&mut self, completed: Box<Frame>, completion: &mut CallCompletion, value: Value,
         stop: Option<super::generator::MaterializedStop>) -> (Value, bool) {
         match completion.take_generator() {
             Some(resume) => {
                 let stop = stop.unwrap_or(super::generator::MaterializedStop::Returned);
-                // The frame's scopes end as its stop says: a return leaves them, a yield keeps its
-                // `with` objects with the frame, which the record then holds (`FrameRecord::capture`).
-                match stop {
-                    super::generator::MaterializedStop::Returned => self.finish_frame_scopes(&completed),
-                    _ => completed.with_objects = self.with_stack.split_off(completed.with_base),
-                }
-                let record = FrameRecord::capture(completed);
-                (self.finish_materialized_generator_step(record, resume, value, stop), true)
+                (self.finish_materialized_generator_step(completed, resume, value, stop), true)
             }
             None => {
                 self.finish_frame_scopes(&completed);
@@ -1439,6 +1474,7 @@ impl Vm {
     #[inline]
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
+        frame.js_jit_interpreter_started = None;
         frame.original_arguments.clear();
         frame.with_objects.clear();
         frame.dynamic_bindings.clear();
@@ -1525,7 +1561,7 @@ impl Vm {
         outcome
     }
 
-    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneHandoff`), the calls pending
+    /// Finish the frames a lane run left at frame `frame`'s PC (`LaneExit`), the calls pending
     /// above the loop's entry frame in `pending_calls`: the general loop runs from there as it
     /// runs after its own lane run, until the entry frame returns.
     pub fn run_frames_after_lane_exit(
@@ -1533,7 +1569,7 @@ impl Vm {
         entry_program: &ResidualProgram,
         frame: usize,
         pending_calls: &mut Vec<PendingGeneralCall>,
-        exit: LaneHandoff,
+        exit: LaneExit,
     ) -> Result<FrameOutcome, JsError> {
         let previous_global = self.realm.globals;
         let caller_registers = self.active_registers;
@@ -1591,7 +1627,7 @@ impl Vm {
             }
             self.frames[running].pc = pc;
             let raised = self.lane_completion.take_raised();
-            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneHandoff { executing, raised })
+            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
         })();
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
@@ -1710,7 +1746,7 @@ impl Vm {
         #[cfg(feature = "native-execution")]
         let mut entered = None;
         let (mut executing_program, mut current_program, raised) = match resume {
-            Some(GeneralResume::Lane(LaneHandoff { executing, raised })) => (executing.id, executing.retained, Some(raised)),
+            Some(GeneralResume::Lane(LaneExit { executing, raised })) => (executing.id, executing.retained, Some(raised)),
             #[cfg(feature = "native-execution")]
             Some(GeneralResume::Native(step)) => {
                 entered = Some(step);
@@ -1988,8 +2024,8 @@ impl Vm {
                             Some(v) if self.heap.array(v).is_some() => "array".into(),
                             Some(v) => match self.heap.get(v) {
                                 _ if let Some(symbol) = self.heap.symbol_data(v) => format!("symbol {:?}", symbol.kind),
-                                _ if self.heap.ordinary_view(v).is_some() => {
-                                    let data = self.heap.ordinary_view(v).unwrap();
+                                _ if self.heap.ordinary_object(v).is_some() => {
+                                    let data = self.heap.ordinary_object(v).unwrap();
                                     format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
                                 }
                                 Some(cell) => format!("cell {}", cell.profile_variant_name()),
@@ -2181,7 +2217,7 @@ impl Vm {
                     if truthy == crate::staged::frame_arm::jump_taken(ins) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor);
+                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                         }
                     }
                     continue;
@@ -2204,7 +2240,7 @@ impl Vm {
                         if !truthy {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
-                                self.note_back_edge(&mut cursor);
+                                self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                             }
                         }
                         continue;
@@ -2216,6 +2252,7 @@ impl Vm {
                     if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
+                        p,
                         receiver,
                         ins.atom_index(),
                         self.read(frame, ins.register_a()),
@@ -2292,7 +2329,7 @@ impl Vm {
                                 .then(|| self.frames[frame].this),
                         } =>
                 {
-                    let value = match self.cached_field_hit(object, cache_site) {
+                    let value = match self.cached_field_hit(p, object, cache_site) {
                         super::object::FieldCacheProbe::Hit(value) => Some(value),
                         super::object::FieldCacheProbe::Ineligible => {
                             self.array_length_field(object, atom)
@@ -2337,6 +2374,7 @@ impl Vm {
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
                 {
+                    self.note_int_update(self.read(frame, ins.register_b()), value);
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
@@ -2349,11 +2387,11 @@ impl Vm {
                     );
                     continue;
                 }
-                // A back edge collects only byte debt (`poll_byte_debt`), so it takes this path while cell debt waits.
-                FrameArm::Jump if !self.heap.byte_due() => {
+                // A back edge collects only once the allocation threshold is reached.
+                FrameArm::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
-                        self.note_back_edge(&mut cursor);
+                        self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                     }
                     continue;
                 }
@@ -2367,26 +2405,20 @@ impl Vm {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            match crate::staged::frame_arm::general(ins.op()) {
+            match crate::staged::frame_arm::arm(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = returned_in_lane.take() => Ok(StepResult::Return(value)),
-                GeneralArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                GeneralArm::Step => self.step(p, frame, ins, &mut pc, allow_inline_calls),
-                GeneralArm::Call if allow_inline_calls => {
-                    let result = match self.try_inline_reflect_apply(p, frame, ins, pc) {
+                FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                FrameArm::Call if allow_inline_calls => {
+                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
                             Some(result) => result,
                             None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
                         },
-                    };
-                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
+                    }
                 }
-                GeneralArm::Call | GeneralArm::Allocating => {
-                    let result = self.step(p, frame, ins, &mut pc, allow_inline_calls);
-                    // SAFETY: as for `p` at the top of the loop.
-                    self.serviced(frame, pc, unsafe { &*executing_residual }, result)
-                }
+                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
             // The frame a generator's activation became yields (or an in-place request's awaits)
@@ -2394,6 +2426,20 @@ impl Vm {
             let (step, mut yielded) = self.materialized_stop(pending_calls.last(), frame, pc, step);
             match step {
                 Ok(StepResult::Return(mut value)) => {
+                    let completion = {
+                        let completed = &mut self.frames[frame];
+                        completed.js_jit_interpreter_started.take().map(|started| {
+                            (
+                                completed.program,
+                                completed.function,
+                                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                            )
+                        })
+                    };
+                    if let Some((program, function, elapsed_ns)) = completion {
+                        self.programs
+                            .record_js_jit_interpreter_completion(program, function, elapsed_ns);
+                    }
                     let mut settle_error;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
@@ -2504,7 +2550,6 @@ impl Vm {
                     return Ok(FrameOutcome::Complete(value));
                     }
                 },
-                // Cell debt was serviced in the dispatch, after an op that may allocate (`serviced`).
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame { destination, call_guard, completion }) => {
                     // A callee of another program became active; the loop runs it until it returns.
@@ -2542,8 +2587,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // An entry is a poll: byte debt collects here; cell debt waits for the callee's first op boundary.
-                    self.poll_byte_debt(unsafe { &*executing_residual });
+                    // An entry is a safepoint: else a due collection waits for a loop, every call a frame.
+                    self.maybe_collect(unsafe { &*executing_residual });
                 }
                 Ok(StepResult::ResumeFrames(recovered)) => {
                     pending_calls.extend(recovered.calls);
@@ -2577,8 +2622,8 @@ impl Vm {
                     );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                    // The replacement frame publishes all callee roots before this poll: byte debt only.
-                    self.poll_byte_debt(current_program.as_deref().unwrap_or(entry_program));
+                    // The replacement frame publishes all callee roots before this back edge.
+                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                 }
                 Ok(StepResult::Suspend(Suspended::Await { value, destination })) => {
                     // An async call the loop pushed in place (`Vm::try_settling_call`) suspends
@@ -2596,7 +2641,7 @@ impl Vm {
                         // SAFETY: as for `p` at the top of the loop.
                         let callee_code = unsafe { &*executing_residual };
                         let continuation = self.suspend_activation(
-                            FrameRecord::capture(suspended),
+                            suspended,
                             super::activation::Completion::Await(value),
                             Some(destination),
                             promise,
@@ -2704,11 +2749,6 @@ impl Vm {
         fast_lane: bool,
     ) -> Result<(usize, usize), JsError> {
         loop {
-            // A capture took the frames the pending calls name (the frame stack may be empty now) and no handler
-            // catches it: the run ends with the chain.
-            if error.is_captured() {
-                return Err(error);
-            }
             // The clone keeps the residual alive for the whole iteration, past any switch of `executing`.
             let retained = executing.retained.clone();
             let p = retained.as_deref().unwrap_or(entry_program);
@@ -2779,8 +2819,7 @@ impl Vm {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
-        // A captured run's frames are gone and a termination is uncatchable: neither has a handler.
-        if error.is_execution_terminated() || error.is_captured() { return Err(error); }
+        if error.is_execution_terminated() { return Err(error); }
         let error = self.name_non_callable_callee(program, frame, function, throwing_pc, error);
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or

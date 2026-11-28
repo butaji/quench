@@ -27,11 +27,11 @@ impl SimdOperator {
         Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
     }
 
-    pub fn selector(self, lane: u8) -> u32 {
+    pub(crate) fn selector(self, lane: u8) -> u32 {
         selector_of(self as u32, lane)
     }
 
-    pub fn right_type(self) -> Option<WasmType> {
+    pub(crate) fn right_type(self) -> Option<WasmType> {
         Self::KERNELS[self as usize].right
     }
 
@@ -44,7 +44,7 @@ pub struct SimdKernel {
     pub right: Option<WasmType>,
     /// How many lanes a lane immediate may name: one for an operator without one.
     lanes: u32,
-    pub result: WasmType,
+    pub(crate) result: WasmType,
     operator: SimdOperator,
 }
 
@@ -88,7 +88,7 @@ const fn lane_count(indexed: &[&str], width: u32) -> u32 {
 macro_rules! simd_kernels {
     ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
         impl SimdOperator {
-            pub const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
+            pub(crate) const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
                 left: WasmType::$left,
                 right: $right,
                 lanes: lane_count(&[$(stringify!($lane))?], $width),
@@ -152,7 +152,7 @@ macro_rules! native_rows {
     ($($operator:ident => $op:ident, $lanes:ident;)+) => {
         /// The operators a machine computes natively, each exactly its kernel
         /// (`staged::wasm_simd_tests` checks every row against `SimdKernel`).
-        pub const NATIVE: [(SimdOperator, Native); [$(SimdOperator::$operator),+].len()] = [$((
+        pub(crate) const NATIVE: [(SimdOperator, Native); [$(SimdOperator::$operator),+].len()] = [$((
             SimdOperator::$operator,
             Native { op: NativeOp::$op, lanes: Lanes::$lanes },
         )),+];

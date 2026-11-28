@@ -60,7 +60,7 @@ impl Vm {
         if self.proxy_parts(target).is_some() {
             return None;
         }
-        Some(self.heap.ordinary_view(target)?.proto())
+        Some(self.heap.ordinary_object(target)?.proto())
     }
 }
 

@@ -5,7 +5,6 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::facts::ranges::{self, Edge};
 use quench_runtime::vm::operations::NumberRelation;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[derive(Clone)]
 pub(crate) struct State {
@@ -119,9 +118,7 @@ fn define(state: &mut State, program: &ResidualProgram, instruction: WideInstruc
 /// the loop that its edge reaches.
 fn forward(incoming: &mut [Option<State>], state: State, program: &ResidualProgram,
     (pc, instruction): (usize, WideInstruction), (header, back): (usize, usize)) {
-    let mut next = smallvec::SmallVec::<[usize; 2]>::new();
-    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |target| next.push(target));
-    let mut targets = next.into_iter().enumerate()
+    let mut targets = successors(pc, instruction).into_iter().enumerate()
         .filter_map(|(edge, target)| (target > pc && target <= back).then_some((edge, target))).peekable();
     let mut state = Some(state);
     while let Some((edge, target)) = targets.next() {

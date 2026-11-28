@@ -14,8 +14,10 @@
 //! other add is the VM's, which allocates and grows.
 
 use super::region::Region;
-use super::field_cache_layout::CLASS_KEY;
-use super::object::plain_payload;
+use super::entry::direct_record;
+use super::object::{Form, plain_payload, proto_link};
+use crate::typed_ir::Representation;
+use super::slot_store::store_slot;
 use super::{StagedRecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -35,7 +37,7 @@ pub struct Edge<W> {
 /// shape reader or method cache can name it) and an open store gate (no slot representation
 /// observes the write, no barrier log is due). Answers the payload word the storage reads from.
 #[inline(always)]
-pub fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     admitted_gated::<S, false>(stage, space, record, record_id, before, value, miss)
 }
@@ -57,44 +59,49 @@ fn admitted_gated<S: Stage, const HELD: bool>(stage: &mut S, space: StagedRecord
     Some(payload)
 }
 
-/// The add of `value` at the slot of a class-keyed `edge` to the live class cell the direct object `object` is
-/// (`add_cell_property`): where `object` is no direct object, or its cell is of another class, it leaves before
-/// any write. The class-keyed rows (`ADD_CLASS_ROW`) run it on its own.
+/// Adds `value` at the slot of `edge` to the object record at `record` (id `record_id`) and moves
+/// it to the edge's after-shape, where it holds the before-shape, is extensible and plain, the
+/// store gate admits the write and `form` holds its values; `None` (leaving at `miss`, before any
+/// write) otherwise. The value is written before the shape, so no reader sees a shape without its
+/// slot; the transition retires no shape reader because only an object with extras, which a
+/// prototype or holder has, is read through one.
 #[inline(always)]
-pub fn class_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, value: S::Word, miss: S::Miss) -> Option<()> {
-    let direct = super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    let granule = super::value::direct_object_id(stage, object);
-    let cell = super::object::cell_at_granule(stage, granule);
-    let class = super::object::cell_class(stage, cell);
-    add_cell_property(stage, (granule, cell, class), edge, value, miss)
+pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
+    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
+    Some(())
 }
 
-/// The add of `value` at the slot of `edge` to the live class cell `cell` at `granule`, in place: it holds the
-/// before-class, keyed as `Heap::live_class_key` keys it (`class | CLASS_KEY`, the same one compare as
-/// `entry::class_matches`: a key of another class equals no cell's key), the
-/// field fits its region's capacity, and the store gate admits the write (the class space's barrier, as
-/// `Heap::class_cell_add`). The field is stored before the header takes the after-class, so no reader sees the
-/// new class without its slot. `None` (leaving at `miss`, before any write) otherwise, where the VM takes the add
-/// or grows nothing. The after-class is the transition's, which keeps the before-class's link and flags.
+/// `add_property` of a value the after-shape's slot observation already holds
+/// (`Heap::add_observation_holds`): the barrier's log alone gates the write (`admitted_gated`).
 #[inline(always)]
-fn add_cell_property<S: Stage>(stage: &mut S, (granule, cell, class): (S::Word, S::Word, S::Word), edge: Edge<S::Word>,
-    value: S::Word, miss: S::Miss) -> Option<()> {
-    let key = stage.add_imm(class, u64::from(CLASS_KEY));
-    let moved = stage.sub(key, edge.before);
-    let same = stage.eq_imm(moved, 0u32);
-    stage.guard(same, miss)?;
-    // The region's capacity is `2^region - 1`, so `slot < capacity` is `slot + 1 < 2^region`, which is `(slot + 1) >> region == 0`.
-    let region = stage.shr_imm(granule, u64::from(super::object_encoding::REGION_SHIFT));
-    let next = stage.add_imm(edge.slot, 1u32);
-    let beyond = stage.shr(next, region);
-    let fits = stage.eq_imm(beyond, 0u32);
-    stage.guard(fits, miss)?;
-    // Always the whole gate: the cell space's gate refuses while slot representations are tracked, so a stored
-    // word is never a Number-slot's raw double that needs converting (`slot_store::class_word`).
-    let open = stage.store_gate(StagedRecordSpace::Class, granule, value);
-    stage.guard(open, miss)?;
-    super::entry::class_store(stage, cell, edge.slot, value);
-    stage.store_u32(Region::ShapeWord.mutable(), cell, super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.class_offset as i32, edge.after);
+pub(crate) fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
+    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = admitted_gated::<S, true>(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
     Some(())
+}
+
+/// `add_property` for the object word `object` of the record table at `records`, the way a
+/// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`), and where
+/// `link` is given (an add the prototype chain can intercept, whose chain proof the code holds as
+/// a Stable fact for exactly that prototype) the object's prototype link is it. The chain's own
+/// shapes are not read: a change to the layout of a prototype on it retires the code
+/// (`Heap::subscribe_prototype_chain`), so only what varies per receiver, its link, is tested.
+#[inline(always)]
+pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
+    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+    let present = stage.ne_imm(records, 0u32);
+    stage.guard(present, miss)?;
+    let (id, record) = direct_record(stage, records, object, miss)?;
+    if let Some(link) = link {
+        let held = proto_link(stage, record);
+        let moved = stage.sub(held, link);
+        let same = stage.eq_imm(moved, 0u32);
+        stage.guard(same, miss)?;
+    }
+    add_property(stage, record, id, edge, form, value, miss)
 }

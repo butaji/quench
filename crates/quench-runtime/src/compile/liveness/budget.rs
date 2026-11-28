@@ -38,7 +38,7 @@ mod tests {
 
     /// A program whose root function runs `length` no-ops, optionally one jump, then returns.
     fn program_of(length: usize, jump: Option<(usize, u32)>) -> ResidualProgram {
-        let mut program = Engine::specialize("", "budget.js").unwrap();
+        let mut program = Engine::specialize_unspecialized("", "budget.js").unwrap();
         let function = &mut program.functions[0];
         let mut code = vec![Instr::new(Op::Nop, 0, 0, 0, 0); length];
         if let Some((pc, target)) = jump {

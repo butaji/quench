@@ -20,7 +20,6 @@ use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_step::Step;
 use quench_bjit::padded_holes;
 use quench_bjit::wasm as codes;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The registers one `ROOT_PUSH` row holds: the row's hole names at most four, 16 bits each.
 const CHUNK: usize = 4;

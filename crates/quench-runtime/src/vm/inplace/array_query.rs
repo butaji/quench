@@ -110,6 +110,6 @@ fn last_index_start(from: Option<Value>, length: usize) -> Option<isize> {
         None => (false, 0),
         Some(from) => (true, i64::from(from.as_int()?)),
     };
-    let mut stage = crate::staged::Concrete::pure();
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
     Some(crate::staged::array_search::last_index_start_row(&mut stage, present, from as u64, length as u64) as i64 as isize)
 }

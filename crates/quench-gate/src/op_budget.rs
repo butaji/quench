@@ -12,11 +12,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const BUDGETS: &str = "crates/quench-tier-corpus/op_budgets.txt";
-/// Each mode's debt list: the ops over their budget in that mode.
+/// Each tier's debt list: the ops over their budget in that tier.
 pub const OVER: [(&str, &str); 3] = [
     ("no-jit", "crates/quench-tier-corpus/op_over_budget_no_jit.txt"),
+    ("b-jit", "crates/quench-tier-corpus/op_over_budget_b_jit.txt"),
     ("default", "crates/quench-tier-corpus/op_over_budget_default.txt"),
-    ("aot", "crates/quench-tier-corpus/op_over_budget_aot.txt"),
 ];
 /// The op whose count is the loop's own step, which every other op's count is taken net of.
 pub const LOOP: &str = "empty";

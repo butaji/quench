@@ -56,10 +56,9 @@ fn for_each_mark_mode(mut scenario: impl FnMut(&mut Heap)) {
     }
 }
 
-/// A chain of `PARALLEL_TEST_CHAIN_LINKS` arrays, each reaching the previous one
-/// through an ordinary object (a class cell), its first holding `keys`: the last array and every string.
+/// A chain of `PARALLEL_TEST_CHAIN_LINKS` array records, each reaching the previous one
+/// through an object record, its first holding `keys`: the last array and every string.
 fn record_chain(heap: &mut Heap, keys: [Value; 2]) -> (Value, Vec<Value>) {
-    register_field_shapes(heap);
     let mut strings = Vec::new();
     let mut link = Value::UNDEFINED;
     for index in 0..PARALLEL_TEST_CHAIN_LINKS {
@@ -70,9 +69,10 @@ fn record_chain(heap: &mut Heap, keys: [Value; 2]) -> (Value, Vec<Value>) {
         if index == 0 {
             elements.extend(keys);
         }
+        let object = heap.alloc_object(plain_object());
+        heap.object_mut(object).unwrap().set_inline_property(0, link);
         let property = heap.alloc_string(format!("object:{index}").into());
-        // A two-field ordinary object: a class cell whose fields hold the previous link and the string.
-        let object = heap.alloc_object_with_properties(Value::NULL, 2, &[link, property]);
+        heap.object_mut(object).unwrap().set_inline_property(1, property);
         strings.push(property);
         elements.push(object);
         link = heap.alloc_array(ArrayObject::new(plain_object(), elements));

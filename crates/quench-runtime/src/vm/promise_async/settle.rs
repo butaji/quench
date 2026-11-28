@@ -38,21 +38,6 @@ impl StopOwner {
 /// whose stop settles a promise or a request instead.
 pub(in crate::vm) type Stop = Result<Option<GeneratorStep>, JsError>;
 
-/// Splits a popped activation's frame by its stop. A suspension moves the frame into the record
-/// its outcome carries (`FrameRecord::capture`, the pop site of a suspended activation); any
-/// other stop keeps the frame, for `settle_stop` to pool.
-pub(in crate::vm) fn split_stop(
-    frame: Box<super::Frame>,
-    result: Result<super::FrameOutcome, JsError>,
-) -> (Option<Box<super::Frame>>, Result<super::FrameOutcome, JsError>) {
-    match result {
-        Ok(super::FrameOutcome::Suspend(suspended, None)) => {
-            (None, Ok(super::FrameOutcome::Suspend(suspended, Some(FrameRecord::capture(frame)))))
-        }
-        result => (Some(frame), result),
-    }
-}
-
 /// The step of a sync generator whose lane run ended with `end`: the lane already suspended or
 /// completed its record at the `yield`, the return or the uncaught raise.
 fn generator_job_step(end: JobEnd) -> Stop {
@@ -109,16 +94,9 @@ impl Vm {
         owner: StopOwner,
         result: Result<super::FrameOutcome, JsError>,
     ) -> Stop {
-        // A captured run's frames are its chain already (`capture_chain_parked`): the stop has no
-        // frame to pop and no promise to reject, so the capture passes through.
-        let result = match result {
-            Err(error) if error.is_captured() => return Err(error),
-            result => result,
-        };
         let mut frame = self.frames.pop().expect("resumed frame exists");
         self.deactivate_frame(&mut frame, &result);
-        let (popped, result) = split_stop(frame, result);
-        self.settle_stop(p, owner, popped, result)
+        self.settle_stop(p, owner, Some(frame), result)
     }
 
     /// The one map from a suspended activation's stop to its effect: `owner`'s activation, whose
@@ -135,9 +113,6 @@ impl Vm {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.pool_stopped(popped);
-                if error.is_captured() {
-                    return Err(error);
-                }
                 return self.stop_threw(p, owner, error);
             }
         };
@@ -152,10 +127,7 @@ impl Vm {
             }
             super::FrameOutcome::Suspend(suspended, retained) => match (popped, retained) {
                 (Some(frame), Some(retained)) => self.stop_retained(p, owner, (frame, retained), &suspended),
-                (frame, retained) => {
-                    self.pool_stopped(frame);
-                    self.stop_suspended(p, owner, retained, suspended)
-                }
+                (frame, retained) => self.stop_suspended(p, owner, frame.or(retained), suspended),
             },
         }
     }
@@ -163,15 +135,6 @@ impl Vm {
     /// A stopped activation's frame, where there is one, goes back to the frame pool.
     fn pool_stopped(&mut self, frame: Option<Box<super::Frame>>) {
         if let Some(frame) = frame {
-            self.pool_frame(frame);
-        }
-    }
-
-    /// A suspended activation's record, where there is one, goes back to the frame pool as the
-    /// frame it was.
-    fn pool_stopped_record(&mut self, frame: Option<Box<FrameRecord>>) {
-        if let Some(frame) = frame {
-            let frame = frame.into_buffers(self.with_stack.len());
             self.pool_frame(frame);
         }
     }
@@ -205,7 +168,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         owner: StopOwner,
-        frame: Option<Box<FrameRecord>>,
+        frame: Option<Box<super::Frame>>,
         suspended: super::Suspended,
     ) -> Stop {
         match suspended {
@@ -223,12 +186,12 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         owner: StopOwner,
-        frame: Option<Box<FrameRecord>>,
+        frame: Option<Box<super::Frame>>,
         (value, destination): (Value, u16),
     ) -> Stop {
         match (owner, frame) {
             (StopOwner::Generator(generator), frame) => {
-                self.pool_stopped_record(frame);
+                self.pool_stopped(frame);
                 self.complete_generator(generator);
                 Err(JsError("await is not supported in a synchronous generator".into()))
             }
@@ -246,7 +209,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         owner: StopOwner,
-        frame: Option<Box<FrameRecord>>,
+        frame: Option<Box<super::Frame>>,
         (value, destination): (Value, u16),
         delegated: Option<Value>,
     ) -> Stop {
@@ -268,23 +231,18 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         owner: StopOwner,
-        (frame, retained): (Box<super::Frame>, Box<FrameRecord>),
+        (frame, retained): (Box<super::Frame>, Box<super::Frame>),
         suspended: &super::Suspended,
     ) -> Stop {
         let awaited = matches!(suspended, super::Suspended::Await { .. });
         match owner {
-            StopOwner::Generator(_) if awaited => {
-                self.pool_stopped(Some(frame));
-                self.stop_awaited(p, owner, None, (Value::UNDEFINED, 0))
-            }
+            StopOwner::Generator(_) if awaited => self.stop_awaited(p, owner, Some(frame), (Value::UNDEFINED, 0)),
             StopOwner::Generator(_) => {
-                self.pool_stopped(Some(frame));
-                self.pool_stopped_record(Some(retained));
+                self.pool_frame(retained);
                 Err(JsError("generator frame retained unexpectedly".into()))
             }
             StopOwner::Async(resume) => {
-                self.pool_stopped(Some(frame));
-                self.pool_stopped_record(Some(retained));
+                self.pool_frame(retained);
                 let message = if awaited { "resumed async frame retained unexpectedly" } else { "yield is not valid in an async function" };
                 self.retained_resumed(p, resume, message).map(|()| None)
             }
@@ -311,7 +269,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,
-        frame: Box<FrameRecord>,
+        frame: Box<super::Frame>,
         value: Value,
         destination: u16,
     ) -> Result<(), JsError> {
@@ -328,7 +286,7 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,
-        frame: Box<FrameRecord>,
+        frame: Box<super::Frame>,
         (value, destination): (Value, u16),
         delegated: bool,
     ) -> Result<(), JsError> {
@@ -337,7 +295,7 @@ impl Vm {
                 self.async_generator_yield(p, generator, resume.promise, frame, value, destination, delegated)
             }
             None => {
-                self.pool_stopped_record(Some(frame));
+                self.pool_frame(frame);
                 Err(JsError("yield is not valid in an async function".into()))
             }
         }

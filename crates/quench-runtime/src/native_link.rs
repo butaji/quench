@@ -1,6 +1,5 @@
 //! Host-neutral native executable publication, available only in compiler builds.
 
-pub mod image_dump;
 mod exports;
 mod footprint;
 mod link;
@@ -10,21 +9,12 @@ pub use link::{NativeLinkAudit, NativeSupport, checked_output};
 pub use footprint::NativeImageFootprint;
 pub use payload::{PayloadReduction, remove_offline_symbols};
 
-/// The sections an image's marks live in, by platform (`shared_vm::marked_operation`).
-const MARK_SECTIONS: [&str; 2] = [".quench_operation_marks", "__quench_marks"];
-
-/// The little-endian 32-bit word of each symbol of `executable` whose name holds `marker`, or every word of the marks'
-/// section where the image has one:
+/// The little-endian 32-bit word of each symbol of `executable` whose name holds `marker`:
 /// statics the linker kept because the code it kept refers to them.
 pub fn marked_words(executable: &std::path::Path, marker: &str) -> Result<Vec<u32>, String> {
     use object::{Object, ObjectSection, ObjectSymbol};
     let bytes = std::fs::read(executable).map_err(|error| format!("{}: {error}", executable.display()))?;
     let file = object::File::parse(&*bytes).map_err(|error| error.to_string())?;
-    // The marks' own section (`MARK_SECTIONS`), whole: every word in it is a mark.
-    if let Some(section) = file.sections().find(|section| section.name().is_ok_and(|name| MARK_SECTIONS.contains(&name))) {
-        let data = section.data().map_err(|error| error.to_string())?;
-        return Ok(data.chunks_exact(4).map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])).collect());
-    }
     let mut words = Vec::new();
     for symbol in file.symbols().filter(|symbol| symbol.name().is_ok_and(|name| name.contains(marker))) {
         let Some(index) = symbol.section_index() else { continue };

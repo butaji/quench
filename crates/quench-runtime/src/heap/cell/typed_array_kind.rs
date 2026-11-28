@@ -61,60 +61,40 @@ const _: () = {
     }
 };
 
-// `TypedArrayKind` is defined in the shared catalog (`typed_array_catalog.rs`), so its methods
-// cannot stay an inherent impl here (spec 4.5). A `const fn` cannot be a trait method, so the
-// const methods are free `const fn`s; the one non-const method is an extension trait.
-
-#[inline(always)]
-pub const fn typed_array_kind_is_bigint(kind: TypedArrayKind) -> bool {
-    matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
-}
-
-/// Whether the elements are binary floats: their Numbers are stored as raw double words
-/// (`Value::from_f64_raw`, decision 4.1), integral values included.
-#[inline(always)]
-pub const fn typed_array_kind_is_float(kind: TypedArrayKind) -> bool {
-    matches!(kind, TypedArrayKind::Float16 | TypedArrayKind::Float32 | TypedArrayKind::Float64)
-}
-
-/// For a kind of 8-, 16- or 32-bit integers, whether they are signed: a Number such a
-/// kind stores is reduced modulo its width (except Uint8Clamped's, which clamps), so an
-/// integer of another such kind converts to its low bytes. `None` for the others.
-pub const fn typed_array_kind_integer_signed(kind: TypedArrayKind) -> Option<bool> {
-    match kind {
-        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped | TypedArrayKind::Uint16 | TypedArrayKind::Uint32 => Some(false),
-        TypedArrayKind::Int8 | TypedArrayKind::Int16 | TypedArrayKind::Int32 => Some(true),
-        TypedArrayKind::BigInt64
-        | TypedArrayKind::BigUint64
-        | TypedArrayKind::Float16
-        | TypedArrayKind::Float32
-        | TypedArrayKind::Float64 => None,
+impl TypedArrayKind {
+    #[inline(always)]
+    pub(crate) const fn is_bigint(self) -> bool {
+        matches!(self, Self::BigInt64 | Self::BigUint64)
     }
-}
 
-/// Whether `Atomics.wait` and `Atomics.notify` accept the kind.
-pub const fn typed_array_kind_is_waitable(kind: TypedArrayKind) -> bool {
-    matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
-}
+    /// For a kind of 8-, 16- or 32-bit integers, whether they are signed: a Number such a
+    /// kind stores is reduced modulo its width (except Uint8Clamped's, which clamps), so an
+    /// integer of another such kind converts to its low bytes. `None` for the others.
+    pub(crate) const fn integer_signed(self) -> Option<bool> {
+        match self {
+            Self::Uint8 | Self::Uint8Clamped | Self::Uint16 | Self::Uint32 => Some(false),
+            Self::Int8 | Self::Int16 | Self::Int32 => Some(true),
+            Self::BigInt64 | Self::BigUint64 | Self::Float16 | Self::Float32 | Self::Float64 => None,
+        }
+    }
 
-/// The constructor's name, which is also the kind's class name.
-pub const fn typed_array_kind_name(kind: TypedArrayKind) -> &'static str {
-    TYPED_ARRAYS[kind as usize].name
-}
+    /// Whether `Atomics.wait` and `Atomics.notify` accept the kind.
+    pub(crate) const fn is_waitable(self) -> bool {
+        matches!(self, Self::Int32 | Self::BigInt64)
+    }
 
-/// The constructor intrinsic.
-pub const fn typed_array_kind_native(kind: TypedArrayKind) -> Native {
-    TYPED_ARRAYS[kind as usize].native
-}
+    /// The constructor's name, which is also the kind's class name.
+    pub(crate) const fn name(self) -> &'static str {
+        TYPED_ARRAYS[self as usize].name
+    }
 
-/// The non-const methods of `TypedArrayKind`.
-pub trait TypedArrayKindTypedArrayKindExt: Sized {
+    /// The constructor intrinsic.
+    pub(crate) const fn native(self) -> Native {
+        TYPED_ARRAYS[self as usize].native
+    }
+
     /// The kind whose constructor intrinsic is `native`.
-    fn of_constructor(native: Native) -> Option<Self>;
-}
-
-impl TypedArrayKindTypedArrayKindExt for TypedArrayKind {
-    fn of_constructor(native: Native) -> Option<Self> {
+    pub(crate) fn of_constructor(native: Native) -> Option<Self> {
         TYPED_ARRAYS.iter().find(|row| row.native == native).map(|row| row.kind)
     }
 }

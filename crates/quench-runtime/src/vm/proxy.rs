@@ -209,29 +209,3 @@ impl Vm {
         Ok(Value::UNDEFINED)
     }
 }
-
-/// The entry of the Proxy natives: the constructor's call error, `Proxy.revocable`, and a
-/// revoke function.
-pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
-    match native {
-        Native::Proxy => Some(proxy_called),
-        Native::ProxyRevocable => Some(proxy_revocable_native),
-        Native::ProxyRevoke => Some(proxy_revoke_native),
-        _ => None,
-    }
-}
-
-fn proxy_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    Err(vm.type_error(p, "Proxy must be called with new".into()))
-}
-
-fn proxy_revocable_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
-    vm.proxy_revocable(p, args)
-}
-
-fn proxy_revoke_native(vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
-    let callee = vm
-        .active_native_callable()
-        .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-    vm.proxy_revoke(callee)
-}

@@ -229,7 +229,7 @@ impl Vm {
             .settle_yield_await(p, (state, generator), promise, reaction.value)
             .and_then(|()| self.resume_async_generator_queue(p, generator));
         match settled {
-            Err(error) if error.is_execution_terminated() || error.is_captured() => ChainStep::Ran(Err(error)),
+            Err(error) if error.is_execution_terminated() => ChainStep::Ran(Err(error)),
             _ => {
                 let role = AwaitRole::AsyncGeneratorYield(generator);
                 ChainStep::Settled(AwaitResume { state: Some(state), promise, role, rejected: false })

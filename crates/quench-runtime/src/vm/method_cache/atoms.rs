@@ -26,8 +26,8 @@ impl MethodCacheAtoms {
 
     /// Names `atom`, retiring the code that held it unnamed.
     pub(in crate::vm) fn name(&mut self, atom: Atom) {
-        if self.bits.insert_growing(atom as usize) {
-            self.readers.retire(atom);
+        if self.bits.insert_growing(atom as usize) && self.readers.retire(atom) {
+            crate::fact_stats::retired(crate::fact_stats::FactKind::Atom, u64::from(atom));
         }
     }
 

@@ -10,8 +10,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::facts::{self, Seeds, Text};
-use super::super::lane_region::writes;
+use super::super::facts::{self, Observed, Seeds, Text};
+use super::super::lane_region::{leaders, writes};
 use quench_runtime::bytecode::{Constant, Function};
 use quench_runtime::dataflow::BitSet;
 
@@ -43,11 +43,11 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
         return None;
     }
     let instructions: Vec<WideInstruction> = function.instructions().collect();
-    let blocks = quench_runtime::bytecode::instruction_leaders(&instructions);
+    let blocks = leaders(&instructions);
     let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
-    let seeds = Seeds::typed();
+    let seeds = Seeds { contracts: &[], observed: Observed::NONE, entering: &[], model: None, signless: &[] };
     let mut exact: BitSet = BitSet::with_capacity(instructions.len());
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(constants, instructions[pc]) {

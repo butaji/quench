@@ -423,6 +423,14 @@ const CASES: &[Case] = &[
     },
 ];
 
+/// The compilations the interpreter, specialized and native tiers share.
+fn compilations(source: &str, name: &str) -> [(&'static str, crate::bytecode::ResidualProgram); 2] {
+    [
+        ("specialized", Engine::specialize(source, name).unwrap()),
+        ("unspecialized", Engine::specialize_unspecialized(source, name).unwrap()),
+    ]
+}
+
 /// Whether the object `weak[label]` refers to survived the last collection.
 fn probe_alive(vm: &mut Vm, program: &crate::bytecode::ResidualProgram, label: &str) -> bool {
     let weak = vm.intern_atom("weak");
@@ -451,8 +459,8 @@ fn check_case(case: &Case, runs: u32) {
     // Each case also runs with every full mark in parallel rounds (`force_parallel_mark_for_test`),
     // whose closure environment edges the collector follows between rounds.
     for parallel in [false, true] {
-        let program = Engine::specialize(&source, case.name).unwrap();
-        let compilation = if parallel { "specialized, parallel mark" } else { "specialized" };
+    for (compilation, program) in compilations(&source, case.name) {
+        let compilation = if parallel { format!("{compilation}, parallel mark") } else { compilation.to_owned() };
         let mut vm = Vm::new(TestHost::default().with_test262());
         if parallel {
             vm.heap.force_parallel_mark_for_test();
@@ -483,6 +491,7 @@ fn check_case(case: &Case, runs: u32) {
                 case.name,
             );
         }
+    }
     }
 }
 

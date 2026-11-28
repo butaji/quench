@@ -2172,7 +2172,7 @@ version = "0.1.0"
 dependencies = [
  "iced-x86",
  "libc",
- "quench-staged",
+ "object 0.39.1",
  "quench-stencils",
 ]
 
@@ -2224,7 +2224,6 @@ name = "quench-lint"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
- "quench-opcodes",
  "quote",
  "syn 2.0.119",
 ]
@@ -2254,10 +2253,6 @@ dependencies = [
  "wait-timeout",
  "wast",
 ]
-
-[[package]]
-name = "quench-opcodes"
-version = "0.1.0"
 
 [[package]]
 name = "quench-regexp"
@@ -2306,7 +2301,6 @@ dependencies = [
  "quench-intl",
  "quench-layers",
  "quench-macros",
- "quench-opcodes",
  "quench-regexp",
  "quench-stack",
  "quench-temporal",
@@ -2373,21 +2367,12 @@ name = "quench-stack"
 version = "0.1.0"
 
 [[package]]
-name = "quench-staged"
-version = "0.1.0"
-dependencies = [
- "libm",
- "wasmparser",
-]
-
-[[package]]
 name = "quench-stencils"
 version = "0.1.0"
 dependencies = [
  "iced-x86",
  "object 0.39.1",
  "quench-bjit",
- "quench-opcodes",
 ]
 
 [[package]]

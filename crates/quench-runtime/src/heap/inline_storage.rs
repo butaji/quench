@@ -12,8 +12,7 @@ impl Heap {
         let Some((data, properties)) = self.object_and_arena_mut(object) else { return };
         let length = properties.len(data.properties());
         let Some(values) = data.inline_properties().filter(|_| length > 0) else { return };
-        let shape = data.shape();
-        widen_inline_storage(data, properties, shape, length, 0, values[0]);
+        widen_inline_storage(data, properties, data.shape(), length, 0, values[0]);
     }
 
     #[cold]
@@ -22,8 +21,7 @@ impl Heap {
             .object_and_arena_mut(object)
             .expect("property owner is an object");
         let length = properties.len(data.properties());
-        let shape = data.shape();
-        widen_inline_storage(data, properties, shape, length, slot, value);
+        widen_inline_storage(data, properties, data.shape(), length, slot, value);
     }
 }
 

@@ -518,7 +518,7 @@ mod rustc_tests {
     #[test]
     fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
         use super::numeric::library::{heap_canonical, heap_name, MEM};
-        use super::numeric::row_names::{IC_GET_ROW, IC_SET_ROW};
+        use super::numeric::row_names::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW};
         let row = |heap, chained| {
             let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
             let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
@@ -529,9 +529,10 @@ mod rustc_tests {
         };
         // A get's receiver offset (hole 0's upper half) and upper-word table (hole 1) are 64-bit fields.
         assert_eq!(row(IC_GET_ROW, false).0, [0, 2, 3]);
+        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 2, 3, 4]);
         // A store's atom (hole 2) is a Stable fact the code holds, which the row does not read.
         assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 3, 4]);
-        for heap in [IC_GET_ROW, IC_SET_ROW] {
+        for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
             let (last, chained) = (row(heap, false).1, row(heap, true).1);
             assert!(last.contains(&crate::EXIT) && !last.contains(&crate::TAKEN), "{heap}: {last:?}");
             assert!(chained.contains(&crate::TAKEN) && chained.contains(&crate::NEXT), "{heap}: {chained:?}");

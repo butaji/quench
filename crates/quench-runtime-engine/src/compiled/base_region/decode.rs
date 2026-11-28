@@ -1,4 +1,3 @@
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -10,7 +9,6 @@ use fields::{field_row, field_store_row};
 pub(crate) use fields::{site_read_row, stores_field};
 pub(crate) mod number_rows;
 pub(crate) use number_rows::{numeric_row, staged_binary, staged_unary};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
 /// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.
@@ -79,28 +77,6 @@ impl Folded {
     }
 }
 
-/// A cache site's inline-cache entry as a row's operands (`Decoded::ic`). A shape-keyed entry is one word (`ic_hole`:
-/// the exact shape below 32 bits, the slot's byte offset above). A class-keyed entry (`NativeFieldLoad::class`) is the
-/// receiver's key (`class | CLASS_KEY`) below 32 bits and the field index above, with the holder cell's granule for a
-/// held read: the operands the class rows take (`ic_rows.rs`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IcEntry {
-    Shape(u64),
-    Class { key_slot: u64, holder: Option<u32> },
-}
-
-impl IcEntry {
-    /// The entry's operands in the order the rows read them: the shape or key, the slot offset or index, and the holder
-    /// cell's granule (zero unless a class-keyed held read takes it).
-    pub(crate) fn words(ic: Option<IcEntry>) -> (u64, u64, u64) {
-        match ic {
-            Some(IcEntry::Shape(word)) => (word & u64::from(u32::MAX), word >> u32::BITS, 0),
-            Some(IcEntry::Class { key_slot, holder }) => (key_slot & u64::from(u32::MAX), key_slot >> u32::BITS, u64::from(holder.unwrap_or(0))),
-            None => (0, 0, 0),
-        }
-    }
-}
-
 /// An instruction as a row: its kind, destination, operands and branch target.
 pub(crate) struct Decoded {
     pub(crate) kind: Kind,
@@ -126,16 +102,23 @@ pub(crate) struct Decoded {
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(crate) folded: Option<Folded>,
     /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
-    /// that `proofs::prove` makes a constant load where the receiver's class shape holds at the row.
+    /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
     pub(crate) class_read: bool,
-    /// The recorded class-keyed transition the add row runs (`adds`).
+    /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
+    /// the receiver is the activation's `this`.
     pub(crate) add: Option<adds::Add>,
+    /// The recorded naming a `SetFunctionName` row runs (`names`).
+    pub(crate) name: Option<names::Name>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(crate) checked: bool,
     /// The instruction carried the return flag: the activation completes with the result the row
     /// writes (`steps::completing`), so control reaches nothing after it.
     pub(crate) completes: bool,
+    /// The constructor an `instanceof` fast arm stands on, with what the VM proved of it (`Known::instanceofs`): its
+    /// identity is the row's `hole`, which the constructor register must hold, and the prototype link the walk looks for
+    /// is the fact's, a Stable fact the code depends on (`held_instanceofs`).
+    pub(crate) instanceof: Option<(Value, InstanceofFact)>,
     /// The global object's slot the row holds under the object's layout and the slot's observed type
     /// (`globals`): Stable facts the code takes.
     pub(crate) global: Option<Access>,
@@ -149,9 +132,10 @@ pub(crate) struct Decoded {
     /// writes only into a receiver of this shape (`plan::site_holes`, hole 4), as the site's live
     /// cache entry may name another shape, whose slot type nothing proved.
     pub(crate) slot_shape: Option<u32>,
-    /// A site read's or store's one own flat entry (`decode::fields::ic_entry`), whose inline-cache row runs first and
-    /// falls to the site row on a miss (`plan::ic_plan`).
-    pub(crate) ic: Option<IcEntry>,
+    /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
+    /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
+    /// on a miss (`plan::ic_plan`).
+    pub(crate) ic: Option<u64>,
     /// The step a store row's instruction runs as where the row declines its operand (`declines`):
     /// the instruction's own (`steps::lowering`).
     pub(crate) declined: Option<Step>,
@@ -163,11 +147,26 @@ pub(crate) struct Decoded {
     /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
     /// The slot type the fact store proves of a site read's one own flat entry (`decode::fields::cached_read`): a
     /// Number type or the direct-object family, which the code holds as a dependency (`held_slot_types`), and a
-    /// widening of the slot retires it over. An object-family proof lets the fast row skip the destination's
-    /// direct-object check, which the site row's path keeps (`plan::ic_plan`'s proof row). Kept only where that row
-    /// runs and the code makes no call (`repr::keep_typed_reads`).
+    /// widening of the slot retires it over. A Number read's inline-cache row then delivers the word to a pinned
+    /// double with no tag test (`plan::ic_plan`); an object read's destination is a direct object after it
+    /// (`proofs::typed_object`). Kept only where that row runs and the code makes no call (`repr::keep_typed_reads`).
     pub(crate) typed: Option<quench_runtime::code_dependencies::SlotDependency>,
     pub(crate) cell: Option<quench_runtime::vm::global_facts::StableCell>,
+    /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
+    /// reads or writes the slot with no guard.
+    pub(crate) proven: bool,
+    /// Where `proven`, the receiver's storage form is proven flat too (`proofs::prove`): the row's slot is the arena run's,
+    /// with no compare of the auxiliary word (`Heap::IcKnownGetFlat`, `Heap::IcKnownSetFlat`).
+    pub(crate) flat: bool,
+    /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
+    /// is not resumed here.
+    pub(crate) relies: bool,
+    /// A proven store whose run-level stores test the region's entry made, and no call since (`proofs::prove`): the row
+    /// tests nothing of its own (`Heap::IcKnownSet`'s `admitted`), or the test `recheck` makes before it.
+    pub(crate) admitted: bool,
+    /// A proven store a call cleared the run-level stores test for, which re-reads the run's stores word
+    /// before it (`Heap::Stores`, a mid-body guard), so the stores after it are admitted (`proofs::prove`).
+    pub(crate) recheck: bool,
     /// A generic `Binary` (its operator is data, so its step helper runs any operands): a numeric row whose site is a
     /// string `+` (`Variant::Concat`) keeps the region running through that helper as its miss (`plan::concat_run`).
     pub(crate) generic: bool,
@@ -177,13 +176,13 @@ pub(crate) struct Decoded {
     pub(crate) int_b: bool,
     /// The typed helper that makes its instruction's step where one does, in place of the general step, for its helper
     /// row and slow arm (`steps::step_helper`): the owner step of a local, capture or name access (`LaneHelper::OwnerStep`),
-    /// an operator or comparison over registers and constants (`LaneHelper::ValueStep`).
+    /// a constant's load (`LaneHelper::ConstantStep`), an operator or comparison over registers and constants (`LaneHelper::ValueStep`).
     pub(crate) own_step: Option<crate::compiled::LaneHelper>,
 }
 
 impl Decoded {
     pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, generic: false, int_a: false, int_b: false, own_step: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
     }
 
     pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -195,10 +194,10 @@ impl Decoded {
     }
 
     /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an
-    /// a global object's slot, an add, or a store in place for an atom no method cache
+    /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(crate) fn holds_stable(&self) -> bool {
-        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.global.is_some() || self.lexical.is_some()
+        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
     }
 
     /// The observed type of the slot a store row writes in place: a global object's slot or a field's.
@@ -495,7 +494,7 @@ pub(crate) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
             .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))
-        .unwrap_or_else(|| names(known, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site)))))
+        .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site))))))
 }
 
 /// The step `row` with the table of `typeof` result strings its fast arm reads (hole 2) where the VM has

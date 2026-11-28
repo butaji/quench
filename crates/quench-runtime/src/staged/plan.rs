@@ -12,9 +12,9 @@ use crate::typed_ir::BindingTime;
 /// A native function a call enters directly: its entry, and whether it runs beside the lane's
 /// activations (`Native::runs_beside_activations`), which stay frameless around such a call.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct NativeId {
-    pub index: u32,
-    pub beside: bool,
+pub(crate) struct NativeId {
+    pub(crate) index: u32,
+    pub(crate) beside: bool,
 }
 
 /// The kinds of callee a site binds to a direct entry. A bound function is one of these with its
@@ -36,7 +36,7 @@ impl CalleeKind {
     /// Whether the call allocates the callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
     #[inline(always)]
-    pub const fn allocates_receiver(self) -> bool {
+    pub(crate) const fn allocates_receiver(self) -> bool {
         matches!(self, Self::Class)
     }
 }
@@ -55,7 +55,7 @@ pub enum Identity {
 impl Identity {
     /// The callee's identity word.
     #[inline(always)]
-    pub const fn word(self) -> u64 {
+    pub(crate) const fn word(self) -> u64 {
         match self {
             Self::Guarded(word) | Self::Folded(word) => word,
         }
@@ -73,7 +73,7 @@ pub struct WordList {
 impl WordList {
     /// The words the list names in `constants`; none where the constants do not hold them.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn words(self, constants: &[u64]) -> &[u64] {
+    pub(crate) fn words(self, constants: &[u64]) -> &[u64] {
         let start = self.start as usize;
         constants.get(start..start + usize::from(self.count)).unwrap_or(&[])
     }
@@ -121,6 +121,8 @@ pub enum CallEntry {
 pub struct Resolved {
     pub plan: DirectPlan,
     pub binding: BindingTime,
+    /// The instructions of the callee's body where a script body is known to the frame.
+    pub body: Option<usize>,
 }
 
 #[cfg(not(stencil_build))]
@@ -134,63 +136,65 @@ impl Resolved {
 #[cfg(not(stencil_build))]
 /// The entry of a call to `callee`, by binding time. A folded identity checks nothing; any other is
 /// guarded once. A bound function whose identity is not folded is the VM's call. A folded script
-/// function the caller's policy inlines (`inlines`, the one rule `tier_policy::inlines` decides) takes
-/// the inlined entry, with its direct entry behind it.
-pub fn plan_entry(callee: Option<Resolved>, inlines: bool) -> CallEntry {
+/// function whose body fits `inline_budget` instructions inlines, with its direct entry behind it.
+pub fn plan_entry(callee: Option<Resolved>, inline_budget: usize) -> CallEntry {
     let Some(callee) = callee else { return CallEntry::Helper };
     if callee.plan.bound.is_some() && !callee.folds() { return CallEntry::Helper; }
     let word = callee.plan.identity.word();
     let identity = if callee.folds() { Identity::Folded(word) } else { Identity::Guarded(word) };
     let plan = DirectPlan { identity, ..callee.plan };
-    let inlined = callee.folds() && callee.plan.kind == CalleeKind::Script && callee.plan.bound.is_none() && inlines;
-    if inlined { CallEntry::Inline(plan) } else { CallEntry::Direct(plan) }
+    let inlines = callee.folds() && callee.plan.kind == CalleeKind::Script && callee.plan.bound.is_none()
+        && callee.body.is_some_and(|size| size <= inline_budget);
+    if inlines { CallEntry::Inline(plan) } else { CallEntry::Direct(plan) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const BUDGET: usize = 96;
+
     fn plan(kind: CalleeKind, bound: Option<Bound>) -> DirectPlan {
         DirectPlan { kind, identity: Identity::Guarded(7), sloppy: None, registers: 2, returned: 1, bound }
     }
 
-    fn resolved(plan: DirectPlan, binding: BindingTime) -> Option<Resolved> {
-        Some(Resolved { plan, binding })
+    fn resolved(plan: DirectPlan, binding: BindingTime, body: Option<usize>) -> Option<Resolved> {
+        Some(Resolved { plan, binding, body })
     }
 
     #[test]
     fn a_callee_the_frame_resolved_is_guarded_unless_its_identity_folds() {
         let script = plan(CalleeKind::Script, None);
-        assert_eq!(plan_entry(None, true), CallEntry::Helper);
+        assert_eq!(plan_entry(None, BUDGET), CallEntry::Helper);
         for binding in [BindingTime::Location, BindingTime::Site, BindingTime::Dynamic] {
-            assert_eq!(plan_entry(resolved(script, binding), true), CallEntry::Direct(script), "{binding:?}");
+            assert_eq!(plan_entry(resolved(script, binding, None), BUDGET), CallEntry::Direct(script), "{binding:?}");
         }
         let folded = DirectPlan { identity: Identity::Folded(7), ..script };
         for binding in [BindingTime::Static, BindingTime::Stable] {
-            assert_eq!(plan_entry(resolved(script, binding), false), CallEntry::Direct(folded), "{binding:?}");
+            assert_eq!(plan_entry(resolved(script, binding, None), BUDGET), CallEntry::Direct(folded), "{binding:?}");
         }
     }
 
     #[test]
-    fn a_stable_script_callee_inlines_where_the_policy_says_and_nothing_else_does() {
+    fn a_stable_script_callee_inlines_within_the_budget_and_nothing_else_does() {
         let script = plan(CalleeKind::Script, None);
         let folded = DirectPlan { identity: Identity::Folded(7), ..script };
-        assert_eq!(plan_entry(resolved(script, BindingTime::Stable), true), CallEntry::Inline(folded));
-        assert_eq!(plan_entry(resolved(script, BindingTime::Stable), false), CallEntry::Direct(folded), "the policy declines");
-        assert_eq!(plan_entry(resolved(script, BindingTime::Site), true), CallEntry::Direct(script), "not Stable");
+        assert_eq!(plan_entry(resolved(script, BindingTime::Stable, Some(BUDGET)), BUDGET), CallEntry::Inline(folded));
+        assert_eq!(plan_entry(resolved(script, BindingTime::Stable, Some(BUDGET + 1)), BUDGET), CallEntry::Direct(folded), "too large");
+        assert_eq!(plan_entry(resolved(script, BindingTime::Site, Some(1)), BUDGET), CallEntry::Direct(script), "not Stable");
         let class = plan(CalleeKind::Class, None);
-        assert!(matches!(plan_entry(resolved(class, BindingTime::Stable), true), CallEntry::Direct(_)), "a construction");
+        assert!(matches!(plan_entry(resolved(class, BindingTime::Stable, Some(1)), BUDGET), CallEntry::Direct(_)), "a construction");
         let native = plan(CalleeKind::Native(NativeId { index: 3, beside: false }), None);
-        assert!(matches!(plan_entry(resolved(native, BindingTime::Stable), true), CallEntry::Direct(_)), "a native has no body");
+        assert!(matches!(plan_entry(resolved(native, BindingTime::Stable, Some(1)), BUDGET), CallEntry::Direct(_)), "a native has no body");
     }
 
     #[test]
     fn a_bound_function_unwraps_only_where_its_identity_folds() {
         let bound = Bound { this: 9, arguments: WordList { start: 1, count: 2 } };
         let target = plan(CalleeKind::Script, Some(bound));
-        assert_eq!(plan_entry(resolved(target, BindingTime::Site), true), CallEntry::Helper, "a guarded bound function is the VM's");
+        assert_eq!(plan_entry(resolved(target, BindingTime::Site, Some(1)), BUDGET), CallEntry::Helper, "a guarded bound function is the VM's");
         let folded = DirectPlan { identity: Identity::Folded(7), ..target };
-        assert_eq!(plan_entry(resolved(target, BindingTime::Stable), true), CallEntry::Direct(folded),
+        assert_eq!(plan_entry(resolved(target, BindingTime::Stable, Some(1)), BUDGET), CallEntry::Direct(folded),
             "a Stable bound function takes its target's entry, not an inlined body");
     }
 

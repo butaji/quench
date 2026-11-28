@@ -281,12 +281,12 @@ impl Vm {
     /// an intermediate's prototype flushes every cache (`set_prototype_of`). The holder's own
     /// layout is still compared here, so a changed holder misses as the walk did.
     #[inline(always)]
-    fn method_cache_holder(&self, receiver: Value, atom: Atom, guard: MethodGuard) -> Option<ObjectRef<'_>> {
+    fn method_cache_holder(&self, receiver: Value, atom: Atom, guard: MethodGuard) -> Option<&Object> {
         self.shape_property_lookup(receiver, atom)?;
         if guard.depth == 0 && receiver != guard.owner {
             return None;
         }
-        let holder = self.heap.object(guard.owner)?;
+        let holder = self.object_data(guard.owner)?;
         (holder.shape() == guard.owner_shape).then_some(holder)
     }
 
@@ -296,7 +296,7 @@ impl Vm {
     /// it was when the property was found. `None` for an accessor or a link a shape cannot
     /// answer; the caller then reads through `get_field_cached`.
     fn method_cache_lookup(&self, receiver: Value, atom: Atom) -> Option<(MethodGuard, Value)> {
-        let receiver_shape = self.heap.object(receiver)?.shape();
+        let receiver_shape = self.object_data(receiver)?.shape();
         if self.shape_is_dictionary(receiver_shape) {
             return None;
         }
@@ -304,7 +304,7 @@ impl Vm {
         let mut owner = receiver;
         let mut depth = 0_u16;
         loop {
-            self.heap.direct_object_view(owner)?;
+            self.heap.object_record(owner)?;
             let data = self.shape_property_lookup(owner, atom)?;
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
                 // The slot the shape resolved serves the attributes too, so it is not looked up again.
@@ -315,7 +315,7 @@ impl Vm {
                 {
                     return None;
                 }
-                let value = self.heap.property_get_ref(data, slot)?;
+                let value = self.heap.property_get(data, slot)?;
                 if self.is_accessor_pair(data.shape(), value) {
                     return None;
                 }
@@ -385,7 +385,7 @@ fn method_cache_shadowed_by(
         if prototype == object {
             return true;
         }
-        let Some(data) = heap.direct_object_view(prototype) else {
+        let Some(data) = heap.object_record(prototype) else {
             return false;
         };
         prototype = data.proto();
@@ -439,7 +439,8 @@ impl Vm {
 
         let key = self.method_receiver_key(this);
         let (shape, proto) = key;
-        let cached_call = self.cached_method(cache_site, metadata.atom, key, this);
+        let specialized = self.specialized && p.specialized;
+        let cached_call = self.cached_method(cache_site, metadata.atom, key, this, specialized);
         self.profile.method_cache(cached_call.is_some());
         #[cfg(feature = "profile-aggregate")]
         self.profile
@@ -454,7 +455,7 @@ impl Vm {
             );
         }
 
-        let (callee, guard) = self.method_refill_read(p, this, metadata.atom, metadata.cache)?;
+        let (callee, guard) = self.method_refill_read(p, this, metadata.atom, metadata.cache, specialized)?;
         if let Some(guard) = guard
             && self.heap.is_function_value(callee)
             && let Ok(target) = self.call_target(callee)
@@ -479,21 +480,24 @@ impl Vm {
 }
 
 impl Vm {
-    /// The callee a method site's miss reads, with the guard that caches it when one exists. The
-    /// site takes a single walk (`method_cache_lookup`), which yields the holder and the value
-    /// together. The walk comes after `prepare_named_function_info_lookup`, which the read
-    /// prepares first and which can change a function's shape. An accessor, and a lookup the
-    /// walk does not answer, take `get_field_cached` alone, uncached.
+    /// The callee a method site's miss reads, with the guard that caches it when one exists. A
+    /// specialized site takes a single walk (`method_cache_lookup`), which yields the holder and
+    /// the value together. The walk comes after `prepare_named_function_info_lookup`, which the
+    /// read prepares first and which can change a function's shape. An accessor, a lookup the
+    /// walk does not answer, and an unspecialized site take `get_field_cached` alone, uncached.
     fn method_refill_read(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         atom: Atom,
         cache: u16,
+        specialized: bool,
     ) -> Result<(Value, Option<MethodGuard>), JsError> {
-        self.prepare_named_function_info_lookup(this, atom);
-        if let Some((guard, callee)) = self.method_cache_lookup(this, atom) {
-            return Ok((callee, Some(guard)));
+        if specialized {
+            self.prepare_named_function_info_lookup(this, atom);
+            if let Some((guard, callee)) = self.method_cache_lookup(this, atom) {
+                return Ok((callee, Some(guard)));
+            }
         }
         Ok((self.get_field_cached(p, this, atom, cache)?, None))
     }
@@ -501,16 +505,18 @@ impl Vm {
     /// The shape and prototype method caches key a lookup on `this` by: an object's own, else
     /// the key no entry serves (`NON_OBJECT_RECEIVER_SHAPE`).
     fn method_receiver_key(&self, this: Value) -> (u32, Value) {
-        self.heap.object(this)
+        self.object_data(this)
             .map(|object| (object.shape(), object.proto()))
             .unwrap_or((NON_OBJECT_RECEIVER_SHAPE, Value::UNDEFINED))
     }
 
     /// The method of `this` the caches of `cache_site` serve for `atom` under `key` (its shape and
     /// prototype), with its call target and the cache tier that served it (the inline ways, then
-    /// the megamorphic set): the entry whose owner still holds the same callee.
-    fn cached_method(&self, cache_site: usize, atom: Atom, (shape, proto): (u32, Value), this: Value)
+    /// the megamorphic set): the entry whose owner still holds the same callee. `specialized` is
+    /// whether the program and the VM use the caches at all.
+    fn cached_method(&self, cache_site: usize, atom: Atom, (shape, proto): (u32, Value), this: Value, specialized: bool)
         -> Option<(Value, CallTarget, usize)> {
+        specialized.then_some(())?;
         let serves = |entry: &MethodCache| entry.serves(shape, atom, proto, this);
         let inline = self.method_caches[cache_site].iter().enumerate()
             .find(|(_, entry)| serves(entry)).map(|(tier, entry)| (*entry, tier));
@@ -522,16 +528,16 @@ impl Vm {
             .map(|entry| (entry, METHOD_CACHE_WAYS));
         let (entry, tier) = inline.or_else(megamorphic)?;
         let holder = self.method_cache_holder(this, atom, entry.guard)?;
-        let callee = self.heap.property_get_ref(holder, entry.guard.slot as usize)?;
+        let callee = self.heap.property_get(holder, entry.guard.slot as usize)?;
         (entry.callee == callee).then_some(())?;
         Some((callee, entry.target?, tier))
     }
 
     /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`
     /// loads it on a hit and without running guest code: `None` where the caches do not serve it.
-    pub fn method_cache_load(&self, site: usize, atom: Atom, this: Value) -> Option<Value> {
+    pub fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
         let key = self.method_receiver_key(this);
-        self.cached_method(self.method_cache_index(site), atom, key, this)
+        self.cached_method(self.method_cache_index(site), atom, key, this, self.specialized && p.specialized)
             .map(|(callee, _, _)| callee)
     }
 }

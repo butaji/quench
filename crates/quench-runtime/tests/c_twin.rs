@@ -8,7 +8,6 @@
 
 use std::collections::BTreeSet;
 
-use quench_runtime::staged::c_twins::{NumberOperationCTwinsExt, OperationCTwinsExt};
 use quench_runtime::staged::{numeric::NumberOperation, CKernel, CTwin, Operation};
 
 /// The kernel names `ops.c` registers in its table of measured ops.

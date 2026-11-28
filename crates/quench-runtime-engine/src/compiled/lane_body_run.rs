@@ -6,6 +6,7 @@ use crate::ext_traits::*;
 use super::dispatch_fast::{LaneStackEntry, LaneStackStorage, LaneStackWords};
 use super::entry_protocol::{self, EntryDescriptor, EntryKind};
 use super::*;
+use quench_runtime::vm::tier_events::Event;
 
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(crate) const NO_PENDING_ACTIVATIONS: usize = 0;
@@ -71,6 +72,7 @@ impl Vm {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(crate) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
         let frame = frame_in_lane();
+        self.programs.tier_events().record(Event::Entered);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (view, stores) = unsafe { crate::dispatch_fast::capture_view(run.captures) };
         let (capture_values, capture_len) = view.unwrap_or((std::ptr::null(), 0));
@@ -92,6 +94,8 @@ impl Vm {
         unsafe { let dispatch = &mut (*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
         let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.head.returned_pc });
+        self.programs.tier_events().record(Event::ended(exit));
+        if let LaneExit::Returned { .. } = exit { self.programs.tier_events().record(Event::Returned); }
         exit
     }
 
@@ -111,12 +115,14 @@ impl Vm {
                 program_id: run.program,
                 lane_context: run.lane_context.addr(),
                 residual: std::ptr::from_ref(run.residual).addr(),
-                stores_specialized: 1,
+                stores_specialized: usize::from(self.specialized && run.residual.specialized),
                 stack: self.lane_stack.values.top_word().addr(),
             };
             // A run's field cache entries and lane stack storage are bound once per run (`bind_run`), not per entry;
             // the frame's word follows a moved field table from then on (`Vm::rebind_lane_field_entries`).
-            (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0), || self.stack_storage_in_lane());
+            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0), || self.stack_storage_in_lane()) {
+                self.programs.tier_events().record(Event::RunBound);
+            }
             debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
             let locals = crate::dispatch_fast::body_locals(run.lane_context, run.registers, crate::dispatch_fast::LocalsOf::Body);
@@ -156,7 +162,7 @@ impl Vm {
             return unsafe { self.call_polling_body(context, descriptor) };
         }
         // SAFETY: as the caller promises.
-        unsafe { super::lane_body_abi::call_body_shim(context, descriptor.receiver, descriptor.captures, descriptor.registers, descriptor.entry) }
+        unsafe { (descriptor.entry)(context, descriptor.receiver, descriptor.captures, descriptor.registers) }
     }
 
     /// `call_body` of a body that polls by fault: through the trampoline that resumes the fault,

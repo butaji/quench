@@ -23,12 +23,16 @@ script_handler! {
     }
 }
 
-/// Settles the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe` left as a probe: it takes the
-/// general step. A probed name is one a scope may declare, which the closed world that fixes a global slot does not
-/// allow, so no slot row is installed here.
-pub(crate) fn settle_name_record(view: &LaneView, pc: usize) {
+/// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
+/// settled: a hinted global read where the name lands on the global object, else an exit.
+pub(crate) fn settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) {
+    let handler = match (lands, quench_runtime::staged::name_load(op)) {
+        (false, _) => exit_lane as Handler,
+        (true, Some(load)) => name_row::<FLAG_NAME_GLOBAL_SCOPED>(load),
+        (true, None) => name_row::<FLAG_NAME_GLOBAL_SCOPED>(quench_runtime::staged::NameLoad::Typeof),
+    };
     // SAFETY: `pc` is a record of the view, whose records live while its program does.
-    edge_rewrite(unsafe { view.records().add(pc) }, exit_lane as Handler);
+    requicken(unsafe { view.records().add(pc) }, handler);
 }
 
 /// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.

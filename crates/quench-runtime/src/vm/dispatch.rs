@@ -1,5 +1,3 @@
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt, OperationOperationRecordsExt, OperationNamesExt, CallRecordFormsExt};
 // What `Vm::step` runs an opcode as: its one arm is the wildcard, `step_unlisted`, which runs each opcode as its
 // catalog runner (`RUNNERS`, decided once per opcode by `runner_of`). `step` keeps
 // `#[quench_macros::operation_semantics]`: `resolve_step_operation` (compiled.rs) selects each opcode's semantic
@@ -7,7 +5,7 @@
 // attribute rejects match guards.) The runners, in `runner_of`'s priority order:
 // - `NO_STEP` (Nop; the wide prefix `Wide` is never dispatched).
 // - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
-// - A call-family record (`staged::CallRecord::has_general_form`: Call, CallArray, CallSpread, CallForwardingArguments,
+// - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
 //   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
 //   on the frame (`call_forms.rs`, `InterpreterFrame::call_row`).
 // - `SUSPENDS` (Await, Yield, YieldStar): `staged_suspend`.
@@ -32,7 +30,6 @@ use super::dispatch_frame::{InterpreterFrame, RowRun};
 mod call_forms;
 mod increment;
 pub(super) use increment::number_increment;
-#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     pub(super) fn module_import_value(
@@ -63,38 +60,29 @@ impl Vm {
         }
     }
 
-    /// Whether the dispatch loop may not push a call made by frame `f` at `pc` as an activation of its
+    /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
     /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
     /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
-    /// call is a proper tail call, which replaces the frame (`call_forms`, `js_tail_call_allowed`).
+    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
     #[inline(always)]
-    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
+    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
         self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || self.js_tail_call_allowed(p, f, i, pc)
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.function(self.frames[f].function as usize).strict)
     }
 
-    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the call is a tail site of
-    /// its caller (`staged::effects::tail_site`: it returns from its frame and the caller's site permits it). This
-    /// is the whole decision, as `CallPlan::tail` takes it: stack depth is not observable (DESIGN.md decision
-    /// 4.4), so no host setting gates a tail call. `pc` is the resume PC, one past the call.
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
+    /// permits them, the call returns from its frame, and the call site permits it.
     #[inline(always)]
     pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
-        crate::staged::effects::tail_site(
-            i.returns_from_frame(),
-            p.function(self.frames[f].function as usize).tail_site_permitted(pc.saturating_sub(1) as u32),
-        )
-    }
-
-    /// Whether a tail call at `pc` of frame `f` reuses the frame for `callee`: the call is a tail site
-    /// (`js_tail_call_allowed`) and the callee's call plan says it is an ordinary body (`CallPlan::tail_callee`),
-    /// which `prepare_user_tail` can bind over the frame. A generator or async callee keeps its own activation.
-    #[inline(always)]
-    pub(super) fn tail_call_reuses_frame(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize, callee: &crate::bytecode::Function) -> bool {
-        self.js_tail_call_allowed(p, f, i, pc) && callee.call_plan(p).tail_callee
+        self.host.proper_tail_calls()
+            && i.returns_from_frame()
+            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
     }
 
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
@@ -111,7 +99,7 @@ impl Vm {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i, pc) {
+        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -194,7 +182,7 @@ impl Vm {
         let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else { return None };
         let callee = self.read(f, i.register_b());
         let arguments: *const [Value] = self.register_window(f, window);
-        if let Some((program, id, env, this)) = self.inline_construct_target(p, f, pc, callee) {
+        if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
             // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
             return self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
                 i.result_register(), CallCompletion::Constructor(this));
@@ -496,7 +484,7 @@ impl Vm {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i, pc) {
+        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -712,9 +700,7 @@ impl Vm {
                 // an unrelated one whose liveness can drop registers the target reads.
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = false;
-                // The back edge is a poll: it collects byte debt only (cell debt is serviced
-                // at the next op boundary, `Vm::serviced` after an op that may allocate).
-                self.poll_byte_debt(p);
+                self.maybe_collect(p);
             }
         }
         run
@@ -889,7 +875,7 @@ impl Vm {
             },
             // A call-family record: its staged row first, then the call's general form on the running frame (`call_forms`).
             Runner::Call => {
-                let form = crate::staged::CallRecord::of(i).expect("a call runner names its form");
+                let form = crate::staged::invoke::general_call_form(i.op()).expect("a call runner names its form");
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
@@ -1085,7 +1071,7 @@ enum Runner {
     RowOnly,
     /// An arithmetic binary (`ARITHMETIC_BINARY`): its staged row, then the record's general `Binary` on a miss.
     RowThenGeneralBinary,
-    /// A call-family record (`CallRecord::has_general_form`): its staged row, then the call's general form on the frame.
+    /// A call-family record (`invoke::general_call_form`): its staged row, then the call's general form on the frame.
     Call,
     /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
     Owner,
@@ -1111,7 +1097,7 @@ const fn runner_of(op: Op) -> Runner {
     if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;
     }
-    if matches!(crate::staged::CallRecord::of_op(op), Some(record) if record.has_general_form()) {
+    if crate::staged::invoke::general_call_form(op).is_some() {
         return Runner::Call;
     }
     if traits.has(crate::bytecode::Traits::SUSPENDS) {

@@ -1,7 +1,7 @@
 //! One initializer expression, evaluated against static or instance global facts.
 
 use super::integer::{I32BinaryOperator, I64BinaryOperator};
-use super::{WasmGlobal, WasmGlobalInitializer, WasmType, WasmValue, WasmValueScalarExt};
+use super::{WasmGlobal, WasmGlobalInitializer, WasmType, WasmValue};
 use crate::{Diagnostic, Engine};
 use std::rc::Rc;
 use wasmparser::{BinaryReaderError, Operator};

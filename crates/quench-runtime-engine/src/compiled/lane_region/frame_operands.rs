@@ -5,7 +5,6 @@ use super::*;
 use crate::compiled::object_slots::emit;
 use quench_runtime::staged::machine::{Lane, MachineScalar, Relation, Unary};
 use quench_runtime::staged::{Float64, Int32, IntFact, NumberFact, NumericStage, Stage};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(crate) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
@@ -52,40 +51,6 @@ pub(crate) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Re
     Some(emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
 }
 
-/// `register` held as the 64-bit integer word of the integer type `target` (its Int64 view): an
-/// int32 sign-extended, or a Number's exact integer. An int32 keeps its own type, which the caller
-/// checks against the target. A Number held here has the solver's integer range within EXACT (the
-/// only type `Representation::Int64` takes, `Representation::accepts`), so its word is an int-tagged
-/// or exact double integer, and that range lies within `target`'s, which joins this edge's type. The
-/// word converts without a guard, and its fact is defined here.
-pub(crate) fn register_long_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, target: Type, otherwise: ir::Block) -> ir::Value {
-    let index = usize::from(register);
-    let fact = state.values[index].value;
-    let (ty, word) = match fact.representation {
-        Representation::Int64 => {
-            let variable = register_long(builder, registers, index);
-            return builder.use_var(variable);
-        }
-        Representation::Int32 => {
-            let variable = register_int(builder, registers, index);
-            let int = builder.use_var(variable);
-            (fact.ty, emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
-        }
-        Representation::Float64 | Representation::Tagged => {
-            fact.ty.int_range().filter(|range| range.fits_exact_double())
-                .expect("a Number held as an Int64 has the solver's integer range within EXACT");
-            let number = register_number_value(builder, registers, state, register, otherwise);
-            let (integer, _exact) = quench_runtime::staged::value::exact_long(&mut emit(builder), number.word());
-            (target, integer)
-        }
-    };
-    let variable = register_long(builder, registers, index);
-    builder.def_var(variable, word);
-    state.values[index] = RegisterFact { tagged: state.values[index].tagged, ..RegisterFact::definition(ty, Representation::Int64) };
-    word
-}
-
 /// An operand's binary64 value, statically where it is a constant Number.
 pub(crate) fn operand_number(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, constants: &[quench_runtime::bytecode::Constant], operand: quench_runtime::bytecode::Operand,
@@ -115,10 +80,6 @@ pub(crate) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mu
         OperandKind::Field | OperandKind::Local => return None,
     };
     if integral { return operand_int(builder, registers, state, constants, operand, exit); }
-    // A register held as its 64-bit integer word: ToInt32 of an integer is the word's low 32 bits, exact.
-    if let Some(word) = operand.register_index().and_then(|register| held_long(builder, registers, state, register)) {
-        return Some(Int32::by_fact(emit(builder).raw_unary(Unary::Narrow(Lane::I32), word), IntFact::int32_home()));
-    }
     // A register only its tag types is its int where the tag says so, else its Number's
     // ToInt32; neither path proves a fact the other does not.
     let tagged = operand.register_index()
@@ -153,6 +114,13 @@ fn int_is_word(builder: &mut FunctionBuilder<'_>, int: ir::Value, word: ir::Valu
     stage.raw_compare(Relation::Equal, widened, word)
 }
 
+/// Leaves to `otherwise` unless `condition` holds, which a register's proved type makes certain (`proved`).
+fn guard_unless(builder: &mut FunctionBuilder<'_>, condition: ir::Value, proved: bool, otherwise: ir::Block) {
+    if !proved {
+        emit_js_guard(builder, condition, otherwise);
+    }
+}
+
 /// `register`'s int32 value: by its fact, or by the staged guard of the representation it holds.
 pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> Int32<ir::Value> {
@@ -185,23 +153,8 @@ pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &
     let variable = register_int(builder, registers, index);
     builder.def_var(variable, int.word());
     state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-        ..RegisterFact::narrowest(Type::INT32) };
+        ..RegisterFact::definition(Type::INT32, Representation::Int32) };
     int
-}
-
-/// The int32 index of a register held as a binary64 that its loop's entry proved integral wherever it is not NaN
-/// (`IntRanges::integral_index`): the truncation of the Number, with no exactness test. The register is left as it
-/// was, so a -0 it holds stays a -0 for its other reads, and an element access reads the index 0 it truncates to.
-/// `None` where the register is no binary64 home without a tag, where its guarded read applies.
-pub(crate) fn integral_index_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &State, register: Register) -> Option<ir::Value> {
-    let index = usize::from(register);
-    let fact = state.values[index];
-    if !matches!(fact.value.representation, Representation::Float64) || fact.tagged.current() { return None; }
-    let variable = register_float(builder, registers, index);
-    let home = NumberFact::of_representation(Representation::Float64).expect("a float home");
-    let (number, mut stage) = (Float64::by_fact(builder.use_var(variable), home), emit(builder));
-    Some(quench_runtime::staged::value::exact_int32(&mut stage, number.word()).0)
 }
 
 /// The int32 of a register held as a binary64: the staged exactness guard, or the truncation

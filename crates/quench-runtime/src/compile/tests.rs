@@ -13,21 +13,28 @@ fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
             "var global = 1; let lexical = 2; global = global + lexical; \
              function read() {{ return global; }} read(); {suffix}"
         );
-        let program = Engine::specialize(&source, "global-lowering.js").unwrap();
-        let root = &program.functions[0];
-        assert!(
-            root.code
-                .iter()
-                .any(|instruction| instruction.op() == Op::StoreEnvLocal)
-        );
-        assert!(!root.global_lexical_atoms().is_empty());
-        assert!(
-            root.global_lexical_atoms()
-                .iter()
-                .all(|atom| !root.global_var_atoms().contains(atom))
-        );
-        assert_eq!(!root.wide.is_empty(), !suffix.is_empty());
-        program.validate().unwrap();
+        for specialize in [false, true] {
+            let program = if specialize {
+                Engine::specialize(&source, "global-lowering.js")
+            } else {
+                Engine::specialize_unspecialized(&source, "global-lowering.js")
+            }
+            .unwrap();
+            let root = &program.functions[0];
+            assert!(
+                root.code
+                    .iter()
+                    .any(|instruction| instruction.op() == Op::StoreEnvLocal)
+            );
+            assert!(!root.global_lexical_atoms().is_empty());
+            assert!(
+                root.global_lexical_atoms()
+                    .iter()
+                    .all(|atom| !root.global_var_atoms().contains(atom))
+            );
+            assert_eq!(!root.wide.is_empty(), !suffix.is_empty());
+            program.validate().unwrap();
+        }
     }
 }
 
@@ -36,6 +43,7 @@ fn scalar_constants_reuse_exact_slots() {
     let mut compiler = Compiler::new(
         "test.js",
         "",
+        SpecializationMode::Enabled,
         &NoAtomPrefix,
         FxHashMap::default(),
     );
@@ -51,6 +59,7 @@ fn scalar_constants_preserve_signed_zero_bits() {
     let mut compiler = Compiler::new(
         "test.js",
         "",
+        SpecializationMode::Enabled,
         &NoAtomPrefix,
         FxHashMap::default(),
     );
@@ -153,6 +162,7 @@ fn constant_runs_remain_fresh_and_contiguous() {
     let mut compiler = Compiler::new(
         "test.js",
         "",
+        SpecializationMode::Enabled,
         &NoAtomPrefix,
         FxHashMap::default(),
     );
@@ -233,21 +243,37 @@ fn constant_computed_property_uses_field_cache_site() {
 }
 
 #[test]
+fn unspecialized_entry_keeps_generic_dispatch_class() {
+    let program = Engine::specialize_unspecialized("print(40 + 2);", "generic.js").unwrap();
+    assert!(!program.specialized);
+    assert!(
+        program
+            .functions
+            .iter()
+            .all(|function| function.dispatch == DispatchClass::General)
+    );
+}
+
+#[test]
 fn constructor_source_anchor_survives_argument_move_coalescing() {
-    let compile = Engine::specialize;
-    let program = compile(
-        "\nthrow new Error('source snapshot');",
-        "constructor-position.js",
-    )
-    .unwrap();
-    let (pc, _) = program.functions[0]
-        .instructions()
-        .enumerate()
-        .find(|(_, instruction)| instruction.op() == Op::Construct)
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let program = compile(
+            "\nthrow new Error('source snapshot');",
+            "constructor-position.js",
+        )
         .unwrap();
-    let position = program.source_position(0, pc as u32).unwrap();
-    assert_eq!((position.line, position.column), (2, 7));
-    program.validate().unwrap();
+        let (pc, _) = program.functions[0]
+            .instructions()
+            .enumerate()
+            .find(|(_, instruction)| instruction.op() == Op::Construct)
+            .unwrap();
+        let position = program.source_position(0, pc as u32).unwrap();
+        assert_eq!((position.line, position.column), (2, 7));
+        program.validate().unwrap();
+    }
 }
 
 #[test]
@@ -349,6 +375,7 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
         crate::compile::LOWER_AT_LOAD.with(|flag| flag.set(false));
         let eager = eager.unwrap();
         assert_eq!(lazy.functions.len(), eager.functions.len(), "{source}");
+        eager.prime_loop_decoding();
         let mut compared = 0;
         for index in 0..lazy.functions.len() {
             if eager.functions[index].is_released() {

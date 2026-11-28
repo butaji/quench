@@ -1,3 +1,0 @@
-# Image gate ceilings, shrink-only: `case metric ceiling` (crates/quench-gate/src/image.rs).
-# Metrics: bytes, text, rodata, data, bss (size -A), ir (startup cases only), rss_delta_kb.
-# Recorded by `QUENCH_DEBT_WRITE=1 quench-gate --only image`; a rise fails, and so does slack.

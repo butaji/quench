@@ -11,13 +11,6 @@
 //! identity and environment (`process.argv`, `process.env`, ...), which stay lazy and are
 //! host operations too; and the clock, the local time zone and `Math.random`, which the
 //! runtime notes (`quench_runtime::clock::note_input`).
-//!
-//! One gate serves both hosts. The first input a watched run reads ends that run
-//! (`quench_runtime::clock::watch_inputs`), and nothing past it is kept: the Node gate's `refuse`
-//! and `stop` end a run at a host operation before it runs, and a core probe (`Probe`,
-//! `core_rest::probe`) ends its run at the input the runtime notes, and makes no output of its own.
-//! What a build keeps is the state before its first input: a core probe's input native captures the
-//! frames that called it, and the run ends with them as its `Captured` exit (`vm::exit::Exit`).
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -125,8 +118,7 @@ impl Question {
 pub(crate) type HeldOperations = (Vec<u32>, Vec<(Vec<String>, Vec<u32>)>, Vec<u16>);
 
 /// What a build-time run left: its effects in order; a question it asked with no answer
-/// assumed, which a run per answer specializes; or a dynamic input it read, named. A captured
-/// caller chain is the run's own exit (`vm::exit::Exit::Captured`), not a residual.
+/// assumed, which a run per answer specializes; or the first other dynamic input it read.
 pub(crate) enum Residual {
     Effects(Vec<(i32, Vec<u8>)>),
     /// The run's effects up to its first wait for input, the runtime there as a snapshot, and
@@ -199,7 +191,7 @@ pub(crate) fn arm(context: &mut NativeContext<'_>) -> Result<(), RootedError> {
             refuse(format!("process.{name}.isTTY (read during start-up)"));
         }
     }
-    quench_runtime::clock::watch_inputs(context.execution_interrupt_handle());
+    quench_runtime::clock::watch_inputs();
     ARMED.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -224,9 +216,11 @@ pub(crate) fn input_of(name: &str) -> String {
     }
 }
 
-/// Notes a dynamic input the run reads by a refusal: the first refusal is the one named.
+/// Notes the first dynamic input of the run: an input the runtime noted before it (the
+/// clock, `quench_runtime::clock::note_input`) came first.
 pub(crate) fn refuse(what: String) {
-    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(what);
+    let first = quench_runtime::clock::first_input().map_or(what, str::to_owned);
+    STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).refusal.get_or_insert(first);
 }
 
 /// The callback the gate runs in place of a refused operation: it ends the run, which a
@@ -263,6 +257,9 @@ pub(crate) fn finish() -> Residual {
     if let Some(question) = state.choice.take() {
         return Residual::Question(question);
     }
+    if let Some(input) = quench_runtime::clock::first_input() {
+        return Residual::Dynamic(input.to_owned());
+    }
     let effects = std::mem::take(&mut state.effects);
     match state.rest.take() {
         Some(rest) => Residual::Waiting(effects, rest, std::mem::take(&mut state.held)),
@@ -289,22 +286,5 @@ pub(crate) fn reach_wait(runtime: &mut quench_runtime::Runtime<crate::NodeHost>,
             refuse(format!("a wait for input whose state cannot be saved ({error})"));
             error
         }
-    }
-}
-
-/// The core half of the gate: the host a core build-time probe runs its entry on
-/// (`core_rest::probe`). An output is an input the runtime notes before it is made
-/// (`HostContext::invoke`), and the gate's handler ends the run there, so the probe makes no
-/// output: `write_line` and `write_err` discard what they are given. A clock read is the
-/// same kind of input, and the run ends at it too.
-pub(crate) struct Probe;
-
-impl quench_runtime::Host for Probe {
-    fn write_line(&mut self, _: &str) {}
-
-    fn write_err(&mut self, _: &str) {}
-
-    fn clock_millis(&mut self) -> f64 {
-        quench_runtime::clock::unix_millis()
     }
 }

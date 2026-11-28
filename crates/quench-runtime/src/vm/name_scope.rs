@@ -105,16 +105,16 @@ impl Vm {
         if probe != (NameProbe { program: frame.program, function: frame.function, pc }) {
             return;
         }
-        // The name's landing is recorded (`name_lands_on_global_object`), so a later declaration of it retires the
-        // dependency; the record of a probed read takes the general step, whose scope may declare the name later.
-        self.name_lands_on_global_object(p, VarOwner::Frame(self.frames.len() - 1), atom);
+        let function = p.function(frame.function as usize);
+        let op = function.widened(function.code[pc as usize]).op();
+        let lands = self.name_lands_on_global_object(p, VarOwner::Frame(self.frames.len() - 1), atom);
         if let Some(view) = self
             .programs
             .views_in_lane(probe.program)
             .and_then(|views| views.get(probe.function as usize))
             .and_then(super::program_store::derived_lane_view)
         {
-            crate::vm::engine_calls::settle_name_record(view, pc as usize);
+            crate::vm::engine_calls::settle_name_record(view, pc as usize, op, lands);
         }
     }
 
@@ -130,8 +130,8 @@ impl Vm {
         if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {
             return None;
         }
-        match self.global_name_read(atom, site) {
-            super::field_cache::GlobalNameRead::Value(value) => Some(value),
+        match self.global_name_read(p, atom, site) {
+            super::field_cache::GlobalNameRead::Value(value, _) => Some(value),
             _ => None,
         }
     }

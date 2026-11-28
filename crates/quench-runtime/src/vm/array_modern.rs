@@ -3,7 +3,7 @@ use super::promise::ThenCapability;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ArrayFromTarget {
+enum ArrayFromTarget {
     Array,
     TypedArray,
 }
@@ -12,6 +12,33 @@ pub(super) enum ArrayFromTarget {
 mod default_sort;
 
 impl Vm {
+    pub(super) fn array_modern_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        match native {
+            Native::ArrayToReversed | Native::ArrayToSpliced => {
+                self.array_copy_native(p, native, this, args)
+            }
+            Native::ArraySort => self.array_sort_native(p, this, args, true),
+            Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
+            Native::ArraySpecies => Ok(this),
+            Native::ArrayToString => self.array_to_string_native(p, this),
+            Native::ArrayToLocaleString => self.array_to_locale_string_native(p, this, args),
+            Native::ArrayFrom => self.array_from_native(p, this, args, ArrayFromTarget::Array),
+            Native::TypedArrayFrom => {
+                self.array_from_native(p, this, args, ArrayFromTarget::TypedArray)
+            }
+            Native::ArrayFromAsync => self.array_from_async_native(p, this, args),
+            Native::ArrayOf => self.array_of_native(p, this, args),
+            Native::TypedArrayOf => self.typed_array_of_native(p, this, args),
+            _ => unreachable!("non-modern native routed to modern array dispatch"),
+        }
+    }
+
     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
         Ok(self.array_value_list(this)?.collect())
     }
@@ -56,7 +83,7 @@ impl Vm {
         self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), values))
     }
 
-    pub(super) fn array_to_string_native(
+    fn array_to_string_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
@@ -116,7 +143,7 @@ impl Vm {
         Ok(self.heap.alloc_string(output))
     }
 
-    pub(super) fn array_of_native(
+    fn array_of_native(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -146,7 +173,7 @@ impl Vm {
         outcome
     }
 
-    pub(super) fn typed_array_of_native(
+    fn typed_array_of_native(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -217,7 +244,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn array_from_native(
+    fn array_from_native(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
@@ -405,7 +432,7 @@ impl Vm {
         outcome
     }
 
-    pub(super) fn array_from_async_native(
+    fn array_from_async_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
@@ -782,7 +809,7 @@ impl Vm {
         error
     }
 
-    pub(super) fn array_sort_native(
+    fn array_sort_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,

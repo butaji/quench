@@ -9,13 +9,11 @@ impl Heap {
         }
     }
 
-    #[quench_macros::test_visible]
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
         value.heap_index()?;
         self.is_live(value).then_some(WeakHandle { value })
     }
 
-    #[quench_macros::test_visible]
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
         let live = self.is_live(handle.value);
         live.then_some(handle.value)

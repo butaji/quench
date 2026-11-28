@@ -5,6 +5,10 @@
 
 use super::wasm::{WasmStage, Width};
 use crate::WasmTrap;
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
+use crate::wasm::CanonicalSignature;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -17,6 +21,25 @@ pub enum Call {
     RefFunc,
     /// `result = b(window)`: a call of a reference an earlier step produced.
     Reference,
+}
+
+#[cfg(not(stencil_build))]
+impl Call {
+    #[inline(always)]
+    pub const fn of(op: Op) -> Option<Self> {
+        match op.class() {
+            Class::CallKnown => Some(Self::Known),
+            Class::WasmIndirectTarget => Some(Self::IndirectTarget),
+            Class::WasmRefFunc => Some(Self::RefFunc),
+            Class::Call => Some(Self::Reference),
+            _ => None,
+        }
+    }
+
+    /// The function a call names statically.
+    pub(crate) fn callee(self, instruction: WideInstruction) -> Option<usize> {
+        (self == Self::Known).then(|| usize::from(instruction.known_function_index()))
+    }
 }
 
 impl Call {
@@ -68,7 +91,7 @@ pub trait WasmTable: WasmStage {
 /// word, which the caller names (a stencil's cold path never reaches it, see `unless_equal`).
 /// The result is the reference and the element's row, read once after the checks.
 #[inline(always)]
-pub fn indirect_target_word<S: WasmTable>(
+pub(crate) fn indirect_target_word<S: WasmTable>(
     stage: &mut S,
     index: S::Word,
     expected: S::Word,
@@ -90,11 +113,25 @@ pub fn indirect_target_word<S: WasmTable>(
     Ok((reference, row))
 }
 
+/// `indirect_target_word` over the canonical signature the program's type names.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub fn indirect_target<S: WasmTable>(
+    stage: &mut S,
+    index: S::Word,
+    expected: CanonicalSignature,
+) -> Result<(S::Word, S::Row), S::Exit> {
+    debug_assert_ne!(expected, CanonicalSignature::NULL);
+    let word = stage.constant(Width::I64, expected.word() as i64);
+    let null = stage.constant(Width::I64, CanonicalSignature::NULL.word() as i64);
+    indirect_target_word(stage, index, word, null)
+}
+
 /// The protocol of a call a compiled frame makes into code it does not hold: the callee's entry,
 /// the VM's callouts, the allocating step. Arguments and results are addresses the caller names
 /// (the window, the destination); a call's status is the only word the protocol reads.
 #[cfg(stencil_build)]
-pub trait WasmCall: WasmStage {
+pub(crate) trait WasmCall: WasmStage {
     /// Calls the compiled entry `entry` (a Wasm function's `WasmEntry`) with the arguments at
     /// `window` and the result at `destination`; returns the status, 0 when it returned.
     fn enter(&mut self, entry: usize, window: usize, destination: usize) -> Self::Word;
@@ -130,7 +167,7 @@ pub trait WasmCall: WasmStage {
 /// status is checked (a nonzero status leaves).
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn finish_call<S: WasmCall>(stage: &mut S, status: S::Word, length_at: usize) -> Result<(), S::Exit> {
+pub(crate) fn finish_call<S: WasmCall>(stage: &mut S, status: S::Word, length_at: usize) -> Result<(), S::Exit> {
     stage.reload_memory(length_at);
     stage.status_leaves(status)
 }
@@ -140,7 +177,7 @@ pub fn finish_call<S: WasmCall>(stage: &mut S, status: S::Word, length_at: usize
 /// memory (`restore_memory`), then the status check. `length_at` is read only when reloading.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn call_entry<S: WasmCall, const RELOAD: bool>(
+pub(crate) fn call_entry<S: WasmCall, const RELOAD: bool>(
     stage: &mut S,
     entry: usize,
     window: usize,
@@ -159,7 +196,7 @@ pub fn call_entry<S: WasmCall, const RELOAD: bool>(
 /// A call of a defined function through the VM (`call_vm` row), then `finish_call`.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn call_defined<S: WasmCall>(
+pub(crate) fn call_defined<S: WasmCall>(
     stage: &mut S,
     callout: usize,
     index: u64,
@@ -175,7 +212,7 @@ pub fn call_defined<S: WasmCall>(
 /// it, then `finish_call`.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn call_reference<S: WasmCall>(
+pub(crate) fn call_reference<S: WasmCall>(
     stage: &mut S,
     callout: usize,
     reference: (u64, u64, u64, u64),
@@ -191,7 +228,7 @@ pub fn call_reference<S: WasmCall>(
 /// its word is zero-extended from its low 32 bits.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn call_table_op<S: WasmCall>(
+pub(crate) fn call_table_op<S: WasmCall>(
     stage: &mut S,
     callout: usize,
     request: u64,
@@ -215,7 +252,7 @@ pub fn call_table_op<S: WasmCall>(
 /// writes it to `destination`. No memory reload: the step runs no interpreter code.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub fn allocate_step<S: WasmCall>(
+pub(crate) fn allocate_step<S: WasmCall>(
     stage: &mut S,
     callout: usize,
     (packed, meta): (u64, u64),
@@ -231,12 +268,3 @@ pub fn allocate_step<S: WasmCall>(
     }
     Ok(())
 }
-
-// The bytecode queries (`call_of`, `callee`) and the canonical-signature entry read the runtime: `glue.rs`.
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;

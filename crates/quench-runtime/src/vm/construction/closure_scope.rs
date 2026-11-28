@@ -47,15 +47,12 @@ impl Vm {
         let with_objects = self.closure_with_objects(p, id, env, chain);
         let plain_scope = with_objects.is_empty();
         if plain_scope && let Some(template) = self.recorded_closure_template(id, realm) {
-            let function = self.closure_of_template(template, env);
-            self.note_closure_created(self.active_program, id, function);
-            return Ok(function);
+            return Ok(self.closure_of_template(template, env));
         }
         let env = self.with_scope_environment(env, with_objects);
         let parts = self.closure_parts(plan, id, realm);
         let recorded_shapes = self.closure_shapes[parts.shapes_key].filter(|_| parts.ordinary);
         let (function, named_shape) = self.alloc_closure(&parts, env, recorded_shapes);
-        self.note_closure_created(self.active_program, id, function);
         // A class constructor's closure is a class evaluation, which makes the class's private
         // homes: the closure and its prototype object. No template makes one: only an ordinary
         // closure records its shapes.

@@ -30,7 +30,7 @@ pub(crate) fn chained_reads(plan: &CallPlan) -> Result<Option<CallChain>, String
     let past = parts.len() + 2 * pairs.len() + 1;
     let mut records = Vec::new();
     for (read, facts) in pairs {
-        let (mut direct, owned) = direct_part(&plan.shape, facts, arguments, plan.proven_args, false)?;
+        let (mut direct, owned) = direct_part(&plan.shape, facts, arguments, plan.proven_args)?;
         parts.push(part(read.stencil, read.holes, vec![Exit::Ahead(2)]));
         direct.taken = Some(past);
         parts.push(direct);

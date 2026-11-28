@@ -1,12 +1,11 @@
 //! The add row's and the naming row's planning inputs from the VM's recorded transitions, and the
 //! interpreter's reading of them. Runtime only: it names the heap, which the stencil build does not compile.
 
-use super::add::Edge;
+use super::add::{Edge, add_property};
 use super::naming::{name_form, set_function_name};
 use super::object::Form;
 use super::Concrete;
-use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT, layouts};
-use super::field_cache_layout::{CLASS_KEY, is_class_key};
+use crate::heap::{Heap, NATIVE_OBJECT_LAYOUT as OBJECT};
 use crate::value_vec::range_has_room;
 
 #[quench_macros::test_visible]
@@ -17,7 +16,7 @@ use crate::value_vec::range_has_room;
 /// the link and the integrity bits, and one id store moves the record.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Transition {
-    pub before: u32,
+    pub(crate) before: u32,
     pub(crate) after: u32,
     pub slot: u16,
     pub layouts: [u32; 2],
@@ -37,33 +36,10 @@ pub struct AddSite {
 }
 
 impl Transition {
-    /// Whether the transition is keyed by a live cell's class (`before` is `class | CLASS_KEY`,
-    /// `Heap::live_class_key`): its add runs in the cell in place, not on a record.
-    #[inline(always)]
-    pub fn is_class_keyed(self) -> bool {
-        is_class_key(self.before)
-    }
-
-    /// The class id a class-keyed transition's cell holds before the add (`before` without its key bit).
-    #[inline(always)]
-    pub(crate) fn class_before(self) -> u32 {
-        self.before & !CLASS_KEY
-    }
-
-    /// The transition as a record's add takes it: a class-keyed `before` becomes its class's shape,
-    /// so `set_class` and the record path see shapes, and the record layouts (`layouts`) are unchanged.
-    #[inline(always)]
-    pub(crate) fn record_form(self) -> Self {
-        if self.is_class_keyed() { Self { before: layouts::class_shape(self.class_before()), ..self } } else { self }
-    }
-
-    /// The staged rows' edge: the layouts, and the slot. A class-keyed transition's `before` is its
-    /// key (`class | CLASS_KEY`), which the class add (`add::class_add`) compares with the cell's class; a record
-    /// transition's is its before-layout.
+    /// The staged rows' edge: the layouts, and the slot.
     #[inline(always)]
     pub fn edge(self) -> Edge<u64> {
-        let [layout_before, after] = self.layouts.map(u64::from);
-        let before = if self.is_class_keyed() { u64::from(self.before) } else { layout_before };
+        let [before, after] = self.layouts.map(u64::from);
         Edge { before, after, slot: u64::from(self.slot) }
     }
 
@@ -83,6 +59,43 @@ impl Transition {
     }
 }
 
+/// The interpreter's reading of `add_property`: `value` added to object record `record_id` of
+/// `heap` along `transition`; false changes nothing and leaves the add to the VM.
+///
+/// # Safety
+/// `record_id` names a live object record of `heap`, whose exact shape's storage length is the
+/// transition's slot where the shape matches (the row proves the shape before any write).
+#[inline(always)]
+pub unsafe fn concrete_add_property(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+    let Some(form) = transition.form() else {
+        return false;
+    };
+    // SAFETY: the caller's contract; the gate reads the heap before any write.
+    let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
+    let mut stage = Concrete::storing(heap);
+    let added = add_property(&mut stage, record, u64::from(record_id), transition.edge(), form, value.to_bits(), ()).is_some();
+    #[cfg(feature = "profile-memory")]
+    if added {
+        heap.note_object_slots(crate::Value::direct_object(record_id), usize::from(transition.slot) + 1);
+    }
+    added
+}
+
+/// `concrete_add_property` of a value the after-shape's slot observation already holds, into the
+/// inline (packed) storage of the record: the add slot observation would see nothing of
+/// (`Heap::add_observation_holds`), whose narrow word needs no slot encoding.
+///
+/// # Safety
+/// As `concrete_add_property`.
+#[inline(always)]
+pub unsafe fn concrete_add_property_held(heap: &mut Heap, record_id: u32, transition: Transition, value: crate::Value) -> bool {
+    if usize::from(transition.slot) >= OBJECT.inline_property_count { return false; }
+    // SAFETY: the caller's contract; the gate reads the heap before any write.
+    let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
+    let mut stage = Concrete::storing(heap);
+    super::add::add_property_held(&mut stage, record, u64::from(record_id), transition.edge(), Form::Packed, value.to_bits(), ()).is_some()
+}
+
 /// The interpreter's reading of `naming::set_function_name`: the function record `record_id` of
 /// `heap` named `name` (the word of the name's string) along `transition`, whose slot is its `name`'s
 /// and whose before and after shapes the naming made; `empty` is the word of the empty string the
@@ -92,21 +105,129 @@ impl Transition {
 /// `record_id` names a live function record of `heap`, whose exact shape the row proves before any write.
 #[inline(always)]
 pub unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32, transition: Transition, empty: u64, name: crate::Value) -> bool {
-    let transition = transition.record_form();
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_function_object(record_id) } as u64;
-    let mut stage = Concrete::over(heap);
+    let mut stage = Concrete::storing(heap);
     set_function_name(&mut stage, record, u64::from(record_id), (transition.edge(), empty), name_form(transition.slot), name.to_bits(), ()).is_some()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::heap::Object;
+    use crate::Value;
+
+    /// A heap that knows the shapes 1 to `shapes`, each of as many slots as its number, and an
+    /// object of none (shape 0).
+    fn heap_of(shapes: u32) -> (Heap, Value) {
+        let mut heap = Heap::new();
+        for shape in 1..=shapes {
+            heap.register_property_shape(shape, shape as usize, None);
+        }
+        let object = heap.alloc_object(Object::new(Value::NULL));
+        (heap, object)
+    }
+
+    /// The edge `len` to `len + 1` as a site records it from `object`, whose layout, renumbered to
+    /// shape `len`, is the one the site guards.
+    fn transition_of(heap: &Heap, object: Value, len: u32) -> Transition {
+        let before = Object::layout_with_shape(heap.object(object).expect("an object").layout_id(), len);
+        Transition { before: len, after: len + 1, slot: len as u16, layouts: [before, Object::layout_with_shape(before, len + 1)] }
+    }
+
+    /// The row's add of `value` to `object` by `transition`.
+    fn add_by(heap: &mut Heap, object: Value, transition: Transition, value: Value) -> bool {
+        let id = object.direct_object_index().expect("a direct object");
+        // SAFETY: a live record of the heap; the row proves its layout.
+        unsafe { concrete_add_property(heap, id, transition, value) }
+    }
+
+    /// The row's add of `value` as the `len`th property of `object`, by the edge `len` to `len + 1`
+    /// recorded from `object` itself.
+    fn add(heap: &mut Heap, object: Value, len: u32, value: Value) -> bool {
+        let transition = transition_of(heap, object, len);
+        add_by(heap, object, transition, value)
+    }
+
+    fn shape_of(heap: &Heap, object: Value) -> u32 {
+        heap.object(object).expect("an object").exact_shape()
+    }
+
+    fn read(heap: &Heap, object: Value, slot: u16) -> Option<Value> {
+        let shape = shape_of(heap, object);
+        // SAFETY: a live record of its exact shape, whose slot it holds.
+        unsafe { crate::staged::concrete_own_field_hit(heap.object(object).expect("an object"), heap.arena_values_base(), shape, slot) }
+    }
+
+    /// The compiled site's reading (`site_add`): the object word must name a direct object, and a chained
+    /// add holds only for receivers whose prototype link is the proved one.
+    #[test]
+    fn a_site_add_tests_the_object_word_and_the_prototype_link() {
+        use super::super::add::site_add;
+        let (mut heap, object) = heap_of(2);
+        let records = heap.object_record_base().expect("a record table") as u64;
+        let link = u64::from(heap.object(object).expect("an object").proto_link().bits());
+        let before = heap.object(object).expect("an object").layout_id();
+        let edge = Edge { before: u64::from(before), after: u64::from(Object::layout_with_shape(before, 1)), slot: 0 };
+        let run = |heap: &mut Heap, word: Value, link: Option<u64>| {
+            let mut stage = Concrete::storing(heap);
+            site_add(&mut stage, records, word.to_bits(), (edge, link), Form::Packed, Value::integer(4).to_bits(), ()).is_some()
+        };
+        assert!(!run(&mut heap, Value::integer(3), None), "an int word names no object");
+        assert!(!run(&mut heap, object, Some(link ^ 1)), "another prototype");
+        assert_eq!(shape_of(&heap, object), 0, "a leave changes nothing");
+        assert!(run(&mut heap, object, Some(link)));
+        assert_eq!((shape_of(&heap, object), read(&heap, object, 0)), (1, Some(Value::integer(4))));
+    }
 
     #[test]
     fn the_form_is_a_fact_of_the_slot() {
         let form = |slot| Transition { before: 0, after: 0, slot, layouts: [0; 2] }.form();
         assert_eq!((form(0), form(1), form(2), form(3)), (Some(Form::Packed), Some(Form::Either), Some(Form::Arena), Some(Form::Arena)));
         assert_eq!((form(4), form(5), form(6), form(7)), (None, Some(Form::Arena), None, Some(Form::Arena)));
+    }
+
+    #[test]
+    fn a_packed_add_takes_narrow_values_and_moves_to_the_after_shape() {
+        let (mut heap, object) = heap_of(3);
+        assert!(add(&mut heap, object, 0, Value::integer(7)));
+        assert!(add(&mut heap, object, 1, Value::NULL));
+        assert_eq!(shape_of(&heap, object), 2);
+        assert_eq!((read(&heap, object, 0), read(&heap, object, 1)), (Some(Value::integer(7)), Some(Value::NULL)));
+        assert!(!add(&mut heap, object, 2, Value::integer(1)), "the inline halves are full and the storage is no arena range");
+        assert_eq!(shape_of(&heap, object), 2, "a leave changes nothing");
+    }
+
+    #[test]
+    fn a_value_with_no_narrow_form_leaves_a_packed_add() {
+        let (mut heap, object) = heap_of(1);
+        assert!(!add(&mut heap, object, 0, Value::number(1.5)));
+        assert_eq!(shape_of(&heap, object), 0);
+    }
+
+    #[test]
+    fn an_arena_add_takes_any_value_while_its_range_has_room() {
+        let (mut heap, object) = heap_of(5);
+        for shape in 1..=3 {
+            heap.property_add(object, Value::integer(shape as i32), shape);
+        }
+        assert!(add(&mut heap, object, 3, Value::number(1.5)));
+        assert_eq!((shape_of(&heap, object), read(&heap, object, 3)), (4, Some(Value::number(1.5))));
+        assert_eq!(read(&heap, object, 2), Some(Value::integer(3)), "the values before it stay");
+        assert!(!add(&mut heap, object, 4, Value::integer(1)), "the range of four is full: the VM grows it");
+        assert_eq!(shape_of(&heap, object), 4);
+    }
+
+    #[test]
+    fn an_add_leaves_for_another_shape_integrity_or_extras() {
+        let (mut heap, object) = heap_of(2);
+        let (first, other) = (transition_of(&heap, object, 0), transition_of(&heap, object, 1));
+        assert!(!add_by(&mut heap, object, other, Value::integer(1)), "the object is of another shape");
+        heap.object_mut(object).expect("an object").set_extensible(false);
+        assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a non-extensible object takes no property");
+        heap.object_mut(object).expect("an object").set_extensible(true);
+        heap.object_mut(object).expect("an object").mark_as_prototype();
+        assert!(!add_by(&mut heap, object, first, Value::integer(1)), "a prototype keeps extras and shape readers");
+        assert_eq!(shape_of(&heap, object), 0);
     }
 }

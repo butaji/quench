@@ -176,8 +176,8 @@ pub(super) fn shape_record(shape: &Shape) -> [u8; SHAPE_RECORD] {
         ShapeTransition::FunctionName { name } => (transition_tag::FUNCTION_NAME, 0, name, 0, 0, 0),
         ShapeTransition::FunctionNameReconfigured => (transition_tag::FUNCTION_NAME_RECONFIGURED, 0, 0, 0, 0, 0),
         ShapeTransition::FunctionLengthReconfigured => (transition_tag::FUNCTION_LENGTH_RECONFIGURED, 0, 0, 0, 0, 0),
-        ShapeTransition::Constructed { constructor, class, new_target_is_base } => {
-            (transition_tag::CONSTRUCTED, u8::from(new_target_is_base), 0, 0, constructor.to_bits(), class)
+        ShapeTransition::Constructed { constructor, new_target_is_base } => {
+            (transition_tag::CONSTRUCTED, u8::from(new_target_is_base), 0, 0, constructor.to_bits(), 0)
         }
         ShapeTransition::Add { key, slot, attributes } => {
             let (kind, atom, value) = key_words(key);
@@ -223,7 +223,6 @@ pub(super) fn shape_of_record(record: &[u8; SHAPE_RECORD]) -> SnapshotResult<Sha
         transition_tag::FUNCTION_LENGTH_RECONFIGURED => ShapeTransition::FunctionLengthReconfigured,
         transition_tag::CONSTRUCTED => ShapeTransition::Constructed {
             constructor: Value::from_bits(value),
-            class: extra,
             new_target_is_base: flags & 1 != 0,
         },
         transition_tag::ADD => ShapeTransition::Add {

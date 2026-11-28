@@ -28,7 +28,7 @@
 use super::RegisterSet;
 use crate::bytecode::{Function, Op, Successors, Traits, WideInstruction};
 use crate::compile::liveness::MethodSite;
-use crate::staged::wasm_operation::{FormWasmOperationExt, Operand, WasmOperation, wasm_operation_of};
+use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::WasmType;
 
 /// The raw webs of a function.
@@ -138,7 +138,7 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
         return Some(roles);
     }
     if (if rewritten { is_raw(op) } else { raw_form(op).is_some() || is_raw(op) })
-        && let Some(operation) = wasm_operation_of(op, instruction.imm())
+        && let Some(operation) = WasmOperation::of(op, instruction.imm())
     {
         let operand_wide = wide(operation.operand_type());
         let result_wide = wide(operation.result_type());

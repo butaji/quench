@@ -62,7 +62,7 @@ impl NodeHost {
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 
-    /// Makes this host, which a dump of a run saved at rest holds (`native_link::image_dump`), this
+    /// Makes this host, which a dump of a run saved at rest holds (`aot::image_dump`), this
     /// process's: every field the snapshot leaves to the restoring process (`write_snapshot`)
     /// comes from `fresh`, the host this process made, so the host is the one restoring the
     /// snapshot over `fresh` (`read_snapshot`) would have made.

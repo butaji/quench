@@ -18,7 +18,6 @@ impl Default for LaneActivations {
 }
 
 impl LaneActivations {
-    #[quench_macros::test_visible]
     pub(super) fn with_capacity(capacity: usize) -> Self {
         let mut owner = Vec::<Activation>::with_capacity(capacity);
         let base = owner.as_mut_ptr();

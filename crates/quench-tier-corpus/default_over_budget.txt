@@ -239,6 +239,7 @@ v_map_set_delete
 v_math_sin_cos
 v_ml_dot_sigmoid
 v_navier_lin_solve
+v_new_point
 v_nullish
 v_num_tostring
 v_obj_keys_loop

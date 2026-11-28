@@ -90,7 +90,7 @@ impl Places {
     /// leaves (`None`). An element row then reads or stores in place with no dispatch on the kind.
     #[inline(always)]
     pub(crate) fn proved_typed_view(&mut self, register: Register, native: crate::staged::typed_elements::NativeKind, writable: bool) -> Option<ElementView<u64>> {
-        let mut stage = Concrete::from_hole(0, payload(&self.s));
+        let mut stage = Concrete::from_hole(0);
         let base = Frame::tagged(self, &mut stage, register);
         let payload = payload(&self.s);
         let records = TypedRecords { directory: word_at(payload, JS_STEP_TYPED_VIEW_DIRECTORY), pages: word_at(payload, JS_STEP_TYPED_VIEW_PAGES),

@@ -5,7 +5,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The proven entry's rows: each pinned guard's unboxing row and holes, and the first row past the guards (`past`).
 pub(crate) struct Proven {

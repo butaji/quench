@@ -27,7 +27,6 @@ use quench_runtime::wasm::gc::ArraySegmentInput;
 use quench_runtime::wasm::i31::I31Operator;
 use cranelift_codegen::ir::{self, MemFlagsData};
 use quench_runtime::staged::frame::WASM_HEADER_WORDS;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The bytes of one word of an operand block or a result.
 const WORD: usize = size_of::<u64>();

@@ -6,7 +6,6 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::tier_surface::TypedArrayKind;
 use quench_runtime::staged::typed_elements::NativeKind;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// How a loop region's arrays are viewed on entry: not at all (each access proves its array's word), as
 /// dense arrays' backings or as typed arrays' elements, which the entry record holds (`ElementViews`).

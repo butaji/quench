@@ -146,14 +146,6 @@ pub(super) fn link_with_reached_operations(
     let catalog = fs::read_to_string(inputs.catalog()).map_err(|error| error.to_string())?;
     let mut kept = held.filter(|_| !loads_code(graph));
     report["held_host_operations"] = json!(kept.as_ref().map(BTreeSet::len));
-    // A closure computed before from the same inputs starts the table closed: the link that follows confirms it.
-    let cache = kept.as_ref().and_then(|held| closure_cache_entry(support, &catalog, driver, held));
-    if let (Some(operations), Some(entry)) = (&mut kept, &cache) {
-        let cached = fs::read_to_string(entry).ok();
-        let cached: Vec<u32> = cached.iter().flat_map(|text| text.split_whitespace()).filter_map(|word| word.parse().ok()).collect();
-        report["cached_closure_operations"] = json!(cached.len());
-        operations.extend(cached);
-    }
     let mut links = 0;
     // The operations each link's marks added, by name.
     let mut rounds: Vec<Vec<&'static str>> = Vec::new();
@@ -173,30 +165,11 @@ pub(super) fn link_with_reached_operations(
         report["operation_rounds"] = json!(rounds);
         operations.extend(added);
         if rounds.last().is_some_and(Vec::is_empty) {
-            if let Some(entry) = &cache {
-                let text = operations.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
-                // A cache that cannot be written only costs the next compile its rounds.
-                let _ = entry.parent().map(fs::create_dir_all).transpose().and_then(|_| fs::write(entry, text));
-            }
             report["unlinked_host_operations"] = json!(unlinked);
             report["operation_links"] = json!(links);
             return Ok(audit);
         }
     }
-}
-
-/// Where the closed operation set of a link of `support` with `catalog`, `driver` and the `held` operations is cached:
-/// the closure is a function of exactly those, so an unchanged program and support reuse it (the user's cache home,
-/// `quench/image-closure`). `None` without a cache home.
-fn closure_cache_entry(support: &NativeSupport, catalog: &str, driver: &Path, held: &BTreeSet<u32>) -> Option<std::path::PathBuf> {
-    use std::hash::{Hash, Hasher};
-    let home = std::env::var_os("XDG_CACHE_HOME").filter(|home| !home.is_empty()).map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache")))?;
-    // The inputs name the compile's own build directory, which differs on every compile: it is not an input.
-    let directory = driver.parent()?.to_string_lossy().into_owned();
-    let mut hasher = std::hash::DefaultHasher::new();
-    (support.build_stamp(), catalog.replace(&directory, ""), fs::read_to_string(driver).ok()?.replace(&directory, ""), held).hash(&mut hasher);
-    Some(home.join("quench/image-closure").join(format!("{:016x}", hasher.finish())))
 }
 
 /// The image's host operation table (the catalog's `OPERATIONS`), with the number of operations

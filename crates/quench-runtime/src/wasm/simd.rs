@@ -14,33 +14,22 @@ pub(crate) use crate::staged::wasm_simd_rules::{bits_of, value_of};
 /// operator's lane immediate is read from the instruction.
 macro_rules! wasm_operators {
     ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
-        /// The operator a wasmparser operator names, with its lane immediate (`SimdOperatorSimdExt::from_wasm`).
-        fn simd_operator_from_wasm(op: &wasmparser::Operator<'_>) -> Option<(SimdOperator, u8)> {
-            match op {
-                $(wasmparser::Operator::$name $({ $lane })? => Some((SimdOperator::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*
-                _ => None,
+        impl SimdOperator {
+            pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
+                match op {
+                    $(wasmparser::Operator::$name $({ $lane })? => Some((Self::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*
+                    _ => None,
+                }
             }
         }
     };
 }
 crate::staged::wasm_simd_lanes::simd_operator_list!(wasm_operators);
 
-/// `SimdOperator`'s boundary methods, as an extension trait (`SimdOperatorSimdExt`): quench-staged
-/// owns the type, so its inherent impls of this file moved onto a trait.
-pub trait SimdOperatorSimdExt: Sized {
-    /// The operator a wasmparser operator names, with its lane immediate (0 when it has none).
-    fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)>;
+impl SimdOperator {
     /// The operator on `left` and `right` at the `WasmValue` boundary: the bits body, typed by the
     /// kernel's result.
-    fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue;
-}
-
-impl SimdOperatorSimdExt for SimdOperator {
-    fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
-        simd_operator_from_wasm(op)
-    }
-
-    fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
+    pub(crate) fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
         let right = right.map_or(0, bits_of);
         value_of(Self::KERNELS[self as usize].result, self.bits(bits_of(left), right, index))
     }

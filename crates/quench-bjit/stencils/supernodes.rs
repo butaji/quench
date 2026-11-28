@@ -1,8 +1,9 @@
-//! The supernode library the planner reads: the rules (`supernode_rules.rs`) and the checked-in list
-//! `supernode_list.rs`, which is `build/supernodes.rs`'s rendering of `crates/quench-bjit/supernodes.txt`. The
-//! list holds `FAMILIES` (the opcodes the list's labels may name, with their row family) and `SUPERNODES` (the
-//! entries, each with its miner pattern text, feeds, place sets and evidence). The build script asserts that the
-//! checked-in list equals its rendering, so an edit to `supernodes.txt` is copied over it.
+//! The supernode library the planner reads: the rules (`supernode_rules.rs`) and the list
+//! `build.rs` generated from `crates/quench-bjit/supernodes.txt` (`build/supernodes.rs`). The
+//! generated file, which `QUENCH_SUPERNODES` names, holds `FAMILIES` (the opcodes the list's labels
+//! may name, with their row family) and `SUPERNODES` (the entries, each with its miner pattern text,
+//! feeds, place sets and evidence). `build.rs` itself includes `supernode_rules.rs` alone, since the
+//! list does not exist until it has run.
 
 /// The rules read the library through their parent (`supernode_rules.rs`, `use super::library`).
 use super::library;
@@ -10,7 +11,7 @@ use super::library;
 mod rules;
 pub use rules::*;
 
-include!("supernode_list.rs");
+include!(env!("QUENCH_SUPERNODES"));
 
 #[cfg(test)]
 mod tests {

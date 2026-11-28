@@ -24,7 +24,7 @@ impl Vm {
     }
 
     pub(super) fn constructor_name(&self, value: Value) -> Option<JsString> {
-        let object = self.heap.object(value)?;
+        let object = self.object_data(value)?;
         if self.proxy_parts(value).is_some() {
             return Some(JsString::from_str(if self.is_function(value) {
                 "Function"
@@ -39,7 +39,7 @@ impl Vm {
         let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag);
         let constructor = self.lookup_atom("constructor");
         let mut current = value;
-        while let Some(data) = self.heap.object(current) {
+        while let Some(data) = self.object_data(current) {
             if self.proxy_parts(current).is_some() {
                 break;
             }
@@ -63,7 +63,7 @@ impl Vm {
         Some(JsString::from_str(self.intrinsic_class_name(value, object)))
     }
 
-    fn intrinsic_class_name(&self, value: Value, object: ObjectRef<'_>) -> &'static str {
+    fn intrinsic_class_name(&self, value: Value, object: &Object) -> &'static str {
         if object.is_arguments_object() {
             return "Arguments";
         }

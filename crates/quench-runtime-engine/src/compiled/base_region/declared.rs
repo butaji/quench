@@ -10,7 +10,6 @@
 //! until then. The other sets a tag alone decides are `EntryGuard`s, kept for parameters the
 //! function never writes, which hold the fact at every row.
 
-#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -22,7 +21,6 @@ use quench_runtime::staged::{DecodeContext, Operation};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::ValueType;
 use super::function::ClassProto;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 const fn language(kind: ValueType) -> u16 {
     1 << kind as u16
@@ -138,10 +136,19 @@ pub(crate) fn entry_numbers(function: &Function) -> Vec<Register> {
     declared(function).filter(|(register, fact)| *fact == DeclaredFact::Number && !written.contains(usize::from(*register))).map(|(register, _)| register).collect()
 }
 
+/// The registers the entry proves plain direct objects, never written: the `Languages(OBJECT_PLAIN)` parameters and
+/// each class-typed receiver of `classes` (`class_prototypes`, a direct object the entry tests). `proofs::prove`
+/// starts from them, so the inline-cache rows on them take the known-shape form (`Heap::IcKnownGet`,
+/// `Heap::IcKnownSet`), whose record indexing assumes a plain object.
+pub(crate) fn exact_objects(function: &Function, classes: &[ClassProto]) -> Vec<Register> {
+    let guards = entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register);
+    guards.chain(classes.iter().map(|proto| proto.register)).collect()
+}
+
 /// The prototypes the entry checks for a class-typed parameter (`DeclaredTypes::declared_parameter_class`): each
 /// of `resolved` (`VM::class_prototypes`, observed where the body was compiled) whose parameter the function
 /// never writes, so the receiver it entered with holds the fact until a row may change it (`proofs::prove`, which
-/// seeds the entry's shape and link proof of each receiver).
+/// seeds the entry's proof of each receiver's shape and link).
 pub(crate) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> Vec<ClassProto> {
     let written = written(function);
     resolved.iter().filter(|proto| !written.contains(usize::from(proto.register))).cloned().collect()
@@ -150,7 +157,7 @@ pub(crate) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> 
 /// The named read `atom` of a class-typed parameter whose prototype holds the name as a data value (`Known::classes`,
 /// already limited to the parameters the function never writes by `class_prototypes`): a held read of the receiver's
 /// exact shape and prototype link, checked per use (`Heap::Held`). `proofs::prove` makes it a constant load where the
-/// receiver's shape holds at the row; the prototype's values are a dependency (`Folded::holder`). `None` for any
+/// receiver's shape is proven at the row; the prototype's values are a dependency (`Folded::holder`). `None` for any
 /// other base or name.
 pub(crate) fn class_member_read(known: Known, object: Option<Register>, atom: quench_runtime::bytecode::Atom, dst: Register) -> Option<Decoded> {
     let register = object?;

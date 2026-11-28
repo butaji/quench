@@ -3,26 +3,157 @@
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
-use super::{Allocation, CallOperation, Operation};
 
+use super::{Allocation, CallOperation, Operation};
 pub use super::region::Region;
 
-use crate::typed_ir::ElementClass;
+/// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct RegionSet(pub(crate) u16);
 
-#[path = "effects/affine.rs"]
-mod affine;
-#[path = "effects/writes.rs"]
-mod writes;
-#[path = "effects/summary.rs"]
-mod summary;
-#[path = "effects/call_sig.rs"]
-mod call_sig;
-#[path = "effects/operation_effects.rs"]
-mod operation_effects;
-pub use affine::*;
-pub use writes::*;
-pub use summary::*;
-pub use call_sig::*;
+impl RegionSet {
+    pub(crate) const NONE: Self = Self(0);
+
+    pub(crate) const fn of(region: Region) -> Self {
+        Self(1 << region as u16)
+    }
+
+    pub(crate) const fn with(self, region: Region) -> Self {
+        Self(self.0 | 1 << region as u16)
+    }
+
+    pub(crate) const fn contains(self, region: Region) -> bool {
+        self.0 & 1 << region as u16 != 0
+    }
+
+    pub(crate) const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+/// An operation's effect row. `may_collect` is separate from `may_alloc`: an allocation whose
+/// fast path is inline does not collect; only a slow helper and a safepoint do.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Effects {
+    pub(crate) reads: RegionSet,
+    pub(crate) writes: RegionSet,
+    pub(crate) may_alloc: bool,
+    pub(crate) may_collect: bool,
+    pub(crate) may_call_js: bool,
+    pub(crate) may_throw: bool,
+}
+
+impl Effects {
+    pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
+        may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
+
+    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+
+    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+
+    /// An operation that may run guest code or collect: it reads and writes every region.
+    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+        may_collect: true, may_call_js: true, may_throw: true };
+}
+
+impl<W> CallOperation<W> {
+    /// The effect row of a call-protocol step: the guards leave and write nothing, the window
+    /// writes the callee's registers, and a site names a call, which may run anything.
+    const fn effects(&self) -> Effects {
+        match self {
+            Self::Callee { .. } | Self::Receiver { .. } | Self::BindThis { .. } | Self::Room { .. } | Self::Complete { .. } => Effects::NONE,
+            Self::Window { .. } => Effects::writes(Region::Frame),
+            Self::Site(_) => Effects::ANY,
+        }
+    }
+}
+
+impl<W, P> Operation<W, P> {
+    /// Whether the operation may move an array's backing or the record table: it adds or removes
+    /// elements (writes `Region::Elements`), allocates (a new record block) or may run guest code,
+    /// which can do either. Native code leaves before a collection. An element read's host arm
+    /// answers by a pure lookup or leaves where the VM would run a getter, so a read does not.
+    pub fn moves_arrays(&self) -> bool {
+        let effects = self.effects();
+        !matches!(self, Self::ElementRead { .. }) && (effects.writes.contains(Region::Elements) || effects.may_alloc || effects.may_call_js)
+    }
+
+    /// Whether the operation may create or replace the running activation's environment, which its environment storage word
+    /// names: a closure's allocation promotes the activation's captured locals into one (it allocates and writes
+    /// `Region::Frame`), and anything that may run any code is conservative. A guard, a read or a store does not.
+    pub fn makes_environment(&self) -> bool {
+        let effects = self.effects();
+        effects.may_alloc && effects.writes.contains(Region::Frame)
+    }
+
+    /// The effect row of the operation, from its variant alone.
+    pub(crate) const fn effects(&self) -> Effects {
+        match self.memory_effects() {
+            Some(effects) => effects,
+            None => self.control_effects(),
+        }
+    }
+
+    /// Effects of the field, element and allocation operations.
+    const fn memory_effects(&self) -> Option<Effects> {
+        Some(match self {
+            Self::IndexWrite { .. } => Effects::writes(Region::Elements),
+            Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::ElementWrite { .. } => Effects::ANY,
+            Self::DefineElement { .. } => Effects::writes(Region::Elements),
+            // A closure promotes the activation's captured locals into its environment.
+            Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            // A callee-argument regexp literal reads its callee register, and its shared object's
+            // `lastIndex` and the proofs it is kept under (`Vm::regexp_literal_argument_of`).
+            Self::Allocate { allocation: Allocation::RegExp { callee: Some(_), .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame).with(Region::ObjectSlots).with(Region::ShapeWord).with(Region::Records),
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { callee: None, .. } | Allocation::ConstArray { .. }, .. } => Effects {
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame), writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            _ => return self.property_effects(),
+        })
+    }
+
+    /// Effects of the property operations: a plan's reads and stores touch object slots and
+    /// shapes; a host callout may run guest code (a getter, a proxy trap) or reshape objects.
+    const fn property_effects(&self) -> Option<Effects> {
+        Some(match self {
+            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
+            Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
+            _ => return None,
+        })
+    }
+
+    const fn control_effects(&self) -> Effects {
+        match self {
+            Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
+            Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
+            Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
+            Self::LoadLocalChecked { .. } => Effects::reads(Region::Frame),
+            Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. } => Effects::writes(Region::Frame),
+            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
+            Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
+            Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
+            Self::Call(operation) => operation.effects(),
+            // A suspension resumes the activation after anything: an `await` may run guest code
+            // through PromiseResolve, and the frame's state is the generator's again.
+            #[cfg(not(stencil_build))]
+            Self::Suspend { .. } => Effects::ANY,
+            // The memory operations answered in `memory_effects`; anything else is conservative.
+            _ => Effects::ANY,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -38,47 +169,5 @@ mod tests {
         let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2, strict: false }, Operation::IndexWrite { index: 0, value: 0, proof: () },
             Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
-    }
-
-    #[test]
-    fn element_writes_join_by_class_and_widen_past_the_bound() {
-        let whole = |class| ClassWrite { class, indices: Indices::Whole };
-        let span = |class| ClassWrite { class, indices: Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) } };
-        let written = ElementWrites::of([whole(ElementClass::Global(3)), span(ElementClass::Parameter { function: 2, index: 0 })]);
-        assert_eq!(written.entries().len(), 2);
-        assert_eq!(written.join(ElementWrites::Nothing), written);
-        assert_eq!(written.join(ElementWrites::Any), ElementWrites::Any);
-        // The same class twice joins its indices: equal spans stay, different ones widen to `Whole`.
-        let joined = ElementWrites::of([span(ElementClass::Unnamed), span(ElementClass::Unnamed)]);
-        assert_eq!(joined.entries()[0].indices, Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) });
-        let widened = ElementWrites::of([span(ElementClass::Unnamed), whole(ElementClass::Unnamed)]);
-        assert_eq!(widened.entries()[0].indices, Indices::Whole);
-        let many = (0..=MAX_WRITE_CLASSES as u32).map(|function| whole(ElementClass::Return(function)));
-        assert_eq!(ElementWrites::of(many), ElementWrites::Any);
-        assert_eq!(ElementWrites::of(std::iter::empty()), ElementWrites::Nothing);
-    }
-
-    #[test]
-    fn a_grade_narrows_element_writes_and_keeps_its_flags() {
-        let store = ElementWrites::of([ClassWrite { class: ElementClass::Field(4), indices: Indices::Whole }]);
-        let graded = Effects::ANY.meet(Effects { elements: store, ..Effects::ANY });
-        assert_eq!(graded.elements, store);
-        assert!(graded.may_call_js && graded.may_throw && graded.may_collect, "an element store's grade clears no flag");
-        assert_eq!(Effects::NONE.meet(Effects::ANY).elements, ElementWrites::Nothing);
-    }
-
-    #[test]
-    fn a_callee_index_is_read_through_the_arguments_parameters() {
-        let index = Indices::Span { start: Affine::parameter(1), len: Affine::constant(1) };
-        let kept = index.substitute(&|param: u16| (param == 1).then_some(0_u16));
-        assert_eq!(kept, Indices::Span { start: Affine::parameter(0), len: Affine::constant(1) });
-        assert_eq!(index.substitute(&|_: u16| None::<u16>), Indices::Whole, "an argument that is no parameter of the caller widens the index");
-    }
-
-    #[test]
-    fn a_returning_call_with_nothing_after_it_is_a_tail_site() {
-        assert!(tail_site(true, true));
-        assert!(!tail_site(false, true), "a call whose value the caller keeps working on is not a tail site");
-        assert!(!tail_site(true, false), "a handler or a sloppy caller must still see the call's completion");
     }
 }

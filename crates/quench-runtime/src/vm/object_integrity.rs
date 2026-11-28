@@ -95,9 +95,8 @@ impl Vm {
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
-                // The arguments-object flag is record data.
                 if key.host_string() == "length" && vm.heap.array(target).is_some()
-                    && !vm.heap.object(target).is_some_and(|object| object.is_arguments_object())
+                    && !vm.object_data(target).is_some_and(Object::is_arguments_object)
                 {
                     return Ok(Value::FALSE);
                 }
@@ -132,8 +131,8 @@ impl Vm {
             let Some((_, slot)) =
                 vm.object_property_slot(target, property_key)
                     .filter(|(_, slot)| {
-                        vm.heap.object(target)
-                            .and_then(|object| vm.heap.property_get_ref(object, *slot))
+                        vm.object_data(target)
+                            .and_then(|object| vm.heap.property_get(object, *slot))
                             .is_some()
                     })
             else {
@@ -272,7 +271,7 @@ impl Vm {
         }
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
-            .heap.object(value)
+            .object_data(value)
             .map(|object| object.proto())
             .unwrap_or(Value::NULL))
     }
@@ -371,7 +370,7 @@ impl Vm {
             return Err(self.wasm_gc_opaque_error(p));
         }
         let data = self
-            .heap.object(target)
+            .object_data(target)
             .expect("SetPrototypeOf target is an object");
         if self.same_value(data.proto(), proto) {
             return Ok(true);
@@ -388,7 +387,7 @@ impl Vm {
         // cache entries apart. Node gives every new Buffer its prototype this way
         // (`FastBuffer`), and its classes their parent constructors (`Readable` from `Stream`).
         let keeps_shape = !data.was_used_as_prototype()
-            && (self.heap.ordinary_view(target).is_some()
+            && (self.heap.ordinary_object(target).is_some()
                 || self.heap.function(target).is_some()
                 || matches!(self.heap.get(target), Some(Cell::TypedArray { .. })));
         let mut cursor = proto;
@@ -400,12 +399,12 @@ impl Vm {
                 break;
             }
             cursor = self
-                .heap.object(cursor)
+                .object_data(cursor)
                 .map(|object| object.proto())
                 .unwrap_or(Value::NULL);
         }
         self.heap.mark_prototype(proto);
-        self.heap.object_mut(target)
+        self.object_data_mut(target)
             .expect("object validated")
             .set_proto(proto);
         // Every cache tier keyed by a receiver shape re-reads the receiver's actual
@@ -447,7 +446,7 @@ impl Vm {
                 .symbol_value()
                 .is_some_and(|symbol| self.is_host_private_symbol(symbol))
             && self
-                .heap.object(object)
+                .object_data(object)
                 .is_some_and(|object| !object.is_extensible())
         {
             return Err(JsError(
@@ -540,7 +539,7 @@ impl Vm {
         if self.typed_array_length_is_variable(source) {
             return Ok(false);
         }
-        self.heap.object_mut(source)
+        self.object_data_mut(source)
             .expect("PreventExtensions target is an object")
             .set_extensible(false);
         Ok(true)
@@ -593,7 +592,7 @@ impl Vm {
             return outcome;
         }
         Ok(Self::integrity_bool(
-            self.heap.object(source).is_some_and(|object| object.is_extensible()),
+            self.object_data(source).is_some_and(Object::is_extensible),
         ))
     }
 
@@ -701,17 +700,17 @@ impl Vm {
         if matches!(self.heap.get(source), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
             || self.heap.wasm_gc(source).is_some()
             || self
-            .heap.object(source)
-            .is_some_and(|object| object.is_module_namespace())
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
             || self.has_lazy_data_properties(source)
         {
             return self.set_integrity_level(p, source, freeze);
         }
         let target = source;
-        if self.heap.object(target).is_none() {
+        if self.object_data(target).is_none() {
             return Ok(target);
         }
-        if let Some(mut object) = self.heap.object_mut(target) {
+        if let Some(object) = self.object_data_mut(target) {
             object.set_extensible(false);
             if freeze {
                 object.set_frozen(true);
@@ -724,7 +723,7 @@ impl Vm {
             .map(PropertyKey::string)
             .collect::<Vec<_>>();
         keys.extend(
-            self.heap.object(target)
+            self.object_data(target)
                 .map(|data| self.shape_keys(data.shape()))
                 .unwrap_or_default()
                 .into_iter()
@@ -754,14 +753,14 @@ impl Vm {
                 Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
             )
             || self
-            .heap.object(source)
-            .is_some_and(|object| object.is_module_namespace())
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
             || self.has_lazy_data_properties(source)
         {
             return self.test_integrity_level(p, source, freeze);
         }
         let target = source;
-        let Some(data) = self.heap.object(target) else {
+        let Some(data) = self.object_data(target) else {
             return Ok(Value::TRUE);
         };
         if data.is_extensible() {

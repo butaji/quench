@@ -3,19 +3,16 @@
 //! by the lane's own allocator (`LaneHelper::NewArray`, `NewObjectLiteral` and kin).
 
 #[allow(unused_imports)]
-use quench_runtime::staged::AllocationAllocationExt;
-#[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;
 use quench_runtime::staged::Allocation;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The instructions after `pc` that no edge enters, as many as a literal's element
     /// definitions (`ARRAY_LITERAL_WINDOW`): the definitions the allocation of an array
     /// literal makes with it.
-    pub(crate) fn straight_following(&self, pc: usize) -> &[WideInstruction] {
+    fn straight_following(&self, pc: usize) -> &[WideInstruction] {
         let after = self.unit.instructions.get(pc + 1..).unwrap_or_default();
         let run = (pc + 1..).zip(after).take(ARRAY_LITERAL_WINDOW).take_while(|(at, _)| self.blocks[*at].is_none()).count();
         &after[..run]
@@ -63,7 +60,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The `count` element definitions after `pc` that the array literal's allocation made.
-    pub(crate) fn consume_definitions(&mut self, pc: usize, count: usize) {
+    fn consume_definitions(&mut self, pc: usize, count: usize) {
         for definition in pc + 1..=pc + count {
             self.consumed.insert(definition);
         }

@@ -51,40 +51,21 @@ fn admitted_word<S: Stage>(stage: &mut S, record: S::Word, shape: u32, hinted: b
 /// that from the invalidation word its rows test after a call, so no bitset is read here.
 #[allow(dead_code)] // the stencil rows' admission; the interpreter's stores hold no per-store test
 #[inline(always)]
-pub fn store_admitted<S: Stage>(stage: &mut S, specialized: S::Word, miss: S::Miss) -> Option<()> {
+pub(crate) fn store_admitted<S: Stage>(stage: &mut S, specialized: S::Word, miss: S::Miss) -> Option<()> {
     let on = stage.ne_imm(specialized, 0u32);
     stage.guard(on, miss)?;
     let _atom = stage.site(0);
     Some(())
 }
 
-/// The type a store of `value` plans by: the narrower of `proven` (what the row proved of it) and
-/// `stage.fact(value)` (what the stage holds), or `proven` where neither is the narrower one.
-#[inline(always)]
-pub fn store_fact<S: Stage>(stage: &S, value: S::Word, proven: Type) -> Type {
-    let known = stage.fact(value);
-    if known.is_subtype(proven) { known } else { proven }
-}
-
-/// The word a store of `(value, fact)` writes into a slot of type `class` (decision 4.1, R4-M1), with
-/// the type the word has: a Number slot (`repr` Float64) holds raw double bits, so an int32 word converts
-/// to its double (`Stage::raw_number`) and its fact is the Number class; any other slot stores the word
-/// and fact as they are. The arm's slot type (`StoreArm::class`), not the type its test admits, decides:
-/// a value the slot already holds is still an int32 in a Number slot.
-#[inline(always)]
-pub fn class_word<S: Stage>(stage: &mut S, (value, fact): (S::Word, Type), class: Type) -> (S::Word, Type) {
-    if crate::typed_ir::repr(class) == Representation::Float64 { (stage.raw_number(value), class) } else { (value, fact) }
-}
-
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may
 /// proceed: its exact shape is `shape` (`admitted_word`), the store gate admits the write and
 /// its values are plain; `None` (leaving at `miss`) otherwise, changing nothing.
 #[inline(always)]
-pub fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool,
+pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     admitted_word(stage, record, shape, hinted, miss)?;
-    let fact = store_fact(stage, value, Type::ANY);
-    gated_payload(stage, record, record_id, (value, fact), miss)
+    gated_payload(stage, record, record_id, (value, Type::ANY), miss)
 }
 
 /// Continues where a store of `value`, which the frame proved of type `fact`, into record
@@ -92,59 +73,93 @@ pub fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
 /// record, so it asks only whether old records keep counts (`Stage::immediate_store_open`), under
 /// which overwriting a reference still logs; any other value asks the stage's gate.
 #[inline(always)]
-pub fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     if fact.is_subtype(Type::IMMEDIATE) {
         let open = stage.immediate_store_open();
         return stage.guard(open, miss);
     }
-    let open = stage.store_gate(super::StagedRecordSpace::Class, record_id, value);
+    let open = stage.store_gate(super::StagedRecordSpace::Object, record_id, value);
     stage.guard(open, miss)
 }
 
 /// `gate_open` of a store whose value the slot's type holds (`Stage::held_store_gate`): the
 /// barrier's log alone, no slot observation.
 #[inline(always)]
-pub fn held_gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+pub(crate) fn held_gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     if fact.is_subtype(Type::IMMEDIATE) {
         let open = stage.immediate_store_open();
         return stage.guard(open, miss);
     }
-    let open = stage.held_store_gate(super::StagedRecordSpace::Class, record_id, value);
+    let open = stage.held_store_gate(super::StagedRecordSpace::Object, record_id, value);
     stage.guard(open, miss)
 }
 
-/// The store gate of a gated `value` into record `id` of `space` (a function record, or a live class cell's
-/// granule) over the slot's current value `old`: an int over an int widens no observed slot type, whose join
-/// already holds `old` (tracking joins every live value and every store), so only the barrier's log is asked
-/// (`Stage::held_store_gate`); any other store asks the whole gate (`Stage::store_gate`), which refuses while
-/// slot types are tracked.
+/// The store gate of a gated `value` into object record `id` over the slot's current value `old`: an int over
+/// an int widens no observed slot type, whose join already holds `old` (tracking joins every live value and
+/// every store), so only the barrier's log is asked (`Stage::held_store_gate`); any other store asks the whole
+/// gate (`Stage::store_gate`), which refuses while slot types are tracked.
 #[inline(always)]
-pub fn int_over_int_gate<S: Stage>(stage: &mut S, (space, id, old): (super::StagedRecordSpace, S::Word, S::Word), value: S::Word) -> S::Cond {
+pub(crate) fn int_over_int_gate<S: Stage>(stage: &mut S, (id, old): (S::Word, S::Word), value: S::Word) -> S::Cond {
     let old_int = super::value::is_int(stage, old);
     let new_int = super::value::is_int(stage, value);
     let same = stage.all(old_int, new_int);
-    let held = stage.held_store_gate(space, id, value);
-    let whole = stage.store_gate(space, id, value);
+    let held = stage.held_store_gate(super::StagedRecordSpace::Object, id, value);
+    let whole = stage.store_gate(super::StagedRecordSpace::Object, id, value);
     stage.pick(same, held, whole)
 }
 
 /// The payload word of the record at `record` once the gate admits `value` (of `fact`) and its
 /// values are plain (no extras); the exact shape is the caller's proof (`property_write::in_place`).
 #[inline(always)]
-pub fn gated_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, value: (S::Word, Type),
+pub(crate) fn gated_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, value: (S::Word, Type),
     miss: S::Miss) -> Option<S::Word> {
     gate_open(stage, record_id, value, miss)?;
     Some(stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32))
 }
 
+#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Stores `value`, a word in `rep`'s encoding, at `slot` of the flat run the plain `payload` word
 /// addresses; the slot is a per-site operand, so its byte offset is a hole.
 #[inline(always)]
-pub fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (value, rep): (S::Word, Representation)) {
+pub(crate) fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (value, rep): (S::Word, Representation)) {
     let run = arena_run(stage, payload);
     let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
     let address = stage.add_imm(run, offset);
     store_word(stage, address, value, rep);
+}
+
+/// `own_store` for a record whose values are a flat run (`Form::Arena`): the guards of
+/// `admitted_payload` (the gate passes a `fact` proved immediate), then the run's slot; `None` (leaving at `miss`) where the record keeps
+/// its values inline, changing nothing.
+#[inline(always)]
+pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
+    (value, rep, fact): (S::Word, Representation, Type), miss: S::Miss) -> Option<()> {
+    let word = admitted_word(stage, record, shape, false, miss)?;
+    let payload = gated_payload(stage, record, record_id, (value, fact), miss)?;
+    let inline = storage_form(stage, word, OBJECT.inline_form);
+    let flat = stage.not(inline);
+    stage.guard(flat, miss)?;
+    store_flat(stage, payload, slot, (value, rep));
+    Some(())
+}
+
+/// Proves the record at `record` of the exact shape `shape` with plain wide flat values in one compare:
+/// its auxiliary word is the shape with no storage-form bit set (`recorded_shape`); `None`, leaving at
+/// `miss`, otherwise. What the access of a receiver known to be a direct object runs (`base_region::proofs`).
+#[inline(always)]
+pub(crate) fn own_flat_known<S: Stage>(stage: &mut S, record: S::Word, shape: u32, miss: S::Miss) -> Option<()> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let shape = stage.shape_site(shape);
+    let same = stage.eq_imm(word, shape);
+    stage.guard(same, miss)
+}
+
+/// `value` written at flat `slot` of the record at `record`, which `own_flat_known` proved of the slot's
+/// shape with plain flat values; the value is one the slot's observed type holds, so the store gate does not apply.
+#[inline(always)]
+pub(crate) fn proved_flat_store<S: Stage>(stage: &mut S, record: S::Word, slot: u16, (value, rep): (S::Word, Representation)) {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    store_flat(stage, payload, slot, (value, rep));
 }
 
 /// `value`, a word in `rep`'s encoding, written at `slot`, a word (the shapes' storage length or a cache
@@ -155,7 +170,7 @@ pub fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (value, 
 /// written) where the object is in the other form, a packed slot cannot hold the value, or the
 /// run is narrow (`object::narrow_run`), whose halves take no wide value.
 #[inline(always)]
-pub fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, form: Form, (value, rep): (S::Word, Representation),
+pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, form: Form, (value, rep): (S::Word, Representation),
     miss: S::Miss) -> Option<()> {
     debug_assert!(rep != Representation::Float64 || form == Form::Arena, "a packed slot holds a narrow value, never a raw double");
     let inline = inline_storage(stage, record);
@@ -168,7 +183,7 @@ pub fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, sl
         Form::Either => {}
     }
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, store_fact(stage, value, Type::ANY), miss)? };
+    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, Type::ANY, miss)? };
     stage.choose_leaving(inline, #[inline(always)] |stage| {
         let half = stage.mul_imm(slot, HALF_BYTES);
         let address = stage.add(record, half);
@@ -186,7 +201,7 @@ pub fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, sl
 
 /// `value`, a word in `rep`'s encoding, written at the arena slot `address`.
 #[inline(always)]
-pub fn store_word<S: Stage>(stage: &mut S, address: S::Word, value: S::Word, rep: Representation) {
+pub(crate) fn store_word<S: Stage>(stage: &mut S, address: S::Word, value: S::Word, rep: Representation) {
     match rep {
         Representation::Float64 => stage.store_f64(Region::ObjectSlots.mutable(), address, 0, value),
         Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value),

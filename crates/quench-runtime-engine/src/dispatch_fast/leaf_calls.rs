@@ -30,14 +30,14 @@ script_handler! {
         // A site meeting other callees too calls each as its own form would: a plain
         // activation's in place, another leaf form's through it, any other through the
         // full form.
-        if target.body.entry != CallEntry::leaf(LEAF) {
-            if target.body.entry == CallEntry::framed(Framed::Activates) {
+        if target.entry != CallEntry::leaf(LEAF) {
+            if target.entry == CallEntry::Activates {
                 match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
                     Some(resumed) => resume!(cx, resumed),
                     None => sibling!(script_call_full_miss, r, ip, Carried::script(cx)),
                 }
             }
-            sibling!(other_leaf_form::<ARGC>(target.body.entry), r, ip, Carried::script(cx))
+            sibling!(other_leaf_form::<ARGC>(target.entry), r, ip, Carried::script(cx))
         }
         // The proof: a leaf call runs its leaf here whether its cell holds a body or not, so the
         // proved form makes the same call; a leaf entry activates as `Activates` from a plain
@@ -47,11 +47,10 @@ script_handler! {
             let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
             let entry = &mut vm.lane_stack.script_targets.entries[index];
             debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
-            entry.body.admission.0 &= !Admission::UNPROVEN;
-            debug_assert!(entry.body.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
+            entry.admission.0 &= !Admission::UNPROVEN;
+            debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         }
         // A proved leaf site is one its function's inlined view may splice in (N7a).
-        #[cfg(feature = "jit")]
         super::inlined_views::note_leaf_site(cx, ip);
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`materialize_leaf_in_lane`), which a binding past the receiver's own
@@ -72,6 +71,7 @@ script_handler! {
         if !admits_window_in_lane(vm, target, ARGC) {
             sibling!(script_call_full_miss, r, ip, Carried::script(cx))
         }
+        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         // SAFETY: the target is the running program's admitted leaf of form `LEAF`, whose
         // parameters take `ARGC` values and whose window the stack holds.
         let (registers, base) = unsafe { lane_run_leaf::<LEAF, ARGC>(cx, r, ip, i, target, this) };
@@ -101,7 +101,7 @@ pub(crate) unsafe fn lane_run_leaf<const LEAF: u8, const ARGC: u16>(
     unsafe {
         let window = Registers(vm(cx).lane_stack.values.top());
         let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
-        lane_enter_leaf(cx, AdmittedWindow::of(target, passed, ARGC), window, ip, r, target, LEAF, ARGC, this, None)
+        lane_enter_leaf(cx, AdmittedWindow::of(target, passed, ARGC), window, ip, r, target, LEAF, ARGC, this, None, true)
     }
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn leaf_call_handler(entry: CallEntry, i: &LaneInstruction) -> Handle
 #[inline(always)]
 fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
     quench_runtime::staged::call_leaf::guard_receiver_binds(
-        &mut quench_runtime::staged::Concrete::pure(), receiver.to_bits(), target.body.this_binding == ThisBinding::Sloppy, (),
+        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), receiver.to_bits(), target.this_binding == ThisBinding::Sloppy, (),
     )
     .is_some()
 }
@@ -177,7 +177,7 @@ pub(crate) struct AdmittedWindow {
 impl AdmittedWindow {
     #[inline(always)]
     pub(crate) fn of(target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Self {
-        Self { fill: usize::from(target.body.fill), registers: usize::from(target.body.registers), passed, argc }
+        Self { fill: usize::from(target.fill), registers: usize::from(target.registers), passed, argc }
     }
 }
 
@@ -227,8 +227,15 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
     argc: u16,
     this: Value,
     caller_program: Option<ProgramId>,
+    checked: bool,
 ) -> (Registers, Ip) {
     use quench_runtime::staged::call_leaf::{step_leaf_call_of, LeafContext, LeafEntry};
+    // A form that binds the receiver writes the leaf's `this` (`call_leaf::binds_this`); any other reads none.
+    // A call row's hand-off checked `this` where it bound it (`checked`, `call_hand_over`).
+    if !checked && quench_runtime::staged::call_leaf::binds_this(form) {
+        // SAFETY: the running lane's context; the program store keeps the view alive.
+        note_lane_this(unsafe { vm(cx) }, this, || unsafe { (*target.view).this_rows });
+    }
     // SAFETY: the function's contract.
     unsafe {
         let entry = LeafEntry {
@@ -239,14 +246,14 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
             argc: u64::from(argc),
             form,
         };
-        let context = LeafContext { this: this.to_bits(), env: target.closure.env.to_bits(), capture: target.closure.capture.expose_provenance() as u64 };
+        let context = LeafContext { this: this.to_bits(), env: target.env.to_bits(), capture: target.capture.expose_provenance() as u64 };
         let leaf = std::ptr::addr_of_mut!((*cx).leaf);
         step_leaf_call_of(
-            &mut Concrete::pure(), &mut window_fill, leaf.expose_provenance() as u64,
+            &mut Concrete::new(std::ptr::null()), &mut window_fill, leaf.expose_provenance() as u64,
             window.0.expose_provenance() as u64, entry, context,
         );
         (*leaf).caller_program = caller_program;
-        let base = (*target.body.view).records();
+        let base = (*target.view).records();
         ((*cx).registers, (*cx).base) = (window, base);
         (window, base)
     }
@@ -293,7 +300,7 @@ fn lane_return_leaf(cx: *mut LaneContext, value: Value, form: LeafForm) -> Optio
         u64::from((*call).a & quench_runtime::bytecode::REGISTER_MASK) * 8
     };
     let caller = quench_runtime::staged::call_leaf::step_leaf_return_of(
-        &mut Concrete::pure(), leaf.expose_provenance() as u64, value.to_bits(), result_at, (),
+        &mut Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, value.to_bits(), result_at, (),
     )?;
     let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
     let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
@@ -314,5 +321,50 @@ fn lane_return_leaf(cx: *mut LaneContext, value: Value, form: LeafForm) -> Optio
 pub(crate) fn materialize_running_leaf_in_lane(cx: *mut LaneContext) {
     if !unsafe { (*cx).leaf.call }.is_null() {
         materialize_leaf_in_lane(cx);
+    }
+}
+
+/// A plain call record `i` of `target`, another program's leaf (`CallEntry::leaf`), run as
+/// `script_call_leaf_prove_miss` runs its own program's: its records on a window at the lane
+/// stack's top without an activation, in its program, which its return leaves
+/// (`complete_leaf_in_lane`) and its materialization records as a crossing activation's
+/// (`Completion::Cross`). `None`, which changes nothing, for a call the leaf form does not
+/// make (more values than `FIXED_ARGUMENT_COPIES` or past the parameters, a receiver whose
+/// binding reads the heap, no room, a call returning its completion, refused cached calls).
+#[inline(always)]
+pub(crate) fn cross_leaf_call_in_lane(
+    cx: *mut LaneContext,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    target: &ScriptCallTarget,
+) -> Option<(Registers, Ip)> {
+    let form = target.entry.leaf_form();
+    let argc = ImmediateLayout::argument_count(i.imm());
+    if form == NOT_LEAF || argc > FIXED_ARGUMENT_COPIES || i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let vm = unsafe { vm(cx) };
+    if vm.with_scope_entered || vm.lane_stack.refuses() || !unsafe { (*cx).leaf.call }.is_null() {
+        return None;
+    }
+    let receiver = r.get(i.c);
+    let this = if leaf_binds_this(form) {
+        direct_call_this_in_lane(vm, target, receiver)?
+    } else {
+        binds_directly_in_lane(target, receiver).then_some(receiver)?
+    };
+    if !admits_window_in_lane(vm, target, argc) {
+        return None;
+    }
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    // SAFETY: as `script_call_leaf_prove_miss`'s window and leaf.
+    unsafe {
+        let window = Registers(vm.lane_stack.values.top());
+        let passed = r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm())));
+        let caller_program = (*cx).program;
+        let entered = lane_enter_leaf(cx, AdmittedWindow::of(target, passed, argc), window, ip, r, target, form, argc, this, Some(caller_program), false);
+        enter_program_in_lane(cx, target.program());
+        Some(entered)
     }
 }

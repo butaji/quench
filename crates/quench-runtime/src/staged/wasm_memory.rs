@@ -5,13 +5,21 @@
 //! Cranelift values (`Emitter`, `vm/compiled/wasm_memory_stage.rs`). A stage supplies the
 //! machine: the memory's length, the words an access moves and the bulk movers.
 
+use super::machine::MachineStage;
 use super::wasm::{WasmStage, Width};
 use super::wasm_concrete::ConcreteWasm;
-use super::machine::MachineStage;
+#[cfg(not(stencil_build))]
+use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Class, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
+#[cfg(not(stencil_build))]
+use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::{WasmTrap, WasmType};
+#[cfg(not(stencil_build))]
+use crate::WasmValue;
 
 /// What one scalar access moves: the type of its register value, the bytes it touches and
 /// whether a narrow load sign-extends them.
@@ -27,7 +35,7 @@ impl Access {
     /// above them): sign-extended where a narrow load asks, in the width of its type. Every
     /// stage that reads bytes (the interpreter's slices, the b-jit's raw memory) decodes here.
     #[inline(always)]
-    pub fn loaded(self, raw: u64) -> u64 {
+    pub(crate) fn loaded(self, raw: u64) -> u64 {
         let unused = u64::BITS - self.bytes as u32 * u8::BITS;
         let value = if self.signed { ((raw << unused) as i64) >> unused } else { raw as i64 };
         match Width::of(self.ty) {
@@ -36,13 +44,76 @@ impl Access {
         }
     }
 
+    /// The value of this scalar access at `address` of `bytes`: out of bounds traps.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
+        let word = load(&mut ConcreteBytes { memory: bytes }, self, address, 0, false)?;
+        Ok(WasmValue::from_bits(self.ty, word))
+    }
+
+    /// Writes `value` of this scalar access at `address` of `bytes`: out of bounds traps before
+    /// any byte changes.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+        store(&mut ConcreteMemory { memory: bytes }, self, address, 0, value.word(), false)
+    }
+
+    /// The access a scalar load makes; a vector load has none. Always inlined: a handler's
+    /// constant load folds to its width and sign, so the bytes move as one word, not by memcpy.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) const fn of_load(load: MemoryLoad) -> Option<Self> {
+        let ty = match load {
+            MemoryLoad::I32Load
+            | MemoryLoad::I32Load8S
+            | MemoryLoad::I32Load8U
+            | MemoryLoad::I32Load16S
+            | MemoryLoad::I32Load16U => WasmType::I32,
+            MemoryLoad::F32Load => WasmType::F32,
+            MemoryLoad::I64Load
+            | MemoryLoad::I64Load8S
+            | MemoryLoad::I64Load8U
+            | MemoryLoad::I64Load16S
+            | MemoryLoad::I64Load16U
+            | MemoryLoad::I64Load32S
+            | MemoryLoad::I64Load32U => WasmType::I64,
+            MemoryLoad::F64Load => WasmType::F64,
+            _ => return None,
+        };
+        let signed = matches!(
+            load,
+            MemoryLoad::I32Load8S
+                | MemoryLoad::I32Load16S
+                | MemoryLoad::I64Load8S
+                | MemoryLoad::I64Load16S
+                | MemoryLoad::I64Load32S
+        );
+        Some(Self {
+            ty,
+            bytes: load.width(),
+            signed,
+        })
+    }
+
     /// A 128-bit vector access: a v128 load or store, which the vector steps make and the
     /// stages move as one `Vector` word.
-    pub const VECTOR: Self = Self {
+    pub(crate) const VECTOR: Self = Self {
         ty: WasmType::V128,
         bytes: V128_BYTES,
         signed: false,
     };
+
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) const fn of_store(store: MemoryStore) -> Self {
+        Self {
+            ty: store.value_type(),
+            bytes: store.width(),
+            signed: false,
+        }
+    }
 }
 
 /// The linear-memory opcodes a function body runs.
@@ -68,6 +139,24 @@ pub enum Memory {
 
 #[cfg(not(stencil_build))]
 impl Memory {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
+        if let Some(load) = MemoryLoad::from_direct_op(op) {
+            if let Some(access) = Access::of_load(load) {
+                return Some(Self::Load(access));
+            }
+        }
+        if let Some(store) = MemoryStore::from_direct_op(op) {
+            return Some(Self::Store(Access::of_store(store)));
+        }
+        match op.class() {
+            Class::WasmMemorySize => Some(Self::Size),
+            Class::WasmMemoryGrow => Some(Self::Grow),
+            Class::WasmMemoryFill => Some(Self::Fill),
+            Class::WasmMemoryCopy => Some(Self::Copy),
+            _ => None,
+        }
+    }
+
     /// Whether the operation runs a native bulk or size operation, which needs the memory's
     /// representation to be the one compiled code supports.
     pub const fn needs_compiled_memory(self) -> bool {
@@ -78,6 +167,23 @@ impl Memory {
     /// program's callouts must be available, and the tier reads the length again after it.
     pub const fn needs_callouts(self) -> bool {
         matches!(self, Self::Grow)
+    }
+}
+
+/// The register of the one memory `instruction` addresses through a binding the frame resolves
+/// once: a direct access's and `memory.size`'s `b`, `memory.fill`'s `a`. `None` for any other
+/// instruction, a grow (whose call-out reads the memory again) and a copy (which names two)
+/// included.
+#[cfg(not(stencil_build))]
+pub fn bound_memory_register(instruction: WideInstruction) -> Option<crate::bytecode::Register> {
+    let op = instruction.op();
+    if MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some() {
+        return Some(instruction.b());
+    }
+    match Memory::of(op)? {
+        Memory::Size => Some(instruction.b()),
+        Memory::Fill => Some(instruction.a()),
+        Memory::Load(_) | Memory::Store(_) | Memory::Grow | Memory::Copy => None,
     }
 }
 
@@ -144,7 +250,7 @@ fn check_range<S: WasmMemory>(
 /// The check of an access of `access` at `index + offset`. `proven` says the caller has shown
 /// the index plus extent inside a guarded reservation, so the machine faults where it must.
 #[inline(always)]
-pub fn check_access<S: WasmMemory>(
+pub(crate) fn check_access<S: WasmMemory>(
     stage: &mut S,
     access: Access,
     index: S::Word,
@@ -203,7 +309,7 @@ pub fn effective_address<S: WasmMemory>(
 /// The length in pages of `1 << page_bits` bytes each, as an `I64` word: `page_bits` is the
 /// memory type's page size (`page_size_log2`), 0 for one-byte pages.
 #[inline(always)]
-pub fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
+pub(crate) fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
     let length = stage.memory_length();
     let bits = stage.constant(Width::I64, i64::from(page_bits));
     stage.operate(Binary::ShiftRightUnsigned, Width::I64, length, bits)
@@ -219,7 +325,7 @@ pub fn size<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
 /// `WasmMemoryAddress`: the effective address of a scalar access, the `I64` `index` of the
 /// address plus its static `offset`. A sum that wraps traps, as the arm's checked add did.
 #[inline(always)]
-pub fn scalar_address<S: WasmStage>(
+pub(crate) fn scalar_address<S: WasmStage>(
     stage: &mut S,
     index: S::Word,
     offset: u64,
@@ -267,7 +373,7 @@ pub fn copy<S: WasmMemoryWrite>(
 /// the one it writes. Each has its own length, and the transfer between them is the stage's
 /// primitive, since shared and buffer-backed bytes move through their own storage.
 #[cfg(not(stencil_build))]
-pub trait WasmMemoryPair: WasmStage {
+pub(crate) trait WasmMemoryPair: WasmStage {
     /// The flag that `extent` bytes from `index` pass the end of the source memory.
     fn source_range_exceeds(&mut self, index: Self::Word, extent: Self::Word) -> Self::Word;
     /// The flag that `extent` bytes from `index` pass the end of the destination memory.
@@ -281,7 +387,7 @@ pub trait WasmMemoryPair: WasmStage {
 /// only then do bytes move. A trap leaves both memories untouched.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub fn copy_across<S: WasmMemoryPair>(
+pub(crate) fn copy_across<S: WasmMemoryPair>(
     stage: &mut S,
     destination: S::Word,
     source: S::Word,
@@ -296,9 +402,81 @@ pub fn copy_across<S: WasmMemoryPair>(
 }
 
 #[cfg(not(stencil_build))]
-mod glue;
+impl Memory {
+    /// The registers naming the memory the operation reads: its binding register.
+    pub fn memories(self, instruction: WideInstruction) -> [Option<u16>; 2] {
+        match self {
+            Self::Load(_) | Self::Store(_) | Self::Size | Self::Grow => {
+                [Some(instruction.b()), None]
+            }
+            Self::Fill => [Some(instruction.a()), None],
+            Self::Copy => [Some(instruction.a()), Some(instruction.b())],
+        }
+    }
+
+    /// The registers holding 32-bit addresses, lengths and bytes the operation reads.
+    pub fn operands(self, instruction: WideInstruction) -> [Option<u16>; 3] {
+        match self {
+            Self::Load(_) | Self::Store(_) | Self::Grow => [Some(instruction.c()), None, None],
+            Self::Size => [None, None, None],
+            Self::Fill => {
+                let (destination, _) = instruction.register_pair();
+                [
+                    Some(instruction.b()),
+                    Some(instruction.c()),
+                    Some(destination),
+                ]
+            }
+            Self::Copy => {
+                let (destination, source) = instruction.register_pair();
+                [Some(destination), Some(source), Some(instruction.c())]
+            }
+        }
+    }
+}
+
+// Scalar memory32 accesses with a static offset have one opcode each. The access semantics
+// remain the MemoryLoad/MemoryStore rules above; the opcode only names the operator so dispatch
+// needs no selector decode.
 #[cfg(not(stencil_build))]
-pub use glue::*;
+macro_rules! direct_accesses {
+    ($kind:ty; $($name:ident => $op:ident;)+) => {
+        impl $kind {
+            pub(crate) const fn direct_op(self) -> Option<crate::bytecode::Op> {
+                match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
+            }
+            pub const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
+            }
+        }
+    }
+}
 #[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
+direct_accesses! { crate::wasm::memory::MemoryLoad;
+    I32Load => WasmI32Load;
+    I64Load => WasmI64Load;
+    F32Load => WasmF32Load;
+    F64Load => WasmF64Load;
+    I32Load8S => WasmI32Load8S;
+    I32Load8U => WasmI32Load8U;
+    I32Load16S => WasmI32Load16S;
+    I32Load16U => WasmI32Load16U;
+    I64Load8S => WasmI64Load8S;
+    I64Load8U => WasmI64Load8U;
+    I64Load16S => WasmI64Load16S;
+    I64Load16U => WasmI64Load16U;
+    I64Load32S => WasmI64Load32S;
+    I64Load32U => WasmI64Load32U;
+}
+#[cfg(not(stencil_build))]
+direct_accesses! { crate::wasm::memory::MemoryStore;
+    I32Store => WasmI32Store;
+    I64Store => WasmI64Store;
+    F32Store => WasmF32Store;
+    F64Store => WasmF64Store;
+    I32Store8 => WasmI32Store8;
+    I32Store16 => WasmI32Store16;
+    I64Store8 => WasmI64Store8;
+    I64Store16 => WasmI64Store16;
+    I64Store32 => WasmI64Store32;
+}

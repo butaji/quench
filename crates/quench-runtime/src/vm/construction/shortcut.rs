@@ -10,7 +10,7 @@ impl Vm {
     /// construction: the proxy, constructor and realm steps cannot change its outcome.
     /// `None` leaves every other construction to them.
     pub(super) fn construction_shortcut(&mut self, p: &ResidualProgram, callee: Value, new_target: Value,
-        args: &[Value], class: u32) -> Option<Result<Value, JsError>> {
+        args: &[Value]) -> Option<Result<Value, JsError>> {
         if !self.constructs_beside_activations(callee) {
             self.materialize_deferred_lane();
             return None;
@@ -28,7 +28,7 @@ impl Vm {
         }
         let constructed = self.construct_native_with_new_target(p, native, args, new_target);
         if let Ok(value) = constructed {
-            self.capture_constructed_value(value, callee, class, true);
+            self.capture_constructed_value(value, callee, true);
         }
         Some(constructed)
     }

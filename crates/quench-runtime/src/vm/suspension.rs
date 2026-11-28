@@ -3,13 +3,10 @@
 //! call-out with the VM's own operation and turns the row's suspension into the step result the
 //! general loop suspends the activation with.
 
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::*;
 use super::call_out::{CallSite, HostControl, HostFrame};
 use crate::bytecode::WideInstruction;
 use crate::staged::{CallFrame, Concrete, DelegationStep, SuspendEffect, Operation, Step, Suspending};
-#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     /// The suspension row `i` at `site`, by its staged row on the interpreter's stage: the step
@@ -19,9 +16,8 @@ impl Vm {
     pub(super) fn staged_suspend(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction, pc: &mut usize)
         -> Result<StepResult, JsError> {
         let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a suspension decodes");
-        let mut stage = crate::staged::concrete_over_vm(self);
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
-        match crate::staged::step(&mut stage, &mut frame, row) {
+        match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Value(_) => Ok(StepResult::Continue),
             Step::Control(HostControl::Suspend(suspending)) => Ok(suspended_step(suspending, pc)),
             Step::Control(HostControl::Edge(_)) => unreachable!("a suspension row takes no edge"),

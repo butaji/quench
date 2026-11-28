@@ -64,7 +64,7 @@ pub(crate) fn admit_resume<S: Stage>(stage: &mut S, depth: S::Word, limit: S::Wo
 /// `admit_resume` on machine words, for the interpreter's own resume of a generator.
 #[inline(always)]
 pub fn concrete_admit_resume(depth: usize, limit: usize) -> Option<usize> {
-    admit_resume(&mut super::Concrete::pure(), depth as u64, limit as u64, ()).map(|depth| depth as usize)
+    admit_resume(&mut super::Concrete::new(std::ptr::null()), depth as u64, limit as u64, ()).map(|depth| depth as usize)
 }
 
 /// Whether the reads after a step, whose operands are the atoms `done` and `value`, read the
@@ -80,7 +80,7 @@ pub(crate) fn reads_step<S: Stage>(stage: &mut S, done: S::Word, value: S::Word,
 /// `reads_step` on machine words: the reads' atom operands against the realm's atoms.
 #[inline(always)]
 pub fn concrete_reads_step(done: u32, value: u32, atoms: StepAtoms) -> bool {
-    reads_step(&mut super::Concrete::pure(), u64::from(done), u64::from(value), atoms)
+    reads_step(&mut super::Concrete::new(std::ptr::null()), u64::from(done), u64::from(value), atoms)
 }
 
 /// Writes the done word `done` to the step's done register and, for a destructuring step, its
@@ -117,13 +117,13 @@ pub(crate) fn step_finished<S: Stage>(stage: &mut S, registers: S::Word, reads: 
 /// `step_yielded` on the interpreter's window `registers` (register 0's address).
 #[inline(always)]
 pub fn concrete_step_yielded(registers: *mut Value, reads: StepReads, value: Value) {
-    step_yielded(&mut super::Concrete::pure(), registers.expose_provenance() as u64, reads, value.to_bits());
+    step_yielded(&mut super::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, reads, value.to_bits());
 }
 
 /// `step_finished` on the interpreter's window `registers` (register 0's address).
 #[inline(always)]
 pub fn concrete_step_finished(registers: *mut Value, reads: StepReads) {
-    step_finished(&mut super::Concrete::pure(), registers.expose_provenance() as u64, reads);
+    step_finished(&mut super::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, reads);
 }
 
 #[cfg(test)]

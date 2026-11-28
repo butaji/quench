@@ -9,7 +9,6 @@ use crate::ext_traits::*;
 use super::super::*;
 use super::super::leaf_calls::script_call_leaf_prove_miss;
 use super::super::native_calls::{builtin_miss_of, math_miss_of, reflect_get_miss};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The kind of a parameter byte: a leaf call (`leaf_parameters`).
 const KIND_MASK: u8 = 0xc0;

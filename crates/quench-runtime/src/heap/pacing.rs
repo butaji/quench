@@ -41,9 +41,6 @@ impl Ratio {
 /// The one authority for collection pacing.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct GenerationalPacing {
-    /// Whether the host returns the pages the process no longer needs resident at each collection
-    /// boundary (`MemoryPolicy::returns_pages_at_collections`).
-    pub(super) returns_pages: bool,
     /// Allocation weight between collections, as a share of the live count.
     pub(super) young: Ratio,
     /// The smallest allocation weight between collections, whatever survived.
@@ -62,12 +59,10 @@ pub(super) struct GenerationalPacing {
     /// peak (npm top-300: +5-16 MB on the heaviest rows with the factor alone).
     pub(super) steady_live_growth: Ratio,
     /// Growth of the old generation since the last full collection, as a share of what that
-    /// collection kept, that makes the next collection full.
+    /// collection kept, that makes the next collection full: the heap's `old_sizing` (`sized`).
     pub(super) old_growth: Ratio,
-    /// The allocation between full collections under `Regime::FullOnly`, as a share of what the
-    /// last full collection kept: the policy's headroom (`THROUGHPUT_HEADROOM`,
-    /// `MEMORY_FIRST_HEADROOM`).
-    pub(super) headroom: Ratio,
+    /// Bounds and adaptation of `old_growth` and `allocation_cap` (`OldGenerationSizing`).
+    pub(super) old_sizing: OldGenerationSizing,
     /// The smallest old growth that makes the next collection full.
     pub(super) minimum_old_growth: usize,
     /// Allocation weight since the last full collection, as a share of what it kept, after
@@ -75,9 +70,14 @@ pub(super) struct GenerationalPacing {
     /// property-arena compaction run only on full collections.
     pub(super) allocation_cap: Ratio,
     pub(super) minimum_allocation_cap: usize,
+    /// The share of its expected live weight a full collection must reclaim to count as
+    /// productive. After an unproductive one the allocation cap doubles, up to
+    /// `maximum_cap_backoff` times; a productive one restores it (`PacingState::cap_backoff`).
+    pub(super) productive_full: Ratio,
+    pub(super) maximum_cap_backoff: u32,
     /// Smoothed young survival, in `SURVIVAL_SCALE` parts, above which minor collections
     /// stop paying: they would mark nearly everything they were meant to skip. The heap
-    /// then collects fully, with the table's headroom between collections.
+    /// then collects fully, with the old sizing's headroom between collections.
     pub(super) survival_limit: u32,
     /// Full collections between minor collections that probe survival again.
     pub(super) probe_interval: u32,
@@ -212,6 +212,8 @@ pub(super) struct PacingState {
     survival: u32,
     /// Full collections left before a minor collection probes survival again.
     probe_in: u32,
+    /// Doublings of the allocation cap after full collections that reclaimed little.
+    pub(super) cap_backoff: u32,
     /// What the last full collection kept, which the next one compares its own with
     /// (`steady`); zero before the first.
     live_after_last_full: usize,
@@ -229,7 +231,17 @@ pub(super) struct PacingState {
     promotions_die_old: bool,
     /// Whether minors promote at `PromotionAge::OLDEST`, and what decides when that changes.
     aging: Aging,
+    /// Where the old-generation sizing stands (`GenerationalPacing::old_sizing`).
+    pub(super) old_generation: OldGenerationState,
+    /// Smoothed resident bytes occupied per unit of allocation weight between full
+    /// collections, times `RESIDENT_SCALE`; zero until two full collections measured it.
+    resident_per_weight: usize,
+    /// Resident bytes the last full collection kept.
+    resident_after_full: usize,
 }
+
+/// The fixed-point scale of `PacingState::resident_per_weight`.
+const RESIDENT_SCALE: usize = 256;
 
 impl PacingState {
     /// The minor collections a survivor needs to become old now: the table's, or the oldest
@@ -276,25 +288,9 @@ const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
 /// such full is often a phase change (a start-up's garbage), whose aging is traced twice and
 /// promoted anyway.
 mod aging;
+mod old_sizing;
 use aging::Aging;
-
-/// Work-clock costs, in nanoseconds of a typical host: a full collection's per live weight kept
-/// and the mutator's per weight allocated (median of Splay's full intervals, no-JIT, x86_64,
-/// 2026-11-15). `plan` charges them to the virtual clock once per collection.
-const WORK_GC_PER_LIVE: usize = 35;
-const WORK_MUTATOR_PER_ALLOCATED: usize = 170;
-
-/// The headroom of a full-only heap under throughput, the default: the allocation between full
-/// collections is three live sets. Splay's RSS is about 30 + 17 x H MB at this headroom (82 MB at
-/// 3, 56 MB at 3/2; strings of parts, 2026-11-11), and its Score rises with H (5613 at 3/2, 5934
-/// at 3, 6131 at 4).
-pub(super) const THROUGHPUT_HEADROOM: Ratio = Ratio::new(3, 1);
-/// The headroom of memory-first, which AOT closed images run: about 1.26 live sets, where Splay's
-/// RSS meets the C-parity gate (1.5 x 34.6 MB = 52 MB; review-2-gc.md section 4).
-pub(super) const MEMORY_FIRST_HEADROOM: Ratio = Ratio::new(126, 100);
-/// The old growth and allocation cap between full collections under both tables: one live set
-/// of what the last full collection kept.
-const FULL_GROWTH: Ratio = Ratio::new(1, 1);
+use old_sizing::{MEMORY_FIRST_OLD_SIZING, OldGenerationSizing, OldGenerationState, THROUGHPUT_OLD_SIZING};
 
 const FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE: u32 = 2;
 
@@ -317,6 +313,11 @@ pub(super) struct CollectionOutcome {
     pub(super) aged: AgedFates,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
+    /// Record and payload bytes occupied when this full collection started and kept by it,
+    /// and the weight charged since the previous full collection; zero for a minor.
+    pub(super) resident_at_start: usize,
+    pub(super) resident_live: usize,
+    pub(super) since_previous_full: usize,
 }
 
 /// When the next collection runs (allocation weight from now) and whether it is full.
@@ -332,10 +333,21 @@ impl GenerationalPacing {
         state.aging.start(self.ages_from_start);
         let traced = if outcome.full { outcome.live_weight } else { outcome.live_weight.saturating_sub(outcome.live_weight_after_full) };
         crate::clock::charge_work(
-            (outcome.allocated.saturating_mul(WORK_MUTATOR_PER_ALLOCATED)
-                + traced.saturating_mul(WORK_GC_PER_LIVE)) as u64,
+            (outcome.allocated.saturating_mul(old_sizing::WORK_MUTATOR_PER_ALLOCATED)
+                + traced.saturating_mul(old_sizing::WORK_GC_PER_LIVE)) as u64,
         );
+        self.old_sizing.after_collection(outcome.full, &mut state.old_generation, outcome.since_previous_full, outcome.live_weight);
         if outcome.full {
+            if state.resident_after_full > 0 && outcome.since_previous_full > 0 {
+                let growth = outcome.resident_at_start.saturating_sub(state.resident_after_full);
+                let sample = growth.saturating_mul(RESIDENT_SCALE) / outcome.since_previous_full;
+                state.resident_per_weight = if state.resident_per_weight == 0 {
+                    sample
+                } else {
+                    (state.resident_per_weight + sample) / 2
+                };
+            }
+            state.resident_after_full = outcome.resident_live;
             // What a minor collection would have kept: the previous live weight and this
             // cycle's expected survivors. A full collection pays when it reclaims old garbage
             // beyond that. Past the survival limit the estimate measures nothing minor
@@ -347,6 +359,9 @@ impl GenerationalPacing {
             let promoted_garbage = self.promoted_garbage_aging.numerator > 0
                 && state.promoted_since_full > 0
                 && reclaimed >= self.promoted_garbage_aging.of(state.promoted_since_full);
+            // A full in the interval after aging turned off measured the young survivors
+            // aging had just stopped freeing, not old garbage: it leaves the back-off reset.
+            let aging_just_off = state.aging.off_since_no_full(self.aging_interval);
             state.aging.after_full(promoted_garbage);
             state.promotions_die_old = promoted_garbage;
             state.promoted_since_full = 0;
@@ -354,11 +369,28 @@ impl GenerationalPacing {
                 && outcome.live
                     <= state.live_after_last_full.saturating_add(self.steady_live_growth.of(state.live_after_last_full));
             state.live_after_last_full = outcome.live;
+            state.cap_backoff = if state.regime(self) == Regime::FullOnly
+                || reclaimed >= self.productive_full.of(expected)
+                || aging_just_off
+            {
+                0
+            } else {
+                (state.cap_backoff + 1).min(self.maximum_cap_backoff)
+            };
         }
         if !outcome.full && outcome.allocated > 0 {
             let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
             state.promoted_since_full = state.promoted_since_full.saturating_add(promoted);
+            let was_aging = matches!(state.aging, Aging::On { .. });
             state.aging.after_minor(outcome.aged, self.aging_interval);
+            if was_aging && !matches!(state.aging, Aging::On { .. }) {
+                // The back-off measured fulls that found little old garbage because aging
+                // freed it young. Survivors now outlive their second minor and are promoted,
+                // so the next full is due at the cap the last full's live set sets: Earley-Boyer
+                // turning to Boyer's growing term rewrite promoted 37% of each young
+                // generation to 280K live weight against the 13K the last full kept.
+                state.cap_backoff = 0;
+            }
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
@@ -383,7 +415,14 @@ impl GenerationalPacing {
                 }
                 // A probe runs inside the interval between full collections; it does not
                 // lengthen it.
-                let interval = self.headroom.of(outcome.live_after_full);
+                let mut interval = self.old_sizing.headroom(&state.old_generation).of(outcome.live_after_full);
+                let resident_eighths = self.old_sizing.resident_headroom_eighths as usize;
+                if resident_eighths > 0 && state.resident_per_weight > 0 {
+                    // Bound the garbage in bytes, not records: the weight a byte budget buys
+                    // at the bytes per weight the last intervals measured.
+                    let garbage = state.resident_after_full / 8 * resident_eighths;
+                    interval = interval.min(garbage.saturating_mul(RESIDENT_SCALE) / state.resident_per_weight);
+                }
                 NextCollection {
                     threshold: interval
                         .saturating_sub(outcome.since_full)
@@ -396,10 +435,16 @@ impl GenerationalPacing {
 
 
     /// Whether the collection after `outcome` is full: old growth or allocation past the
-    /// table's bounds, or live weight growth.
-    fn next_full(&self, _state: &PacingState, outcome: &CollectionOutcome) -> bool {
-        self.full_due(outcome.live_after_full, outcome.live, outcome.since_full)
+    /// heap's sizing (`sized`), or live weight growth.
+    fn next_full(&self, state: &PacingState, outcome: &CollectionOutcome) -> bool {
+        self.sized(state).full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
             || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight)
+    }
+
+    /// This table with the old growth and allocation cap the heap's sizing has reached.
+    pub(super) fn sized(self, state: &PacingState) -> Self {
+        let growth = self.old_sizing.growth(&state.old_generation);
+        Self { old_growth: growth, allocation_cap: growth, ..self }
     }
 
     /// `young_budget` of a heap whose smoothed young survival is `survival`, and whose live
@@ -420,9 +465,9 @@ impl GenerationalPacing {
             .max(self.minimum_young)
     }
 
-    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize) -> bool {
+    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize, cap_backoff: u32) -> bool {
         self.old_growth_reached(live_after_full, live.saturating_sub(live_after_full))
-            || self.allocation_cap_reached(live_after_full, since_full)
+            || self.allocation_cap_reached(live_after_full, since_full, cap_backoff)
     }
 
     /// Whether `growth` bytes of reclaimable programs past the `kept` bytes that stayed at the
@@ -456,8 +501,9 @@ impl GenerationalPacing {
             && live_weight.saturating_sub(after_full) >= self.weight_growth.of(after_full)
     }
 
-    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize) -> bool {
-        since_full >= self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap)
+    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize, cap_backoff: u32) -> bool {
+        let cap = self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap);
+        since_full >= cap.checked_shl(cap_backoff).unwrap_or(usize::MAX)
     }
 }
 
@@ -498,29 +544,75 @@ impl MemoryPolicy {
     }
 
     /// Whether the host returns the memory the process no longer needs resident (read-only
-    /// pages, the allocator's free pages) at collection boundaries: a row of the policy's pacing
-    /// (`GenerationalPacing::returns_pages`).
+    /// pages, the allocator's free pages) at collection boundaries. Under throughput it does
+    /// not: releasing them after every collection refaulted the run's hot code after each
+    /// young one (EarleyBoyer, dynamic x86_64 production build, 2026-10-20: ~63K minor faults
+    /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
     pub fn returns_pages_at_collections(self) -> bool {
-        self.pacing().returns_pages
+        matches!(self, Self::MemoryFirst) || memory_mix_has("pages")
     }
 
-    /// The policy's pacing table (`GenerationalPacing`).
-    pub(super) const fn pacing(self) -> GenerationalPacing {
+    /// The policy's own pacing table.
+    const fn table(self) -> GenerationalPacing {
         match self {
             Self::Throughput => THROUGHPUT_PACING,
             Self::MemoryFirst => MEMORY_FIRST_PACING,
         }
     }
+
+    pub(super) fn pacing(self) -> GenerationalPacing {
+        let table = self.table();
+        if self == Self::MemoryFirst {
+            return table;
+        }
+        let first = MEMORY_FIRST_PACING;
+        let mut mixed = table;
+        if memory_mix_has("young") {
+            mixed.young = first.young;
+            mixed.minimum_young = first.minimum_young;
+            mixed.maximum_young = first.maximum_young;
+            mixed.surviving_young_factor = first.surviving_young_factor;
+        }
+        if memory_mix_has("young-max") {
+            mixed.maximum_young = first.maximum_young;
+        }
+        if memory_mix_has("full") {
+            mixed.old_growth = first.old_growth;
+            mixed.old_sizing = first.old_sizing;
+            mixed.minimum_old_growth = first.minimum_old_growth;
+            mixed.allocation_cap = first.allocation_cap;
+            mixed.minimum_allocation_cap = first.minimum_allocation_cap;
+            mixed.maximum_cap_backoff = first.maximum_cap_backoff;
+            mixed.survival_limit = first.survival_limit;
+        }
+        if memory_mix_has("aging") {
+            mixed.promotion_age = first.promotion_age;
+            mixed.promoted_garbage_aging = first.promoted_garbage_aging;
+            mixed.aging_interval = first.aging_interval;
+            mixed.ages_from_start = first.ages_from_start;
+        }
+        if memory_mix_has("external") {
+            mixed.minimum_external_budget = first.minimum_external_budget;
+        }
+        mixed
+    }
+}
+
+/// Whether `QUENCH_DEV=memory-mix=a+b` names the memory-first component `part` to take on top
+/// of throughput (TOD-2055: which memory-first settings cost no performance).
+pub fn memory_mix_has(part: &str) -> bool {
+    crate::trace::Dev::MemoryMix.value().is_some_and(|parts| parts.split('+').any(|named| named == part))
 }
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which
 /// the other lanes' measurements bound. Young collections run every eighth of a live set, at
 /// least `THROUGHPUT_MINIMUM_YOUNG` and at most `THROUGHPUT_MAXIMUM_YOUNG` weight
 /// (`THROUGHPUT_SURVIVING_YOUNG_FACTOR` times that past a quarter's young survival on a steady
-/// heap); a full one once the old generation has doubled or one live set of allocation has
-/// passed since the last one, at least `THROUGHPUT_MINIMUM_FULL_INTERVAL` apart, whatever the
-/// full collections reclaim; past half survival, full collections with one live set between
-/// them, probing survival every fourth one.
+/// heap); a full one once the
+/// old generation has doubled or one live set of allocation has passed since the last one, at
+/// least `THROUGHPUT_MINIMUM_FULL_INTERVAL` apart; an unproductive full collection doubles the
+/// allocation cap, at most twice; past half survival, full collections with one live set
+/// between them, probing survival every fourth one.
 ///
 /// - The eighth: the npm lane's young share (v2-npm abd3484b9, npm top-300, x86_64 4 CPUs,
 ///   matched against the memory-first table: median wall 63.1 -> 57.9 ms, fastest of three
@@ -529,26 +621,30 @@ impl MemoryPolicy {
 ///   29.4-32.1 at 22.5 -> 32 MB, Bun no-JIT 47 MB; x86_64 4 vCPU, 2026-10-21). The Score and
 ///   web lanes ran eight live sets per young collection; with `MAXIMUM_YOUNG` (web) that is
 ///   the cap on any live set past 2^14, and this table reaches the same cap from 2^20.
-/// - Full collections: one live set of growth or allocation, as under memory-first. The
-///   allocation cap is one fixed constant per table: no feedback from what a full collection
-///   reclaimed.
+/// - Full collections: one live set of growth or allocation, as under memory-first, with the
+///   cap doubling after full collections that reclaim under an eighth of their expected live
+///   weight. Two doublings reach the Score and web lanes' four live sets only where full
+///   collections do not pay (v2-cloud-jet, x86_64 4 vCPU, 2026-10-22, median of 3-5 against
+///   no back-off: source-map-wtb 6.58 -> 7.46 at max RSS 56 -> 58 MB, chai-wtb 14.6 -> 15.8,
+///   web-ssr 18.9 -> 19.6 at 103 -> 110 MB, Bun 119.5; three doublings took web-ssr to 154 MB).
 /// The arena growth floor (`GenerationalPacing::minimum_arena_growth`): 8 MB of values, so a
 /// small heap's arena never paces its collections.
 const MINIMUM_ARENA_GROWTH: usize = 1 << 20;
 
 pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
-    returns_pages: false,
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
     maximum_young: THROUGHPUT_MAXIMUM_YOUNG,
     surviving_young_from: SURVIVING_YOUNG_FROM,
     surviving_young_factor: THROUGHPUT_SURVIVING_YOUNG_FACTOR,
     steady_live_growth: STEADY_LIVE_GROWTH,
-    old_growth: FULL_GROWTH,
-    headroom: THROUGHPUT_HEADROOM,
+    old_growth: THROUGHPUT_OLD_SIZING.widest(),
+    old_sizing: THROUGHPUT_OLD_SIZING,
     minimum_old_growth: THROUGHPUT_MINIMUM_FULL_INTERVAL,
-    allocation_cap: FULL_GROWTH,
+    allocation_cap: THROUGHPUT_OLD_SIZING.widest(),
     minimum_allocation_cap: THROUGHPUT_MINIMUM_FULL_INTERVAL,
+    productive_full: Ratio::new(1, 8),
+    maximum_cap_backoff: 2,
     survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
@@ -581,7 +677,6 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 /// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
 /// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
 pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
-    returns_pages: true,
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
@@ -589,11 +684,15 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     surviving_young_from: SURVIVING_YOUNG_FROM,
     surviving_young_factor: MEMORY_FIRST_SURVIVING_YOUNG_FACTOR,
     steady_live_growth: STEADY_LIVE_GROWTH,
-    old_growth: FULL_GROWTH,
-    headroom: MEMORY_FIRST_HEADROOM,
+    old_growth: MEMORY_FIRST_OLD_SIZING.widest(),
+    old_sizing: MEMORY_FIRST_OLD_SIZING,
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
-    allocation_cap: FULL_GROWTH,
+    allocation_cap: MEMORY_FIRST_OLD_SIZING.widest(),
     minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    productive_full: Ratio::new(1, 8),
+    // Memory-first: the cap never backs off (`maximum_cap_backoff`), as an unproductive full
+    // collection's back-off trades max RSS for fewer collections (v2-cloud-jet 551f170f7).
+    maximum_cap_backoff: 0,
     survival_limit: SURVIVAL_SCALE / 2,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),

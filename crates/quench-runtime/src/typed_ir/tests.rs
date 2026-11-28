@@ -288,8 +288,7 @@ fn integer_ranges_are_number_subtypes_and_int32_is_the_widest_machine_range() {
     assert!(!wide.is_subtype(Type::INT32) && !Type::NUMBER.is_subtype(Type::INT32));
     assert!(Type::int(IntRange::singleton(3)).is_int32() && !wide.is_int32() && !Type::NUMBER.is_int32());
     assert_eq!(Type::int(IntRange::singleton(3)).machine(), Type::INT32);
-    assert_eq!(wide.machine(), wide, "a range within EXACT keeps its 64-bit view");
-    assert_eq!(Type::int(IntRange::WORD).machine(), Type::NUMBER, "beyond EXACT a Number");
+    assert_eq!(wide.machine(), Type::NUMBER);
     assert_eq!(Type::ANY.machine(), Type::ANY);
     assert_eq!(SlotType::from_type(Type::int(IntRange { min: 0, max: 255 })), SlotType::Int32);
     assert_eq!(SlotType::from_type(wide), SlotType::Number);
@@ -350,57 +349,4 @@ fn a_64_bit_integer_view_holds_the_integers_a_number_holds_exactly() {
         proof: Proof::Definition, projection: Projection::Exact };
     assert!(held.verified().is_some());
     assert!(Fact { ty: Type::int(IntRange::WORD), ..held }.verified().is_none());
-}
-
-#[test]
-fn a_types_representation_is_the_narrowest_view_that_accepts_it() {
-    use super::representation::repr;
-    let exact = Type::int(IntRange::EXACT);
-    let wide = Type::int(IntRange::WORD);
-    let cases = [
-        (Type::INT32, Representation::Int32),
-        (Type::int(IntRange::singleton(7)), Representation::Int32),
-        (exact, Representation::Int64),
-        (Type::int(IntRange { min: i64::from(i32::MAX), max: 1 << 40 }), Representation::Int64),
-        (wide, Representation::Float64),
-        (Type::NUMBER, Representation::Float64),
-        (Type::NUMBER.join(Type::INT32), Representation::Float64),
-        (Type::INT32.join(Type::language(ValueType::BigInt)), Representation::Tagged),
-        (Type::ANY, Representation::Tagged),
-        (Type::NEVER, Representation::Tagged),
-    ];
-    for (ty, expected) in cases {
-        assert_eq!(repr(ty), expected, "{ty:?}");
-    }
-    assert_eq!(repr(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
-}
-
-#[test]
-fn string_atoms_join_to_a_bounded_set_then_any_string_of_the_hull() {
-    let a = Type::string_atoms(&[5], 3, 3, true);
-    let b = Type::string_atoms(&[2], 1, 4, true);
-    let joined = a.join(b);
-    assert_eq!(joined.string_fact().unwrap().atoms(), &[2, 5]);
-    assert_eq!(joined.string_fact().unwrap().length(), StringLength { min: 1, max: 4 });
-    assert!(a.is_subtype(joined) && !joined.is_subtype(a));
-    assert!(a.is_subtype(Type::language(ValueType::String)));
-    let many = (0..=MAX_STRING_ATOMS as u32).fold(Type::NEVER, |ty, atom| ty.join(Type::string_atoms(&[atom], 1, 1, true)));
-    assert_eq!(many.string_fact().unwrap().atoms(), &[] as &[u32]);
-    assert_eq!(many.string_fact().unwrap().length(), StringLength { min: 1, max: 1 });
-    // Flatness joins by AND: a string flat on one side only is not flat in the hull.
-    assert!(a.string_fact().unwrap().flat() && !a.join(Type::string_length(3, 3, false)).string_fact().unwrap().flat());
-}
-
-#[test]
-fn full_length_string_without_atoms_is_the_plain_string_type() {
-    assert_eq!(Type::string_length(0, u32::MAX, false), Type::language(ValueType::String));
-    assert_eq!(Type::language(ValueType::String).string_fact(), Some(StringFact::ANY));
-    assert_eq!(Type::string_length(1, 1, true).join(Type::language(ValueType::String)), Type::language(ValueType::String));
-    assert_eq!(Type::string_length(1, 1, true).join(Type::NUMBER).string_fact(), None);
-}
-
-#[test]
-fn string_widening_reaches_a_fixed_length_range() {
-    let grown = Type::string_length(1, 1, true).widen(Type::string_length(1, 2, true));
-    assert_eq!(grown.string_fact().unwrap().length(), StringLength { min: 1, max: u32::MAX });
 }

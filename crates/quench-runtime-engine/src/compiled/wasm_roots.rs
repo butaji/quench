@@ -24,7 +24,6 @@ use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_roots::{WasmRoots, push, restore};
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use cranelift_codegen::ir::{self, MemFlagsData};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The bytes of one native root.
 const ROOT: usize = size_of::<quench_runtime::Value>();

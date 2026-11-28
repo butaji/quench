@@ -38,7 +38,7 @@ impl Vm {
     }
 
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
-        self.heap.object(value)?.boxed_primitive()
+        self.object_data(value)?.boxed_primitive()
     }
 
     pub(super) fn boxed_primitive_data(
@@ -326,7 +326,7 @@ impl Vm {
             B::External => self
                 .heap
                 .object(value)
-                .and_then(|object| object.external_address())
+                .and_then(Object::external_address)
                 .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
@@ -346,8 +346,8 @@ impl Vm {
                 matches!(cell, Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
             }
             B::ArgumentsObject => self
-                .heap.object(value)
-                .is_some_and(|object| object.is_arguments_object()),
+                .object_data(value)
+                .is_some_and(Object::is_arguments_object),
             B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
                 Some(FunctionRecord {
                     kind:
@@ -397,7 +397,7 @@ impl Vm {
                     && self
                         .heap
                         .object(value)
-                        .is_some_and(|object| object.is_module_namespace())
+                        .is_some_and(Object::is_module_namespace)
             }
             B::BooleanObject
             | B::NumberObject
@@ -465,8 +465,8 @@ impl Vm {
         let value = self.embedding_value(error)?;
         // Proxy objects deliberately do not expose their target's captured metadata.
         if let Some(crate::heap::StackData::Captured { records, source }) = self
-            .heap.object(value)
-            .and_then(|object| object.stack_data())
+            .object_data(value)
+            .and_then(crate::heap::Object::stack_data)
             && let Some(record) = records
                 .iter()
                 .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
@@ -822,7 +822,11 @@ impl Vm {
             value = *target;
         }
 
-        if self.heap.object(value).is_some_and(|object| object.has_error_data()) {
+        if self
+            .heap
+            .object_record(value)
+            .is_some_and(Object::has_error_data)
+        {
             let name = self
                 .own_data_string(value, "name")
                 .filter(|name| !name.is_empty())
@@ -834,7 +838,7 @@ impl Vm {
                 format!("{name}: {message}")
             };
         }
-        if self.heap.ordinary_view(value).is_some() {
+        if self.heap.object_record(value).is_some() {
             return "#<Object>".into();
         }
         if self.heap.array(value).is_some() {
@@ -888,7 +892,7 @@ impl Vm {
 
     fn own_data_string(&self, object: Value, name: &str) -> Option<String> {
         let atom = self.lookup_atom(name)?;
-        let data = self.heap.object(object)?;
+        let data = self.object_data(object)?;
         let index = self.shape_slot(data.shape(), atom)?;
         if self
             .property_attributes(object, super::property_key::PropertyKey::string(atom))
@@ -896,7 +900,7 @@ impl Vm {
         {
             return None;
         }
-        let value = self.heap.property_get_ref(data, index)?;
+        let value = self.heap.property_get(data, index)?;
         self.heap.string(value).map(|text| text.host_string().to_owned())
     }
 
@@ -1006,7 +1010,7 @@ impl Vm {
         right: RootId,
     ) -> Result<Value, JsError> {
         use crate::NativeArithmetic;
-        use crate::operator::BinaryOperator;
+        use oxc_ast::ast::BinaryOperator;
         let operation = match operation {
             NativeArithmetic::Add => BinaryOperator::Addition,
             NativeArithmetic::Multiply => BinaryOperator::Multiplication,
@@ -1038,7 +1042,7 @@ impl Vm {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        self.embedding_binary(crate::operator::BinaryOperator::Subtraction as u32, left, right)
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::Subtraction as u32, left, right)
     }
 
     pub(crate) fn embedding_greater_than(
@@ -1080,7 +1084,7 @@ impl Vm {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        self.embedding_binary(crate::operator::BinaryOperator::BitwiseOR as u32, left, right)
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::BitwiseOR as u32, left, right)
     }
 
     /// The binary operator `operator` of two rooted values.
@@ -1228,7 +1232,6 @@ impl Vm {
 
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
-        self.heap.ensure_cell_extras(value);
         self.heap
             .object_mut(value)
             .expect("new native object")
@@ -1714,7 +1717,7 @@ impl Vm {
         let key = super::property_key::PropertyKey::string(atom);
         let absent_plain = self.plain_named_key(atom)
             && !self.descriptors.contains_key(&(object, key))
-            && self.heap.ordinary_view(object).is_some_and(|data| {
+            && self.heap.ordinary_object(object).is_some_and(|data| {
                 data.is_extensible()
                     && !data.is_module_namespace()
                     && data.deferred_module().is_none()

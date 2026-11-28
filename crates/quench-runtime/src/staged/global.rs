@@ -51,10 +51,11 @@ pub trait GlobalFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn global_held(&mut self, _stage: &mut S, _destination: Register, _value: Value, _ty: Type) -> Option<()> { None }
 
-    /// Define `destination` as the whole-program `value` of type `ty` the closed world fixes before any read of it: no read
-    /// runs, so no check does either.
+    /// Read the global once, require the closed program's `value`, and define `destination`
+    /// as it; a changed binding leaves at the proof's edge.
     #[inline(always)]
-    fn global_frozen(&mut self, _stage: &mut S, _destination: Register, _value: Value, _ty: Type) -> Option<()> { None }
+    fn global_frozen(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _value: Value, _ty: Type,
+        _proof: S::Proof) -> Option<()> { None }
 
     /// The lane's own global-name read (`LaneHelper::GlobalGet`), whose value has type `ty`.
     #[inline(always)]

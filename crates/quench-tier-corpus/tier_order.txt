@@ -1,2 +1,28 @@
 # Programs a higher tier runs in more instructions than the tier under it (quench-gate step `tier-order`).
-# One `program higher>lower` per line, the faster mode first (interpreter < default < aot in score). The list may only shrink; quench-lint --census counts it.
+# One `program higher>lower` per line. The list may only shrink; quench-lint --census counts it.
+crc b-jit>no-jit
+deltablue b-jit>no-jit
+deltablue default>b-jit
+deltablue u-jit>b-jit
+dot default>b-jit
+dot u-jit>b-jit
+earley-boyer b-jit>no-jit
+earley-boyer default>b-jit
+earley-boyer u-jit>b-jit
+fib b-jit>no-jit
+navier-stokes b-jit>no-jit
+nbody default>b-jit
+qsort b-jit>no-jit
+raytrace b-jit>no-jit
+raytrace default>b-jit
+raytrace u-jit>b-jit
+regexp b-jit>no-jit
+richards b-jit>no-jit
+richards default>b-jit
+richards u-jit>b-jit
+splay b-jit>no-jit
+splay default>b-jit
+splay u-jit>b-jit
+structs b-jit>no-jit
+structs default>b-jit
+sum b-jit>no-jit

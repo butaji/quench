@@ -1,7 +1,5 @@
 //! The element rows on the concrete stage, against the heap's own array model.
 
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::element_rows::concrete_record_replace;
 use super::elements::concrete_record_element;
 use super::test_words::{ANSWER, READ, WRITE};
@@ -10,9 +8,6 @@ use crate::bytecode::Operand;
 use crate::typed_ir::Type;
 use crate::heap::{ArrayObject, Heap, Object};
 use crate::Value;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
 
 /// A frame over a few registers and the heap's array records, whose host paths log their name.
 struct Probe {
@@ -64,8 +59,8 @@ impl ElementFrame<Concrete> for Probe {
 impl crate::staged::CallFrame<Concrete> for Probe {}
 
 impl NumericFrame<Concrete> for Probe {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no numbers") }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!("no numbers") }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn int_fact(&self) {}
@@ -84,7 +79,7 @@ fn probe(heap: &Heap, registers: [Value; 3], fact: Type) -> Probe {
 
 /// The row `operation` run on the concrete stage over `frame`.
 fn run(frame: &mut Probe, operation: Operation<u64, ()>) -> Option<Value> {
-    match step(&mut Concrete::pure(), frame, operation) {
+    match step(&mut Concrete::new(std::ptr::null()), frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
         Step::Unresolved => None,
         Step::Control(_) => unreachable!("an element access transfers no control"),

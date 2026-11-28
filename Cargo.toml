@@ -9,7 +9,6 @@ members = [
     "crates/quench-gate",
     "crates/quench-js-check",
     "crates/quench-lint",
-    "crates/quench-opcodes",
     "crates/quench-macros",
     "crates/quench",
     "crates/quench-node-test",
@@ -18,7 +17,6 @@ members = [
     "crates/quench-runtime-engine",
     "crates/quench-layers",
     "crates/quench-stack",
-    "crates/quench-staged",
     "crates/quench-tier-corpus",
     "crates/quench-bjit",
     "crates/quench-stencils",
@@ -38,7 +36,7 @@ members = [
 # suffices. `quench-lint` enforces the same law for duplicated functions and constants.
 [workspace.lints.rust]
 # `stencil_build` is set on the stencil crate's compile (`quench-bjit/build.rs`); the build script mounts the same files without it.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(stencil_build)", 'cfg(stencil_family, values("js", "wasm", "regexp", "call"))', "cfg(fixed_rows)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(stencil_build)"] }
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
@@ -116,25 +114,22 @@ incremental = true
 debug = 0
 strip = "none"
 
+# A static image's cold support: code size over instruction throughput. `quench compile
+# --profile aot-compact` builds the support libs here; the guest's JavaScript objects stay
+# Cranelift's own optimized code (`aot_image::object`). The host CLI remains `experiment`.
 # The engine instantiates the staged handler language (`#[inline(always)]`, generic over stage and frame) in most of
 # its 411 modules: merged into 256 units, a staged edit redid 252 of them (887 s at -j2). One unit per module keeps an
 # edit to the units whose modules inline the edited code.
 [profile.experiment.package.quench-runtime-engine]
 codegen-units = 1024
 
-# A static image's support: the minimal build. `quench compile` builds a static image's support with
-# this profile by default (`--profile aot-image` names it explicitly). Code size over instruction
-# throughput: `opt-level = "s"`, one codegen unit and fat LTO across the support and the image driver
-# (`native_link/link.rs`), and `-Zbuild-std` with the `immediate-abort` panic strategy and `optimize_for_size`
-# (`aot/cli.rs`), which drops the panic-message formatting from the standard library. The guest's
-# JavaScript objects stay Cranelift's own optimized code
-# (`aot_image::object`). The host CLI remains `experiment`.
-[profile.aot-image]
-inherits = "release"
-opt-level = "s"
-lto = "fat"
-codegen-units = 1
+[profile.aot-compact]
+inherits = "experiment"
+opt-level = "z"
+lto = "thin"
+codegen-units = 16
 panic = "abort"
+strip = "symbols"
 
 # Targeted library tests in a short change-test cycle: `experiment` compiled with crate-local
 # ThinLTO and full optimization, where an edit to one test re-ran ThinLTO and LLVM passes over

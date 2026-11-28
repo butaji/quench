@@ -1,0 +1,55 @@
+//! A map from small dense ids (atoms, registers) to values, kept as one flat vector indexed by
+//! the id: a lookup is an index, never a hash or a tree walk.
+// One reader: the closed-world folding path, which the derived-row lowering replaces; the map
+// stays the one recipe for a sparse table over ids.
+#![allow(dead_code)]
+
+/// Values by dense `u32` id; an id with no entry holds `None`.
+#[derive(Clone, Debug)]
+// Written by `frozen::frozen_fields` for a lowering that folds whole-program field values; a
+// build whose lowering folds them another way keeps the map's shape but reads none of it.
+#[allow(dead_code)]
+pub struct DenseMap<V> {
+    slots: Vec<Option<V>>,
+    len: usize,
+}
+
+impl<V> Default for DenseMap<V> {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            len: 0,
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl<V> DenseMap<V> {
+    pub fn get(&self, id: &u32) -> Option<&V> {
+        self.slots.get(*id as usize)?.as_ref()
+    }
+}
+
+impl<V> DenseMap<V> {
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    fn slot(&mut self, id: u32) -> &mut Option<V> {
+        let index = id as usize;
+        if index >= self.slots.len() {
+            self.slots.resize_with(index + 1, || None);
+        }
+        &mut self.slots[index]
+    }
+
+    pub fn insert(&mut self, id: u32, value: V) {
+        let absent = self.slot(id).replace(value).is_none();
+        self.len += usize::from(absent);
+    }
+
+    /// The ids with an entry, ascending.
+    pub(crate) fn keys(&self) -> impl Iterator<Item = u32> + '_ {
+        self.slots.iter().enumerate().filter(|(_, slot)| slot.is_some()).map(|(id, _)| id as u32)
+    }
+}

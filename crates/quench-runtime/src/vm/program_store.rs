@@ -1,4 +1,5 @@
 use crate::vm::EngineLaneView;
+use crate::vm::tier_policy::{TierRows, Tiers};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -10,37 +11,200 @@ use residual::{EncodedResidual, Residual};
 pub mod lane_publication;
 mod chunks;
 mod eval_cache;
+mod js_jit_report;
 mod loops;
 mod residual;
 mod root_constants;
 mod snapshot;
+mod tier_census;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
 
-use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES};
+#[derive(Default)]
+struct JsJitCounters {
+    source_name: Option<Box<str>>,
+    function_name: Option<Box<str>>,
+    parameter_count: u16,
+    instruction_count: u32,
+    guard_conditional_branches: u32,
+    guard_typeof_ops: u32,
+    guard_strict_comparisons: u32,
+    guard_relational_comparisons: u32,
+    entries: u64,
+    lane_entries: u64,
+    numeric_entries: u64,
+    promotions: u64,
+    compile_attempts: u64,
+    compile_successes: u64,
+    rejection_reason: Option<&'static str>,
+    compile_ns: u64,
+    native_entries: u64,
+    field_cache_probes: u64,
+    field_cache_hits: u64,
+    field_cache_sites: FxHashMap<u16, (u64, u64)>,
+    field_store_cache_probes: u64,
+    field_store_cache_hits: u64,
+    field_return_candidate_entries: u64,
+    field_return_fixed_this_entries: u64,
+    field_return_fast_entries: u64,
+    field_increment_candidate_entries: u64,
+    field_increment_fixed_this_entries: u64,
+    field_increment_fast_entries: u64,
+    captured_store_fast_entries: u64,
+    numeric_find_fast_entries: u64,
+    fallback_entries: u64,
+    interpreter_completions: u64,
+    interpreter_inclusive_ns: u64,
+    opcode_counts: Vec<(u16, u32)>,
+    call_sites: Vec<JsJitCallSiteCounters>,
+    code_bytes: usize,
+}
+
+#[derive(Default)]
+struct JsJitCallSiteCounters {
+    pc: u32,
+    opcode: u16,
+    attempts: u64,
+    direct_target: Option<(u32, u32)>,
+    direct_target_calls: u64,
+    alternate_target_calls: u64,
+    other_target_calls: u64,
+    outcomes: [u64; JsJitCallOutcome::COUNT],
+    sampled_calls: u64,
+    sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
+}
+
+#[cfg(feature = "native-execution")]
+impl JsJitCallSiteCounters {
+    /// Counts one call by where it went: the site's first direct target, a later call to it,
+    /// a call to another direct target, or a target that is not a direct callee.
+    fn note_target(&mut self, direct_target: Option<(u32, u32)>) {
+        match direct_target {
+            Some(target) => match self.direct_target {
+                None => {
+                    self.direct_target = Some(target);
+                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
+                }
+                Some(first) if first == target => {
+                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
+                }
+                Some(_) => {
+                    self.alternate_target_calls = self.alternate_target_calls.saturating_add(1);
+                }
+            },
+            None => {
+                self.other_target_calls = self.other_target_calls.saturating_add(1);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-execution")]
+const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum JsJitCallOutcome {
+    Continue = 0,
+    TailCall = 1,
+    PushFrame = 2,
+    Return = 3,
+    Await = 4,
+    Yield = 5,
+    Error = 6,
+}
+
+impl JsJitCallOutcome {
+    const COUNT: usize = Self::Error as usize + 1;
+
+    const ALL: [Self; Self::COUNT] = [
+        Self::Continue,
+        Self::TailCall,
+        Self::PushFrame,
+        Self::Return,
+        Self::Await,
+        Self::Yield,
+        Self::Error,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::TailCall => "tail_call",
+            Self::PushFrame => "push_frame",
+            Self::Return => "return",
+            Self::Await => "await",
+            Self::Yield => "yield",
+            Self::Error => "error",
+        }
+    }
+}
+
+use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MODULE_CLOCK_INTERVAL, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
 // independent compiled-artifact or executable-memory budgets.
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
+const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
+const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
+/// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
+/// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
+/// one that runs long gets the code eager compilation would have made at its first entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct WasmModuleCompile {
+    /// The work (`WasmModuleTier::Selective`) at which the module compiles.
+    work: u32,
+    /// The time since the module's first work after which its next entry compiles it, for a
+    /// module whose work the counts undersell.
+    after: std::time::Duration,
+}
+
+impl WasmModuleCompile {
+    /// The default (npm's adaptive policy). source-map 0.7.4, one parse and lookups through
+    /// its Wasm consumer, best CPU ms of 3, eager / this / selective without escalation:
+    /// 100 mappings 160 / 38 / 38; 300: 171 / 154 / 45; 2,000: 266 / 261 / 151 (its module,
+    /// 13k bytecodes, compiles whole in 67 ms, which a short parse never repays; work alone,
+    /// without the time bound, compiles it at 300 mappings too). JetStream 3 --jit, eager
+    /// (one round) / this (median of 3): argon2 55.9 / 51.5, gcc-loops 78.0 / 68.3, quicksort
+    /// 106.6 / 88.8, tsf 28.0 / 29.3, zlib 35.6 / 33.0 (Linux x86_64, 4 vCPU, 2026-10-27).
+    pub(super) const ADAPTIVE: Self =
+        Self { work: 4096, after: std::time::Duration::from_millis(20) };
+    /// Never compile whole: hot roots only (`QUENCH_DEV=wasm-selective`, for A/B runs).
+    const NEVER: Self = Self { work: u32::MAX, after: std::time::Duration::MAX };
+    /// Compile at the first entry, as eager compilation does: a conformance run that
+    /// exercises every module's compiled code, and tests of module-wide code.
+    pub(super) const EAGER: Self = Self { work: 1, after: std::time::Duration::ZERO };
+
+    fn due(self, work: u32, since_first: std::time::Duration) -> bool {
+        work >= self.work || since_first >= self.after
+    }
+}
+
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = crate::vm::engine_types::CODE_GRANULE;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
+    BaselineWasm,
     JsFunction,
     WasmTierRoot,
 }
 
-/// One VM-local executable-code budget for the JavaScript and Wasm root artifacts. Tier-kind
-/// limits and the JS and Wasm tiers' aggregate capacity are admitted and accounted together here.
+/// One VM-local executable-code budget for the JavaScript, Wasm tier and eager
+/// compiled-program artifacts. Tier-kind limits and the JS and Wasm tiers' aggregate
+/// capacity are admitted and accounted together here; eager module artifacts have their own
+/// ceiling (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
 #[derive(Default)]
 struct JitCodeCacheBudget {
     /// The JavaScript and Wasm tier artifacts, which share `JIT_MAX_ARTIFACTS` and
     /// `JIT_MAX_MAPPED_BYTES`.
     artifacts: usize,
     mapped_bytes: usize,
+    /// Eager Wasm module artifacts, bounded apart (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
+    baseline_artifacts: usize,
+    baseline_mapped_bytes: usize,
     js_functions: usize,
     js_mapped_bytes: usize,
     wasm_tier_roots: usize,
@@ -50,6 +214,10 @@ struct JitCodeCacheBudget {
 impl JitCodeCacheBudget {
     fn can_retain(&self, kind: JitArtifactKind, mapped_bytes: usize) -> bool {
         let (count, bytes, max_count, max_bytes) = match kind {
+            JitArtifactKind::BaselineWasm => {
+                return self.baseline_mapped_bytes.saturating_add(mapped_bytes)
+                    <= WASM_JIT_MAX_BASELINE_MAPPED_BYTES;
+            }
             JitArtifactKind::JsFunction => (
                 self.js_functions,
                 self.js_mapped_bytes,
@@ -73,9 +241,15 @@ impl JitCodeCacheBudget {
         if !self.can_retain(kind, mapped_bytes) {
             return false;
         }
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts += 1;
+            self.baseline_mapped_bytes += mapped_bytes;
+            return true;
+        }
         self.artifacts += 1;
         self.mapped_bytes += mapped_bytes;
         match kind {
+            JitArtifactKind::BaselineWasm => {}
             JitArtifactKind::JsFunction => {
                 self.js_functions += 1;
                 self.js_mapped_bytes += mapped_bytes;
@@ -89,9 +263,15 @@ impl JitCodeCacheBudget {
     }
 
     fn release(&mut self, kind: JitArtifactKind, artifacts: usize, mapped_bytes: usize) {
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts = self.baseline_artifacts.saturating_sub(artifacts);
+            self.baseline_mapped_bytes = self.baseline_mapped_bytes.saturating_sub(mapped_bytes);
+            return;
+        }
         self.artifacts = self.artifacts.saturating_sub(artifacts);
         self.mapped_bytes = self.mapped_bytes.saturating_sub(mapped_bytes);
         match kind {
+            JitArtifactKind::BaselineWasm => {}
             JitArtifactKind::JsFunction => {
                 self.js_functions = self.js_functions.saturating_sub(artifacts);
                 self.js_mapped_bytes = self.js_mapped_bytes.saturating_sub(mapped_bytes);
@@ -108,6 +288,10 @@ impl JitCodeCacheBudget {
 
 #[derive(Clone)]
 pub enum JsTierState {
+    Hot { observations: u8, numeric: u8 },
+    /// The numeric profile passed its look, so wait for a numeric entry before
+    /// compiling the specialized artifact.
+    PromotionPending,
     Rejected {
         entries: u64,
         reason: &'static str,
@@ -116,6 +300,27 @@ pub enum JsTierState {
     /// bytecode lowers to the same code), so a retry only repeats the compile.
     Unsupported,
     Compiled(Rc<crate::vm::engine_types::CompiledJsFunction>),
+}
+
+/// What one entry of a function does past counting it: whether it promotes the function's
+/// tier state (a diagnostic event) and whether it compiles the function now. All four occur:
+/// a pending numeric promotion compiles at a later numeric entry without promoting again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsEntryStep {
+    Count,
+    Promote,
+    Compile,
+    PromoteAndCompile,
+}
+
+impl JsEntryStep {
+    fn promotes(self) -> bool {
+        matches!(self, Self::Promote | Self::PromoteAndCompile)
+    }
+
+    fn compiles(self) -> bool {
+        matches!(self, Self::Compile | Self::PromoteAndCompile)
+    }
 }
 
 /// One sparse tier-state table per program. Frontend-specific transitions and
@@ -129,30 +334,146 @@ enum JitTierManager {
     Wasm(WasmTiers),
 }
 
-/// A Wasm program's tier state: each function's compile attempt and its root artifacts.
+/// A Wasm program's tier state: its functions' hotness and selective artifacts, and the
+/// module-wide lifecycle that ends selective tiering.
 #[derive(Default)]
 struct WasmTiers {
     functions: FxHashMap<u32, WasmTierState>,
-    /// The root whose artifact holds each function one holds: a function's own, else the first
-    /// installed. A call finds its code without visiting every artifact.
+    /// The root whose selective artifact holds each function one holds: a function's own,
+    /// else the first installed. A call finds its code without visiting every artifact.
     holders: FxHashMap<u32, u32>,
+    module: WasmModuleTier,
 }
 
 impl WasmTiers {
-    /// Keeps `root`'s artifact, the holder of each function it holds that none held.
+    /// Keeps `root`'s selective artifact, the holder of each function it holds that none held.
     fn install(&mut self, root: u32, compiled: Rc<crate::vm::engine_types::CompiledProgram>) {
         for function in compiled.held_functions() { self.holders.entry(function as u32).or_insert(root); }
         self.holders.insert(root, root);
-        self.functions.insert(root, WasmTierState::Compiled(compiled));
+        *self.functions.entry(root).or_default() = WasmTierState::Compiled(compiled);
     }
 }
 
+/// A Wasm module's lifecycle under `--jit`. It starts with no eager artifact, so a short use
+/// pays for the few functions it runs hot; once `WasmModuleCompile` says it runs long, the
+/// whole module compiles at once, as eager tiering would have from the start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WasmModuleTier {
+    /// The work observed so far: entries from the VM (interpreted calls, and host calls into
+    /// the module), and interpreted loop work as entries (`TIERS.wasm.backedges_per_entry`);
+    /// and when the first came.
+    Selective { work: u32, first: Option<std::time::Instant> },
+    /// The whole-module compile was claimed, eagerly or by escalation; its result is the
+    /// program's `compiled`.
+    Whole,
+    /// The whole-module compile held code for less than `WASM_MODULE_MIN_COVERAGE` of the
+    /// module's bytecodes: the module runs interpreted for good, its calls pay no tier
+    /// lookups and its functions compile no roots (K-TIER T4a).
+    Declined,
+}
+
+impl Default for WasmModuleTier {
+    fn default() -> Self {
+        Self::Selective { work: 0, first: None }
+    }
+}
+
+
 impl JitTierManager {
-    /// Whether an entry of `function` compiles it now: the model picked a compiled tier for it
-    /// (`predicted`), the entry is numeric (the code is specialized to numbers), and no state
-    /// yet records the function. Compiles are made on the first such entry; no entry counts.
-    fn note_js_entry(&mut self, function: u32, numeric: bool, predicted: bool) -> bool {
-        !self.is_wasm() && self.js(function).is_none() && predicted && numeric
+    /// Apply JavaScript's bounded statistical promotion transition to the
+    /// manager-owned tier record. ProgramStore handles only global counters
+    /// and diagnostic side effects after this decision is complete.
+    fn note_js_entry(
+        &mut self,
+        tiers: &Tiers,
+        function: u32,
+        numeric: bool,
+        first_entry_candidate: bool,
+        compiled_functions: usize,
+        can_track: bool,
+    ) -> JsEntryStep {
+        if self.is_wasm() {
+            return JsEntryStep::Count;
+        }
+        let full = compiled_functions >= JS_JIT_MAX_FUNCTIONS;
+        let Some(state) = self.js_mut(function) else {
+            if !can_track {
+                return JsEntryStep::Count;
+            }
+            let (initial, step) = if full {
+                (JsTierState::Unsupported, JsEntryStep::Count)
+            } else if first_entry_candidate {
+                (JsTierState::PromotionPending, JsEntryStep::PromoteAndCompile)
+            } else {
+                (JsTierState::Hot { observations: 1, numeric: u8::from(numeric) }, JsEntryStep::Count)
+            };
+            let inserted = self.js_insert(function, initial);
+            debug_assert!(inserted);
+            return step;
+        };
+        match state {
+            JsTierState::Hot { observations, numeric: numeric_entries } => {
+                *observations = observations.saturating_add(1);
+                *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
+                let promotion = numeric_promotion_decision(tiers, *numeric_entries, *observations);
+                let (next, step) = if full {
+                    (Some(JsTierState::Unsupported), JsEntryStep::Count)
+                } else if first_entry_candidate || (promotion == Some(true) && numeric) {
+                    (None, JsEntryStep::PromoteAndCompile)
+                } else if promotion == Some(true) {
+                    (Some(JsTierState::PromotionPending), JsEntryStep::Promote)
+                } else {
+                    let exhausted = promotion == Some(false) && *observations == u8::MAX;
+                    (exhausted.then_some(JsTierState::Unsupported), JsEntryStep::Count)
+                };
+                if let Some(next) = next {
+                    *state = next;
+                }
+                step
+            }
+            JsTierState::PromotionPending if full => {
+                *state = JsTierState::Unsupported;
+                JsEntryStep::Count
+            }
+            JsTierState::PromotionPending if numeric => JsEntryStep::Compile,
+            JsTierState::PromotionPending
+            | JsTierState::Rejected { .. }
+            | JsTierState::Unsupported
+            | JsTierState::Compiled(_) => JsEntryStep::Count,
+        }
+    }
+
+    /// Advance the Wasm call-hotness state. Both the lane handoff and the
+    /// ordinary dispatcher call this transition owner, so the threshold and
+    /// one-shot attempt bit have one implementation.
+    fn note_wasm_entry(&mut self, tiers: &Tiers, function: u32, lane_handoff: bool) -> bool {
+        let Some(state) = self.wasm_mut_or_default(function) else {
+            return false;
+        };
+        let WasmTierState::Counting(count) = *state else {
+            return false;
+        };
+        let count = count.saturating_add(1);
+        if lane_handoff && count >= tiers.wasm.promotion_entries {
+            return true;
+        }
+        if count < tiers.wasm.promotion_entries {
+            *state = WasmTierState::Counting(count);
+            return false;
+        }
+        *state = WasmTierState::Attempted;
+        true
+    }
+
+    /// `note_wasm_tier_backedges`'s transition: one more observation, held below the
+    /// threshold.
+    fn note_wasm_backedges(&mut self, tiers: &Tiers, function: u32) {
+        let Some(state) = self.wasm_mut_or_default(function) else {
+            return;
+        };
+        if let WasmTierState::Counting(count) = state {
+            *count = count.saturating_add(1).min(tiers.wasm.promotion_entries - 1);
+        }
     }
 
     fn js(&self, function: u32) -> Option<&JsTierState> {
@@ -201,7 +522,17 @@ impl JitTierManager {
         }
     }
 
-    /// The root artifact holding `function` (`WasmTiers::holders`).
+    fn wasm_mut_or_default(&mut self, function: u32) -> Option<&mut WasmTierState> {
+        if matches!(self, Self::Empty) {
+            *self = Self::Wasm(WasmTiers::default());
+        }
+        match self {
+            Self::Wasm(tiers) => Some(tiers.functions.entry(function).or_default()),
+            Self::Empty | Self::JavaScript(_) => None,
+        }
+    }
+
+    /// The selective artifact holding `function` (`WasmTiers::holders`).
     fn wasm_holding(&self, function: u32) -> Option<&Rc<crate::vm::engine_types::CompiledProgram>> {
         let Self::Wasm(tiers) = self else { return None };
         tiers.functions.get(tiers.holders.get(&function)?)?.compiled()
@@ -225,26 +556,69 @@ impl JitTierManager {
         }
     }
 
-    /// Whether `function` has no compile attempt yet: a function with no state has not been attempted.
-    fn wasm_unattempted(&self, function: u32) -> bool {
+    /// Count `work` more entries of a selective module; whether `policy` says its
+    /// whole-module compile is due (claimed by `claim_wasm_module_escalation`).
+    fn note_wasm_module_work(&mut self, work: u32, policy: WasmModuleCompile) -> bool {
+        match self.wasm_tiers_mut().map(|tiers| &mut tiers.module) {
+            Some(WasmModuleTier::Selective { work: observed, first }) => {
+                let first = *first.get_or_insert_with(std::time::Instant::now);
+                let before = *observed;
+                *observed = observed.saturating_add(work);
+                // A passed time bound counts as the work bound from then on, so every later
+                // entry, whichever path observes it, finds the compile due.
+                if *observed / WASM_JIT_MODULE_CLOCK_INTERVAL != before / WASM_JIT_MODULE_CLOCK_INTERVAL
+                    && policy.due(0, first.elapsed())
+                {
+                    *observed = (*observed).max(policy.work);
+                }
+                policy.due(*observed, std::time::Duration::ZERO)
+            }
+            Some(WasmModuleTier::Whole | WasmModuleTier::Declined) | None => false,
+        }
+    }
+
+    /// Whether the module's hot functions compile one by one (`WasmTierState`): under the
+    /// selective A/B arm, which never compiles a module whole, or once a module's whole
+    /// compile was claimed without an artifact (it failed, or the budget refused it). A module
+    /// still waiting to compile whole runs interpreted until then: a short use (an npm
+    /// package's one source-map parse) runs faster in the interpreter than through root
+    /// compiles, and a long one would throw them away at its whole compile.
+    fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
+        !self.wasm_module_declined() && (policy == WasmModuleCompile::NEVER || !self.wasm_module_selective())
+    }
+
+    fn wasm_module_declined(&self) -> bool {
+        matches!(self, Self::Wasm(tiers) if tiers.module == WasmModuleTier::Declined)
+    }
+
+    fn wasm_module_selective(&self) -> bool {
         match self {
-            Self::Wasm(tiers) => !tiers.functions.contains_key(&function),
+            Self::Wasm(tiers) => matches!(tiers.module, WasmModuleTier::Selective { .. }),
             Self::Empty => true,
             Self::JavaScript(_) => false,
         }
     }
 
-    /// Claims `function`'s one compile attempt, where it is unattempted (`wasm_unattempted`). A claimed
-    /// attempt is never repeated, whether or not it compiled.
-    fn claim_wasm_root(&mut self, function: u32) -> bool {
-        if !self.wasm_unattempted(function) {
-            return false;
-        }
-        let Some(tiers) = self.wasm_tiers_mut() else {
-            return false;
+    /// Claim the one whole-module compile of a selective module (`note_wasm_module_work`
+    /// said it is due), and retire its selective artifacts: the module artifact holds every
+    /// function they hold. Returns the retired artifacts' mapped bytes, or `None` when the
+    /// module is not selective.
+    fn claim_wasm_module_escalation(&mut self) -> Option<(usize, usize)> {
+        let tiers = match self {
+            Self::Wasm(tiers) => tiers,
+            Self::Empty | Self::JavaScript(_) => return None,
         };
-        tiers.functions.insert(function, WasmTierState::Attempted);
-        true
+        if matches!(tiers.module, WasmModuleTier::Whole | WasmModuleTier::Declined) {
+            return None;
+        }
+        tiers.module = WasmModuleTier::Whole;
+        tiers.holders.clear();
+        let retired = tiers
+            .functions
+            .values_mut()
+            .filter_map(WasmTierState::take_compiled)
+            .fold((0, 0), |(count, bytes), compiled| (count + 1, bytes + compiled.mapped_bytes()));
+        Some(retired)
     }
 
     fn is_javascript(&self) -> bool {
@@ -268,13 +642,6 @@ pub(crate) struct RegExpArgumentShare {
     pub(crate) constructor: Value,
     pub(crate) watch: crate::heap::PrototypeValueWatch,
 }
-
-/// Whether a planned arm enters its function `function` of the program `code` as a framed method call with `argc`
-/// arguments (`planned_call_sites`): the derivation's check on the callee's body, which the engine decides.
-pub type PlannedArmAdmission = fn(&ResidualProgram, u32, u16) -> bool;
-
-/// The `ProgramEntry::construct_sites` entry of a construct pc with no construct site fact.
-const NO_CONSTRUCT_CLASS: u32 = u32::MAX;
 
 struct ProgramEntry {
     residual: Residual,
@@ -316,37 +683,12 @@ struct ProgramEntry {
     raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
-    /// The program's AOT facts, solved once on the first lowering that reads them (`aot_facts`).
-    aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
-    /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
-    call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
-    /// Per function, its predicted tier (one argmin over all its entries), solved once beside `call_graph` (`predicted_tiers`).
-    predicted_tiers: std::cell::OnceCell<std::sync::Arc<[crate::vm::tier_policy::PredictedTier]>>,
-    /// The program's method selectors (`compile::call_plan::Selectors`), solved once beside `call_graph` (`selectors`).
-    selectors: std::cell::OnceCell<std::sync::Arc<crate::compile::call_plan::Selectors>>,
-    /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
-    /// (`set_class_method`), each of the selectors' count; `layouts::set_class_methods` holds its address.
-    class_method_vectors: std::cell::RefCell<FxHashMap<u32, Box<[usize]>>>,
-    /// Per class id (a function id, or a synthetic class of `AotFacts::classes`): the layout id its constructed instances
-    /// hold, 0 until the first construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
-    class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
-    /// Per function, per construct pc: the class of that construct site (`AotFacts::construct_classes`), dense by pc and
-    /// `NO_CONSTRUCT_CLASS` where the site has no fact. Derived once from the facts (`construct_site_table`).
-    construct_sites: std::cell::OnceCell<Box<[Box<[u32]>]>>,
-    /// Per body: `Some` where the closed world makes the body's closure one object (`AotFacts::closure_identity`), holding
-    /// that object once its creation edge has run (`ProgramStore::write_closure_cell`), else `None`. Derived from the facts on
-    /// first use (`closure_cells_of`). A program root while the program lives (`extend_roots`).
-    closure_cells: std::cell::OnceCell<Box<[Option<std::cell::OnceCell<Value>>]>>,
-    /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
-    /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
-    class_prototypes: std::cell::RefCell<std::collections::BTreeMap<u32, Value>>,
-    /// The planned arms' targets by (class, method, function), each boxed so its address is the arm's for the program's
-    /// life (`planned_target`). Entries are added, never removed.
-    planned_targets: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, u32), Box<crate::vm::engine_types::PlannedTarget>>>,
-    /// Whether every function's planned sites have registered their arms' targets (`register_planned_targets`).
-    planned_registered: std::cell::Cell<bool>,
-    /// Per function: whether it loops, and whether that is known (`function_loops`).
-    lane_loops: Vec<std::cell::Cell<u8>>,
+    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
+    /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    lane_deferred: Vec<std::cell::Cell<u8>>,
+    /// The program's compiled functions, once the compiled mode first calls
+    /// one; `Some(None)` records that none compile.
+    compiled: Option<Option<Rc<crate::vm::engine_types::CompiledProgram>>>,
     /// Sparse frontend-specific hotness state and compiled artifacts, owned
     /// by one VM-local tier manager.
     jit_tiers: JitTierManager,
@@ -451,20 +793,16 @@ pub struct ProgramStore {
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
+    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
     /// The IR size of the last lane plan from each entry of each function (`Vm::start_lane_method`):
     /// what deciding the next compile's worth from costs, before planning it again.
+    lane_plan_ir: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), usize>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::engine_types::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
     ahead: std::cell::RefCell<Vec<Rc<crate::vm::engine_types::AheadImages>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
-    /// The classes a restored snapshot recorded (program, class, header, prototype), which `Vm::install_restored_main`
-    /// records again at the class-header edge once the main program is installed; empty otherwise.
-    restored_classes: Vec<(ProgramId, u32, u32, Value)>,
-    /// The closure cells a restored snapshot recorded (program, body, closure), which `Vm::install_restored_main` takes at
-    /// the creation edge again once the main program is installed; empty otherwise.
-    restored_closures: Vec<(ProgramId, u32, Value)>,
     /// The id of each program `insert_shared` holds, by its code's address: `find_shared` is one
     /// probe, not a scan of every program (the Wasm boundary asks it per call).
     shared_ids: FxHashMap<usize, ProgramId>,
@@ -497,24 +835,38 @@ pub struct ProgramStore {
     js_jit_rejected_functions: usize,
     /// Shared JS/Wasm executable-code cache admission and accounting.
     jit_code_cache: JitCodeCacheBudget,
+    /// When a selective Wasm module compiles whole (`WasmModuleTier`).
+    wasm_module_compile: WasmModuleCompile,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
+    js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
+    /// The warming-entry clock a lane body's `recurrent` reads: one tick per entry a warming
+    /// body counts, program-wide. A plain cell of the store the lane already reaches, where a
+    /// thread-local read costs a `tlv_get_addr` call on every entry.
+    warming_ticks: std::cell::Cell<u32>,
     #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
+    js_jit_dataview_float64_get_entries: u64,
+    js_jit_dataview_float64_set_entries: u64,
+    /// What the tiers did in this VM (`Vm::tier_events`).
+    tier_events: super::tier_events::TierEvents,
+    /// The thresholds this VM's tier controllers read (`TierRows`), fixed at its construction.
+    tiers: &'static Tiers,
 }
 
 impl Default for ProgramStore {
     fn default() -> Self {
         crate::jit_coverage::sample_this_thread();
+        let tiers = TierRows::made();
         Self {
             native_call_bindings: Default::default(),
             lane_installed: Default::default(),
             ahead: Default::default(),
+            lane_compiles: Default::default(),
+            lane_plan_ir: Default::default(),
             programs: Vec::new(),
-            restored_classes: Vec::new(),
-            restored_closures: Vec::new(),
             shared_ids: FxHashMap::default(),
             // Each store's epochs start apart from every other's, so a context derived from
             // a store a snapshot or reset replaced never matches its successor's.
@@ -536,9 +888,20 @@ impl Default for ProgramStore {
             jit_code_cache: JitCodeCacheBudget::default(),
             // TOD-191's correctness oracle may force hot candidates past the payback model so
             // guarded exits can be tested independently of profitability (diagnostic only).
-            js_jit_lane_methods_enabled: false,
+            wasm_module_compile: if crate::vm::engine_calls::jit_wasm_selective_enabled() {
+                WasmModuleCompile::NEVER
+            } else {
+                WasmModuleCompile::ADAPTIVE
+            },
+            js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
+            js_jit_lane_methods_enabled: tiers.stress,
+            warming_ticks: std::cell::Cell::new(0),
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
+            js_jit_dataview_float64_get_entries: 0,
+            js_jit_dataview_float64_set_entries: 0,
+            tier_events: Default::default(),
+            tiers,
         }
     }
 }
@@ -551,7 +914,7 @@ impl ProgramStore {
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body);
+            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(any(test, feature = "test-support"))]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
@@ -560,260 +923,6 @@ impl ProgramStore {
                 Rc::new(facts)
             }
         })))
-    }
-
-    /// The AOT facts of program `id` (`compile::aot_facts::analyze`), solved on its first call and
-    /// shared by every lowering of the program after it.
-    pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
-        let entry = self.entry(id)?;
-        Some(std::sync::Arc::clone(Self::facts_of(entry)))
-    }
-
-    /// The AOT facts of `entry`, solved on its first use (`aot_facts`).
-    fn facts_of(entry: &ProgramEntry) -> &std::sync::Arc<crate::compile::aot_facts::AotFacts> {
-        entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))
-    }
-
-    /// The method selectors of program `id` (`compile::call_plan::Selectors`), solved on its first call from its AOT facts.
-    pub fn selectors(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::call_plan::Selectors>> {
-        let entry = self.entry(id)?;
-        Some(std::sync::Arc::clone(entry.selectors.get_or_init(|| {
-            let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
-            std::sync::Arc::new(crate::compile::call_plan::Selectors::of(&entry.residual, &facts))
-        })))
-    }
-
-    /// Writes `record` (a `CalleeRecord` address) as the entry of method `selector` in the method vector of class layout
-    /// `layout` of program `id`, allocating the vector zeroed on its first write, and publishes its address to
-    /// `layouts::set_class_methods`. Nothing is written where the program has no selectors.
-    pub fn set_class_method(&self, id: ProgramId, layout: u32, selector: u32, record: usize) {
-        let (Some(count), Some(entry)) = (self.selectors(id).map(|selectors| selectors.count()), self.entry(id)) else { return };
-        let mut vectors = entry.class_method_vectors.borrow_mut();
-        let vector = vectors.entry(layout).or_insert_with(|| vec![0_usize; count].into_boxed_slice());
-        if let Some(slot) = vector.get_mut(selector as usize) {
-            *slot = record;
-        }
-        crate::heap::layouts::set_class_methods(layout, vector.as_ptr() as usize);
-    }
-
-    /// The call graph of program `id` and its loop-or-cycle facts (`compile::call_graph::CallGraph`), solved on its first
-    /// call from the program's AOT facts and shared by every lane body that reads them after it.
-    pub fn call_graph(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::call_graph::CallGraph>> {
-        let entry = self.entry(id)?;
-        Some(std::sync::Arc::clone(entry.call_graph.get_or_init(|| {
-            let facts = self.aot_facts(id).expect("a program with an entry has AOT facts");
-            std::sync::Arc::new(crate::compile::call_graph::CallGraph::of(&entry.residual, &facts))
-        })))
-    }
-
-    /// The predicted tier of each function of program `id` (`tier_policy::predicted_tiers`, the fixed point over the call
-    /// graph), solved on its first call from `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
-    pub fn predicted_tiers(&self, id: ProgramId) -> Option<std::sync::Arc<[crate::vm::tier_policy::PredictedTier]>> {
-        let entry = self.entry(id)?;
-        let graph = self.call_graph(id)?;
-        Some(std::sync::Arc::clone(entry.predicted_tiers.get_or_init(|| {
-            crate::vm::tier_policy::predicted_tiers(&graph, &entry.residual).into()
-        })))
-    }
-
-    /// The header cell of class `class` (a class id, `AotFacts::classes`: a function id or a synthetic class) in program
-    /// `id`: the layout id its constructed instances hold, recorded once by the first construction of the class
-    /// (`Vm::record_class_header`), 0 until then.
-    pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
-        Self::class_header_cell(self.entry(id)?, class)
-    }
-
-    /// The header cells of `entry`, one per class id: the count `AotFacts::classes` gives, which is the functions and the
-    /// synthetic classes. The table is sized on first use, from the facts that count them (`facts_of`).
-    fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
-        let headers = entry.class_headers.get_or_init(|| (0..Self::facts_of(entry).classes.count()).map(|_| std::cell::Cell::new(0)).collect());
-        headers.get(class as usize)
-    }
-
-    /// The class of the construct site at `pc` of function `function` in program `id` (`AotFacts::construct_classes`), an
-    /// array read of the table `construct_site_table` derived: `None` where the site has no fact (an ordinary construction).
-    pub fn construct_class(&self, id: ProgramId, function: u32, pc: usize) -> Option<u32> {
-        let entry = self.entry(id)?;
-        let sites = entry.construct_sites.get_or_init(|| Self::construct_site_table(entry));
-        let class = *sites.get(function as usize)?.get(pc)?;
-        (class != NO_CONSTRUCT_CLASS).then_some(class)
-    }
-
-    /// The dense site table of `entry`: each function's row holds, at its construct pc, the class the facts give that site,
-    /// and is as long as its last construct site.
-    fn construct_site_table(entry: &ProgramEntry) -> Box<[Box<[u32]>]> {
-        let mut rows = vec![Vec::<u32>::new(); entry.residual.functions.len()];
-        for (&(function, pc), &class) in &Self::facts_of(entry).construct_classes {
-            let row = &mut rows[function as usize];
-            if row.len() <= pc as usize {
-                row.resize(pc as usize + 1, NO_CONSTRUCT_CLASS);
-            }
-            row[pc as usize] = class;
-        }
-        rows.into_iter().map(Vec::into_boxed_slice).collect()
-    }
-
-    /// The closure cell of body `body` in program `id`: the one closure object of the body, `None` for a body whose closure is
-    /// not one object (`AotFacts::closure_identity`). An edge fact, written once at the body's one creation
-    /// (`Vm::note_closure_created`), which dominates every call of the closure, since a call needs the value. Code that folds
-    /// the closure subscribes to `closure_cell_key` and is not entered before that write; the write retires what subscribed.
-    pub fn closure_cell(&self, id: ProgramId, body: u32) -> Option<Value> {
-        let entry = self.entry(id)?;
-        Self::closure_cells_of(entry).get(body as usize)?.as_ref()?.get().copied()
-    }
-
-    /// The address of body `body`'s closure cell in program `id`, where the body has one (`closure_cell`'s cell, not its
-    /// value). The cells are one boxed slice made on first use, never resized, so the address is stable for the program's
-    /// life: a load writes it into a record, which reads the closure there (`CLOSURE_CELL_READ`).
-    pub fn closure_cell_slot(&self, id: ProgramId, body: u32) -> Option<*const std::cell::OnceCell<Value>> {
-        let entry = self.entry(id)?;
-        Self::closure_cells_of(entry).get(body as usize)?.as_ref().map(std::ptr::from_ref)
-    }
-
-    /// The key of body `body`'s closure cell in program `id` (`FactKey::ClosureCell`): what code that folds the closure
-    /// subscribes to (`FactWatch::subscribe_cell`), and the key the creation edge's write retires.
-    pub fn closure_cell_key(id: ProgramId, body: u32) -> crate::typed_ir::FactKey {
-        crate::typed_ir::FactKey::ClosureCell { program: id.raw(), body }
-    }
-
-    /// Writes `closure`, the closure object of body `body` that its creation made, into program `id`'s closure cell, where the
-    /// body qualifies. `true` when it wrote: the cell was empty. A body with no qualifying closure, or a second creation of it,
-    /// writes nothing. The write marks the program's roots pending, as `planned_target_set` does.
-    pub(crate) fn write_closure_cell(&mut self, id: ProgramId, body: u32, closure: Value) -> bool {
-        let Some(entry) = self.entry(id) else { return false };
-        let wrote = match Self::closure_cells_of(entry).get(body as usize) {
-            Some(Some(cell)) => cell.set(closure).is_ok(),
-            _ => false,
-        };
-        if wrote {
-            self.entry_mut(id);
-        }
-        wrote
-    }
-
-    /// The closure cells of `entry`, one per body, `None` for a body whose closure is not one object. The table is sized and
-    /// marked on first use, from the facts (`facts_of`), as `construct_site_table` is.
-    fn closure_cells_of(entry: &ProgramEntry) -> &[Option<std::cell::OnceCell<Value>>] {
-        entry.closure_cells.get_or_init(|| {
-            let facts = Self::facts_of(entry);
-            (0..entry.residual.functions.len() as u32)
-                .map(|body| facts.closure_identity(body).then(std::cell::OnceCell::new))
-                .collect()
-        })
-    }
-
-    /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
-    /// method call (`CallForm::Framed`) over a closed union of classes and misses on nothing (`Miss::None`), and which
-    /// the facts admit. A site is admitted when every arm's class has a prototype that names the method (`prototype_layout`:
-    /// an own data property of the prototype, no other writes), and `admits` (the callee's body enters a framed call
-    /// with the site's argument count, `planned_calls::planned_arm_admits`) holds for each arm's function. Each arm has
-    /// its class's header cell and its target slot (`planned_target`); the last class is the default arm. Plans of one
-    /// callee (no class) keep their own rows. A site's record dispatches on its receiver's header (`planned_call_row`).
-    pub fn planned_call_sites(&self, id: ProgramId, function: u32, admits: PlannedArmAdmission) -> Vec<crate::vm::engine_types::PlannedSite> {
-        use crate::compile::call_plan::{CallForm, Miss};
-        use crate::vm::engine_types::{PlannedArm, PlannedSite};
-        let (Some(entry), Some(facts)) = (self.entry(id), self.aot_facts(id)) else { return Vec::new() };
-        facts.call_plans(&entry.residual, function).into_iter()
-            .filter(|(_, plan)| plan.miss == Miss::None && plan.form == CallForm::Framed && !plan.arms.is_empty())
-            .filter_map(|(pc, plan)| {
-                let method = plan.method?;
-                let mut arms = Vec::with_capacity(plan.arms.len());
-                for arm in plan.arms.iter() {
-                    let class = arm.class?;
-                    if !facts.prototype_layout(class)?.contains(&method) || !admits(&entry.residual, arm.function, plan.argc) {
-                        return None;
-                    }
-                    let header = Self::class_header_cell(entry, class)?;
-                    arms.push(PlannedArm { function: arm.function, header: std::ptr::from_ref(header), target: Self::planned_target(entry, class, arm.function, method) });
-                }
-                let default = arms.pop()?;
-                Some(PlannedSite { pc, arms: arms.into_boxed_slice(), default })
-            })
-            .collect()
-    }
-
-    /// The slot of the target of class `class`'s arm `function` reading `method`, made on first use.
-    fn planned_target(entry: &ProgramEntry, class: u32, function: u32, method: u32) -> *const crate::vm::engine_types::PlannedTarget {
-        let mut targets = entry.planned_targets.borrow_mut();
-        let slot = targets.entry((class, method, function)).or_insert_with(|| Box::new(crate::vm::engine_types::PlannedTarget {
-            method,
-            target: std::cell::Cell::new(crate::vm::engine_types::EMPTY_SCRIPT_CALL_TARGET),
-        }));
-        std::ptr::from_ref(&**slot)
-    }
-
-    /// Makes every planned arm of program `id` register its target slot (`planned_call_sites` of each function), so
-    /// that a class's arms are all known when its header is recorded. Once per program.
-    pub fn register_planned_targets(&self, id: ProgramId, admits: PlannedArmAdmission) {
-        let Some(entry) = self.entry(id) else { return };
-        if entry.planned_registered.get() { return; }
-        entry.planned_registered.set(true);
-        for function in 0..entry.residual.functions.len() {
-            drop(self.planned_call_sites(id, function as u32, admits));
-        }
-    }
-
-    /// Records class `class`'s instances' prototype in program `id` at the class-header edge (`Vm::record_class_edge`).
-    pub fn record_class_prototype(&self, id: ProgramId, class: u32, prototype: Value) {
-        if let Some(entry) = self.entry(id) {
-            entry.class_prototypes.borrow_mut().insert(class, prototype);
-        }
-    }
-
-    /// Every recorded class of every program, as (program, class, header, prototype), for the snapshot (`write_snapshot`).
-    fn recorded_classes(&self) -> Vec<(ProgramId, u32, u32, Value)> {
-        let mut recorded = Vec::new();
-        for (index, entry) in self.programs.iter().enumerate() {
-            let Some(entry) = entry else { continue };
-            let id = ProgramId::from_raw(index as u32);
-            for (&class, &prototype) in entry.class_prototypes.borrow().iter() {
-                let header = Self::class_header_cell(entry, class).map_or(0, std::cell::Cell::get);
-                recorded.push((id, class, header, prototype));
-            }
-        }
-        recorded
-    }
-
-    /// The classes a restored snapshot recorded, taken once the main program is installed (`Vm::install_restored_main`).
-    pub(crate) fn take_restored_classes(&mut self) -> Vec<(ProgramId, u32, u32, Value)> {
-        std::mem::take(&mut self.restored_classes)
-    }
-
-    /// Every written closure cell of every program, as (program, body, closure), for the snapshot (`write_snapshot`).
-    fn recorded_closures(&self) -> Vec<(ProgramId, u32, Value)> {
-        let mut recorded = Vec::new();
-        for (index, entry) in self.programs.iter().enumerate() {
-            let Some(entry) = entry else { continue };
-            let Some(table) = entry.closure_cells.get() else { continue };
-            let id = ProgramId::from_raw(index as u32);
-            for (body, cell) in table.iter().enumerate() {
-                if let Some(closure) = cell.as_ref().and_then(|cell| cell.get()) {
-                    recorded.push((id, body as u32, *closure));
-                }
-            }
-        }
-        recorded
-    }
-
-    /// The closure cells a restored snapshot recorded, taken once the main program is installed (`Vm::install_restored_main`).
-    pub(crate) fn take_restored_closures(&mut self) -> Vec<(ProgramId, u32, Value)> {
-        std::mem::take(&mut self.restored_closures)
-    }
-
-    /// Marks program `id`'s roots pending after one of its planned arms' targets is set, so the next collection traces
-    /// the target's values (`extend_roots`).
-    pub fn planned_target_set(&mut self, id: ProgramId) {
-        self.entry_mut(id);
-    }
-
-    /// The arms of class `class` in program `id`, registered (`register_planned_targets`): each arm's function, the
-    /// property its method is read from, and its target slot.
-    pub fn planned_targets_of_class(&self, id: ProgramId, class: u32) -> Vec<(u32, u32, *const crate::vm::engine_types::PlannedTarget)> {
-        let Some(entry) = self.entry(id) else { return Vec::new() };
-        let targets = entry.planned_targets.borrow();
-        targets.range((class, 0, 0)..=(class, u32::MAX, u32::MAX))
-            .map(|(&(_, _, function), slot)| (function, slot.method, std::ptr::from_ref(&**slot)))
-            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -901,6 +1010,7 @@ impl ProgramStore {
         let mut reclaimed = Vec::new();
         let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut reclaimed_wasm_tiers = (0usize, 0usize);
+        let mut reclaimed_wasm_baselines = (0usize, 0usize);
         let mut reclaimed_rejected = 0usize;
         let mut pending = 0;
         let mut settled = 0usize;
@@ -944,6 +1054,10 @@ impl ProgramStore {
                 .wasm_values()
                 .filter(|state| state.compiled().is_some())
                 .count();
+            if let Some(compiled) = entry.compiled.as_ref().and_then(Option::as_ref) {
+                reclaimed_wasm_baselines.0 += 1;
+                reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
+            }
             if let Some(code) = entry.residual.if_decoded()
                 && let key = Rc::as_ptr(code) as usize
                 && self.shared_ids.get(&key).copied() == ProgramId::from_index(index)
@@ -971,6 +1085,11 @@ impl ProgramStore {
             reclaimed_wasm_tiers.0,
             reclaimed_wasm_tiers.1,
         );
+        self.jit_code_cache.release(
+            JitArtifactKind::BaselineWasm,
+            reclaimed_wasm_baselines.0,
+            reclaimed_wasm_baselines.1,
+        );
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             self.retain_live_eval_programs();
@@ -990,6 +1109,9 @@ impl ProgramStore {
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
         self.jit_code_cache = JitCodeCacheBudget::default();
+        if let Some(diagnostics) = &mut self.js_jit_diagnostics {
+            diagnostics.clear();
+        }
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.entry_mut(id) {
@@ -1159,7 +1281,6 @@ impl ProgramStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    #[quench_macros::test_visible]
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
@@ -1195,7 +1316,7 @@ impl ProgramStore {
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = FxHashMap::default();
         let views_in_lane = LaneViews::default();
-        let lane_loops = zeroed_counts(program.functions.capacity());
+        let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
         self.shared_ids.entry(Rc::as_ptr(&program) as usize).or_insert(id);
@@ -1218,18 +1339,8 @@ impl ProgramStore {
             views_in_lane,
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
-            aot_facts: std::cell::OnceCell::new(),
-            call_graph: std::cell::OnceCell::new(),
-            predicted_tiers: std::cell::OnceCell::new(),
-            selectors: std::cell::OnceCell::new(),
-            class_method_vectors: Default::default(),
-            class_headers: std::cell::OnceCell::new(),
-            construct_sites: std::cell::OnceCell::new(),
-            closure_cells: std::cell::OnceCell::new(),
-            class_prototypes: Default::default(),
-            planned_targets: Default::default(),
-            planned_registered: std::cell::Cell::new(false),
-            lane_loops,
+            lane_deferred,
+            compiled: None,
             jit_tiers: JitTierManager::default(),
             scope: ProgramScope::Own,
             origin,
@@ -1592,45 +1703,197 @@ impl ProgramStore {
         }
     }
 
-    /// Whether a root tier may take `function` of Wasm program `id`: the function is small enough, and the code
+    /// The lane view of `function`, derived by `derive` on first use from the
+    /// immutable residual and the program's constants.
+    pub fn compiled(
+        &self,
+        id: ProgramId,
+    ) -> Option<Option<Rc<crate::vm::engine_types::CompiledProgram>>> {
+        self.entry(id)?.compiled.clone()
+    }
+
+    pub fn has_compiled_function_or_note_fallback(
+        &self,
+        id: ProgramId,
+        function: usize,
+    ) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function_or_note_fallback(function))
+    }
+
+    /// Whether an already retained selective-tier artifact contains this
+    /// function. This check is intentionally borrow-only so lane dispatches
+    /// do not clone its `Rc` on every call.
+    pub fn has_wasm_tier_containing(&self, id: ProgramId, function: usize) -> bool {
+        self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_holding(function as u32).is_some())
+    }
+
+    pub fn set_compiled(
+        &mut self,
+        id: ProgramId,
+        compiled: Option<Rc<crate::vm::engine_types::CompiledProgram>>,
+    ) {
+        if let Some(previous_bytes) = self
+            .entry(id)
+            .and_then(|entry| entry.compiled.as_ref())
+            .and_then(Option::as_ref)
+            .map(|previous| previous.mapped_bytes())
+        {
+            self.jit_code_cache
+                .release(JitArtifactKind::BaselineWasm, 1, previous_bytes);
+        }
+        let declined = compiled.as_ref().is_some_and(|compiled| self.wasm_module_coverage_short(id, compiled));
+        let compiled = compiled.filter(|compiled| {
+            !declined && self.jit_code_cache
+                .retain(JitArtifactKind::BaselineWasm, compiled.mapped_bytes())
+        });
+        if declined && let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+            tiers.module = WasmModuleTier::Declined;
+        }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.compiled = Some(compiled);
+        }
+    }
+
+    /// Whether a root tier may take `function` of Wasm module `id` (`wasm_activation::offer_entry`):
+    /// the module promotes its hot roots one by one, the function is small enough, and the code
     /// budget could keep the artifact (a compile it could not keep is work thrown away).
-    fn wasm_root_admissible(&self, id: ProgramId, function: u32) -> bool {
+    pub fn wasm_root_admissible(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id).is_some_and(|entry| {
             entry.residual.kind == crate::bytecode::ProgramKind::Wasm
+                && entry.jit_tiers.wasm_promotes_roots(self.wasm_module_compile)
                 && entry.residual.function_get(function as usize).is_some_and(|function| {
                     function.code.len() <= crate::vm::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                 })
         }) && self.wasm_tier_has_room()
     }
 
-    /// Whether the root compile of `function` of Wasm program `id` is due at its first call (`wasm_activation::offer_entry`):
-    /// the function is unattempted, a compile may start (`tier_policy::may_compile`), its predicted tier compiles it
-    /// (`compiled_tier`), and the root may be admitted.
-    pub fn wasm_root_due(&self, id: ProgramId, function: u32) -> bool {
-        self.wasm_root_admissible(id, function)
-            && crate::vm::tier_policy::may_compile()
-            && self.compiled_tier(id, function)
-            && self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_unattempted(function))
+    /// Records one entry of `function` of Wasm module `id` toward its root compile; whether the
+    /// compile is due. The entry that reaches the threshold claims the one attempt, so repeated
+    /// compile failures never turn hot calls into work; a `handoff` entry (the lane's, which
+    /// hands the compile to the general loop) finds it due without claiming it.
+    pub fn note_wasm_root_entry(&mut self, id: ProgramId, function: u32, handoff: bool) -> bool {
+        let tiers = self.tiers;
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_entry(tiers, function, handoff))
     }
 
-    /// Claims the one compile attempt of `function` of Wasm program `id` when its root compile is due
-    /// (`wasm_root_due`). A claimed attempt is never repeated, so a refused or failed compile does not turn later
-    /// calls into work.
-    pub fn claim_wasm_root(&mut self, id: ProgramId, function: u32) -> bool {
-        self.wasm_root_due(id, function)
-            && self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.claim_wasm_root(function))
+    /// Whether the whole compile of program `id` holds `function`, borrow-only.
+    pub fn has_compiled_function(&self, id: ProgramId, function: usize) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function(function))
     }
 
-    /// Whether the predicted tier of `function` of program `id` is a compiled one: the one predicate of design 4.9 that
-    /// every lane derive, entry and back-edge gate and the JavaScript and Wasm entries read. It is the argmin of the
-    /// function's entry in `predicted_tiers`, or the u-jit of an ahead-of-time image (`tier_policy::body_tier`);
-    /// false for the interpreter's pick and for a function that does not exist. Which compiled tier a build allows is
-    /// the compile sites' question (`tier_policy::lane_body_tier`), not this one's.
-    pub fn compiled_tier(&self, id: ProgramId, function: u32) -> bool {
-        let Some(table) = self.predicted_tiers(id) else { return false };
-        let aot = self.residual(id).is_some_and(|program| self.ahead_images(id, program).is_some());
-        let predicted = table.get(function as usize).copied().unwrap_or(crate::vm::tier_policy::PredictedTier::Interpreter);
-        crate::vm::tier_policy::body_tier(aot, predicted) != crate::vm::tier_policy::PredictedTier::Interpreter
+    /// Credit `function` with one interpreter entry's worth of loop work, short of the
+    /// threshold: the entry that reaches it claims the compile (`note_wasm_tier_entry`), so
+    /// promotion keeps one owner and a function compiles between calls, never inside a loop.
+    pub fn note_wasm_tier_backedges(&mut self, id: ProgramId, function: u32) {
+        let (policy, tiers) = (self.wasm_module_compile, self.tiers);
+        if let Some(entry) = self.entry_mut(id) {
+            entry.jit_tiers.note_wasm_module_work(1, policy);
+            if entry.jit_tiers.wasm_promotes_roots(policy) {
+                entry.jit_tiers.note_wasm_backedges(tiers, function);
+            }
+        }
+    }
+
+    /// Count an entry into a selective Wasm module from the VM; whether its whole-module
+    /// compile is due (`WasmModuleTier`).
+    pub fn note_wasm_module_entry(&mut self, id: ProgramId) -> bool {
+        let policy = self.wasm_module_compile;
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_module_work(1, policy))
+    }
+
+    /// Whether Wasm module `id` starts in the interpreter at its first entry: always under the
+    /// selective A/B arm, else when it is too large to compile whole at once as cheaply as
+    /// waiting (`TIERS.wasm.eager_module_bytecodes`).
+    pub fn wasm_module_starts_interpreted(&self, id: ProgramId) -> bool {
+        self.wasm_module_compile == WasmModuleCompile::NEVER
+            || self.entry(id).is_some_and(|entry| {
+                let code = &entry.residual;
+                (0..code.functions.len())
+                    .filter_map(|index| code.function_get(index))
+                    .map(|function| function.code.len())
+                    .sum::<usize>()
+                    > self.tiers.wasm.eager_module_bytecodes
+            })
+    }
+
+    /// Whether Wasm module `id` still runs selectively: its whole-module compile not yet
+    /// claimed (`WasmModuleTier`).
+    pub fn wasm_module_selective(&self, id: ProgramId) -> bool {
+        self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_module_selective())
+    }
+
+    /// Whether Wasm modules compile whole at their first entry: not under a selective A/B arm that
+    /// keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
+    pub fn wasm_modules_compile_at_first_entry(&self) -> bool {
+        self.wasm_module_compile != WasmModuleCompile::NEVER
+    }
+
+    /// Compile every Wasm module whole at its first entry (`WasmModuleCompile::EAGER`), unless
+    /// a selective A/B arm keeps modules to their hot roots (`WasmModuleCompile::NEVER`).
+    pub fn compile_wasm_modules_at_first_entry(&mut self) {
+        if self.wasm_module_compile != WasmModuleCompile::NEVER {
+            self.wasm_module_compile = WasmModuleCompile::EAGER;
+        }
+    }
+
+    /// Keep every Wasm module to its hot roots (`WasmModuleCompile::NEVER`): tests of root
+    /// promotion.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn keep_wasm_modules_selective(&mut self) {
+        self.wasm_module_compile = WasmModuleCompile::NEVER;
+    }
+
+    /// Compile a Wasm module whole at `work`, never by time: a deterministic test policy.
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
+    pub(super) fn compile_wasm_modules_after_work(&mut self, work: u32) {
+        self.wasm_module_compile = WasmModuleCompile { work, after: std::time::Duration::MAX };
+    }
+
+    /// Record that the program's whole-module compile was claimed at its first call (eager
+    /// tiering, or a diagnostic root mode), so selective escalation never repeats it.
+    pub fn settle_wasm_module_tier(&mut self, id: ProgramId) {
+        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut())
+            && tiers.module != WasmModuleTier::Declined
+        {
+            tiers.module = WasmModuleTier::Whole;
+        }
+    }
+
+    /// Whether `compiled`, a whole compile of the Wasm module `id`, holds code for less than
+    /// `WASM_MODULE_MIN_COVERAGE` of its bytecodes. JavaScript programs are never short.
+    fn wasm_module_coverage_short(&self, id: ProgramId, compiled: &crate::vm::engine_types::CompiledProgram) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm || entry.residual.functions.len() < WASM_MODULE_WEIGHED_FUNCTIONS {
+            return false;
+        }
+        let (mut held, mut total) = (0usize, 0usize);
+        for index in 0..entry.residual.functions.len() {
+            let Some(function) = entry.residual.function_get(index) else { continue };
+            total += function.code.len();
+            if compiled.has_function(index) {
+                held += function.code.len();
+            }
+        }
+        held * 1000 < total * WASM_MODULE_MIN_COVERAGE
+    }
+
+    /// Claim a due whole-module compile (`WasmModuleTier::Whole`), releasing the
+    /// selective artifacts it supersedes from the tier budget. Active native calls keep
+    /// their own `Rc` through return, and an artifact's caches reach others only weakly.
+    pub fn claim_wasm_module_escalation(&mut self, id: ProgramId) -> bool {
+        let Some((artifacts, bytes)) = self
+            .entry_mut(id)
+            .and_then(|entry| entry.jit_tiers.claim_wasm_module_escalation())
+        else {
+            return false;
+        };
+        self.jit_code_cache
+            .release(JitArtifactKind::WasmTierRoot, artifacts, bytes);
+        true
     }
 
     pub fn wasm_tier(
@@ -1654,9 +1917,10 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.wasm_holding(function).cloned()
     }
 
-    /// Find a root artifact holding the requested function in the currently executing artifact.
-    /// Both caller and target can sit in one closure; prefer that closure so the native call
-    /// does not leave it.
+    /// Find a selective tier with the requested function in the currently
+    /// executing artifact. Indirect-call promotion can place both caller and
+    /// profile-selected target in one closure; prefer that closure so the
+    /// native call does not bounce through the baseline artifact.
     pub fn wasm_tier_for_artifact_containing(
         &self,
         id: ProgramId,
@@ -1725,6 +1989,11 @@ impl ProgramStore {
         true
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn wasm_tier_state(&self, id: ProgramId, function: u32) -> Option<WasmTierState> {
+        self.entry(id).and_then(|entry| entry.jit_tiers.wasm(function)).cloned()
+    }
+
     pub fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
         self.entry(id)?.jit_tiers.js(function).cloned()
     }
@@ -1762,26 +2031,557 @@ impl ProgramStore {
         self.js_jit_lane_methods_enabled
     }
 
-    /// Whether an entry of `function` of program `id` compiles it now (`JitTierManager::note_js_entry`).
-    /// A compile is due where a compile may start (`tier_policy::may_compile`) and the model picks a compiled tier for
-    /// the function (`compiled_tier`), within the tracking and code budgets.
-    pub fn note_js_function_entry(&mut self, id: ProgramId, function: u32, numeric: bool) -> bool {
-        let predicted = crate::vm::tier_policy::may_compile() && self.compiled_tier(id, function);
-        let compiled_functions = self.jit_code_cache.js_functions;
+    /// Takes the next warming-entry tick (`body_tier_in_lane`): one per entry a warming body
+    /// counts, which a function entered rarely but for long reads to specialize early.
+    #[inline]
+    pub(super) fn warming_tick(&self) -> u32 {
+        let tick = self.warming_ticks.get().wrapping_add(1);
+        self.warming_ticks.set(tick);
+        tick
+    }
+
+    #[inline]
+    pub fn tiers(&self) -> &'static Tiers { self.tiers }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
+
+    #[inline]
+    pub fn tier_events(&self) -> &super::tier_events::TierEvents {
+        &self.tier_events
+    }
+
+    #[inline]
+    pub fn js_jit_diagnostics_enabled(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
+    }
+
+    #[quench_macros::test_visible]
+    /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
+    pub(super) fn enable_js_jit_diagnostics(&mut self) {
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
+    }
+
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
+    pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| counters.field_cache_probes)
+    }
+
+    pub fn note_js_jit_dataview_float64(&mut self, setter: bool) {
+        if self.js_jit_diagnostics.is_none() {
+            return;
+        }
+        if setter {
+            self.js_jit_dataview_float64_set_entries += 1;
+        } else {
+            self.js_jit_dataview_float64_get_entries += 1;
+        }
+    }
+
+    /// Record the input guard outcome. Promotion checks only at prespecified
+    /// sample sizes; exact binomial cutoffs spend alpha across those looks.
+    pub fn note_js_function_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+        first_entry_candidate: bool,
+    ) -> bool {
+        let (compiled_functions, tiers) = (self.jit_code_cache.js_functions, self.tiers);
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
-        let compile = entry.jit_tiers.note_js_entry(function, numeric, predicted);
-        if compile && compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-            entry.jit_tiers.js_insert(function, JsTierState::Unsupported);
-            return false;
+        let already_tracked = entry.jit_tiers.js(function).is_some();
+        let step = entry.jit_tiers.note_js_entry(
+            tiers,
+            function,
+            numeric,
+            first_entry_candidate,
+            compiled_functions,
+            can_track,
+        );
+        if !already_tracked && entry.jit_tiers.js(function).is_some() {
+            self.js_jit_tracked_functions += 1;
+        } else if !can_track && !already_tracked {
+            self.js_jit_tracking_exhaustions =
+                self.js_jit_tracking_exhaustions.saturating_add(1);
         }
-        if compile && !can_track {
-            self.js_jit_tracking_exhaustions = self.js_jit_tracking_exhaustions.saturating_add(1);
-            return false;
+        if step.promotes() {
+            self.record_js_jit_promotion(id, function);
         }
-        compile
+        step.compiles()
+    }
+
+    /// Memoize an unsupported bytecode shape separately from tier candidates.
+    /// Cold bootstrap helpers therefore cannot consume the hot-function
+    /// promotion table. Return its accumulated count only once diagnostic
+    /// reporting becomes useful.
+    pub(super) fn reject_js_function(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+    ) -> Option<u64> {
+        let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
+        let entry = self.entry_mut(id)?;
+        let mut inserted = false;
+        let count = if let Some(JsTierState::Rejected { entries, .. }) =
+            entry.jit_tiers.js_mut(function)
+        {
+            *entries = entries.saturating_add(1);
+            *entries
+        } else {
+            if !can_reject {
+                return None;
+            }
+            inserted = entry
+                .jit_tiers
+                .js_insert(function, JsTierState::Rejected { entries: 1, reason });
+            if !inserted {
+                return None;
+            }
+            1
+        };
+        if inserted {
+            self.js_jit_rejected_functions += 1;
+        }
+        (count >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some(count)
+    }
+
+    pub(super) fn note_js_rejected_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<(u64, &'static str)> {
+        let JsTierState::Rejected { entries, reason } = self
+            .entry_mut(id)?
+            .jit_tiers
+            .js_mut(function)?
+        else {
+            return None;
+        };
+        *entries = entries.saturating_add(1);
+        (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
+    }
+
+    /// Counts, in the diagnostics report, an entry of a function no tier path claims: its entries
+    /// and, once rejected, its reason. The entry takes its general path whatever this finds.
+    pub fn observe_unclaimed_entry(&mut self, program: &ResidualProgram, id: ProgramId, function: u32, parameters: &[Value]) {
+        if self.js_jit_diagnostics.is_none() { return; }
+        let Some(body) = program.function_get(function as usize) else { return };
+        let Some(arguments) = parameters.get(..usize::from(body.params)) else { return };
+        let numeric = arguments.iter().all(|value| value.as_number().is_some());
+        let rejected = matches!(self.js_tier_ref(id, function), Some(JsTierState::Rejected { .. })).then(|| self.note_js_rejected_entry(id, function)).flatten();
+        let reported = match rejected {
+            Some(rejection) => Some(rejection),
+            None if self.js_tier_ref(id, function).is_none() => {
+                let reason = crate::vm::engine_calls::candidate_rejection_reason(program, function);
+                self.reject_js_function(id, function, reason).map(|entries| (entries, reason))
+            }
+            None => None,
+        };
+        if let Some((entries, reason)) = reported {
+            self.record_js_jit_entry(id, function, numeric, body.params);
+            self.record_js_jit_rejection(id, function, reason, entries);
+        }
+    }
+
+    pub fn record_js_jit_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+        parameter_count: u16,
+    ) {
+        self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
+    }
+
+    #[inline(always)]
+    pub fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) { if self.js_jit_diagnostics.is_some() { self.record_diagnosed_lane_entry(id, function); } }
+
+    #[inline(never)] fn record_diagnosed_lane_entry(&mut self, id: ProgramId, function: u32) {
+        let params = self.entry(id).and_then(|entry| entry.residual.function_get(function as usize)).map_or(0, |body| body.params);
+        self.record_js_jit_counter_entry(id, function, None, params);
+    }
+
+    fn record_js_jit_counter_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: Option<bool>,
+        parameter_count: u16,
+    ) {
+        let key = (id.raw(), function);
+        let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
+            return;
+        };
+        if diagnostics.contains_key(&key) {
+            if let Some(counters) = self
+                .js_jit_diagnostics
+                .as_mut()
+                .and_then(|diagnostics| diagnostics.get_mut(&key))
+            {
+                counters.parameter_count = parameter_count;
+                if let Some(numeric) = numeric {
+                    counters.entries = counters.entries.saturating_add(1);
+                    counters.numeric_entries = counters
+                        .numeric_entries
+                        .saturating_add(u64::from(numeric));
+                } else {
+                    counters.lane_entries = counters.lane_entries.saturating_add(1);
+                }
+            }
+            return;
+        }
+        if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
+            return;
+        }
+        let (source_name, function_name, instruction_count, opcode_counts, guard_census) = self
+            .entry(id)
+            .map(|entry| {
+                let slot = entry.residual.functions.get(function as usize);
+                let function_code = slot.and_then(|slot| slot.record());
+                let function_name = slot
+                    .and_then(|slot| slot.header().name.or_else(|| slot.header().inferred_name))
+                    .and_then(|atom| {
+                        let index = atom as usize;
+                        (index < entry.residual.atoms.len())
+                            .then(|| entry.residual.atoms[index].to_owned())
+                    })
+                    .unwrap_or_default();
+                let instruction_count = function_code.map_or(0, |function| {
+                    u32::try_from(function.code.len()).unwrap_or(u32::MAX)
+                });
+                let mut opcode_counts = vec![0_u32; crate::bytecode::OPCODE_COUNT];
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let opcode = instruction.as_wide().op() as usize;
+                        opcode_counts[opcode] = opcode_counts[opcode].saturating_add(1);
+                    }
+                }
+                let opcode_counts = opcode_counts
+                    .into_iter()
+                    .enumerate()
+                    .filter(|&(_opcode, count)| count != 0).map(|(opcode, count)| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
+                    .collect();
+                // This is a bytecode-site census, not a claim that a site is
+                // pure, redundant, or safe to remove. Predicate purity and
+                // path implication need separate proofs before optimization.
+                let mut guard_census = (0_u32, 0_u32, 0_u32, 0_u32);
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let instruction = instruction.as_wide();
+                        let op = instruction.op();
+                        // merge: the guard census counts conditional jumps (JumpFalse, JumpTrue, JumpBinaryFalse) and their comparison operator, as HEAD's JumpIf/CompareJump arms did.
+                        if crate::staged::conditional_jump(op) {
+                            guard_census.0 = guard_census.0.saturating_add(1);
+                            if crate::staged::compare_jump(op) {
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
+                            }
+                        } else if crate::staged::computes_unary(op)
+                            && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Typeof as u32
+                        {
+                            guard_census.1 = guard_census.1.saturating_add(1);
+                        } else if crate::staged::binary(op) {
+                            count_comparison_guard(&mut guard_census, instruction.binary_operator())
+                        }
+                    }
+                }
+                (
+                    entry.residual.source_name.clone(),
+                    function_name,
+                    instruction_count,
+                    opcode_counts,
+                    guard_census,
+                )
+            })
+            .unwrap_or_default();
+        if let Some(diagnostics) = self.js_jit_diagnostics.as_mut() {
+            let counters = diagnostics.entry(key).or_default();
+            counters.source_name = Some(source_name.into_boxed_str());
+            counters.function_name = Some(function_name.into_boxed_str());
+            counters.parameter_count = parameter_count;
+            counters.instruction_count = instruction_count;
+            counters.opcode_counts = opcode_counts;
+            counters.guard_conditional_branches = guard_census.0;
+            counters.guard_typeof_ops = guard_census.1;
+            counters.guard_strict_comparisons = guard_census.2;
+            counters.guard_relational_comparisons = guard_census.3;
+            if let Some(numeric) = numeric {
+                counters.entries = counters.entries.saturating_add(1);
+                counters.numeric_entries = counters
+                    .numeric_entries
+                    .saturating_add(u64::from(numeric));
+            } else {
+                counters.lane_entries = counters.lane_entries.saturating_add(1);
+            }
+        }
+    }
+
+    fn record_js_jit_promotion(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.promotions = counters.promotions.saturating_add(1);
+        }
+    }
+
+    pub fn record_js_jit_compile(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        elapsed_ns: u64,
+        code_bytes: usize,
+        installed: bool,
+        rejection: Option<&'static str>,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.compile_attempts = counters.compile_attempts.saturating_add(1);
+            counters.compile_successes = counters
+                .compile_successes
+                .saturating_add(u64::from(installed));
+            counters.compile_ns = counters.compile_ns.saturating_add(elapsed_ns);
+            counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
+            if rejection.is_some() {
+                counters.rejection_reason = rejection;
+            }
+        }
+    }
+
+    pub(super) fn record_js_jit_rejection(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        reason: &'static str,
+        entries: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.rejection_reason = Some(reason);
+            counters.entries = entries;
+        }
+    }
+
+    pub fn record_js_jit_native_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.native_entries = counters.native_entries.saturating_add(1);
+        }
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub fn record_js_jit_field_cache_probe(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        cache_site: u16,
+        hit: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
+            counters.field_cache_hits = counters
+                .field_cache_hits
+                .saturating_add(u64::from(hit));
+            let site = counters.field_cache_sites.entry(cache_site).or_default();
+            site.0 = site.0.saturating_add(1);
+            site.1 = site.1.saturating_add(u64::from(hit));
+        }
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub fn record_js_jit_field_store_cache_probe(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        hit: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_store_cache_probes =
+                counters.field_store_cache_probes.saturating_add(1);
+            counters.field_store_cache_hits = counters
+                .field_store_cache_hits
+                .saturating_add(u64::from(hit));
+        }
+    }
+
+    /// Count call instructions handled by a compiled function's VM islands.
+    /// Rows are bounded by that function's static Call/CallArray PCs and only
+    /// exist when the opt-in diagnostics map has been allocated.
+    #[cfg(feature = "native-execution")]
+    pub fn record_js_jit_call_site(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+        direct_target: Option<(u32, u32)>,
+        outcome: JsJitCallOutcome,
+        sampled_call_ns: Option<u64>,
+    ) {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        else {
+            return;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return;
+        };
+        let key = (pc, opcode as u16);
+        let index = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => index,
+            Err(index) => {
+                counters.call_sites.insert(
+                    index,
+                    JsJitCallSiteCounters {
+                        pc,
+                        opcode: key.1,
+                        ..JsJitCallSiteCounters::default()
+                    },
+                );
+                index
+            }
+        };
+        let site = &mut counters.call_sites[index];
+        site.attempts = site.attempts.saturating_add(1);
+        site.note_target(direct_target);
+        let outcome_count = &mut site.outcomes[outcome as usize];
+        *outcome_count = outcome_count.saturating_add(1);
+        if let Some(elapsed_ns) = sampled_call_ns {
+            site.sampled_calls = site.sampled_calls.saturating_add(1);
+            let outcome_elapsed = &mut site.sampled_call_ns[outcome as usize];
+            *outcome_elapsed = outcome_elapsed.saturating_add(elapsed_ns);
+        }
+    }
+
+    /// Sample the first call and then one in each interval at a static call site.
+    /// The attempt count is advanced by `record_js_jit_call_site` after the call.
+    #[cfg(feature = "native-execution")]
+    pub fn should_sample_js_jit_call_site(
+        &self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+    ) -> bool {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.get(&(id.raw(), function)))
+        else {
+            return false;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return false;
+        };
+        let key = (pc, opcode as u16);
+        let attempts = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => counters.call_sites[index].attempts,
+            Err(_) => 0,
+        };
+        attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
+    }
+
+    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
+    pub(super) fn js_jit_call_site_counts(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<Vec<(
+        u32,
+        u16,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
+        Option<(u32, u32)>,
+        u64,
+        u64,
+        u64,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
+    )>> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| {
+                counters
+                    .call_sites
+                    .iter()
+                    .map(|site| {
+                        (
+                            site.pc,
+                            site.opcode,
+                            site.attempts,
+                            site.outcomes,
+                            site.direct_target,
+                            site.direct_target_calls,
+                            site.alternate_target_calls,
+                            site.other_target_calls,
+                            site.sampled_calls,
+                            site.sampled_call_ns,
+                        )
+                    })
+                    .collect()
+            })
+    }
+
+    pub fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.fallback_entries = counters.fallback_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_interpreter_completion(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        inclusive_ns: u64,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.interpreter_completions = counters.interpreter_completions.saturating_add(1);
+            counters.interpreter_inclusive_ns = counters
+                .interpreter_inclusive_ns
+                .saturating_add(inclusive_ns);
+        }
     }
 
     pub fn install_js_tier(
@@ -1799,16 +2599,14 @@ impl ProgramStore {
         let compiled = compiled.filter(|compiled| {
             self.jit_code_cache.retain(JitArtifactKind::JsFunction, compiled.mapped_bytes())
         });
-        let mut tracked = false;
         if let Some(entry) = self.entry_mut(id) {
             let tier = compiled.map_or(JsTierState::Unsupported, JsTierState::Compiled);
             if let Some(state) = entry.jit_tiers.js_mut(function) {
                 *state = tier;
             } else {
-                tracked = entry.jit_tiers.js_insert(function, tier);
+                entry.jit_tiers.js_insert(function, tier);
             }
         }
-        self.js_jit_tracked_functions += usize::from(tracked);
         self.js_tier(id, function)
             .is_some_and(|tier| matches!(tier, JsTierState::Compiled(_)))
     }
@@ -1823,9 +2621,8 @@ impl ProgramStore {
         self.js_jit_tracking_exhaustions
     }
 
-    #[quench_macros::test_visible]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_code_cache.mapped_bytes
+        self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
     /// The epoch program contexts are derived at (`context_epoch`).
@@ -1865,6 +2662,34 @@ impl ProgramStore {
         }
     }
 
+    /// Clears every lane view's global-object hints of its by-name loads
+    /// (`LaneView::clear_name_hints`): the global lexical names they read past changed.
+    pub(super) fn clear_global_name_hints(&self) {
+        for entry in self.programs.iter().flatten() {
+            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
+                view.clear_name_hints();
+            }
+        }
+    }
+
+    /// Gives every lane view's operator records that read a speculative int32 register their
+    /// checked forms (`LaneView::retire_int_speculation`): an update of one overflowed.
+    pub(super) fn retire_int_speculation(&self) {
+        for entry in self.programs.iter().flatten() {
+            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
+                view.retire_int_speculation();
+            }
+        }
+    }
+
+    /// `LaneView::rewrite_handlers` on every lane view of every program.
+    pub fn rewrite_lane_handlers(&self, map: &impl Fn(*const ()) -> Option<*const ()>) {
+        for entry in self.programs.iter().flatten() {
+            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
+                view.rewrite_handlers(map);
+            }
+        }
+    }
 
     /// A program's lane views by function, derived on first use.
     pub fn views_in_lane(
@@ -1886,12 +2711,16 @@ impl ProgramStore {
         (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
-    /// The lane view a general-loop entry of `function` runs with: derived at its first entry where its predicted tier
-    /// compiles it (`compiled_tier`), and not while it still runs unlowered (`ResidualProgram::runs_tier0`).
+    /// The lane view a general-loop entry of `function` runs with. A function that may loop
+    /// gets it at its first entry; any other once its deferred runs are complete
+    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
+    /// body) runs on the general path instead of first deriving a view of every instruction,
+    /// which costs more than those runs.
     pub fn entry_lane_view<'s>(
         &'s self,
         id: ProgramId,
         function: u32,
+        may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
         derive: impl FnOnce(
             &crate::bytecode::Function,
             &[Value],
@@ -1906,19 +2735,29 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if entry.residual.runs_tier0(function as usize) || !self.compiled_tier(id, function) {
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
             return None;
         }
         Some(store_lane_view(entry, function, code, view, derive))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or its predicted tier compiles the function
-    /// (`compiled_tier`). An interpreted function is called from the general path.
-    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32) -> bool {
+    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
+    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
+    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
+    /// general path.
+    /// An unlowered function derives only where `unlowered` (`Vm::call_may_derive_in_lane`); where
+    /// `now`, its deferred runs are skipped, uncounted.
+    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
         let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        entry.views_in_lane.derived(function).is_some() || self.compiled_tier(id, function)
+        let derived = entry.views_in_lane.derived(function).is_some();
+        derived
+            || entry
+                .lane_deferred
+                .get(function as usize)
+                .is_some_and(|runs| now || deferred_run_completes(runs))
+                && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 
     pub fn view_in_lane<'s>(
@@ -2113,17 +2952,6 @@ impl ProgramStore {
             roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
             roots.extend(entry.root_constants.environment.get());
-            // A planned arm's target holds its closure, its environment and its lexical `this`, which the arm
-            // enters while the program lives (`PlannedTarget`).
-            for slot in entry.planned_targets.borrow().values() {
-                let target = slot.target.get();
-                roots.extend([target.closure.callee, target.closure.env, target.closure.lexical_this]);
-            }
-            roots.extend(entry.class_prototypes.borrow().values().copied());
-            // A written closure cell is its body's one closure, which the body's calls enter while the program lives.
-            if let Some(table) = entry.closure_cells.get() {
-                roots.extend(table.iter().flatten().filter_map(|cell| cell.get().copied()));
-            }
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,
@@ -2133,6 +2961,35 @@ impl ProgramStore {
     }
 }
 
+impl ProgramStore {
+    /// Whether dropping the store reports something (`QUENCH_TRACE=js-jit`).
+    pub fn reports_on_drop(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
+    }
+}
+
+/// The diagnostics report's ratios are parts per million.
+const PARTS_PER_MILLION: u128 = 1_000_000;
+
+/// `part` of `whole` in parts per million, capped at the whole; zero of nothing is zero.
+fn parts_per_million(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        return 0;
+    }
+    (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
+}
+
+impl Drop for ProgramStore {
+    fn drop(&mut self) {
+        let census = crate::trace::Channel::Census.on();
+        if census && self.js_jit_diagnostics.is_some() {
+            eprintln!("{}", self.tier_census().render());
+        }
+        if !census || crate::trace::Channel::JsJit.on() {
+            self.report_js_jit();
+        }
+    }
+}
 
 fn write_json_string(output: &mut impl std::io::Write, value: &str) -> std::io::Result<()> {
     write!(output, "\"")?;
@@ -2152,6 +3009,13 @@ fn write_json_string(output: &mut impl std::io::Write, value: &str) -> std::io::
     write!(output, "\"")
 }
 
+fn numeric_promotion_decision(tiers: &Tiers, numeric: u8, observations: u8) -> Option<bool> {
+    let minimum = tiers.js_function.promotion_looks
+        .iter()
+        .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
+    Some(numeric >= minimum)
+}
+
 /// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
 #[cfg(feature = "profile-lane-exits")]
 fn census_label(entry: &ProgramEntry, function: u32) -> String {
@@ -2163,6 +3027,16 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
         body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
         body.and_then(|body| body.source_span).map(|span| span.start),
     )
+}
+
+/// Count one view-less run of a function; true once its deferred runs are complete.
+fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
+    let held = runs.get();
+    if held & loops::DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
+        return true;
+    }
+    runs.set(held + 1);
+    false
 }
 
 /// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).
@@ -2321,12 +3195,56 @@ impl LaneViews {
 
 // Profiled builds deliberately disable JS function tiers (`Vm::tier_may_run`).
 #[cfg(all(test, not(quench_profiled)))]
+mod lane_diagnostic_tests {
+    #[test]
+    fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
+        let program = crate::Engine::compile(crate::ExecutionRequest::script(
+            r#"
+                function label(value) { return value + '!'; }
+                function drive(count) {
+                    let result;
+                    for (let index = 0; index < count; index++) result = label(index);
+                    return result;
+                }
+                for (let round = 0; round < 4; round++) {
+                    if (drive(2000) !== '1999!') throw Error('lane call result');
+                }
+            "#,
+            "lane-diagnostic-entries.js",
+        )).unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let counters = vm.programs.js_jit_diagnostics.as_ref().unwrap().values()
+            .find(|counters| counters.function_name.as_deref() == Some("label"))
+            .expect("the called function must have diagnostic counters");
+        assert!(counters.lane_entries > 1000,
+            "hot plain calls must stay visible after tier rejection: {} tier entries, {} lane entries",
+            counters.entries, counters.lane_entries);
+    }
+}
+
+#[cfg(test)]
 mod jit_code_cache_tests {
+    use crate::vm::tier_policy::TierRows;
     use super::{
-        JIT_MAX_ARTIFACTS, JS_JIT_MAX_FUNCTIONS,
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
+
+    #[test]
+    fn wasm_module_compiles_whole_once_its_work_or_time_says_it_runs_long() {
+        use super::WasmModuleCompile as Policy;
+        let policy = Policy::ADAPTIVE;
+        assert!(!policy.due(1, std::time::Duration::ZERO));
+        assert!(!policy.due(policy.work - 1, policy.after / 2));
+        assert!(policy.due(policy.work, std::time::Duration::ZERO));
+        assert!(policy.due(1, policy.after));
+        assert!(Policy::EAGER.due(1, std::time::Duration::ZERO));
+        assert!(!Policy::NEVER.due(u32::MAX - 1, std::time::Duration::MAX / 2));
+    }
 
     #[test]
     fn shared_jit_cache_budget_tracks_mixed_artifacts() {
@@ -2339,7 +3257,18 @@ mod jit_code_cache_tests {
         cache.release(JitArtifactKind::WasmTierRoot, 1, 256 * 1024);
         assert_eq!(cache.artifacts, 1);
         assert_eq!(cache.mapped_bytes, 128 * 1024);
+
+        // An eager module artifact larger than the shared ceiling is admitted against its
+        // own, and leaves the tiers' allowance as it was.
+        assert!(cache.retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES + 1));
+        assert_eq!((cache.artifacts, cache.mapped_bytes), (1, 128 * 1024));
         assert!(cache.can_retain(JitArtifactKind::JsFunction, 128 * 1024));
+        assert!(!cache.can_retain(
+            JitArtifactKind::BaselineWasm,
+            WASM_JIT_MAX_BASELINE_MAPPED_BYTES - JIT_MAX_MAPPED_BYTES
+        ));
+        cache.release(JitArtifactKind::BaselineWasm, 1, JIT_MAX_MAPPED_BYTES + 1);
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, WASM_JIT_MAX_BASELINE_MAPPED_BYTES));
     }
 
     #[test]
@@ -2360,37 +3289,46 @@ mod jit_code_cache_tests {
             WASM_JIT_MAX_TIER_MAPPED_BYTES + 1
         ));
         assert_eq!(cache.artifacts, JIT_MAX_ARTIFACTS);
+        // Full tiers do not hold back an eager module artifact.
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, 0));
     }
 
     #[test]
     fn jit_tier_manager_rejects_cross_frontend_state_for_one_program() {
         let mut tiers = super::JitTierManager::default();
         assert!(tiers.js_insert(3, super::JsTierState::Unsupported));
-        assert!(!tiers.wasm_unattempted(3));
-        assert!(!tiers.claim_wasm_root(3));
+        assert!(tiers.wasm_mut_or_default(3).is_none());
+        assert!(tiers.wasm_mut_or_default(4).is_none());
         assert!(matches!(tiers.js(3), Some(super::JsTierState::Unsupported)));
         assert_eq!(tiers.js_values().count(), 1);
         assert_eq!(tiers.wasm_values().count(), 0);
 
         let mut wasm_tiers = super::JitTierManager::default();
-        assert!(wasm_tiers.claim_wasm_root(4));
+        assert!(wasm_tiers.wasm_mut_or_default(4).is_some());
         assert!(!wasm_tiers.js_insert(3, super::JsTierState::Unsupported));
         assert_eq!(wasm_tiers.wasm_values().count(), 1);
-        assert!(!wasm_tiers.note_js_entry(3, true, true));
+        assert_eq!(
+            wasm_tiers.note_js_entry(TierRows::Measured.table(), 3, true, true, 0, true),
+            super::JsEntryStep::Count
+        );
     }
 
     #[test]
     fn jit_tier_manager_owns_frontend_promotion_transitions() {
         let mut js_tiers = super::JitTierManager::default();
-        assert!(js_tiers.note_js_entry(1, true, true));
-        assert!(!js_tiers.note_js_entry(1, false, true));
-        assert!(!js_tiers.note_js_entry(2, true, false));
+        let first = js_tiers.note_js_entry(TierRows::Measured.table(), 1, true, true, 0, true);
+        assert_eq!(first, super::JsEntryStep::PromoteAndCompile);
+        assert!(matches!(
+            js_tiers.js(1),
+            Some(super::JsTierState::PromotionPending)
+        ));
 
         let mut wasm_tiers = super::JitTierManager::default();
-        assert!(wasm_tiers.wasm_unattempted(2));
-        assert!(wasm_tiers.claim_wasm_root(2));
-        assert!(!wasm_tiers.wasm_unattempted(2));
-        assert!(!wasm_tiers.claim_wasm_root(2));
+        for _ in 1..TierRows::Measured.table().wasm.promotion_entries {
+            assert!(!wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
+        }
+        assert!(wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
+        assert!(!wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
         assert!(matches!(
             wasm_tiers.wasm(2),
             Some(super::WasmTierState::Attempted)
@@ -2421,6 +3359,25 @@ fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<crate::vm::engi
     unsafe { Box::from_raw(cells) }
 }
 
+/// Counts a comparison in the guard census: strict (in)equality in its third column, an
+/// order (`<`, `<=`, `>`, `>=`) in its fourth.
+fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
+    use oxc_ast::ast::BinaryOperator;
+    const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
+    const ORDER: [BinaryOperator; 4] = [
+        BinaryOperator::LessThan,
+        BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan,
+        BinaryOperator::GreaterEqualThan,
+    ];
+    let named = |operators: &[BinaryOperator]| operators.iter().any(|&named| named as u32 == operator);
+    if named(&STRICT) {
+        census.2 = census.2.saturating_add(1);
+    } else if named(&ORDER) {
+        census.3 = census.3.saturating_add(1);
+    }
+}
+
 /// `len` zero counts on zero pages: a program's per-function counts take a slot for each
 /// function it may append, which a filled table would touch at its load.
 pub(super) fn zeroed_counts(len: usize) -> Vec<std::cell::Cell<u8>> {
@@ -2431,8 +3388,8 @@ pub(super) fn zeroed_counts(len: usize) -> Vec<std::cell::Cell<u8>> {
 }
 
 /// The tiers of a Wasm entry made where no compile is (`wasm_activation::offer_entry`): the lane's.
-/// It reads the root tiers, and hands a compile that is due to the general loop, which makes it at the same call
-/// (`Compile::Leave`).
+/// They count the entry as the general loop's tiers do, and hand a compile it makes due to the
+/// general loop, which makes it at the same call (`Compile::Leave`).
 pub struct HandoffTiers<'a> {
     pub store: &'a mut ProgramStore,
     pub program: ProgramId,
@@ -2442,16 +3399,40 @@ impl crate::staged::wasm_activation::WasmEntryTiers for HandoffTiers<'_> {
     type Code = Rc<crate::vm::engine_types::CompiledProgram>;
 
     #[inline(always)]
+    fn whole(&mut self, function: u32) -> Option<Self::Code> {
+        self.store.compiled(self.program).flatten().filter(|compiled| compiled.has_function(function as usize))
+    }
+
+    #[inline(always)]
+    fn note_module_work(&mut self) -> bool {
+        self.store.note_wasm_module_entry(self.program)
+    }
+
+    fn compile_whole(&mut self) -> crate::staged::wasm_activation::Compile {
+        crate::staged::wasm_activation::Compile::Leave
+    }
+
+    #[inline(always)]
     fn root(&mut self, function: u32) -> Option<Self::Code> {
         self.store.wasm_tier_containing(self.program, function)
     }
 
     #[inline(always)]
-    fn root_due(&mut self, function: u32) -> bool {
-        self.store.wasm_root_due(self.program, function)
+    fn root_admissible(&mut self, function: u32) -> bool {
+        self.store.wasm_root_admissible(self.program, function)
+    }
+
+    #[inline(always)]
+    fn note_root_entry(&mut self, function: u32) -> bool {
+        self.store.note_wasm_root_entry(self.program, function, true)
     }
 
     fn compile_root(&mut self, _function: u32) -> crate::staged::wasm_activation::Compile {
         crate::staged::wasm_activation::Compile::Leave
+    }
+
+    #[inline(always)]
+    fn note_fallback(&mut self, function: u32) {
+        self.store.has_compiled_function_or_note_fallback(self.program, function as usize);
     }
 }

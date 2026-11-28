@@ -218,7 +218,7 @@ mod tests {
     use super::*;
     use crate::staged::Concrete;
 
-    fn concrete() -> Concrete { Concrete::pure() }
+    fn concrete() -> Concrete { Concrete::new(std::ptr::null()) }
 
     #[test]
     fn a_strict_receiver_always_binds_and_a_sloppy_primitive_never_does() {

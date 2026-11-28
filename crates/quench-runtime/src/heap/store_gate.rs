@@ -13,39 +13,46 @@ impl Heap {
         if !self.store_watched && value.heap_index().is_none() {
             return true;
         }
-        let logs = self.space_store_logs(space, record_id, value);
-        !self.tracks_slot_values() && !logs
-    }
-
-    /// Whether a store of `value` into `space`'s record `record_id` needs the barrier's log (`RecordSpace::store_logs`).
-    /// A class cell's `record_id` is its granule, which its region and local cell name (`ClassSpace::store_logs`).
-    #[inline(always)]
-    fn space_store_logs(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
-        match space {
+        let logs = match space {
+            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
             StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
-            StagedRecordSpace::Class => self.class_space.store_logs(record_id, value),
-        }
+        };
+        !self.tracks_slot_values() && !logs
     }
 
     /// `store_unlogged` of a store whose value the slot's type already holds: slot observation
     /// sees nothing of it, so only the barrier's log is asked.
     #[inline(always)]
     pub(crate) fn held_store_unlogged(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
-        !self.space_store_logs(space, record_id, value)
+        !match space {
+            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
+            StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
+        }
     }
 
-    /// Recomputes `store_watched` after a gate input changed: slot observation
-    /// (`track_slot_representations`).
+    /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
+    /// reference counts (`set_rc`) or slot observation (`track_slot_representations`).
     pub(super) fn refresh_store_watch(&mut self) {
-        self.store_watched = self.properties.tracks();
+        self.store_watched = self.rc_active || self.properties.tracks();
     }
 
     /// The word native stores read as their gate (`JsStepHead::store_watch`): `store_watched`,
-    /// as slot observation (`STORE_WATCH_TRACKS`). Zero exactly when `store_watched` is clear.
+    /// split into its inputs, slot observation (`STORE_WATCH_TRACKS`) and reference counts
+    /// (`STORE_WATCH_COUNTS`). Zero exactly when `store_watched` is clear.
     #[inline(always)]
     pub fn store_watch_word(&self) -> usize {
-        use crate::staged::layout_offsets::STORE_WATCH_TRACKS;
-        (if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 }) as usize
+        use crate::staged::layout_offsets::{STORE_WATCH_COUNTS, STORE_WATCH_TRACKS};
+        let tracks = if self.properties.tracks() { STORE_WATCH_TRACKS } else { 0 };
+        let counts = if self.rc_active { STORE_WATCH_COUNTS } else { 0 };
+        (tracks | counts) as usize
+    }
+
+    /// Whether a store of a value that names no heap record needs no barrier log: always, unless
+    /// old records keep counts (`RecordSpace::store_logs`). What a staged store proved immediate
+    /// still asks (`staged::Stage::immediate_store_open`).
+    #[inline(always)]
+    pub(crate) fn immediate_store_unlogged(&self) -> bool {
+        !self.rc_active
     }
 
     /// Whether an add of `value` at `slot` of `shape` (the add's after-shape) changes no slot
@@ -55,18 +62,14 @@ impl Heap {
     pub(crate) fn add_observation_holds(&self, shape: u32, slot: usize, value: Value) -> bool {
         self.properties.tracks() && !value.is_deleted() && slot < self.properties.shape_length(shape) && {
             let held = self.properties.slot_observation(shape, slot);
-            // A Number slot holds raw doubles, so an int32 is not its word: the held row would store it
-            // as is, so the add takes the joining path, whose words are `ValueArena::stored_word`.
-            let raw_int = held == crate::typed_ir::SlotType::Number && value.as_int().is_some();
-            held == crate::typed_ir::SlotType::Tagged || (!raw_int && held.join(crate::typed_ir::SlotType::of(value)) == held)
+            held == crate::typed_ir::SlotType::Tagged || held.join(crate::typed_ir::SlotType::of(value)) == held
         }
     }
 
-    /// The class edge's retirement (R4-C4): an object's class moved from shape `previous` to `next`,
-    /// its header already written (by a staged add row, or `ObjectMut::set_class`). Retires the code
-    /// that holds `previous` stable past a call (`ValueArena::note_shape_transition`).
+    /// Notes an object's move from shape `previous` to `next` (`ValueArena::note_shape_transition`),
+    /// which retires the code that holds `previous` stable past a call.
     #[inline(always)]
-    pub(crate) fn set_class(&mut self, previous: u32, next: u32) {
+    pub(crate) fn note_shape_departure(&mut self, previous: u32, next: u32) {
         self.properties.note_shape_transition(previous, next);
     }
 
@@ -80,6 +83,16 @@ impl Heap {
     #[inline(always)]
     pub fn arena_values_base(&self) -> *const Value {
         self.properties.values_base()
+    }
+
+    /// Object record `record_id` for a store that `store_unlogged` admitted.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record, and `&mut self` is exclusive.
+    #[inline(always)]
+    pub(crate) unsafe fn unlogged_object_record(&mut self, record_id: u32) -> *mut Object {
+        // SAFETY: the caller's contract; the barrier logs nothing for the admitted store.
+        unsafe { self.object_records.get_live_mut_unbarriered(record_id) }
     }
 
     /// The `Object` part of function record `record_id` for a store that `store_unlogged` admitted.

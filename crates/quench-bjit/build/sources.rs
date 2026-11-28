@@ -12,9 +12,8 @@ use std::{
 
 /// The attribute that names a module's file.
 const PATH_ATTRIBUTE: &str = "#[path = \"";
-/// The files the graph starts from, relative to the crate: the build script, the stencil directory and quench-staged's
-/// sources (the stencil rows compile against them).
-const ROOTS: [&str; 3] = ["build.rs", "stencils", "../quench-staged/src"];
+/// The files the graph starts from, relative to the crate: the build script and the stencil directory.
+const ROOTS: [&str; 2] = ["build.rs", "stencils"];
 
 /// The files to watch, relative to `crate_dir`.
 pub fn watched(crate_dir: &Path) -> BTreeSet<PathBuf> {
@@ -24,7 +23,7 @@ pub fn watched(crate_dir: &Path) -> BTreeSet<PathBuf> {
         if is_test(crate_dir, &path) || !seen.insert(path.clone()) {
             continue;
         }
-        pending.extend(members(crate_dir, &path));
+        pending.extend(members(&path));
         pending.extend(owned_directory(&path));
     }
     seen.into_iter().filter(|path| !path.is_dir()).collect()
@@ -47,7 +46,7 @@ fn owned_directory(file: &Path) -> Option<PathBuf> {
 }
 
 /// What a directory holds, or the files a source file names in `#[path]` attributes.
-fn members(crate_dir: &Path, path: &Path) -> Vec<PathBuf> {
+fn members(path: &Path) -> Vec<PathBuf> {
     if path.is_dir() {
         return fs::read_dir(path).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
     }
@@ -60,17 +59,15 @@ fn members(crate_dir: &Path, path: &Path) -> Vec<PathBuf> {
         .filter(|line| !line.trim_start().starts_with("//"))
         .filter_map(|line| line.split_once(PATH_ATTRIBUTE))
         .filter_map(|(_, rest)| rest.split_once('"'))
-        .map(|(named, _)| normalize(crate_dir, &base.join(named)))
+        .map(|(named, _)| normalize(&base.join(named)))
         .collect()
 }
 
-/// `path` without its `.` and `..` components, so one file has one name. A `..` that would climb above `crate_dir`
-/// stays: quench-staged's files are named `../quench-staged/src/...` as rustc names them (`staged_sources` and the
-/// rows' dep-info), and a name that left the crate would make the key differ by checkout.
-fn normalize(crate_dir: &Path, path: &Path) -> PathBuf {
+/// `path` without its `.` and `..` components, so one file has one name.
+fn normalize(path: &Path) -> PathBuf {
     path.components().fold(PathBuf::new(), |mut normal, component| {
         match component {
-            std::path::Component::ParentDir if normal.file_name().is_some() && normal.as_path() != crate_dir => { normal.pop(); }
+            std::path::Component::ParentDir if normal.file_name().is_some() => { normal.pop(); }
             std::path::Component::CurDir => {}
             other => normal.push(other),
         }

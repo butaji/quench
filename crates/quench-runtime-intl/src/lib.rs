@@ -39,7 +39,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::Value;
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_set_function_name};
+    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
     pub use quench_runtime::library_surface::CellKind;
     pub use quench_runtime::library_surface::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
@@ -59,7 +59,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::bytecode::MAX_ARRAY_LENGTH;
     pub use quench_runtime::vm::pending_job::PendingJob;
     pub use quench_runtime::vm::atom_set::{AtomSet, IndexAtoms};
-    pub use quench_runtime::vm::call_printer::freeze_call_sites;
+    pub use quench_runtime::vm::call_printer::{freeze_call_sites, freeze_source_call_sites};
     pub use quench_runtime::vm::engine_types::{copy_arguments, fill_window as fill_registers};
     pub use quench_runtime::vm::group_by::GroupByKind;
     pub use quench_runtime::vm::property_definition::PropertyDefinitionKind;

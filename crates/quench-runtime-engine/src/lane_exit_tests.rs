@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::dispatch_fast::super_chain::tests::printed;
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A number, boolean, bigint or symbol read of a name its prototype chain lacks is `undefined`;
 /// a prototype that gains the name, a getter that sees a primitive `this`, or a changed chain

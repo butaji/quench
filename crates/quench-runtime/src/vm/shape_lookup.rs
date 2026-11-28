@@ -192,7 +192,7 @@ impl ShapeLookupIndex {
 }
 
 mod owned_dictionary;
-pub(super) use owned_dictionary::{owned_dictionaries, owned_slots, rebuild_owned_dictionary, restore_owned_dictionaries};
+pub(super) use owned_dictionary::{is_owned as is_owned_dictionary, owned_dictionaries, owned_slots, rebuild_owned_dictionary, restore_owned_dictionaries};
 
 #[cfg(test)]
 mod tests;

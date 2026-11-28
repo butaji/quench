@@ -12,8 +12,14 @@ const ARRAY_INDEX_GET_SPARSE: usize = 1;
 pub fn mutable_array_elements(
     elements: &mut crate::heap::ArrayElements,
 ) -> &mut crate::heap::UniqueElements {
+    if quench_runtime_trace_on() && elements.len() == 16900 {
+        let caller = std::panic::Location::caller();
+        eprintln!("MUTABLE-ARRAY double={} at {}:{}", elements.is_double(), caller.file(), caller.line());
+    }
     elements.make_mut()
 }
+
+fn quench_runtime_trace_on() -> bool { crate::trace::Channel::JsJit.on() }
 
 /// `elements`' value at `index`, below its length, set in place where the backing takes it —
 /// a Number into a double one (`replace_in_place`), which keeps it double — and by a copy
@@ -213,8 +219,8 @@ impl Vm {
                         .heap
                         .sparse_get(object, index)
                         .is_some_and(|value| !value.is_deleted());
-                let integrity = self.heap.object(object);
-                if integrity.is_some_and(|object| object.is_frozen())
+                let integrity = self.object_data(object);
+                if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
                     let atom = self.index_key_atom(index);
@@ -287,7 +293,7 @@ impl Vm {
         let index = usize::try_from(key.as_int()?).ok()?;
         let mut current = base;
         loop {
-            let data = self.heap.object(current)?;
+            let data = self.object_data(current)?;
             if data.has_indexed_descriptors()
                 || data.is_arguments_object()
                 || data.boxed_primitive().is_some()
@@ -304,7 +310,7 @@ impl Vm {
                 }
                 Some(_) => {}
                 None => {
-                    self.heap.ordinary_view(current)?;
+                    self.heap.ordinary_object(current)?;
                 }
             }
             let base_checked = current == base;
@@ -461,7 +467,7 @@ impl Vm {
             let elements = array.elements();
             !array.has_indexed_descriptors() && array.arguments_map().is_none() && elements.owner_count() == 1
                 && (index == elements.len() || elements.get(index).is_some_and(|element| element.is_deleted()))
-        }) && self.heap.object(object).is_some_and(|data| data.is_extensible() && !data.is_frozen())
+        }) && self.object_data(object).is_some_and(|data| data.is_extensible() && !data.is_frozen())
             && self.property_attributes(object, PropertyKey::string(self.length_atom)).is_none_or(|attributes| attributes.writable)
             && self.inherited_index_unclaimed(object, index);
         adds && self.store_validated_array_element(object, index, value)
@@ -709,8 +715,8 @@ impl Vm {
                 .heap
                 .sparse_get(object, index)
                 .is_some_and(|value| !value.is_deleted());
-        let integrity = self.heap.object(object);
-        if integrity.is_some_and(|object| object.is_frozen())
+        let integrity = self.object_data(object);
+        if integrity.is_some_and(Object::is_frozen)
             || integrity.is_some_and(|object| !object.is_extensible()) && !existing
         {
             return Err(JsError("cannot write sealed or frozen array".into()));

@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list: the first number after the `RelocKind` ones.
-const BASE_PC_NAMESPACE: u32 = RelocKind::EntryStub as u32 + 1;
+const BASE_PC_NAMESPACE: u32 = RelocKind::GuardLayout as u32 + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
@@ -37,8 +37,6 @@ pub(crate) const NO_SHAPE: u32 = u32::MAX;
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
 pub(crate) const ATTRIBUTE_ENUMERABLE: u8 = 1 << 1;
 pub(crate) const ATTRIBUTE_CONFIGURABLE: u8 = 1 << 2;
-/// The attribute bits of a field an initializer's store adds: a plain data property.
-pub(crate) const ADDED_FIELD: u8 = ATTRIBUTE_WRITABLE | ATTRIBUTE_ENUMERABLE | ATTRIBUTE_CONFIGURABLE;
 
 /// What a run-time address in image code addresses. Class A/B variants mirror `RelocKind`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -74,26 +72,14 @@ pub(crate) enum Symbol {
     HolderLink(u32),
     /// The value that holder's slot holds when the code links (`holder_constant`).
     HolderValue(u32),
-    /// The class id of the cell a field guard key's construction makes (`guarded_layout`):
+    /// The layout id of the objects of a field guard key's construction (`guarded_layout`):
     /// `NO_LAYOUT` where the guard does not resolve.
     GuardLayout(u32),
-    /// The layout id of the instances shape recipe `key` builds (`class_layout_id`): `NO_LAYOUT` where its
-    /// prototype does not resolve. Keyed by the recipe, as `Shape`.
-    ClassLayout(u32),
-    /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
-    /// class's vector from by its layout id. One table for the process: keyed 0.
-    ClassMethods,
-    /// The entry stub (`lane_body_abi::entry_stub`): the one the image links ahead, or the process's. Keyed 0.
-    EntryStub,
 }
 
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
 
 pub(crate) use quench_runtime::vm::engine_types::ShapeRecipe;
-#[path = "symbols/guard_access.rs"] mod guard_access;
-pub(crate) use guard_access::{GuardAccess, guard_read_type, guard_recipe};
-use guard_access::{GUARD_ACCESS_SHIFT, GUARD_SLOT_BITS, guard_key};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Recipes or labels interned to dense keys: one key per distinct value, in first-seen order.
 struct Interned<T> {
@@ -126,9 +112,6 @@ pub(crate) struct SymbolTable {
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
     calls: Interned<(u32, u32, u32)>,
-    /// The program's method selectors (`Selectors::of`, the same numbering the interpreter's store keeps): a method's
-    /// selector indexes every class's method vector (`layouts::class_methods`).
-    selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>,
 }
 
 /// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
@@ -144,15 +127,10 @@ pub(crate) struct Finished {
 impl SymbolTable {
     /// The table of `program`'s image: its atom texts by program atom number, the key `Symbol::Atom`
     /// and a recipe's field name carry (atom numbers are per VM, texts are not).
-    pub(crate) fn new(program: &ResidualProgram, selectors: std::sync::Arc<quench_runtime::compile::call_plan::Selectors>) -> Self {
+    pub(crate) fn new(program: &ResidualProgram) -> Self {
         let atoms = program.atoms.iter().map(Box::<str>::from).collect();
         Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(),
-            calls: Interned::default(), selectors }
-    }
-
-    /// The selector of method atom `atom` (`Selectors::get`), where a call plan names it.
-    pub(crate) fn selector(&self, atom: u32) -> Option<u32> {
-        self.selectors.get(atom)
+            calls: Interned::default() }
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
@@ -185,12 +163,6 @@ impl SymbolTable {
     /// The key of the guard of `access` of `slot` of an object of `recipe` (`Symbol::GuardShape`):
     /// the recipe's number in the same table as `shape`, the access and the slot, in one key
     /// (`guard_key`).
-    /// The layout id of the instances `recipe` builds (`Symbol::ClassLayout`): the recipe's number in the shape table.
-    pub(crate) fn class_layout(&mut self, recipe: ShapeRecipe) -> Symbol {
-        Symbol::ClassLayout(self.shapes.key(recipe))
-    }
-
-
     pub(crate) fn guard_shape(&mut self, recipe: ShapeRecipe, slot: u16, access: GuardAccess) -> Option<u32> {
         guard_key(self.shapes.key(recipe), slot, access)
     }
@@ -214,7 +186,7 @@ impl SymbolTable {
 }
 
 /// The constructor of each symbol kind keyed by its own number, by namespace.
-const KEYED: [(u32, fn(u32) -> Symbol); 16] = [
+const KEYED: [(u32, fn(u32) -> Symbol); 13] = [
     (RelocKind::EntryCell as u32, Symbol::EntryCell),
     (RelocKind::Descriptor as u32, Symbol::Descriptor),
     (RelocKind::CaptureWords as u32, Symbol::CaptureWords),
@@ -228,19 +200,11 @@ const KEYED: [(u32, fn(u32) -> Symbol); 16] = [
     (RelocKind::HolderLink as u32, Symbol::HolderLink),
     (RelocKind::HolderValue as u32, Symbol::HolderValue),
     (RelocKind::GuardLayout as u32, Symbol::GuardLayout),
-    (RelocKind::ClassLayout as u32, Symbol::ClassLayout),
-    (RelocKind::ClassMethods as u32, class_methods),
-    (RelocKind::EntryStub as u32, |_| Symbol::EntryStub),
 ];
 
 /// The invalidation word's symbol: one word, keyed 0.
 fn invalidation(_key: u32) -> Symbol {
     Symbol::Invalidation
-}
-
-/// The method table's base symbol: one table, keyed 0.
-fn class_methods(_key: u32) -> Symbol {
-    Symbol::ClassMethods
 }
 
 impl Symbol {
@@ -259,9 +223,6 @@ impl Symbol {
             Self::HolderLink(_) => RelocKind::HolderLink as u32,
             Self::HolderValue(_) => RelocKind::HolderValue as u32,
             Self::GuardLayout(_) => RelocKind::GuardLayout as u32,
-            Self::ClassLayout(_) => RelocKind::ClassLayout as u32,
-            Self::ClassMethods => RelocKind::ClassMethods as u32,
-            Self::EntryStub => RelocKind::EntryStub as u32,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
             Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
@@ -274,8 +235,8 @@ impl Symbol {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) | Self::GuardShape(key)
-                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) | Self::ClassLayout(key) => key,
-            Self::Invalidation | Self::NarrowUpperWords | Self::Attention | Self::ClassMethods | Self::EntryStub => 0,
+                | Self::HolderLink(key) | Self::HolderValue(key) | Self::GuardLayout(key) => key,
+            Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::BasePc { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC or a call record is keyed by its site (`intern`)"),
         }
@@ -295,7 +256,6 @@ pub(crate) fn resolve_recipe(symbol: Symbol, image: &AotImage, vm: &mut Vm) -> O
         Symbol::HolderLink(key) => Some(holder_constant(image, vm, key).map_or(NO_LINK, |(_, link, _)| u64::from(link))),
         Symbol::HolderValue(key) => Some(holder_constant(image, vm, key).map_or(Value::UNDEFINED, |(_, _, value)| value).to_bits()),
         Symbol::GuardLayout(key) => Some(u64::from(guarded_layout(image, vm, key).unwrap_or(NO_LAYOUT))),
-        Symbol::ClassLayout(key) => Some(u64::from(class_layout_id(image, vm, key).unwrap_or(NO_LAYOUT))),
         _ => None,
     }
 }
@@ -360,16 +320,114 @@ const NO_LINK: u64 = !quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.proto_m
 const _: () = assert!(NO_LINK != 0);
 
 /// The prototype method fact of holder guard key `key` (`GuardAccess::Holder`), proven in `vm`
-/// as the image links: the holder's class word (its shape), its prototype link, and the value its slot
-/// holds, where the holder holds the name as a plain data field at the key's slot. The holder is a
-/// prototype, a class cell: its value is read through the cell's own data property (`Vm::own_property`), so a
-/// write of its values retires the code that took the value (`ahead_images::holder_dependencies`
-/// subscribes it under the shape).
+/// as the image links: the holder's exact shape, its prototype link, and the value its slot holds,
+/// where the holder holds the name as a plain data field at the key's slot. The holder is marked a
+/// prototype, so a write of its values retires the code that took the value
+/// (`ahead_images::holder_dependencies` subscribes it under the shape).
 pub(crate) fn holder_constant(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u32, Value)> {
-    let slot = key & ((1 << GUARD_ACCESS_SHIFT) - 1);
-    let (holder, atom, class) = holder_cell(image, vm, key >> GUARD_SLOT_BITS, slot)?;
-    let value = vm.own_property(holder, atom)?;
-    Some((class, quench_runtime::tier_surface::ProtoLink::of(holder).bits(), value))
+    let slot = (key & ((1 << GUARD_ACCESS_SHIFT) - 1)) as u16;
+    let access = *GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?;
+    if access != GuardAccess::Holder { return None; }
+    let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
+    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
+    let holder = heap_value(image, vm, holder)?;
+    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
+    let (shape, at) = vm.holder_data_field(holder, atom)?;
+    if at != usize::from(slot) { return None; }
+    let value = vm.own_property(holder, atom).filter(|value| !value.is_deleted())?;
+    vm.mark_prototype(holder);
+    Some((shape, quench_runtime::tier_surface::ProtoLink::of(holder).bits(), value))
+}
+
+/// The bits of a guard key below its recipe (`guard_key`): the access, then the slot.
+const GUARD_SLOT_BITS: u32 = 12;
+/// The bits of a guard key below its access (`GuardAccess`): the slot.
+const GUARD_ACCESS_SHIFT: u32 = GUARD_SLOT_BITS - GuardAccess::BITS;
+
+/// What the access a shape guard admits needs of its slot (`guarded_shape`): a read reads any
+/// tagged word; a store writes in place, with no join of the slot's type, only the values of one
+/// class (`StoreArm::of` of the slot typed `GuardAccess::stored`), so its guard resolves only where
+/// the slot's type holds every value of that class. A prototype read guards two shapes: its
+/// receiver's (`Inherited`), which owns no field of the name, and its holder's (`Holder`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GuardAccess {
+    Read,
+    /// A store of an int32.
+    StoreInt32,
+    /// A store of a direct object or `null`.
+    StoreReference,
+    /// A store of any tagged word: the slot is admitted to every value (`ahead_images::fields`).
+    StoreTagged,
+    /// The receiver of a read its prototype answers: the recipe's shape, whatever its slots hold.
+    Inherited,
+    /// The holder of a prototype read: the shape the object the recipe's `prototype` names has
+    /// now, where the slot holds the recipe's one field, the name read, as a plain data field
+    /// (`Vm::holder_data_field`). The recipe names no shape of its own: it carries the holder and
+    /// the name.
+    Holder,
+    /// A read of a slot every store of which writes an int32 (`AotFacts::field_type`): the slot is
+    /// admitted to int32s, as its stores' guards admit it, and the read takes its words as int32s
+    /// under the slot's dependency (`ahead_images::guard_dependencies`), so a store of anything else
+    /// retires the code: the type is proven where the slot is written, never at the read.
+    ReadInt32,
+    /// A read of a slot every store of which writes a direct object or `null`, as `ReadInt32`.
+    ReadReference,
+}
+
+impl GuardAccess {
+    /// The bits of the access in a guard key.
+    const BITS: u32 = 3;
+    const ALL: [Self; 8] = [Self::Read, Self::StoreInt32, Self::StoreReference, Self::StoreTagged, Self::Inherited, Self::Holder,
+        Self::ReadInt32, Self::ReadReference];
+
+    /// The type the slot's type must hold for the access: `None` for a read.
+    pub(crate) fn stored(self) -> Option<quench_runtime::typed_ir::Type> {
+        use quench_runtime::typed_ir::Type;
+        match self {
+            Self::Read | Self::Inherited | Self::Holder | Self::ReadInt32 | Self::ReadReference => None,
+            Self::StoreInt32 => Some(Type::INT32),
+            Self::StoreReference => Some(Type::DIRECT_OBJECT_FAMILY.join(Type::language(quench_runtime::ValueType::Null))),
+            Self::StoreTagged => Some(Type::ANY),
+        }
+    }
+
+    /// The type a typed read takes its slot's words as, which the slot's type must be within: `None`
+    /// for any other access.
+    pub(crate) fn read(self) -> Option<quench_runtime::typed_ir::Type> {
+        use quench_runtime::typed_ir::Type;
+        match self {
+            Self::ReadInt32 => Some(Type::INT32),
+            Self::ReadReference => Some(Type::NULLABLE_DIRECT_OBJECT),
+            _ => None,
+        }
+    }
+
+    /// The accesses of a field whose stores all write values of type `ty` (`AotFacts::field_type`):
+    /// its reads' and its stores', typed by the one class `ty` is within, or any tagged word.
+    pub(crate) fn of_field(ty: quench_runtime::typed_ir::Type) -> (Self, Self) {
+        use quench_runtime::typed_ir::Type;
+        if ty == Type::NEVER { (Self::Read, Self::StoreTagged) }
+        else if ty.is_subtype(Type::INT32) { (Self::ReadInt32, Self::StoreInt32) }
+        else if ty.is_subtype(Type::NULLABLE_DIRECT_OBJECT) { (Self::ReadReference, Self::StoreReference) }
+        else { (Self::Read, Self::StoreTagged) }
+    }
+}
+
+/// The type the guard `key` admits its slot's words as for a typed read (`GuardAccess::read`).
+pub(crate) fn guard_read_type(key: u32) -> Option<quench_runtime::typed_ir::Type> {
+    GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?.read()
+}
+
+/// The shape recipe guard key `key` guards a slot of (`guard_key`).
+pub(crate) fn guard_recipe(key: u32) -> u32 {
+    key >> GUARD_SLOT_BITS
+}
+
+/// The key of the guard of `access` of `slot` of shape recipe `recipe`: the recipe above the
+/// access and the slot. `None` where either does not fit.
+fn guard_key(recipe: u32, slot: u16, access: GuardAccess) -> Option<u32> {
+    (u32::from(slot) < 1 << GUARD_ACCESS_SHIFT && recipe < 1 << (u32::BITS - GUARD_SLOT_BITS))
+        .then_some(recipe << GUARD_SLOT_BITS | (access as u32) << GUARD_ACCESS_SHIFT | u32::from(slot))
 }
 
 /// The shape guard key `key` names in `vm`, its slot and the type an access of the slot depends on
@@ -392,13 +450,13 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
         eprintln!("aot-lanes: guard {key:#x} ({access:?}) resolves to shape {shape:?}, slot {slot} type {:?}", shape.map(|shape| vm.tagged_slot_type(shape, slot)));
     }
     let shape = shape?;
-    // A store's class joins the slot's type before the store is exposed (`Vm::admit_slot_writes`),
+    // A store's class joins the slot's type before the store is exposed (`Vm::admit_slot_writes_as`),
     // as a JIT body's writer's domain does: a field the construction made `null` holds objects
     // once the run stores one, which the image's store does in place from its first run. A
     // widening retires the slot's readers; one that would make the words raw refuses below.
     // A typed read admits the class its field's stores write, as their guards do: the slot then holds
     // that class from its first store, and a read resolves only where it holds nothing wider.
-    if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes(shape, usize::from(slot), stored); }
+    if let Some(stored) = access.stored().or(access.read()) { vm.admit_slot_writes_as(shape, usize::from(slot), stored, false); }
     let ty = vm.tagged_slot_type(shape, slot)?;
     (access.stored().is_none_or(|stored| stored.is_subtype(ty)) && access.read().is_none_or(|read| ty.is_subtype(read))).then_some((shape, slot, ty))
 }
@@ -407,53 +465,35 @@ pub(crate) fn guarded_shape(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(
 const NO_LAYOUT: u32 = u32::MAX;
 const _: () = assert!(NO_LAYOUT as usize >= quench_runtime::tier_surface::layouts::LAYOUT_CAPACITY);
 
-/// The class id of the cell field guard key `key`'s construction (`guarded_shape`) makes: the class a
-/// cell carries, its exact shape and its fields in a class cell's region (`ProtoLink::class`, which
-/// names the prototype's link and the region). A construction of more fields than inline storage holds
-/// is a class cell, so a compare of the live cell's class with this id proves the shape and the link
-/// (`IcOp::GuardImageClass`). `None` where the guard does not resolve, or the recipe is of a construction
-/// whose fields may stay inline.
+/// The layout id of the objects of field guard key `key`'s construction (`guarded_shape`): its
+/// exact shape, its values a plain arena run, under the link of its recipe's prototype
+/// (`ProtoLink::arena_layout`). A construction of more fields than inline storage holds keeps its
+/// values in that run, so the id is the class's one representation, and a compare of a record's
+/// own word with it proves the shape, the form and the link. `None` where the guard does not
+/// resolve, or the recipe is of a construction whose fields may stay inline.
 pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
     let (shape, _, _) = guarded_shape(image, vm, key)?;
     let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
     if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
-    let region = quench_runtime::tier_surface::cell_region_for(recipe.fields.len());
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape, region))
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).arena_layout(shape))
 }
 
-/// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the class word of the class cell its
-/// `prototype` names, where that cell holds its one field's name at `slot` as a plain data field of tagged words;
-/// `None` otherwise, so the guard resolves to `NO_SHAPE`.
+/// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its
+/// `prototype` names has now, where that shape holds its one field's name at `slot` as a plain
+/// data field of tagged words; `None` otherwise, so the guard resolves to `NO_SHAPE`.
 fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
-    let (holder, atom, class) = holder_cell(image, vm, recipe, u32::from(slot))?;
-    let shape = vm.heap_reads().object(holder)?.shape();
-    let ty = vm.tagged_slot_type(shape, slot)?;
-    vm.own_property(holder, atom)?;
-    Some((class, slot, ty))
-}
-
-/// The holder cell of a prototype read (`GuardAccess::Holder`) of recipe `recipe`, whose name is its one field, at
-/// `slot`: the object its `prototype` names, the name's atom, and the class word of that cell. `None` where the
-/// holder is no live class cell, or the name is not the holder's field at `slot`.
-fn holder_cell(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u32) -> Option<(Value, quench_runtime::bytecode::Atom, u32)> {
     let recipe = image.shapes.get(recipe as usize)?;
-    let holder = heap_value(image, vm, recipe.prototype?)?;
-    let (name, _) = *recipe.fields.first()?;
-    let atom = vm.intern_atom(image.atoms.get(name as usize)?);
-    let class = vm.heap_reads().live_class_key(holder)? & !quench_runtime::staged::field_cache_layout::CLASS_KEY;
-    let shape = vm.heap_reads().object(holder)?.shape();
-    (vm.shape_slot(shape, atom) == Some(slot as usize)).then_some((holder, atom, class))
-}
-
-/// The layout id of the instances shape recipe `key` builds (`Symbol::ClassLayout`): the header a construction of its
-/// fields allocates with (`InlineObjectHeader::for_fields`, the construct plan's own rule) over the shape `shape`
-/// gives it. `None` where the recipe's prototype does not resolve.
-fn class_layout_id(image: &AotImage, vm: &mut Vm, key: u32) -> Option<u32> {
-    let recipe = image.shapes.get(key as usize)?;
-    let prototype = heap_value(image, vm, recipe.prototype?)?;
-    let shape = shape(image, vm, key)?;
-    Some(quench_runtime::tier_surface::InlineObjectHeader::for_fields(prototype, shape, recipe.fields.len()).layout_id())
+    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
+    let holder = heap_value(image, vm, holder)?;
+    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
+    let found = vm.holder_data_field(holder, atom);
+    if quench_runtime::trace::Channel::AotLanes.on() {
+        eprintln!("aot-lanes: holder guard of slot {slot} finds {found:?}");
+    }
+    let (shape, at) = found?;
+    let ty = vm.tagged_slot_type(shape, slot)?;
+    (at == usize::from(slot)).then_some((shape, slot, ty))
 }
 
 /// The data attributes of a field's attribute bits.

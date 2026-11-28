@@ -2,13 +2,10 @@
 use super::*;
 use crate::bytecode::{Op, Register};
 use crate::staged::tests::ConcreteFrame;
-use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame};
+use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame, Stage};
 use crate::typed_ir::Type;
 use crate::ValueType;
-use crate::operator::BinaryOperator;
-#[cfg(not(stencil_build))]
-#[allow(unused_imports)]
-use crate::staged::glue_prelude::*;
+use oxc_ast::ast::BinaryOperator;
 
 /// A register file that records the decisions it is asked for, answering them with `answer`, and
 /// the facts a jump proves along its edges; `types` are the registers' proved types.
@@ -19,12 +16,16 @@ struct Probe {
     types: Vec<Option<Type>>,
     refined: Vec<(Register, Type, Edge)>,
     html_dda: bool,
+    /// The object record table the frame walks prototypes in, and the constructor `prototype` link
+    /// it holds as a Stable fact.
+    records: Option<u64>,
+    prototype: Option<u64>,
 }
 
 impl Probe {
     fn of(values: &[Value]) -> Self {
         Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None,
-            types: Vec::new(), refined: Vec::new(), html_dda: true }
+            types: Vec::new(), refined: Vec::new(), html_dda: true, records: None, prototype: None }
     }
 }
 
@@ -62,6 +63,7 @@ impl crate::staged::ElementFrame<Concrete> for Probe {}
 impl PropertyFrame<Concrete> for Probe {
     type Plans = NoPlans;
     fn plans(&self) -> NoPlans { NoPlans }
+    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { self.records }
 }
 
 impl NumericFrame<Concrete> for Probe {
@@ -74,6 +76,7 @@ impl NumericFrame<Concrete> for Probe {
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn html_dda_possible(&self) -> bool { self.html_dda }
+    fn stable_prototype(&mut self, _stage: &mut Concrete, _constructor: Register) -> Option<u64> { self.prototype }
     fn int_fact(&self) {}
     fn number_fact(&self) {}
 }
@@ -81,12 +84,12 @@ impl NumericFrame<Concrete> for Probe {
 /// The step of the comparison jump of registers 0 and 1 over `frame`.
 fn run(frame: &mut Probe, comparison: Comparison, negate: bool) -> Step<u64, Edge> {
     let operation = Operation::CompareJump { comparison, left: Operand::register(0), right: Operand::register(1), negate };
-    crate::staged::step(&mut Concrete::pure(), frame, operation)
+    crate::staged::step(&mut Concrete::new(std::ptr::null()), frame, operation)
 }
 
 /// The edge a comparison jump of registers 0 and 1 takes on the interpreter's stage.
 fn edge(comparison: Comparison, [left, right]: [Value; 2], negate: bool) -> Edge {
-    let mut stage = Concrete::pure();
+    let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![left.to_bits(), right.to_bits()], heap: None };
     let operation = Operation::CompareJump { comparison, left: Operand::register(0), right: Operand::register(1), negate };
     match crate::staged::step(&mut stage, &mut frame, operation) {
@@ -218,7 +221,7 @@ fn an_equality_the_words_leave_is_the_vms_decision() {
 /// A constant the frame holds no word for leaves the row to the interpreter.
 #[test]
 fn an_equality_of_a_constant_the_frame_has_no_word_for_is_unresolved() {
-    let mut stage = Concrete::pure();
+    let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![Value::number(1.5).to_bits()], heap: None };
     let operation = Operation::CompareJump { comparison: Comparison::Equality { strict: true, negated: false },
         left: Operand::register(0), right: Operand::constant(0).expect("a constant operand"), negate: true };
@@ -371,7 +374,7 @@ fn an_instanceof_jump_is_the_vms_decision() {
     }
     let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
     assert!(matches!(run(&mut frame, Comparison::Instanceof, true), Step::Unresolved), "no VM leaves the row");
-    let mut stage = Concrete::pure();
+    let mut stage = Concrete::new(std::ptr::null());
     let operation = Operation::CompareJump { comparison: Comparison::Instanceof, left: Operand::register(0),
         right: Operand::constant(0).expect("a constant operand"), negate: true };
     frame.answer = Some(true);
@@ -433,7 +436,7 @@ fn a_membership_jump_is_the_vms_decision() {
     }
     let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
     assert!(matches!(run(&mut frame, Comparison::Membership, true), Step::Unresolved), "no VM leaves the row");
-    let mut stage = Concrete::pure();
+    let mut stage = Concrete::new(std::ptr::null());
     frame.answer = Some(true);
     frame.calls.clear();
     let operation = Operation::CompareJump { comparison: Comparison::Membership, left: Operand::constant(0).expect("a constant operand"),

@@ -5,17 +5,18 @@
 //! the i32 operators of `staged::wasm` (`I32BinaryOperator`), written once over `Stage` primitives:
 //! an unsigned order is `ult`, and a signed order is the unsigned order of the words with their sign
 //! bits flipped. A tier that proves no int32 operand leaves the row (`Step::Unresolved`) to the
-//! general step, which runs the Wasm operator. The decode of these rows from their records is in
-//! `wasm_jump/glue.rs`.
+//! general step, which runs the Wasm operator.
 
 use super::{NumericFrame, NumericStage, Stage, Step};
 use crate::bytecode::{Operand, Register};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
 #[cfg(not(stencil_build))]
 use crate::wasm::integer::I32BinaryOperator;
 
 /// An i32 comparison: its relation, and for an order whether it compares signed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WasmRelation {
+pub(crate) enum WasmRelation {
     Equal,
     NotEqual,
     Less { signed: bool },
@@ -27,7 +28,7 @@ pub enum WasmRelation {
 impl WasmRelation {
     /// The relation `operator` names, where it is a comparison.
     #[cfg(not(stencil_build))]
-    pub fn of(operator: I32BinaryOperator) -> Option<Self> {
+    fn of(operator: I32BinaryOperator) -> Option<Self> {
         Some(match operator {
             I32BinaryOperator::Equal => Self::Equal,
             I32BinaryOperator::NotEqual => Self::NotEqual,
@@ -47,14 +48,14 @@ impl WasmRelation {
 /// The right operand of a comparison: a register, or the 16-bit constant an immediate form carries,
 /// sign-extended.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WasmRight {
+pub(crate) enum WasmRight {
     Register(Register),
     Constant(i32),
 }
 
 /// A Wasm i32 jump: where its edge goes, and what it writes first.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WasmJump {
+pub(crate) enum WasmJump {
     /// Jumps where `left` relates to `right` (`WasmJumpI32*`, and their immediate forms).
     Compare { relation: WasmRelation, left: Register, right: WasmRight },
     /// Jumps where register `register` is nonzero, or where it is zero when not `nonzero`
@@ -63,6 +64,40 @@ pub enum WasmJump {
     /// Defines `destination` with `source` plus `addend`, then jumps where the sum is nonzero
     /// (`WasmI32AddImmediateJumpNonZero`).
     AddNonZero { destination: Register, source: Register, addend: i32 },
+}
+
+impl WasmJump {
+    /// The i32 jump `instruction` is, from its record's operands (`a`, `b`, `c`): a comparison's
+    /// right operand is `b` (a register, or a signed constant for an immediate form), and an add's
+    /// addend is `c`.
+    #[cfg(not(stencil_build))]
+    pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
+        let op = instruction.op();
+        if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
+            return Some(Self::Compare {
+                relation: WasmRelation::of(operator)?,
+                left: instruction.a(),
+                right: WasmRight::Register(instruction.b()),
+            });
+        }
+        if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
+            return Some(Self::Compare {
+                relation: WasmRelation::of(operator)?,
+                left: instruction.a(),
+                right: WasmRight::Constant(i32::from(instruction.b() as i16)),
+            });
+        }
+        Some(match op {
+            Op::WasmJumpI32Zero => Self::Test { register: instruction.a(), nonzero: false },
+            Op::WasmJumpI32NonZero => Self::Test { register: instruction.a(), nonzero: true },
+            Op::WasmI32AddImmediateJumpNonZero => Self::AddNonZero {
+                destination: instruction.a(),
+                source: instruction.b(),
+                addend: i32::from(instruction.c() as i16),
+            },
+            _ => return None,
+        })
+    }
 }
 
 /// The unsigned order of `word` with its sign bit flipped: the signed order of the int32 words.
@@ -127,7 +162,7 @@ fn relate<S: Stage>(stage: &mut S, relation: WasmRelation, left: S::Word, right:
 /// `jump` on `frame`: its operands read as int32s, its result written where it defines one, and
 /// its edge taken from the condition. An operand the frame cannot read as an int32 leaves the row.
 #[inline(always)]
-pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, jump: WasmJump) -> Step<S::Word, F::Control> {
+pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, jump: WasmJump) -> Step<S::Word, F::Control> {
     match jump {
         WasmJump::Compare { relation, left, right } => {
             let miss = frame.miss();
@@ -177,16 +212,28 @@ pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, j
 /// jump records that follow the table record; the last entry is the default, which every selector
 /// past it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct BranchTable {
-    pub index: Register,
+pub(crate) struct BranchTable {
+    pub(crate) index: Register,
     /// The entry count: the record's case count plus the default.
-    pub entries: u32,
+    pub(crate) entries: u32,
+}
+
+impl BranchTable {
+    /// The table `instruction` is: its selector is `a`, and its immediate counts the cases before
+    /// the default (`branch_table_entries`), so the entries are that count plus one.
+    #[cfg(not(stencil_build))]
+    pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
+        if instruction.op() != Op::WasmBranchTable {
+            return None;
+        }
+        Some(Self { index: instruction.a(), entries: instruction.imm().checked_add(1)? })
+    }
 }
 
 /// `table` on `frame`: its selector read as an int32, and the entry it picks (`Frame::branch_table`,
 /// which clamps it to the default). A selector the frame cannot read as an int32 leaves the row.
 #[inline(always)]
-pub fn branch_table<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, table: BranchTable) -> Step<S::Word, F::Control> {
+pub(crate) fn branch_table<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, table: BranchTable) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let Some(index) = frame.int_operand(stage, Operand::register(table.index), miss).map(super::Int32::word) else {
         return Step::Unresolved;
@@ -196,8 +243,3 @@ pub fn branch_table<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
         None => Step::Unresolved,
     }
 }
-
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;

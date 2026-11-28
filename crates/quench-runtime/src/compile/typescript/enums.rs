@@ -6,8 +6,6 @@
 use oxc_ast::ast::*;
 use rustc_hash::FxHashMap;
 
-use crate::bytecode::Constant;
-
 #[derive(Clone)]
 pub(super) enum Value {
     Number(f64),
@@ -93,11 +91,23 @@ fn binary_fold(binary: &BinaryExpression<'_>, enum_name: &str, known: &FxHashMap
         return Some(Value::String(format!("{}{}", display(&left)?, display(&right)?)));
     }
     let (Value::Number(a), Value::Number(b)) = (left, right) else { return None };
-    // The interpreter's own Number operators (`static_number_binary`): a member's value is the value the runtime computes.
-    match crate::vm::operations::static_number_binary(binary.operator as u32, a, b)? {
-        Constant::Number(value) => Some(Value::Number(value)),
-        _ => None,
-    }
+    let (ia, ib) = (crate::value::number_to_i32(a), crate::value::number_to_i32(b));
+    let shift = (b as i64 & 31) as u32;
+    Some(Value::Number(match binary.operator {
+        BinaryOperator::Addition => a + b,
+        BinaryOperator::Subtraction => a - b,
+        BinaryOperator::Multiplication => a * b,
+        BinaryOperator::Division => a / b,
+        BinaryOperator::Remainder => crate::vm::operations::number_remainder(a, b),
+        BinaryOperator::Exponential => a.powf(b),
+        BinaryOperator::BitwiseOR => f64::from(ia | ib),
+        BinaryOperator::BitwiseAnd => f64::from(ia & ib),
+        BinaryOperator::BitwiseXOR => f64::from(ia ^ ib),
+        BinaryOperator::ShiftLeft => f64::from(ia.wrapping_shl(shift)),
+        BinaryOperator::ShiftRight => f64::from(ia.wrapping_shr(shift)),
+        BinaryOperator::ShiftRightZeroFill => f64::from((ia as u32).wrapping_shr(shift)),
+        _ => return None,
+    }))
 }
 
 /// The JavaScript text of a folded value, when it is exact without runtime help

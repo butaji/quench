@@ -122,6 +122,7 @@ impl<'a> ChunkWindow<'a> {
     pub(super) fn compiler(
         self,
         name: &'a str,
+        mode: SpecializationMode,
         atom_prefix: &'a dyn AtomPrefix,
         program: &mut Program<'_>,
         mut private_name_ids: FxHashMap<(u32, u32), u32>,
@@ -129,7 +130,7 @@ impl<'a> ChunkWindow<'a> {
         prototype_unobservable: &mut FxHashSet<u32>,
     ) -> Compiler<'a> {
         self.place(program, &mut private_name_ids, private_name_labels, prototype_unobservable);
-        let mut compiler = Compiler::new(name, &self.source.text, atom_prefix, private_name_ids);
+        let mut compiler = Compiler::new(name, &self.source.text, mode, atom_prefix, private_name_ids);
         compiler.first_call.kept_source = Some(self.source);
         compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
         compiler.first_call.chunk_function = Some(self.function);

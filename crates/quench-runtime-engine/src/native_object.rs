@@ -132,13 +132,8 @@ pub fn emit_native_module_for(
                 .map_err(|error| error.to_string())?,
         );
     }
-    let mut sectioned = Vec::new();
     for (index, definition) in functions.into_iter().enumerate() {
         let definition = match definition {
-            NativeFunction::Code(code) if code.section.is_some() => {
-                sectioned.push((symbols[index], code));
-                continue;
-            }
             NativeFunction::Code(code) => {
                 define_code(&mut module, symbols[index], code)?;
                 continue;
@@ -270,39 +265,7 @@ pub fn emit_native_module_for(
             .define_data(id, &description)
             .map_err(|error| error.to_string())?;
     }
-    let mut product = module.finish();
-    place_sectioned(&mut product, sectioned)?;
-    product.emit().map_err(|error| error.to_string())
-}
-
-/// Places each code that names a section (`NativeCode::section`) in that executable section of `product`, which starts
-/// and ends on a page boundary so it can be made writable without touching any other code.
-fn place_sectioned(product: &mut cranelift_object::ObjectProduct, sectioned: Vec<(cranelift_module::FuncId, NativeCode)>) -> Result<(), String> {
-    use cranelift_object::object;
-    // The target's largest page: 4 KiB on x86-64; on AArch64 up to 64 KiB (Linux kernels built so, 16 KiB on macOS).
-    let page: u64 = if product.object.architecture() == object::Architecture::X86_64 { 1 << 12 } else { 1 << 16 };
-    // Per section: its name, id and end.
-    let mut sections: Vec<(&'static str, object::write::SectionId, u64)> = Vec::new();
-    for (id, code) in sectioned {
-        if !code.relocations.is_empty() { return Err(format!("{}: sectioned code names a relocation", code.name)); }
-        let name = code.section.expect("only sectioned code is collected");
-        let at = match sections.iter().position(|(named, ..)| *named == name) {
-            Some(at) => at,
-            None => {
-                let section = product.object.add_section(Vec::new(), name.as_bytes().to_vec(), object::SectionKind::Text);
-                product.object.append_section_data(section, &[], page);
-                sections.push((name, section, 0));
-                sections.len() - 1
-            }
-        };
-        let symbol = product.function_symbol(id);
-        let offset = product.object.add_symbol_data(symbol, sections[at].1, &code.code, code.alignment);
-        sections[at].2 = offset + code.code.len() as u64;
-    }
-    for (_, section, end) in sections {
-        product.object.append_section_data(section, &vec![0xcc; (end.next_multiple_of(page) - end) as usize], 1);
-    }
-    Ok(())
+    module.finish().emit().map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -494,13 +457,14 @@ mod tests {
     }
 
     fn link_and_run(object: Vec<u8>) -> Option<i32> {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "quench-native-object-{}-{}",
             std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
-        let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir(&directory).unwrap();
         let object_path = directory.join("program.o");
         let executable = directory.join("program");

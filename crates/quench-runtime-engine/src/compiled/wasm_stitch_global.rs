@@ -12,7 +12,6 @@ use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::wasm_instance::{Instance, Storage};
 use quench_bjit::padded_holes;
 use quench_bjit::wasm::{self as codes};
-#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The rows of the global access `step` at `pc` (`a` is the value or the destination register,
 /// `b` the binding), or `None` where the global has no row: a reference or a vector, or an access
