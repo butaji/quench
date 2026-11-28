@@ -193,15 +193,15 @@ impl Record {
             let (array, index) = (state[usize::from(base)], state[usize::from(key)]);
             self.element_stores.insert(pc as u32, ElementStore { class: array.elements_key(), indices: indices_of(ctx, pc as u32, index), prototype: array.cell.prototype });
         }
-        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`).
-        if instruction.op() == crate::bytecode::Op::GetIndex {
-            self.reads.insert(Key::Element(state[usize::from(instruction.register_b())].elements_key()));
+        // An element read reads the elements of its array's class (`Key::Element`, `ElementClasses`). `GetIndex` decodes as one
+        // (`Operation::ElementRead`): its key is an operand, so no field of it is read as a register but through the decode.
+        if let Some(crate::staged::Operation::ElementRead { base, .. }) = decoded(instruction) {
+            self.reads.insert(Key::Element(state[usize::from(base)].elements_key()));
         }
         // An element access (a read or a store) keeps the view of the array its base holds, so a tier reads a typed array's
         // element by its kind (`FunctionFacts::element_view`).
         let element_base = match decoded(instruction) {
-            Some(crate::staged::Operation::ElementWrite { base, .. }) => Some(base),
-            _ if instruction.op() == crate::bytecode::Op::GetIndex => Some(instruction.register_b()),
+            Some(crate::staged::Operation::ElementWrite { base, .. } | crate::staged::Operation::ElementRead { base, .. }) => Some(base),
             _ => None,
         };
         if let Some(base) = element_base {
@@ -378,12 +378,11 @@ impl Record {
         if instruction.op() == crate::bytecode::Op::ForInStart {
             self.scan.for_in_sources.push(parameter(instruction.register_b()));
         }
-        if instruction.op() == crate::bytecode::Op::GetIndex {
-            if let Some(result) = instruction.defined_register() {
-                self.scan.element_reads.push((result, parameter(instruction.register_b()), instruction.register_c()));
-            }
-        }
         match decoded(instruction) {
+            // An element read whose key is a register (`CopyScan::copies` follows the key a for-in loop's key register holds).
+            Some(crate::staged::Operation::ElementRead { base, key, destination }) => if let Some(key) = key.register_index() {
+                self.scan.element_reads.push((destination, parameter(base), key));
+            },
             Some(crate::staged::Operation::ForInNext { destination, .. }) => self.scan.for_in_keys.push(destination),
             Some(crate::staged::Operation::ElementWrite { base, key, value, .. }) => {
                 self.scan.stores += 1;
