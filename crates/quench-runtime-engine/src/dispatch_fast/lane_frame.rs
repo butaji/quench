@@ -2363,7 +2363,7 @@ pub(crate) const FLAG_PROBE: u8 = 13;
 /// `FLAG` of a loop site's backward jump (`dispatch_fast::loop_jump_row`): the jump row takes the jump while the
 /// site warms up; past that, or out of fuel, the site's body (`loop_jump_miss`) runs.
 pub(crate) const FLAG_LOOP: u8 = 14;
-/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
+/// `FLAG` of a depth-0 `LoadCapture` of a root-owned slot that a root store dominates (`root_capture_row`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(crate) const FLAG_ROOT: u8 = 15;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding that a forwarding call passes on
@@ -2388,8 +2388,7 @@ pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_
 /// that joins gets its handler with no line written here.
 /// Whether opcode `op`'s row defines the carried accumulator: its record's `a` is its result
 /// register, and its miss takes the general step, which carries the result on
-/// (`Carried::stepped`). A capture read's miss walks the scopes and requickens its record to
-/// handlers that carry none, and a local row defines none.
+/// (`Carried::stepped`). A capture read's miss walks the scopes, and a local row defines none.
 pub(crate) const fn row_produces(op: Op) -> bool {
     matches!(op.field_layout(quench_runtime::bytecode::InstructionField::A), quench_runtime::bytecode::FieldLayout::ResultRegister)
         && !matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Local))
@@ -2704,8 +2703,7 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture read the lane's walk, which requickens the record to the root binding it finds
-/// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
+/// a capture read the lane's walk (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).

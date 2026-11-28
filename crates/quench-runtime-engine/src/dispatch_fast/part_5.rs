@@ -440,7 +440,7 @@ pub(crate) fn derive_lane_view<'live>(
     };
     specialize_returning_binaries(&decoded, constants, &mut records);
     specialize_frame_locals(function, &mut records);
-    specialize_captures(&mut records);
+    specialize_captures(function_id, facts, &mut records);
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
     let environment_window = (kind != quench_runtime::bytecode::ProgramKind::Wasm)
         .then(|| specialize_environment_window(function, &decoded, &mut records)).flatten();
@@ -1386,13 +1386,15 @@ pub(super) fn specialize_environment_window(
 /// record past the function's own scope keeps its row: an outer `LoadCapture` reads through the
 /// lane's remembered walks (`Reads::of_captures`), an outer `StoreCapture` takes the general step.
 /// A depth-0 record is its row read as
-/// the zero depth it is (`row_near`).
-pub(super) fn specialize_captures(records: &mut [LaneInstruction]) {
+/// the zero depth it is (`row_near`), or the root row of a root-owned slot a root store dominates (`root_capture_row`).
+pub(super) fn specialize_captures(function_id: u32, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, records: &mut [LaneInstruction]) {
     for pc in 0..records.len() {
         let record = &records[pc];
         let own = ImmediateLayout::capture_depth(record.imm()) == 0;
         let handler: Handler = if !own {
             continue;
+        } else if let Some(root) = root_capture_row(function_id, facts, record) {
+            root
         } else if let Some(near) = row_near::<CAPTURE_READ>(record.handler).or_else(|| row_near::<CAPTURE_WRITE>(record.handler)) {
             // Its own scope's capture: the row reads its depth as the zero it is.
             near
@@ -1401,6 +1403,20 @@ pub(super) fn specialize_captures(records: &mut [LaneInstruction]) {
         };
         records[pc].handler = handler as *const ();
     }
+}
+
+/// The root row of a depth-0 `LoadCapture` record (`FLAG_ROOT`), where the program's root function owns the slot it reads and
+/// a root store dominates every read of it (`dominated_root_store`): the read is the root binding's from the start, so the
+/// record takes no walk. `None` otherwise, and for a record that is not its installed default row.
+fn root_capture_row(function_id: u32, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, record: &LaneInstruction) -> Option<Handler> {
+    let facts = facts?;
+    let slot = ImmediateLayout::capture_slot(record.imm());
+    let owner = facts.function_facts(function_id).capture_owner(slot)?;
+    if owner != quench_runtime::vm::ROOT_FUNCTION_ID || facts.dominated_root_store(quench_runtime::typed_ir::FactKey::Slot { owner, slot }).is_none() {
+        return None;
+    }
+    row_near::<CAPTURE_READ>(record.handler)?;
+    Some(generated_row!(quench_runtime::staged::LOAD_CAPTURE_ROW, ACC_NONE, FLAG_ROOT) as Handler)
 }
 
 /// Gives each `IncDec` record its row at the flag its immediate names (`FLAG_SET`, else `FLAG_CLEAR`), which is static
