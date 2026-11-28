@@ -1425,14 +1425,6 @@ pub(super) fn capture_read_value(cx: *mut LaneContext, depth: u16, slot: u16) ->
 /// `capture_read_value`, with `PLAIN` also a root projection's plain read
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held.
 #[inline(always)]
-/// Whether a capture of `depth` in the running activation's environment settles on a root binding
-/// (the root `walked_capture_slots` reports), which a record's root row answers (`FLAG_ROOT`).
-pub(super) fn capture_settles_on_root(cx: *mut LaneContext, depth: u16) -> bool {
-    let vm = unsafe { vm(cx) };
-    let env = unsafe { (*cx).registers }.env();
-    !env.is_deleted() && vm.walked_capture_slots(env, false, depth).is_some_and(|(_, root)| root.is_some())
-}
-
 pub(super) fn read_capture_value<const PLAIN: bool>(cx: *mut LaneContext, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();

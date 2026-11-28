@@ -2363,7 +2363,7 @@ pub(crate) const FLAG_PROBE: u8 = 13;
 /// `FLAG` of a loop site's backward jump (`dispatch_fast::loop_jump_row`): the jump row takes the jump while the
 /// site warms up; past that, or out of fuel, the site's body (`loop_jump_miss`) runs.
 pub(crate) const FLAG_LOOP: u8 = 14;
-/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
+/// `FLAG` of a depth-0 `LoadCapture` of a root-owned slot that a root store dominates (`root_capture_row`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(crate) const FLAG_ROOT: u8 = 15;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding that a forwarding call passes on
@@ -2388,8 +2388,7 @@ pub(crate) const fn local_result_site(op: u16, flag: u8) -> bool { flag == FLAG_
 /// that joins gets its handler with no line written here.
 /// Whether opcode `op`'s row defines the carried accumulator: its record's `a` is its result
 /// register, and its miss takes the general step, which carries the result on
-/// (`Carried::stepped`). A capture read's miss walks the scopes and requickens its record to
-/// handlers that carry none, and a local row defines none.
+/// (`Carried::stepped`). A capture read's miss walks the scopes, and a local row defines none.
 pub(crate) const fn row_produces(op: Op) -> bool {
     matches!(op.field_layout(quench_runtime::bytecode::InstructionField::A), quench_runtime::bytecode::FieldLayout::ResultRegister)
         && !matches!(op.staged(), Some(quench_runtime::bytecode::Decoder::Local))
@@ -2704,8 +2703,7 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture read the lane's walk, which requickens the record to the root binding it finds
-/// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
+/// a capture read the lane's walk (`load_capture_walk_miss`), for a store the first-run resolution of a global name
 /// (`store_name_first_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
@@ -3399,7 +3397,7 @@ fn nullish_constant(operator: u32, ty: Type) -> Option<Value> {
 /// holds for any left value, as the constant's test does. Where the right operand is a constant, a left register that
 /// `typed` types within `null` or `undefined` takes the nullish test of the constant (`nullish_jump_row`), or one typed
 /// within Boolean takes the Boolean test of a constant Boolean (`boolean_jump_row`). Both instances test any value exactly,
-/// so the type only picks the instance the first run would otherwise pick (`row_jump`). `typed` gives a register
+/// so the type only picks the instance the constant would otherwise leave to the formed comparison. `typed` gives a register
 /// operand's cell type, `ANY` where no cell is. `None` otherwise, the record unchanged.
 pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], typed: impl Fn(Operand) -> Type) -> Option<Handler> {
     use quench_runtime::ValueType;
@@ -3432,6 +3430,56 @@ pub(crate) fn typed_compare_jump(record: &LaneInstruction, constants: &[Value], 
     None
 }
 
+/// The nullish or Boolean instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its constant
+/// decides: a register left operand against a constant `null` or `undefined` takes the nullish test (`nullish_jump_row`), and
+/// against a constant Boolean the Boolean test (`boolean_jump_row`). Both test any value exactly, so the constant alone picks
+/// the instance. `None` otherwise, the record unchanged.
+pub(crate) fn constant_compare_jump(record: &LaneInstruction, constants: &[Value]) -> Option<Handler> {
+    use quench_runtime::bytecode::OperandKind::{Constant, Register};
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    if Operand(record.b).kind() != Some(Register) || Operand(record.c).kind() != Some(Constant) { return None }
+    let operator = u32::from(record.a);
+    let constant = constants.get(usize::from(Operand(record.c).payload())).copied()?;
+    if backward {
+        nullish_jump_row::<true>(operator, constant).or_else(|| boolean_jump_row::<true>(operator, constant))
+    } else {
+        nullish_jump_row::<false>(operator, constant).or_else(|| boolean_jump_row::<false>(operator, constant))
+    }
+}
+
+/// The comparison jump instance of the plain comparison jump `record` (`COMPARE_JUMP_ROW`, not yet run) that its operator and
+/// operand kinds name (`compare_jump_row`): a register left operand with a register or constant right one. A constant right
+/// operand is the record's `mode` where the instance reads it (`compare_operands_of`). `None` for any other kinds, and for a
+/// constant the constants table lacks, the record unchanged.
+pub(crate) fn formed_compare_jump(record: &mut LaneInstruction, constants: &[Value]) -> Option<Handler> {
+    use quench_runtime::bytecode::OperandKind::Constant;
+    const OP: u16 = quench_runtime::staged::COMPARE_JUMP_ROW;
+    let backward = if record.handler == jump_row::<OP>(true) as *const () {
+        true
+    } else if record.handler == jump_row::<OP>(false) as *const () {
+        false
+    } else {
+        return None
+    };
+    let operator = u32::from(record.a);
+    let (left, right) = (Operand(record.b), Operand(record.c));
+    let constant = (right.kind() == Some(Constant)).then(|| constants.get(usize::from(right.payload())).copied()).flatten();
+    if right.kind() == Some(Constant) && constant.is_none() { return None }
+    let handler = if backward { compare_jump_row::<true>(operator, left, right) } else { compare_jump_row::<false>(operator, left, right) }?;
+    let fixes_constant = if backward { compare_operands_of::<true>(handler) } else { compare_operands_of::<false>(handler) };
+    if let (Some(constant), Some(true)) = (constant, fixes_constant) {
+        record.mode = constant.to_bits();
+    }
+    Some(handler)
+}
+
 /// The guarded instances of a register-register comparison jump, by `FORMED_COMPARISONS` entry (`compare_guarded_row`).
 fn compare_guarded_instances<const BACKWARD: bool>() -> [Handler; FORMED_COMPARISONS.len()] {
     macro_rules! guarded { ($($n:literal)+) => { [$(compare_guarded_row::<BACKWARD, $n> as Handler),+] } }
@@ -3457,8 +3505,8 @@ pub(crate) fn guarded_compare_jump(record: &LaneInstruction) -> Option<Handler> 
 script_handler! {
     /// The comparison jump over two registers, its operator `FORMED_COMPARISONS[ENTRY]`, that the solve's int32 cells do not
     /// prove (`guarded_compare_jump`). It tests both registers' int32 tags, once per execution: an int32 pair runs the proven
-    /// instance (`proven_compare_row`) over the same record. Any other pair requickens the record to its formed register and
-    /// register instance (`compare_jump_row`) for good.
+    /// instance (`proven_compare_row`) over the same record. Any other pair takes the general comparison step
+    /// (`compare_jump_row`) in place, and the record keeps its instance.
     pub(crate) fn compare_guarded_row<BACKWARD: bool, ENTRY: u8>(cx, r, ip, i, view) {
         // SAFETY: `guarded_compare_jump` installed this form on a record whose two operands are registers, which it keeps.
         let (left, right) = unsafe { (Operand(i.b).register_index().unwrap_unchecked(), Operand(i.c).register_index().unwrap_unchecked()) };
@@ -3469,7 +3517,6 @@ script_handler! {
         }
         let general = compare_jump_row::<BACKWARD>(FORMED_COMPARISONS[usize::from(ENTRY)], Operand(i.b), Operand(i.c))
             .unwrap_or(jump_row::<{ quench_runtime::staged::COMPARE_JUMP_ROW }>(BACKWARD));
-        requicken(ip, general);
         sibling!(general, r, ip, view)
     }
 }
@@ -3504,9 +3551,8 @@ fn compare_jump_row<const BACKWARD: bool>(operator: u32, left: Operand, right: O
     table.get(usize::from(compare_slot(operator)?)).copied()
 }
 
-/// The plain comparison jump row (`jump_row`) of `handler` where it is an instance its first run moved to
-/// (`compare_jump_row`, or a `compare_guarded_row` either direction); `None` for any other handler. A record moved back to its plain row
-/// takes its instance again at its next run, so the move undoes only what the run learned.
+/// The plain comparison jump row (`jump_row`) of `handler` where it is an instance the load gave it (`compare_jump_row`, or a
+/// `compare_guarded_row` either direction); `None` for any other handler. The plain row takes the generic comparison step.
 pub(crate) fn unformed_compare_jump(handler: *const ()) -> Option<Handler> {
     fn instances<const BACKWARD: bool>() -> [Handler; COMPARE_OPERATORS as usize + 4 * FORMED_COMPARISONS.len() + NULLISH_TESTS.len() + BOOLEAN_TESTS.len()] {
         macro_rules! row { ($flag:expr) => { row_jump!({ quench_runtime::staged::COMPARE_JUMP_ROW }, BACKWARD, { $flag }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }, { quench_runtime::staged::NO_LINK }) as Handler } }
@@ -3535,44 +3581,6 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
         // enters the loop's native code where the site enters (`LoopSite::enters`).
         if const { FLAG == FLAG_LOOP } {
             sibling!(crate::dispatch_fast::loop_jump_miss, r, ip, view)
-        }
-        // A comparison jump's operator is a constant of its record: its first run moves the record to
-        // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a
-        // constant and its row folds to that operator's test rather than matching every comparison.
-        // The nullish, Boolean and formed instances here are chosen by the first run only for the operands no
-        // cell decides (`typed_compare_jump`, `proven_compare_jump` pick the others at derivation); this path
-        // goes once the solve covers every program.
-        if const { OP == quench_runtime::staged::COMPARE_JUMP_ROW && FLAG == FLAG_UNREAD
-            && PREFIX == quench_runtime::staged::NO_LINK && COPY == quench_runtime::staged::NO_LINK && TEST == quench_runtime::staged::NO_LINK } {
-            // The operator is the record's field A (`binary_operator_field`), the field its decode (`decode_compare`)
-            // compares by, so the instance a record takes names the comparison the record decodes to.
-            let operator = u32::from(i.a);
-            // A register-constant form's constant is a static fact of the record: it moves into the
-            // record's `mode` (zero on an unfused record), which the formed instance reads it from.
-            let right = Operand(i.c);
-            let constant = (right.kind() == Some(quench_runtime::bytecode::OperandKind::Constant))
-                .then(|| unsafe { &*(*cx).constants }.get(usize::from(right.payload())).copied()).flatten();
-            let formable = right.kind() != Some(quench_runtime::bytecode::OperandKind::Constant) || constant.is_some();
-            // A register tested against a constant `null` or `undefined`: its tag decides it (`Comparison::Nullish`).
-            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
-                && let Some(handler) = constant.and_then(|constant| nullish_jump_row::<BACKWARD>(operator, constant)) {
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
-            // A register tested against a constant Boolean (`x === true`, `x !== false`): identity decides it (`Comparison::Boolean`).
-            if Operand(i.b).kind() == Some(quench_runtime::bytecode::OperandKind::Register)
-                && let Some(handler) = constant.and_then(|constant| boolean_jump_row::<BACKWARD>(operator, constant)) {
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
-            if formable && let Some(handler) = compare_jump_row::<BACKWARD>(operator, Operand(i.b), right) {
-                if let (Some(constant), Some(true)) = (constant, compare_operands_of::<BACKWARD>(handler)) {
-                    // SAFETY: `ip` is this record of the running view, whose handler changes with it here.
-                    unsafe { (*ip.cast_mut()).mode = constant.to_bits() };
-                }
-                requicken(ip, handler);
-                sibling!(handler, r, ip, view)
-            }
         }
         // SAFETY: `compare_jump_row` chose a formed instance from the record's own operand kinds.
         if let Some(constant) = const { compare_operands(FLAG) } {

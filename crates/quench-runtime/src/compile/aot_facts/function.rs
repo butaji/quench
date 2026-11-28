@@ -79,6 +79,13 @@ impl<'a> FunctionFacts<'a> {
         })
     }
 
+    /// The function whose environment holds the depth-0 capture slot `slot` this function reads (`FactKey::Slot { owner, slot }`).
+    /// None where this function reads no depth-0 capture of `slot`. Read by the load-time choice of a capture's root row
+    /// (category M: site 1), which needs the owner to test whether it is the program's root function.
+    pub fn capture_owner(&self, slot: u16) -> Option<u32> {
+        self.facts.captures.get(&self.function)?.iter().find(|&&(_, captured)| captured == slot).map(|&(owner, _)| owner)
+    }
+
     /// The cell register `register` holds just before the instruction at `pc` in the settled solve
     /// (`RegisterCells::at`): its type with its range, the classes of its objects and what its arrays keep.
     /// None where the solve did not settle or no path reaches `pc`. A tier lowers the instruction from it:

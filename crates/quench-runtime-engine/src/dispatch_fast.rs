@@ -2627,7 +2627,7 @@ script_handler! {
         let slot = ImmediateLayout::capture_slot(imm);
         // The root reads' fast paths (a global var's hint, a global lexical's index, a root
         // binding slot read in place) are gone: every read takes the walk, which answers the same
-        // value through `read_capture_value`. Their record requickening went with them.
+        // value through `read_capture_value`.
         let value = read_capture_value::<true>(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
@@ -2649,11 +2649,6 @@ script_handler! {
         }
         if let Some(value) = value {
             r.set(i.a, value);
-            // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
-            // which reads the binding through the same reads this walk takes.
-            if capture_settles_on_root(cx, depth) {
-                requicken(ip, generated_row!(quench_runtime::staged::LOAD_CAPTURE_ROW, ACC_NONE, FLAG_ROOT) as Handler);
-            }
             next!(cx, r, following(ip), view)
         }
         // A capture of a root environment's global var or lexical: the staged row's root read.
