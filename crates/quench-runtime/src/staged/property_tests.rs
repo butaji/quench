@@ -25,10 +25,9 @@ impl PlanSource for Plans {
     fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { Some(self.store) }
 }
 
-/// A frame over a few registers and the heap's object records, whose callouts log their name.
+/// A frame over a few registers, whose callouts log their name.
 struct Host<'p> {
     registers: Vec<u64>,
-    records: u64,
     plans: &'p Plans,
     answers: bool,
     log: Vec<&'static str>,
@@ -38,8 +37,8 @@ struct Host<'p> {
 }
 
 impl<'p> Host<'p> {
-    fn new(records: u64, plans: &'p Plans, registers: Vec<u64>) -> Self {
-        Self { registers, records, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
+    fn new(plans: &'p Plans, registers: Vec<u64>) -> Self {
+        Self { registers, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
     }
 
     fn call(&mut self, name: &'static str) -> bool {
@@ -76,7 +75,6 @@ impl crate::staged::CallFrame<Concrete> for Host<'_> {}
 impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.records) }
     fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<(u32, crate::staged::ShapeFact)> {
         self.proven.map(|shape| (shape, crate::staged::ShapeFact::entry_guard()))
     }
@@ -146,13 +144,10 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     (object, shape)
 }
 
-/// The object record table is gone (S7f): no table base, so a record plan reads none.
-pub fn records(_heap: &Heap) -> u64 { 0 }
-
 /// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    let mut frame = Host::new(&plans, vec![0]);
     let mut stage = Concrete::over(heap);
     read_with(&mut stage, &mut frame, (Owner::Temporary, false), object.to_bits(), plan, ()).map(Value::from_bits)
 }
@@ -263,7 +258,7 @@ fn the_property_instructions_decode_to_their_operations() {
 /// and the shapes its guards recorded.
 fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: Option<u32>) -> (Option<Value>, Vec<u32>) {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    let mut frame = Host::new(&plans, vec![0]);
     frame.proven = proven;
     let mut stage = Concrete::over(heap);
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
@@ -294,7 +289,7 @@ fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_agai
 fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, operation: Operation<u64, ()>)
     -> (Option<Value>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
-    let mut frame = Host::new(records(heap), &plans, registers);
+    let mut frame = Host::new(&plans, registers);
     let mut stage = Concrete::over(&*heap);
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),

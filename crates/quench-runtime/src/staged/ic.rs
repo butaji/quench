@@ -111,14 +111,12 @@ impl<W, C> Reached<W, C> {
     }
 }
 
-/// The value `ops` read from `start`, prototypes found in the record table at `records`, or
-/// `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
+/// The value `ops` read from `start`, or `miss` where a guard fails. `None` where the stage leaves at `miss`, or the list ends
 /// before a load.
 #[inline(always)]
-pub fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
-    miss: S::Miss) -> Option<S::Word> {
+pub fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, miss: S::Miss) -> Option<S::Word> {
     for op in ops {
-        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, miss) { return read; }
     }
     None
 }
@@ -129,8 +127,7 @@ pub fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S
 /// there kept every arm and counted holes at run time. Only that site unrolls: inlined at every
 /// `run`, the copies tripled the compile time of a heap shard.
 #[inline(always)]
-pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
-    miss: S::Miss) -> Option<S::Word> {
+pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::Word, S::Cond>, miss: S::Miss) -> Option<S::Word> {
     // The first ops one by one, then any rest in a loop: a stencil row's list is a constant of at most
     // `UNROLLED` ops, so each step folds to its op's arm and the row makes no call (a loop over the list
     // would keep every arm, and the holes each arm takes would be counted at run time).
@@ -138,7 +135,7 @@ pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S
     macro_rules! step {
         ($index:expr) => {
             if let Some(op) = ops.get($index) {
-                if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+                if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, miss) { return read; }
             } else {
                 return None;
             }
@@ -146,7 +143,7 @@ pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S
     }
     step!(0); step!(1); step!(2); step!(3);
     for op in ops.get(UNROLLED..).unwrap_or(&[]) {
-        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, records, miss) { return read; }
+        if let core::ops::ControlFlow::Break(read) = run_op(stage, op, &mut at, miss) { return read; }
     }
     None
 }
@@ -154,8 +151,7 @@ pub fn run_unrolled<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S
 /// One op of `run` over the record `at` reached: `Continue` to the next op, or `Break` with the read
 /// (`None` where a guard left at `miss`).
 #[inline(always)]
-fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::Cond>, records: Option<S::Word>,
-    miss: S::Miss) -> core::ops::ControlFlow<Option<S::Word>> {
+fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::Cond>, miss: S::Miss) -> core::ops::ControlFlow<Option<S::Word>> {
     use core::ops::ControlFlow::{Break, Continue};
     macro_rules! guarded { ($e:expr) => { match $e { Some(held) => held, None => return Break(None) } }; }
     match *op {
