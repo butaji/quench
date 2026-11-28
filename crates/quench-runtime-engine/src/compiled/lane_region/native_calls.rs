@@ -109,12 +109,6 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline, which a loop holds natively (`holds_in_loop`). A loop whose calls are all such runs
-/// natively in a body (`loop_body::offer_body`).
-pub(crate) fn inlines_in_loop(native: Native) -> bool {
-    Inline::of(native).is_some()
-}
-
 /// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
 /// of `intrinsic_calls` (`accepts`) for the region analysis.
 pub(crate) fn inlines_in_loop_call(native: Native, count: u16) -> bool {

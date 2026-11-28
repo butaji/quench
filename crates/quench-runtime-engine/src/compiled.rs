@@ -121,7 +121,7 @@ pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
-pub(crate) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
+pub(crate) use lane_region::{inlines_in_loop_call, native_method_call};
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]

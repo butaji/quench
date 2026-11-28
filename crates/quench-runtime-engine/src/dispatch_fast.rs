@@ -3345,10 +3345,6 @@ script_handler! {
         if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // A loop whose calls no body inlines yet is offered a body once (`offer_body`).
-        if loop_body::offer_body(cx, r, site) {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
         // A loop with no body takes its plain jump from now on.
         loop_retire_in_lane(cx, ip, site);
         next!(cx, r, header, Carried::script_in(cx, view))
