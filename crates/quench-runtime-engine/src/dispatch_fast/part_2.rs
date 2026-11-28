@@ -346,18 +346,23 @@ pub(super) const fn script_call_row(argc: u16, plain: bool, returns: bool) -> Ha
     }
 }
 
-/// The general protocol row of a call record whose immediate is `imm`: that of its argument count, not
-/// `PLAIN` nor `RETURNS`, which the record's requickened form takes (`specialize_script_calls`).
-pub(super) fn script_call_handler(imm: u32) -> Handler {
-    script_call_row(ImmediateLayout::argument_count(imm), false, false)
+/// The entry every body the call at `pc` of `function` may call takes (`FunctionFacts::call_targets`,
+/// `AotFacts::body_entry`): one body's, or the one entry shared by several. None where a body's entry is
+/// not named, or where the bodies differ.
+fn targets_entry(facts: &quench_runtime::compile::aot_facts::AotFacts, function: u32, pc: u32) -> Option<CallEntry> {
+    let mut entries = facts.function_facts(function).call_targets(pc).into_iter().map(|body| facts.body_entry(body));
+    let first = entries.next()??;
+    entries.all(|entry| entry == Some(first)).then_some(first)
 }
 
 /// Gives each call record the protocol row of its argument count, of a receiver that is the function's
 /// `undefined` register (`undefined`), and, where `admits_returns` (`concrete_admits_returning_call` for
 /// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits. A record of
 /// a planned site (`planned`, sorted by pc) takes `planned_call_row` instead, which reads its site from the record's `mode`.
+/// A call whose entry the facts name (`targets_entry`) takes that entry's row (`entry_call_row`), except an activating
+/// entry, which keeps the row that proves the call on its first run.
 pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool,
-    planned: &[quench_runtime::vm::engine_types::PlannedSite]) {
+    planned: &[quench_runtime::vm::engine_types::PlannedSite], facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) {
     let general = script_call_row(ANY_ARGC, false, false) as *const ();
     for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
         if let Ok(index) = planned.binary_search_by_key(&(pc as u32), |site| site.pc) {
@@ -369,7 +374,12 @@ pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined
         let returns = admits_returns && record.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         let argc = ImmediateLayout::argument_count(record.imm());
         const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-        record.handler = script_call_row(argc, plain, returns) as *const ();
+        let entry = facts.and_then(|facts| targets_entry(facts, function, pc as u32)).filter(|entry| *entry != CallEntry::framed(Framed::Activates));
+        let handler = match entry {
+            Some(entry) => entry_call_row(entry, record),
+            None => script_call_row(argc, plain, returns),
+        };
+        record.handler = handler as *const ();
     }
 }
 
@@ -441,19 +451,6 @@ pub(super) fn array_iteration_result_in_lane(vm: &mut Vm, iterator: Value) -> Op
     let result = vm.reused_iterator_result(step.unwrap_or(Value::UNDEFINED), step.is_none());
     note_allocation(vm);
     Some(result)
-}
-
-/// The `script_call_cross_plain_miss` instantiation of a window of `argc` values, at most
-/// `FIXED_ARGUMENT_COPIES`.
-pub(super) fn cross_plain_handler(argc: u16) -> Handler {
-    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    match argc {
-        0 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_0 as u16 }>(),
-        1 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_1 as u16 }>(),
-        2 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_2 as u16 }>(),
-        3 => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_3 as u16 }>(),
-        _ => call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_4 as u16 }>(),
-    }
 }
 
 /// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
