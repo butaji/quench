@@ -352,12 +352,9 @@ pub const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsSt
 /// The string record range's base, which a string `length` read finds the record from.
 pub const JS_STEP_STRING_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, string_record_base);
 /// What a store into a function's own properties reads (`StagedRecordSpace::Function`): the function
-/// records' mark blocks and their count; and the empty string's word, which a function's inferred name replaces (`staged::naming`).
+/// records' mark blocks and their count.
 pub const JS_STEP_FUNCTION_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_blocks);
 pub const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_mark_block_count);
-pub const JS_STEP_EMPTY_STRING: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_string);
-/// The function record reservation's base (`JsStepDispatch::function_record_base`).
-pub const JS_STEP_FUNCTION_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_record_base);
 pub const JS_STEP_FIELD_ENTRIES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, field_entries);
 /// The base pointer's offset within a property buffer: the head is the buffer's first field (`PropertyBuffer::head`).
 pub const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::property_buffer::PropertyBufferHead<u8>, base);

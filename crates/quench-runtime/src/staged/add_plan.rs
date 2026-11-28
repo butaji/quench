@@ -58,7 +58,7 @@ impl Transition {
     }
 
     /// The staged rows' edge: the layouts, and the slot. A class-keyed transition's `before` is its
-    /// key (`class | CLASS_KEY`), which `add::site_add` compares with the cell's class; a record
+    /// key (`class | CLASS_KEY`), which the class add (`add::class_add`) compares with the cell's class; a record
     /// transition's is its before-layout.
     #[inline(always)]
     pub fn edge(self) -> Edge<u64> {
