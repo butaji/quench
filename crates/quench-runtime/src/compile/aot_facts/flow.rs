@@ -19,7 +19,7 @@ use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
-use crate::typed_ir::{Cell, Classes, ElementClass, Holders, Identity, Representation, WIDENING_ROUNDS};
+use crate::typed_ir::{Cell, ElementClass, Holders, Identity, Representation, WIDENING_ROUNDS};
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)]
 use crate::staged::glue_prelude::*;
@@ -230,9 +230,10 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     record.registers.sort();
     let arity = arity_of(function);
     let returns_out = ctx.is_root || function.is_generator || function.is_async;
+    let leaked = solver.leaked.take();
     let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
-    flow.leaked = solver.leaked.take();
+    flow.leaked = leaked;
     flow
 }
 
