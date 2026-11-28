@@ -2,7 +2,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::bytecode::{ImmediateLayout, InitializerValue, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
+use quench_runtime::bytecode::{ImmediateLayout, NestedConstruct, NESTED_ARGUMENTS, NESTED_CHAIN};
 
 pub(crate) use quench_runtime::vm::engine_types::NestedField;
 
@@ -74,8 +74,8 @@ pub(crate) fn finish_forwarded_in_lane(
     union: Option<quench_runtime::vm::engine_types::FixedUnion>,
 ) -> Option<()> {
     // Each store's name and value in store order: a fixed receiver's slot writes.
-    let mut atoms = [0; quench_runtime::heap::MAX_CELL_FIELDS];
-    let mut values = [Value::UNDEFINED; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut atoms = [0; quench_runtime::tier_surface::MAX_CELL_FIELDS];
+    let mut values = [Value::UNDEFINED; quench_runtime::tier_surface::MAX_CELL_FIELDS];
     let mut stored = 0;
     let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read, union.is_some(),
         |vm, construct| nested_construct_in_lane(vm, env, construct).map(|(built, _)| built),

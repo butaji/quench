@@ -29,9 +29,9 @@ pub(crate) fn header_closure(vm: &mut Vm, code: &ResidualProgram, callee: &Direc
     // SAFETY: the header's words lie below its window.
     let entered = unsafe { *window.sub(quench_runtime::staged::frame::CONTEXT_CALLEE) };
     // A site that reads its bound words may have entered a closure at its own closure's reused locator: resolve it.
-    if entered == callee.callee && !callee.bound.read.get() { return (callee.target.env, callee.target.capture); }
+    if entered == callee.closure.callee && !callee.bound.read.get() { return (callee.closure.env, callee.closure.capture); }
     let target = vm.resolve_script_call_target(code, entered).expect("a rebound closure resolves to its function's target");
-    (target.env, target.capture)
+    (target.closure.env, target.closure.capture)
 }
 
 /// The environment a running native frame's captures resolve in: its descriptor's, or where it entered another closure
@@ -40,8 +40,8 @@ pub(crate) fn frame_env(frame: quench_runtime::vm::engine_types::ActivationView)
     // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run; a header's window is linked.
     let callee = unsafe { &*frame.callee };
     match frame.kind {
-        quench_runtime::vm::engine_types::ActivationKind::Script(script) if script.callee != callee.callee || callee.bound.read.get() => unsafe { *(frame.window as *const Value).sub(quench_runtime::staged::frame::CONTEXT_ENV) },
-        _ => callee.target.env,
+        quench_runtime::vm::engine_types::ActivationKind::Script(script) if script.callee != callee.closure.callee || callee.bound.read.get() => unsafe { *(frame.window as *const Value).sub(quench_runtime::staged::frame::CONTEXT_ENV) },
+        _ => callee.closure.env,
     }
 }
 
@@ -52,8 +52,8 @@ pub(crate) fn frame_env(frame: quench_runtime::vm::engine_types::ActivationView)
 pub(crate) fn rebind_closure(cx: *mut quench_runtime::vm::engine_types::LaneContext, ip: quench_runtime::vm::engine_types::Ip, target: &crate::dispatch_fast::ScriptCallTarget, argc: u16) {
     // SAFETY: the running region's code (and its `CallCode`) outlives its run, which named it.
     let Some(calls) = (unsafe { ((*cx).region_calls as *const quench_runtime::vm::engine_types::CallCode).as_ref() }).filter(|_| unsafe { (*cx).region_payload } != 0) else { return };
-    let (call, word) = (ip.addr(), target.callee.to_bits());
-    let mut sites = calls.direct.iter().filter(|direct| direct.call == call && direct.bound.read.get() && direct.target.function == target.function).peekable();
+    let (call, word) = (ip.addr(), target.closure.callee.to_bits());
+    let mut sites = calls.direct.iter().filter(|direct| direct.call == call && direct.bound.read.get() && direct.target.function == target.body.function).peekable();
     if sites.peek().is_none() { return; }
     // SAFETY: the running lane's context; its decoded site is the call being made.
     let (vm, Some((_, function, pc, _))) = (unsafe { &*(*cx).vm }, unsafe { (*cx).body_site }) else { return };
@@ -76,7 +76,7 @@ pub(crate) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy
 /// retires the code (`ProgramStore::retire_dead_native_calls`).
 pub(crate) fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: impl Fn(Value) -> bool) -> bool {
     inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-        || direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()))
+        || direct.iter().any(|callee| !live(callee.closure.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()))
 }
 
 /// The registers past the caller's `caller_registers` that `inlined` occupy: the scratch window a
@@ -149,27 +149,27 @@ pub(crate) fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, i
 pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<crate::compiled::DirectCallee> {
     // No tier's direct row binds an arrow's lexical `this` (Cranelift cannot), so an arrow calls direct only where it
     // never reads `this`, and as strict.
-    let sloppy = match target.this_binding {
+    let sloppy = match target.body.this_binding {
         ThisBinding::Sloppy => Some(vm.realm.globals),
         ThisBinding::Strict => None,
         ThisBinding::Lexical => {
-            vm.programs.residual(target.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.function as usize)))?;
+            vm.programs.residual(target.body.admission.program()).filter(|code| !quench_runtime::bytecode::activation_reads_this(code, code.function(target.body.function as usize)))?;
             None
         }
         _ => return None,
     };
-    (target.admission.current(vm.lane_stack.admission)
-        && target.entry.activates() && !target.view.is_null() && argc <= target.params).then_some(())?;
+    (target.body.admission.current(vm.lane_stack.admission)
+        && target.body.entry.activates() && !target.body.view.is_null() && argc <= target.body.params).then_some(())?;
     // SAFETY: a resolved target's view outlives its program.
-    let view_of = unsafe { &*target.view };
-    let (method, body) = view_of.pinned_callee(target.function == function);
+    let view_of = unsafe { &*target.body.view };
+    let (method, body) = view_of.pinned_callee(target.body.function == function);
     // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
-    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.closure.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(crate::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(),
-        bound: quench_runtime::vm::engine_types::BoundClosure::new(target.callee.to_bits(), crate::compiled::entry_cell::capture_word(capture_values, capture_len, capture_stores(target.capture).is_some())),
+        target: target.body, closure: target.closure, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
+        registers: target.body.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.closure.capture).is_some(),
+        bound: quench_runtime::vm::engine_types::BoundClosure::new(target.closure.callee.to_bits(), crate::compiled::entry_cell::capture_word(capture_values, capture_len, capture_stores(target.closure.capture).is_some())),
     })
 }
 
@@ -190,8 +190,8 @@ pub(crate) unsafe fn rebind_region_call(cx: *mut quench_runtime::vm::engine_type
     // SAFETY: the region's code (and its `CallCode`) outlives its run, which named it.
     let Some(calls) = (unsafe { calls.as_ref() }) else { return };
     let site = ip.addr() as u64;
-    let Some(record) = calls.records.iter().find(|record| record.call == site && record.callee != 0) else { return };
-    if record.callee == target.callee.to_bits() || record.packed & u64::from(u32::MAX) != u64::from(target.function) { return; }
+    let Some((_, record)) = calls.records.iter().find(|(call, callee)| call.call == site && callee.callee != 0) else { return };
+    if record.callee == target.closure.callee.to_bits() || record.function != u64::from(target.body.function) { return; }
     let mut rebound = calls.rebound.borrow_mut();
     if rebound.len() >= REGION_REBINDS { return; }
     // SAFETY: the context's decoded site is the call being made.
@@ -202,7 +202,7 @@ pub(crate) unsafe fn rebind_region_call(cx: *mut quench_runtime::vm::engine_type
     (direct.method, direct.body) = (None, None);
     rebound.push(Box::new(direct));
     let Some(direct) = rebound.last() else { return };
-    let (env, capture) = direct.target.context_words();
+    let (env, capture) = direct.closure.context_words();
     let words = std::ptr::from_ref(&**record).cast_mut();
     // SAFETY: the record is the region's, read in place by its code on this thread, none of which runs while
     // its helper does; the descriptor is boxed in `rebound`, which keeps it for the code's life.
@@ -212,6 +212,6 @@ pub(crate) unsafe fn rebind_region_call(cx: *mut quench_runtime::vm::engine_type
         (*words).descriptor = std::ptr::from_ref(&**direct) as u64;
         (*words).env = env;
         (*words).capture = capture;
-        (*words).callee = direct.callee.to_bits();
+        (*words).callee = direct.closure.callee.to_bits();
     }
 }

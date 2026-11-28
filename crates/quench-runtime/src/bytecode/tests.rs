@@ -153,7 +153,6 @@ fn eval_binding_declarations_survive_residual_round_trip() {
 /// A residual of one function with `code` and `source_positions`, the rest empty.
 fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::SourcePositions) -> ResidualProgram {
     ResidualProgram {
-        specialized: true,
         kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),
@@ -274,7 +273,6 @@ fn decoder_rejects_inconsistent_source_position_tables() {
 #[test]
 fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     let program = ResidualProgram {
-        specialized: true,
         kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),

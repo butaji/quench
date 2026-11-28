@@ -401,7 +401,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
             if !seen_modules.insert(name.clone()) { continue; }
             let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
             if path.extension().is_some_and(|extension| extension == "json") { continue; }
-            manifest.insert(&name, &["specialized", module.compilation_goal(), &module.source])?;
+            manifest.insert(&name, &[module.compilation_goal(), &module.source])?;
             (name, module.source.to_string(), oxc_span::SourceType::mjs().with_typescript(module.typescript))
         };
         let body = commonjs::script_body(&text);
@@ -413,7 +413,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         quench_runtime::Engine::admit_typescript(&allocator, &mut parsed.program);
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let scoping = semantic.semantic.scoping();
-        let demands = quench_runtime::Engine::source_demands(&parsed.program, scoping, true);
+        let demands = quench_runtime::Engine::source_demands(&parsed.program, scoping);
         let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
         graph.record_source_demands(manifest, demands, &path, base);
         let loaders = LoaderBindings::discover(&parsed.program, scoping, &path);

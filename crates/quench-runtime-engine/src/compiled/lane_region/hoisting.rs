@@ -13,7 +13,8 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variables.bits, bits);
             match array.views {
                 ElementViews::Dense => {
-                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access(), exit);
+                    let access = self.array_access();
+                    let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, access, exit);
                     if self.int32_loop(array) {
                         // An int32 loop keeps the backing's exact count of others, which is zero: a backing the solve
                         // proves plain (`proven_plain_backing`) has that count by its fact; any other is guarded here
@@ -70,7 +71,7 @@ impl Lowering<'_, '_> {
                         }
                         None => {
                             self.hoist_typed_view(ViewAccess { kind, writable: array.writable }, bits, variables, exit);
-                            if let (Some(register), Some(native)) = (register, kind) {
+                            if let Some(native) = kind {
                                 let (values, length) = (self.builder.use_var(variables.values), self.builder.use_var(variables.length));
                                 state.proofs.typed.retain(|view| view.register != register);
                                 state.proofs.typed.push(TypedProof { register, kind: native.kind, values, length, writable: array.writable, kept: false });
@@ -79,7 +80,8 @@ impl Lowering<'_, '_> {
                     }
                 }
                 ElementViews::Double => {
-                    let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access().record, exit);
+                    let record = self.array_access().record;
+                    let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, record, exit);
                     self.builder.def_var(variables.values, values);
                     self.builder.def_var(variables.length, length);
                 }
@@ -150,13 +152,14 @@ impl Lowering<'_, '_> {
             debug_assert!(!self.int_only.contains(&(array.header, array.source)), "a reload of an int-only array");
             let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
+            let record = self.array_access().record;
             if array.views == ElementViews::Double {
-                let (values, length) = super::emit_double_array_reload(&mut self.builder, self.payload, bits, self.array_access().record);
+                let (values, length) = super::emit_double_array_reload(&mut self.builder, self.payload, bits, record);
                 self.builder.def_var(variables.values, values);
                 self.builder.def_var(variables.length, length);
                 continue;
             }
-            let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits, self.array_access().record);
+            let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits, record);
             // A grown backing may count its values again; stores through the view keep none. An int32
             // loop's count stays exact (`hoist_arrays`), so its view marks nothing.
             if array.writable && !self.int32_loop(array) {

@@ -175,7 +175,7 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
             caller_registers: caller.registers,
             caller_program: caller.program,
             kind: ActivationKind::Script(ScriptActivation {
-                callee: callee.target.callee,
+                callee: callee.closure.callee,
                 argc,
                 completion: Completion::Plain,
                 forwards: false,
@@ -188,8 +188,8 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     // The frame's window takes the context words its call would have written (`enter_window_in_lane`).
     let window = Registers(window_at as *mut Value);
     window.set_this(Value::from_bits(this));
-    window.set_env(callee.target.env);
-    window.set_capture(callee.target.capture);
+    window.set_env(callee.closure.env);
+    window.set_capture(callee.closure.capture);
     vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
 }
 

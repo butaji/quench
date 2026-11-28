@@ -41,7 +41,6 @@ pub(crate) struct BodyCall<'a> {
     pub(crate) ip: Ip,
     /// The running activation's `this`; the deleted marker where the body reads a lexical one.
     this: Value,
-    code: &'a ResidualProgram,
     /// The registers of a method call's argument list; none for a window.
     list: &'a [Register],
 }
@@ -75,7 +74,7 @@ impl<'a> BodyCall<'a> {
             Arguments::Window { .. } => &[],
         };
         // SAFETY: `call_pc` is a record of the function whose records start at `base`.
-        Some(Self { site, registers, ip: unsafe { base.add(call_pc as usize) }, this, code, list })
+        Some(Self { site, registers, ip: unsafe { base.add(call_pc as usize) }, this, list })
     }
 
     /// How many arguments the call passes.
@@ -101,7 +100,7 @@ impl<'a> BodyCall<'a> {
             Receiver::This { path } => {
                 let this = Some(self.this).filter(|this| !this.is_deleted())?;
                 let Some((_, cache)) = path else { return Some(this) };
-                match vm.cached_field_hit(self.code, this, cache) {
+                match vm.cached_field_hit(this, cache) {
                     FieldCacheProbe::Hit(value) => Some(value),
                     FieldCacheProbe::OrdinaryMiss | FieldCacheProbe::Ineligible => None,
                 }
@@ -117,7 +116,7 @@ impl<'a> BodyCall<'a> {
     pub(crate) fn callee(&self, vm: &mut Vm, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
-            Callee::Method { atom, site } => vm.method_cache_load(self.code, site as usize, atom, receiver),
+            Callee::Method { atom, site } => vm.method_cache_load(site as usize, atom, receiver),
             Callee::Known(function) => known_callee(vm, self.link(), function),
         }
     }
@@ -180,8 +179,8 @@ impl<'a> BodyCall<'a> {
         let window = unsafe {
             let top = stack.values.top();
             let listed = Passed::List { file: self.registers.0 as u64, registers: self.list };
-            fill_call(&mut Concrete::pure(), top as u64, &[], listed, target.registers);
-            stack.values.set_top(top.add(usize::from(target.registers) + quench_runtime::vm::lane_values::CONTEXT));
+            fill_call(&mut Concrete::pure(), top as u64, &[], listed, target.body.registers);
+            stack.values.set_top(top.add(usize::from(target.body.registers) + quench_runtime::vm::lane_values::CONTEXT));
             Registers(top)
         };
         enter_window_in_lane::<false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
@@ -192,5 +191,5 @@ impl<'a> BodyCall<'a> {
 /// entry the record's hint names, where that is a function of the running program.
 fn known_callee(vm: &Vm, link: &std::cell::Cell<u16>, function: FunctionId) -> Option<Value> {
     let entry = vm.lane_stack.script_targets.entries.get(usize::from(link.get()))?;
-    (entry.function == u32::from(function) && entry.program() == vm.active_program).then_some(entry.callee)
+    (entry.body.function == u32::from(function) && entry.body.program() == vm.active_program).then_some(entry.closure.callee)
 }

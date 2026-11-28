@@ -40,7 +40,7 @@ pub(in super::super) fn body_resume_at_in_lane(cx: *mut LaneContext, r: Register
 /// forms take that fact as proven (`MAY_CROSS` false) and only the general activation asks.
 #[inline(always)]
 pub(in super::super) fn crosses_in_lane<const MAY_CROSS: bool>(cx: *mut LaneContext, target: &ScriptCallTarget) -> bool {
-    MAY_CROSS && target.program() != unsafe { (*cx).program }
+    MAY_CROSS && target.body.program() != unsafe { (*cx).program }
 }
 
 /// `activate_in_lane` past its checks: the call passes at most `target`'s parameters, the lane
@@ -81,7 +81,7 @@ pub(in super::super) fn push_passed_in_lane<const GENERAL: bool, const SETTLES: 
 ) -> (Registers, Ip) {
     // Only `script_call_settles_miss` activates a settling target, and it says so statically,
     // so the other call forms decide the completion without reading the target's entry.
-    debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
+    debug_assert_eq!(SETTLES, target.body.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
     enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
@@ -110,7 +110,7 @@ pub(in super::super) fn enter_cell_body_in_lane(
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program store keeps a derived view alive with its program.
-    let own = unsafe { &*target.view };
+    let own = unsafe { &*target.body.view };
     let method = own.cell_method()?;
     let window = fill_window_in_lane(vm, target, passed, argc);
     if !body_admits_in_lane(cx, method, CALLEE_ACTIVATION_PENDING) {
@@ -121,9 +121,9 @@ pub(in super::super) fn enter_cell_body_in_lane(
     begin_cell_leaf_in_lane(cx, ip, r, target, argc, this, window);
     let run = crate::compiled::BodyRun {
         method, direct_calls: direct_calls_in_lane(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
-        registers: window.0, receiver: entry_receiver_in_lane(cx, own.binds_this()), captures: capture_reads(target.capture), lane_context: cx.cast(),
+        registers: window.0, receiver: entry_receiver_in_lane(cx, own.binds_this()), captures: capture_reads(target.closure.capture), lane_context: cx.cast(),
         pending: CALLEE_ACTIVATION_PENDING, bases_stand: false };
-    Some(cell_body_ended_in_lane(cx, window, own, target.function, method, vm.run_lane_body(&run)))
+    Some(cell_body_ended_in_lane(cx, window, own, method, vm.run_lane_body(&run)))
 }
 
 /// A frameless call of `target` (`CallEntry::frameless(Frameless::Native)`), passed the `argc` values at `passed`
@@ -139,16 +139,16 @@ pub(in super::super) fn enter_cell_body_in_lane(
 pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &ScriptCallTarget, passed: *const Value, argc: u16, this: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program store keeps a derived view alive with its program.
-    let own = unsafe { &*target.view };
+    let own = unsafe { &*target.body.view };
     let method = own.cell_method()?;
     if vm.with_scope_entered || !activation_room_in_lane(vm, target) || !body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS) {
         return None;
     }
-    let window = fill_window_in_lane(vm, target, passed, argc.min(target.params));
+    let window = fill_window_in_lane(vm, target, passed, argc.min(target.body.params));
     let receiver = if own.binds_this() { body_calls::body_this_in_lane(target, this) } else { Value::DELETED };
     let run = crate::compiled::BodyRun {
         method, direct_calls: direct_calls_in_lane(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
-        registers: window.0, receiver, captures: capture_reads(target.capture), lane_context: cx.cast(),
+        registers: window.0, receiver, captures: capture_reads(target.closure.capture), lane_context: cx.cast(),
         pending: NO_PENDING_ACTIVATIONS, bases_stand: false };
     let exit = vm.run_lane_body(&run);
     // SAFETY: the window is the stack's top the fill moved; a returned call leaves the stack as it found it.
@@ -165,7 +165,7 @@ pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &Scrip
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.
 #[inline(always)]
 pub(in super::super) fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
-    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program(), target.function);
+    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     unsafe { vm(cx) }.programs.tier_events().record(Event::CellCrossed);
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
@@ -184,7 +184,6 @@ pub(in super::super) fn cell_body_ended_in_lane(
     cx: *mut LaneContext,
     window: Registers,
     own: &LaneView,
-    function: u32,
     method: &crate::compiled::LaneMethod,
     exit: crate::compiled::LaneExit,
 ) -> Resumed {
@@ -208,7 +207,7 @@ pub(in super::super) fn cell_body_ended_in_lane(
 /// values at `passed` as its parameters, which the stack's values cover from here on.
 #[inline(always)]
 pub(in super::super) fn fill_window_in_lane(vm: &mut Vm, target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Registers {
-    let count = usize::from(target.registers);
+    let count = usize::from(target.body.registers);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the
     // registers live at entry are written before the length covers them, and no activation's
@@ -217,7 +216,7 @@ pub(in super::super) fn fill_window_in_lane(vm: &mut Vm, target: &ScriptCallTarg
     // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
     unsafe {
         let registers = stack.values.top();
-        fill_admitted_window(registers, usize::from(target.fill), count);
+        fill_admitted_window(registers, usize::from(target.body.fill), count);
         copy_arguments(registers, passed, argc);
         stack.values.set_top(registers.add(count + lane_values::CONTEXT));
         Registers(registers)

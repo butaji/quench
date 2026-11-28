@@ -6,6 +6,8 @@ use super::*;
 use quench_runtime::staged::region::Mutability;
 use quench_runtime::staged::{Access, Stage, Table};
 use quench_runtime::staged::flow::FlowStage;
+use quench_runtime::staged::NumericStage;
+use quench_runtime::staged::number_machine as numbers;
 use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::compiled::regions;
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;

@@ -173,12 +173,12 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
     let third = vm.own_property(vm.realm.globals, vm.lookup_atom("third").unwrap()).unwrap();
     vm.profile.field_primitives = Default::default();
     // The site's class-keyed entry admits the warmed receiver's class only: other shapes miss.
-    assert!(vm.primary_own_field_store_hit::<false>(&program, receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
-    assert!(!vm.primary_own_field_store_hit::<false>(&program, other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
-    assert!(vm.primary_own_field_store_hit::<true>(&program, receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
-    assert!(vm.cached_field_store_hit(&program, receiver, atom, Value::integer(4), site));
+    assert!(vm.primary_own_field_store_hit::<false>(receiver, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert!(!vm.primary_own_field_store_hit::<false>(other, atom, Value::integer(1), site, crate::heap::PropertyStoreLayout::Preserve));
+    assert!(vm.primary_own_field_store_hit::<true>(receiver, atom, Value::integer(2), site, crate::heap::PropertyStoreLayout::MayWiden));
+    assert!(vm.cached_field_store_hit(receiver, atom, Value::integer(4), site));
     assert_eq!(vm.profile.field_primitives.count(Path::CachedStore), 1);
-    assert!(vm.set_field_cache_hit(&program, receiver, atom, Value::integer(5), site, true));
+    assert!(vm.set_field_cache_hit(receiver, atom, Value::integer(5), site, true));
     assert_eq!(vm.profile.field_primitives.count(Path::GeneralStore), 1);
     assert_eq!(vm.own_property(receiver, atom), Some(Value::integer(5)));
     assert_eq!(vm.own_property(other, atom), Some(Value::integer(0)));
@@ -284,18 +284,18 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
     // SAFETY: the receiver remains rooted by its global binding; no allocation
     // or collection happens between obtaining this slot and the Number write.
-    assert!(unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
+    assert!(unsafe { vm.cached_field_store_pointer(receiver, atom, site, crate::typed_ir::Type::NUMBER) }.is_none(),
         "widening declines before exposing a raw writer to an active native caller");
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
     assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(Value::integer(1)));
     // The next admission consumes the already-widened domain.
-    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
+    let pointer = unsafe { vm.cached_field_store_pointer(receiver, atom, site, crate::typed_ir::Type::NUMBER) }.unwrap();
     for value in [Value::number(0.5), Value::number(-0.0), Value::number(f64::NAN), Value::integer(7)] {
         unsafe { pointer.write(value); }
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
     }
     let child = vm.object();
-    assert!(!vm.primary_own_field_store_hit::<false>(&program, receiver, atom, child, site, crate::heap::PropertyStoreLayout::Preserve),
+    assert!(!vm.primary_own_field_store_hit::<false>(receiver, atom, child, site, crate::heap::PropertyStoreLayout::Preserve),
         "the no-log store must defer a reference barrier");
     // A real reference store logs its owner through the class cell's barrier, and the collector follows it.
     vm.heap.property_set(receiver, slot, child);

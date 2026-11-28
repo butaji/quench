@@ -61,13 +61,13 @@ impl Specializer for RegionSpecializer<'_> {
 
 thread_local! {
     /// The first reason this thread's current lowering declined, and its PC (`usize::MAX`: none).
-    static DECLINED: std::cell::Cell<Option<(&'static str, usize)>> = const { std::cell::Cell::new(None) };
+    pub(super) static DECLINED: std::cell::Cell<Option<(&'static str, usize)>> = const { std::cell::Cell::new(None) };
     /// The opcodes this thread's current lowering leaves at because it has no lowering for them.
-    static UNLOWERED: std::cell::RefCell<std::collections::BTreeSet<String>> = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    pub(super) static UNLOWERED: std::cell::RefCell<std::collections::BTreeSet<String>> = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
     /// Whether this thread's current lowering wrote a value whose lane disagrees with the
     /// register's representation (`register_define`): the register's variable is per representation,
     /// so the body is no well-formed lowering and is declined.
-    static MISMATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static MISMATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Notes that the lowering wrote a value of the wrong representation (`register_define`).

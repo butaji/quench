@@ -255,8 +255,8 @@ impl<'a> Visit<'a> for Hazards<'_> {
 impl Engine {
     /// Literal constructor sources and every site that may receive source first
     /// known at execution (see [`SourceDemands`]), over the caller's authoritative scopes.
-    pub fn source_demands(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> SourceDemands {
-        let (keys, function) = constructors::analyze(program, scoping, specialized);
+    pub fn source_demands(program: &Program<'_>, scoping: &Scoping) -> SourceDemands {
+        let (keys, function) = constructors::analyze(program, scoping);
         let mut hazards = Hazards { scoping, numeric: NumericBindings::symbols(program, scoping), eval: Vec::new(), reflective: Vec::new(), computed: Vec::new() };
         hazards.visit_program(program);
         for sites in [&mut hazards.eval, &mut hazards.reflective] { sites.sort_unstable(); sites.dedup(); }
@@ -286,7 +286,7 @@ impl Engine {
         let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
         if !parsed.diagnostics.is_empty() { return None; }
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping(), true))
+        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping()))
     }
 }
 
@@ -342,7 +342,7 @@ mod tests {
         let allocator = oxc_allocator::Allocator::default();
         let parsed = oxc_parser::Parser::new(&allocator, "Function('return 1'); Function(s); eval(t);", oxc_span::SourceType::script()).parse();
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        let demands = Engine::source_demands(&parsed.program, semantic.semantic.scoping(), true);
+        let demands = Engine::source_demands(&parsed.program, semantic.semantic.scoping());
         assert_eq!((demands.keys.len(), demands.function.len(), demands.eval.len()), (1, 1, 1));
         assert!(demands.requires_dynamic_source());
     }

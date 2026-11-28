@@ -93,7 +93,7 @@ fn callback_target_in_lane(
 /// plain call (`script_target_in_in_lane`): not a frame, an environment or a settling one.
 #[inline(always)]
 pub(crate) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
-    !target.entry.needs_frame_path()
+    !target.body.entry.needs_frame_path()
 }
 
 /// `forEach` at the lane `Call` record `ip`, whose result nothing reads

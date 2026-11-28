@@ -30,14 +30,14 @@ script_handler! {
         // A site meeting other callees too calls each as its own form would: a plain
         // activation's in place, another leaf form's through it, any other through the
         // full form.
-        if target.entry != CallEntry::leaf(LEAF) {
-            if target.entry == CallEntry::framed(Framed::Activates) {
+        if target.body.entry != CallEntry::leaf(LEAF) {
+            if target.body.entry == CallEntry::framed(Framed::Activates) {
                 match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
                     Some(resumed) => resume!(cx, resumed),
                     None => sibling!(script_call_full_miss, r, ip, Carried::script(cx)),
                 }
             }
-            sibling!(other_leaf_form::<ARGC>(target.entry), r, ip, Carried::script(cx))
+            sibling!(other_leaf_form::<ARGC>(target.body.entry), r, ip, Carried::script(cx))
         }
         // The proof: a leaf call runs its leaf here whether its cell holds a body or not, so the
         // proved form makes the same call; a leaf entry activates as `Activates` from a plain
@@ -47,8 +47,8 @@ script_handler! {
             let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
             let entry = &mut vm.lane_stack.script_targets.entries[index];
             debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
-            entry.admission.0 &= !Admission::UNPROVEN;
-            debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
+            entry.body.admission.0 &= !Admission::UNPROVEN;
+            debug_assert!(entry.body.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         }
         // A proved leaf site is one its function's inlined view may splice in (N7a).
         super::inlined_views::note_leaf_site(cx, ip);
@@ -71,7 +71,7 @@ script_handler! {
         if !admits_window_in_lane(vm, target, ARGC) {
             sibling!(script_call_full_miss, r, ip, Carried::script(cx))
         }
-        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+        vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
         // SAFETY: the target is the running program's admitted leaf of form `LEAF`, whose
         // parameters take `ARGC` values and whose window the stack holds.
         let (registers, base) = unsafe { lane_run_leaf::<LEAF, ARGC>(cx, r, ip, i, target, this) };
@@ -160,7 +160,7 @@ pub(crate) fn leaf_call_handler(entry: CallEntry, i: &LaneInstruction) -> Handle
 #[inline(always)]
 fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
     quench_runtime::staged::call_leaf::guard_receiver_binds(
-        &mut quench_runtime::staged::Concrete::pure(), receiver.to_bits(), target.this_binding == ThisBinding::Sloppy, (),
+        &mut quench_runtime::staged::Concrete::pure(), receiver.to_bits(), target.body.this_binding == ThisBinding::Sloppy, (),
     )
     .is_some()
 }
@@ -177,7 +177,7 @@ pub(crate) struct AdmittedWindow {
 impl AdmittedWindow {
     #[inline(always)]
     pub(crate) fn of(target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Self {
-        Self { fill: usize::from(target.fill), registers: usize::from(target.registers), passed, argc }
+        Self { fill: usize::from(target.body.fill), registers: usize::from(target.body.registers), passed, argc }
     }
 }
 
@@ -239,14 +239,14 @@ pub(crate) unsafe fn lane_enter_leaf<F: LeafWindow<Concrete>>(
             argc: u64::from(argc),
             form,
         };
-        let context = LeafContext { this: this.to_bits(), env: target.env.to_bits(), capture: target.capture.expose_provenance() as u64 };
+        let context = LeafContext { this: this.to_bits(), env: target.closure.env.to_bits(), capture: target.closure.capture.expose_provenance() as u64 };
         let leaf = std::ptr::addr_of_mut!((*cx).leaf);
         step_leaf_call_of(
             &mut Concrete::pure(), &mut window_fill, leaf.expose_provenance() as u64,
             window.0.expose_provenance() as u64, entry, context,
         );
         (*leaf).caller_program = caller_program;
-        let base = (*target.view).records();
+        let base = (*target.body.view).records();
         ((*cx).registers, (*cx).base) = (window, base);
         (window, base)
     }

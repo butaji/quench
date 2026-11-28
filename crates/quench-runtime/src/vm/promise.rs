@@ -2930,11 +2930,10 @@ impl Vm {
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
         let bytes = self.host.kept_compiled_program(
             &module.name,
-            &[self.specialization_part(), module.compilation_goal(), &module.source],
+            &[module.compilation_goal(), &module.source],
         )?;
         let text = crate::bytecode::SourceText::Shared(module.source.clone());
-        let specialized = self.specialized;
-        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
+        self.decode_cached_program(bytes, text, 0, &module.name).ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`),
@@ -2942,7 +2941,7 @@ impl Vm {
     fn keep_static_module_program(&mut self, module: &ModuleSource, residual: &ResidualProgram) {
         if let Some(bytes) = self.encode_cached_program(residual) {
             self.host
-                .keep_compiled_program(&module.name, &[self.specialization_part(), module.compilation_goal(), &module.source], &bytes);
+                .keep_compiled_program(&module.name, &[module.compilation_goal(), &module.source], &bytes);
         }
     }
 

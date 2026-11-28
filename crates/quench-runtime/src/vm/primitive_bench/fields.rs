@@ -37,13 +37,12 @@ fn cached_own<const OP: u8, const MISS: bool>(b: &mut Bencher) {
         vm.get_field_cached(&program, receiver, atom, site).unwrap(),
         Value::integer(0)
     );
-    assert_eq!(vm.cell_own_field_hit(&program, receiver, site), Some(Value::integer(0)));
-    assert_eq!(vm.cell_own_field_hit(&program, other, site), None);
+    assert_eq!(vm.cell_own_field_hit(receiver, site), Some(Value::integer(0)));
+    assert_eq!(vm.cell_own_field_hit(other, site), None);
     let object = if MISS { other } else { receiver };
     let store = |vm: &mut super::super::Vm, value| {
         if OP == PRIMARY_STORE {
             vm.primary_own_field_store_hit::<false>(
-                black_box(&program),
                 black_box(object),
                 black_box(atom),
                 black_box(value),
@@ -52,7 +51,6 @@ fn cached_own<const OP: u8, const MISS: bool>(b: &mut Bencher) {
             )
         } else {
             vm.set_field_cache_hit(
-                black_box(&program),
                 black_box(object),
                 black_box(atom),
                 black_box(value),
@@ -68,7 +66,7 @@ fn cached_own<const OP: u8, const MISS: bool>(b: &mut Bencher) {
             if OP != READ {
                 black_box(store(vm, Value::integer(index as i32)));
             } else {
-                black_box(vm.cell_own_field_hit(black_box(&program), black_box(object), black_box(site)));
+                black_box(vm.cell_own_field_hit(black_box(object), black_box(site)));
             }
         }
     });
@@ -82,7 +80,7 @@ fn cached_own<const OP: u8, const MISS: bool>(b: &mut Bencher) {
         Some(Value::integer(expected))
     );
     assert_eq!(vm.own_property(other, atom), Some(Value::integer(0)));
-    assert_eq!(vm.cell_own_field_hit(&program, other, site), None);
+    assert_eq!(vm.cell_own_field_hit(other, site), None);
 }
 
 #[bench]

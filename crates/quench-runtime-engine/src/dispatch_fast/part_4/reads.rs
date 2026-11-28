@@ -17,11 +17,11 @@ pub(in super::super) unsafe fn call_read_in_lane(
 ) -> Option<Value> {
     // SAFETY: the context's program outlives the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
-    match target.entry {
+    match target.body.entry {
         // The receiver the call binds (`direct_call_this_in_lane`), which is what it returns.
-        _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(this),
+        _ if target.body.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(this),
         // SAFETY: a capture-read target of the running program.
-        _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => unsafe { read_capture_in_lane(vm, target) },
+        _ if target.body.entry == CallEntry::frameless(Frameless::ReadsCapture) => unsafe { read_capture_in_lane(vm, target) },
         // SAFETY: as for `LeafRead::of`.
         _ => unsafe { LeafRead::of(target) }?.run(vm, code, arguments, this),
     }
@@ -37,14 +37,14 @@ pub(in super::super) unsafe fn call_read_in_lane(
 #[inline(never)]
 pub(in super::super) unsafe fn read_capture_in_lane(vm: &mut Vm, target: &ScriptCallTarget) -> Option<Value> {
     // SAFETY: the program store keeps a derived view alive with its program.
-    let imm = unsafe { &*(*target.view).records() }.imm();
+    let imm = unsafe { &*(*target.body.view).records() }.imm();
     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-    let slots = capture_reads(target.capture);
+    let slots = capture_reads(target.closure.capture);
     if depth == 0 && !slots.is_null() {
         // SAFETY: as `ScriptCallTarget::capture`.
         return unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, slot) };
     }
-    let (slots, root) = vm.walked_capture_slots(target.env, false, depth)?;
+    let (slots, root) = vm.walked_capture_slots(target.closure.env, false, depth)?;
     // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
     vm.owned_capture(unsafe { &*slots }, root, slot)
 }
@@ -79,7 +79,7 @@ pub(in super::super) unsafe fn read_answer_in_lane(
     arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
-    if target.entry == CallEntry::frameless(Frameless::AppendsCapture) {
+    if target.body.entry == CallEntry::frameless(Frameless::AppendsCapture) {
         return unsafe { capture_append::run(cx, target, arguments) };
     }
     unsafe { call_read_in_lane(cx, target, arguments, this) }

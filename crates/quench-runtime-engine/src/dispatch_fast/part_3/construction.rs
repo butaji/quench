@@ -35,7 +35,7 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     let Some(target) = script_target_in_lane(cx, callee) else {
         return Err(None);
     };
-    if !(target.constructs() && target.forwards()) {
+    if !(target.body.constructs() && target.body.forwards()) {
         return Err(None);
     }
     // One look at the plan serves the receiver.
@@ -54,20 +54,20 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
         // activation, where the construction completes in the lane (`finishes_construction_in_lane`).
         // Its body completes with `undefined`, as the forwarding body then does, so
         // [[Construct]] yields `this`.
-        if forwarded.initializes() && finishes {
+        if forwarded.body.initializes() && finishes {
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`script_target_in_lane`).
             let code = unsafe { &*(*cx).code };
             let argument = construct_argument_in_lane(r, i);
             let read = construct_plan::field_reader(vm, callee);
-            if construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read, union).is_some() {
+            if construct_plan::finish_forwarded_in_lane(vm, code, forwarded.closure.env, this, forwarded.body.function, argument, read, union).is_some() {
                 return Ok(KeepingConstruction::Finished(this));
             }
         }
         let forwarder = SkippedForwarder {
-            function: target.function,
+            function: target.body.function,
             callee,
-            env: target.env,
+            env: target.closure.env,
             method,
         };
         return activate_keeping_in_lane::<false>(cx, r, ip, &forwarded, arguments, this, false, Some(forwarder))
@@ -101,14 +101,14 @@ pub(in super::super) fn forwarded_construction_in_lane(
     // A read of `name` or `length` prepares its lookup (`Vm::reads_function_info`), which
     // only the general read does.
     let function = match (!vm.reads_function_info(method.method.0))
-        .then(|| vm.polymorphic_field_hit(code, this, method.method.1))
+        .then(|| vm.polymorphic_field_hit(this, method.method.1))
         .flatten()
     {
         Some(function) => function,
         None => lane_frame::LaneFrame::<ACC_NONE>::cached_read(cx, code, this, method.method.0, method.method.1, 0)?,
     };
     let apply = match (!vm.reads_function_info(method.apply.0))
-        .then(|| vm.cell_holder_field_hit(code, function, method.apply.1))
+        .then(|| vm.cell_holder_field_hit(function, method.apply.1))
         .flatten()
     {
         Some(apply) => apply,
@@ -120,7 +120,7 @@ pub(in super::super) fn forwarded_construction_in_lane(
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
-    ) || function == constructor.callee
+    ) || function == constructor.closure.callee
     {
         return None;
     }

@@ -584,7 +584,7 @@ impl Vm {
             let view = views.get(caller as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
             let mut direct = crate::dispatch_fast::direct_callee_in_lane(self, view, caller, pc as usize, argc, target)?;
             (direct.method, direct.body) = (None, None);
-            if !admits_proven(code, target.function, &direct) { return None; }
+            if !admits_proven(code, target.body.function, &direct) { return None; }
             live.calls.bind(key, direct, self)?;
         }
         live.calls.callee_record(key).map(|address| address as usize)

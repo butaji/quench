@@ -272,7 +272,7 @@ pub(crate) fn materialize(
         let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
         leaving(&call, at, &mut |register: u16, value: Value| callee_registers.set(register, value));
         // SAFETY: the running lane's context, whose base the push made the callee's records.
-        (registers, records, view) = (callee_registers, unsafe { (*cx).base }, target.view);
+        (registers, records, view) = (callee_registers, unsafe { (*cx).base }, target.body.view);
     }
     // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
     (registers, unsafe { records.add(pc as usize) }, super::carried_at_in_lane(cx, view, registers, pc))
@@ -321,7 +321,7 @@ fn install(cx: *mut super::LaneContext, function: u32, original: *const LaneView
     // SAFETY: the running lane's context.
     let (vm, program) = unsafe { (super::vm(cx), (*cx).program) };
     let stack = &mut vm.lane_stack;
-    for target in stack.script_targets.entries.iter_mut().chain(stack.function_targets.iter_mut()) {
+    for target in stack.script_targets.entries.iter_mut().map(|target| &mut target.body).chain(stack.function_targets.iter_mut()) {
         if target.function == function && target.program() == program && !target.view.is_null() && ours(target.view) {
             target.view = view;
             target.registers = registers;

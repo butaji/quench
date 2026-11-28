@@ -201,7 +201,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm as _;
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm2 as _;
     pub use crate::compiled::lane_compile::PendingLaneMethodOps1 as _;
-    pub use crate::compiled::lane_compile::LaneMethodOps4 as _;
     pub use crate::compiled::lane_compile::dependencies::LaneDependenciesOps1 as _;
     pub use crate::compiled::lane_region::ElementViewsOps1 as _;
     pub use crate::compiled::lane_region::kept_shapes::StateOps2 as _;
@@ -238,9 +237,10 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::ActivationOps2 as _;
     pub use crate::dispatch_fast::ActivationOps3 as _;
     pub use crate::dispatch_fast::CompletionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps1 as _;
+    pub use crate::dispatch_fast::closure_targets::ClosureOperandsOps1 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps1 as _;
     pub use crate::dispatch_fast::AdmissionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps2 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps2 as _;
     pub use crate::dispatch_fast::ScriptTargetsOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps2 as _;
@@ -285,7 +285,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::lane_stack_trace::DispatchFastLaneStackTraceVm as _;
     pub use crate::dispatch_fast::lane_trace::LaneStackOps12 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps1 as _;
-    pub use crate::dispatch_fast::loop_body::LoopSiteOps3 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps2 as _;
     pub use crate::dispatch_fast::loop_runs::LoopSiteRunsOps as _;
     pub use crate::dispatch_fast::loop_tier::LoopTierOps1 as _;

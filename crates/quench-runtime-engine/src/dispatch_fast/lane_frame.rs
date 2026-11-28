@@ -652,7 +652,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
                 return Some(value);
             }
             vm.prepare_named_function_info_lookup(object, atom);
-            vm.cached_field_hit(code, object, site)
+            vm.cached_field_hit(object, site)
         };
         match probe {
             super::object::FieldCacheProbe::Hit(value) => Some(value),
@@ -704,12 +704,12 @@ impl<const ACC: u8> LaneFrame<ACC> {
                 .array_length_field(object, atom)
                 // The entries of a site past one shape, whose handler may be a nested site's or a
                 // local base's, as the hashed row reads them.
-                .or_else(|| vm.polymorphic_field_hit(code, object, site))
+                .or_else(|| vm.polymorphic_field_hit(object, site))
                 .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
                 .or_else(|| vm.probed_field_miss_value(object, atom, site)),
             super::object::FieldCacheProbe::Ineligible => vm
                 .array_length_field(object, atom)
-                .or_else(|| vm.cached_string_field_hit(code, object, atom, site))
+                .or_else(|| vm.cached_string_field_hit(object, atom, site))
                 .or_else(|| vm.cached_primitive_field_hit(object, atom)),
         }
         // A collection's `size` or a buffer view's field, which no cache records
@@ -1514,16 +1514,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         LanePlans {
             read: self.plan.filter(|plan| plan.host.is_none()).map(|plan| (plan.ops, plan.len)),
             host: self.plan.and_then(|plan| plan.host),
-        }
-    }
-
-    /// The nested chain's base: the register the record's site names, or the activation's `this`.
-    #[inline(always)]
-    fn nested_base(&mut self, stage: &mut Concrete, miss: ()) -> Option<u64> {
-        let (_, base) = self.plan?.nested?;
-        match base.register_index() {
-            Some(register) => Some(self.tagged(stage, register)),
-            None => self.field_this(stage, miss),
         }
     }
 
@@ -3424,16 +3414,16 @@ unsafe fn plain_call_activation<const ARGC: u16>(context: *mut (), r: Registers,
     let cx = context.cast::<LaneContext>();
     // SAFETY: the function's contract.
     let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
-    debug_assert!(target.entry.activates() && !target.settles());
+    debug_assert!(target.body.entry.activates() && !target.body.settles());
     // A leaf entry's own call form proves it published or not (`script_call_leaf_prove_miss`).
-    debug_assert!(target.entry != super::CallEntry::framed(Framed::Activates) || !unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    debug_assert!(target.body.entry != super::CallEntry::framed(Framed::Activates) || !unsafe { (*target.body.view).entry_published() }, "publishing unproves the view's entries");
     let argc = call_argument_count::<ARGC>(i);
     // SAFETY: the record's window of `r` holds its values.
     let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
     let mut depth = depth;
     // A callee whose entry cell holds a body that pays its entry runs it before any activation exists;
     // a returning call's completion is its caller's, which no body runs before.
-    if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 && unsafe { (*target.view).enters_cell_body() } {
+    if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 && unsafe { (*target.body.view).enters_cell_body() } {
         if let Some(resumed) = super::enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
             return resumed;
         }

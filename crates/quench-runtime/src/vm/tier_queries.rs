@@ -331,6 +331,11 @@ impl Vm {
     /// The storage span of the array `base`, its values and readable and writable lengths (`Heap::array_storage_span`).
     #[inline(always)]
     pub fn array_storage_span(&mut self, base: Value) -> Option<(std::ptr::NonNull<Value>, usize, usize)> { self.heap.array_storage_span(base) }
+    /// Proves the storage of the array `base` in `register` (`Heap::prove_array_storage`), for a row's element span (`proof_span`).
+    #[inline(always)]
+    pub fn prove_array_storage(&mut self, proofs: &mut crate::heap::ArrayStorageProofs, register: u16, base: Value) -> bool {
+        self.heap.prove_array_storage(proofs, register, base)
+    }
     /// Moves the inline properties of `object` to its spilled storage (`Heap::spill_inline_properties`).
     #[inline(always)]
     pub fn spill_inline_properties(&mut self, object: Value) { self.heap.spill_inline_properties(object) }

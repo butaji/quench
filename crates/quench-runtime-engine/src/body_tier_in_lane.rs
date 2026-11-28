@@ -40,12 +40,10 @@ impl LaneView {
         let h = self.tier().history.get();
         // SAFETY: as `lane_body`; read only.
         let state = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized".into(),
-            LaneBody::Compiling { .. } => "compiling".into(),
-            LaneBody::Specialized { .. } => "specialized".into(),
-            LaneBody::Declined => "declined".into(),
-            #[allow(unreachable_patterns)]
-            _ => "other".into(),
+            LaneBody::Unspecialized => "unspecialized",
+            LaneBody::Compiling { .. } => "compiling",
+            LaneBody::Specialized { .. } => "specialized",
+            LaneBody::Declined => "declined",
         };
         format!("{state} unpaid={} demanded={} declined={:?}", h.unpaid, h.demanded, self.tier().body_stats.declined.get())
     }
@@ -121,7 +119,7 @@ pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, function: u32, 
         crate::compiled::meaning_compiled::is_call(body.widened(*packed))
             && site_target(vm, view, function, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
-                target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
+                target.body.program() == vm.active_program && !target.body.view.is_null() && !std::ptr::eq(target.body.view, view) && pending(unsafe { &*target.body.view })
             })
     });
     // A callee declined for its length warms toward the body this one calls by its entry

@@ -14,7 +14,6 @@ use super::base_region::call_plan::planned;
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
-use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::vm::global_facts::GlobalTable;
@@ -130,7 +129,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch,
-            direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            direct, proven_calls: false, closed, _records: body.records, constructors: Box::default(), inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
 }
@@ -184,7 +183,7 @@ impl Vm {
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
-        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
+        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.closure.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable, natives, plans)
     }
 
@@ -195,8 +194,7 @@ impl Vm {
 
     /// The facts of the program's sites the code folds, where it `folds`: its membership tests, and its global names'
     /// accesses, which read the global object's slots under its layout.
-    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
-        if !folds { return SiteFacts { presences: Vec::new(), globals: None }; }
+    fn site_facts(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
         SiteFacts {
             presences: self.membership_facts(code),
             globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
@@ -208,7 +206,7 @@ impl Vm {
         let closed = callees.closed(code);
         // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
         // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
-        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
+        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.closure.callee).is_some());
         let Some(mut method) = LaneMethod::of_base_body(built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
         method.exits = ExitTable::of_code(code);
         bind_callees(&method.direct, caller);
@@ -270,26 +268,26 @@ impl Vm {
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
-        let callees = self.stitch_callees(program, function, region.instructions(), &direct(&mut *self));
+        let candidates = direct(&mut *self);
+        let callees = self.stitch_callees(program, function, region.instructions(), &candidates);
         let invalidation = Invalidation::default();
-        // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
-        let folds = self.specialized && program.specialized;
-        let SiteFacts { presences, globals } = self.site_facts(folds, program, function, region.instructions(), body);
+        // The code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
+        let SiteFacts { presences, globals } = self.site_facts(program, function, region.instructions(), body);
         let classes = self.class_prototypes(program, function, region.instructions(), parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
-            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: folds.then(|| self.method_cache_atoms.bits()),
-            reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
-            adds: folds.then_some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
+            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: Some(self.method_cache_atoms.bits()),
+            reads: Some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            adds: Some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
-            presences: folds.then_some(presences.as_slice()),
-            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
+            presences: Some(presences.as_slice()),
+            fields: Some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
-            classes: if folds { classes.as_slice() } else { &[] },
+            classes: classes.as_slice(),
         };
         // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
         let facts = self.aot_facts_of(program);

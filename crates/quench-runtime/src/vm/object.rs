@@ -39,7 +39,6 @@ mod tests {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
         vm.execute_native_program(&native, true).unwrap();
-        assert!(vm.specialized_operations_enabled(program));
         assert!(!vm.admits_in_lane(crate::vm::ProgramId::MAIN, program), "native semantics do not admit interpreter lane dispatch");
         let site = |name: &str| {
             let function = program.functions.iter().position(|body| body.header().name
@@ -61,21 +60,18 @@ mod tests {
         let own_site = site("readOwn");
         let cell_site = site("readCell");
         let inherited_site = site("readInherited");
-        assert_eq!(vm.cell_own_field_hit(program, own, own_site), Some(Value::integer(7)));
-        assert_eq!(vm.cell_own_field_hit(program, function, cell_site), Some(Value::integer(8)));
-        assert!(matches!(vm.cached_field_hit(program, inherited, inherited_site), FieldCacheProbe::Hit(value)
+        assert_eq!(vm.cell_own_field_hit(own, own_site), Some(Value::integer(7)));
+        assert_eq!(vm.cell_own_field_hit(function, cell_site), Some(Value::integer(8)));
+        assert!(matches!(vm.cached_field_hit(inherited, inherited_site), FieldCacheProbe::Hit(value)
             if value == Value::integer(9)));
-        assert!(matches!(vm.cached_field_hit(program, function, cell_site), FieldCacheProbe::Hit(value)
+        assert!(matches!(vm.cached_field_hit(function, cell_site), FieldCacheProbe::Hit(value)
             if value == Value::integer(8)));
-        assert_eq!(vm.cell_own_field_hit(program, accessor, own_site), None,
+        assert_eq!(vm.cell_own_field_hit(accessor, own_site), None,
             "a data probe must leave accessor semantics untouched");
         let value = vm.intern_atom("value");
         assert_eq!(vm.get_field_cached(program, accessor, value, own_site).unwrap(), Value::integer(11));
         let calls = vm.intern_atom("getterCalls");
         assert_eq!(vm.own_property(vm.realm.globals, calls), Some(Value::integer(1)));
-        vm.specialized = false;
-        assert!(!vm.specialized_operations_enabled(program));
-        assert!(matches!(vm.cached_field_hit(program, own, own_site), FieldCacheProbe::Ineligible));
     }
 }
 
@@ -1324,11 +1320,9 @@ impl Vm {
     }
     #[inline(always)]
     pub fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
-        if self.specialized && program.specialized {
-            let shape = self.object_shapes.get(self.object_cache_index(site));
-            if shape != NO_OBJECT_SHAPE {
-                return shape;
-            }
+        let shape = self.object_shapes.get(self.object_cache_index(site));
+        if shape != NO_OBJECT_SHAPE {
+            return shape;
         }
         self.derive_object_site_shape(program, site)
     }
@@ -1389,10 +1383,8 @@ impl Vm {
     #[inline(never)]
     fn derive_object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
         let shape = self.literal_shape(&program.object_sites[site].atoms);
-        if self.specialized && program.specialized {
-            let cache_site = self.object_cache_index(site);
-            self.object_shapes.set(cache_site, shape);
-        }
+        let cache_site = self.object_cache_index(site);
+        self.object_shapes.set(cache_site, shape);
         shape
     }
     /// The shape an empty object reaches by adding `atoms` as data properties in order: the
@@ -1471,7 +1463,7 @@ impl Vm {
         if let Some(length) = self.array_length_field(object, atom) {
             return Ok(length);
         }
-        let probe = self.cached_field_hit(p, object, site);
+        let probe = self.cached_field_hit(object, site);
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(
             site as usize,
@@ -1580,11 +1572,10 @@ impl Vm {
     /// `constructor` (JetStream postcss-wtb), whose cause remains open (Linear TOD-121).
     pub fn compiled_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> FieldCacheProbe {
-        let probe = self.cached_field_hit(p, object, site);
+        let probe = self.cached_field_hit(object, site);
         if !matches!(probe, FieldCacheProbe::OrdinaryMiss) {
             return probe;
         }
@@ -1613,13 +1604,9 @@ impl Vm {
     #[inline(always)]
     pub fn cached_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> FieldCacheProbe {
-        if !(self.specialized && p.specialized) {
-            return FieldCacheProbe::Ineligible;
-        }
         let Some(receiver) = self.heap.object(object) else {
             return FieldCacheProbe::Ineligible;
         };
@@ -1642,9 +1629,9 @@ impl Vm {
         // The tiers the lane's own handlers read past these: a receiver a heap cell holds (whose
         // ordinary holder entry `cached_ordinary_holder_field_value` has already probed), and a
         // field inherited from beyond the immediate prototype.
-        if let Some(value) = self.cell_own_field_hit(p, object, site)
-            .or_else(|| self.class_holder_field_hit(p, object, site))
-            .or_else(|| self.inherited_field_hit(p, object, site)) {
+        if let Some(value) = self.cell_own_field_hit(object, site)
+            .or_else(|| self.class_holder_field_hit(object, site))
+            .or_else(|| self.inherited_field_hit(object, site)) {
             return FieldCacheProbe::Hit(value);
         }
         FieldCacheProbe::OrdinaryMiss
@@ -1809,14 +1796,12 @@ impl Vm {
     #[inline(always)]
     pub fn primary_own_field_store_hit<const LOGS: bool>(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
-        debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
             return false;
         }
@@ -1875,13 +1860,12 @@ impl Vm {
     #[inline(always)]
     pub fn primary_field_add_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
     ) -> bool {
-        debug_assert!(self.specialized_operations_enabled(p) && self.field_add_atom_eligible(atom));
+        debug_assert!(self.field_add_atom_eligible(atom));
         let Some(data) = self.heap.direct_object_view(object) else {
             return false;
         };
@@ -2064,11 +2048,9 @@ impl Vm {
     #[inline(always)]
     pub(super) fn cell_own_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.specialized_operations_enabled(p));
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
         if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
@@ -2096,11 +2078,9 @@ impl Vm {
     #[inline(always)]
     pub fn class_holder_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.specialized_operations_enabled(p));
         let value = self.class_held_field_hit(self.field_cache_entry(site), object)?;
         self.profile.field_cache_hit(0, 1);
         Some(value)
@@ -2127,11 +2107,9 @@ impl Vm {
     #[inline(always)]
     pub fn cell_holder_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.specialized_operations_enabled(p));
         if let Some(value) = self.class_held_field_hit(self.field_cache_entry(site), object) {
             self.profile.field_cache_hit(0, 1);
             return Some(value);
@@ -2149,11 +2127,10 @@ impl Vm {
     #[inline(always)]
     pub fn inherited_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.inherited_field_entry_hit(p, object, site).map(|(value, _)| value)
+        self.inherited_field_entry_hit(object, site).map(|(value, _)| value)
     }
 
     /// `inherited_field_hit` with the index of the entry that answered, which a lane record
@@ -2161,11 +2138,9 @@ impl Vm {
     #[inline(always)]
     pub fn inherited_field_entry_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<(Value, u32)> {
-        debug_assert!(self.specialized_operations_enabled(p));
         // The site's head entry, proved against the receiver, answers without the walk and
         // without the holder's slot read (its constant is kept under a watch on that holder):
         // a site whose reads alternate between receiver shapes walks from the head to its own.
@@ -2194,11 +2169,9 @@ impl Vm {
     #[inline(always)]
     pub fn proved_inherited_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.specialized_operations_enabled(p));
         // SAFETY: as for `cached_inherited_field_value`.
         let index = unsafe { self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
         if index == NO_INHERITED_FIELD {
@@ -2249,11 +2222,10 @@ impl Vm {
     #[inline(always)]
     pub fn polymorphic_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
+        self.polymorphic_field_entries_hit::<true>(object, site, EMPTY_CACHE).map(|(value, _)| value)
     }
 
     /// The value prototype-held hint `index` (`hold_holder_hint`) holds for a read of `atom`
@@ -2358,11 +2330,10 @@ impl Vm {
     #[inline(always)]
     pub(super) fn polymorphic_field_entry_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<(Value, PolymorphicHit)> {
-        self.polymorphic_field_entries_hit::<true>(p, object, site, EMPTY_CACHE)
+        self.polymorphic_field_entries_hit::<true>(object, site, EMPTY_CACHE)
     }
 
     /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
@@ -2372,11 +2343,10 @@ impl Vm {
     #[inline(always)]
     pub fn inline_polymorphic_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        self.polymorphic_field_entries_hit::<false>(p, object, site, EMPTY_CACHE).map(|(value, _)| value)
+        self.polymorphic_field_entries_hit::<false>(object, site, EMPTY_CACHE).map(|(value, _)| value)
     }
 
     /// `inline_polymorphic_field_hit` that tests `hint`, an own entry of the site a lane
@@ -2385,12 +2355,11 @@ impl Vm {
     #[inline(always)]
     pub fn hinted_polymorphic_field_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
         hint: FieldCache,
     ) -> Option<(Value, PolymorphicHit)> {
-        self.polymorphic_field_entries_hit::<false>(p, object, site, hint)
+        self.polymorphic_field_entries_hit::<false>(object, site, hint)
     }
 
     /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`, after `hint`, an own
@@ -2398,12 +2367,10 @@ impl Vm {
     #[inline(always)]
     fn polymorphic_field_entries_hit<const HASHED: bool>(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         site: u16,
         hint: FieldCache,
     ) -> Option<(Value, PolymorphicHit)> {
-        debug_assert!(self.specialized_operations_enabled(p));
         debug_assert!(hint.holder == NO_FIELD_HOLDER);
         // Any record receiver, an array's too: entries name only shape slots, which an
         // array's length and elements are not.
@@ -2553,7 +2520,7 @@ impl Vm {
         if let Some(receiver) =
             heap_reference.and_then(|reference| self.heap.record_object(reference))
         {
-            if self.specialized && p.specialized && !receiver.is_module_namespace() {
+            if !receiver.is_module_namespace() {
                 let index = self.field_cache_index(site);
                 if let Some(hit) = self
                     .cached_field_value(index, receiver)
@@ -2568,17 +2535,13 @@ impl Vm {
             return self.get_field_miss(p, object, atom, self.field_cache_index(site));
         }
         if heap_reference.is_none() && object.as_number().is_some() && self.number_proto.is_heap() {
-            let lookup = if self.specialized && p.specialized {
-                match self.primitive_field_cache_read(self.number_proto, atom, site) {
-                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
-                    Some(None) => FieldCacheRead::StringMiss {
-                        prototype: self.number_proto,
-                        site: self.field_cache_index(site),
-                    },
-                    None => FieldCacheRead::Generic,
-                }
-            } else {
-                FieldCacheRead::Generic
+            let lookup = match self.primitive_field_cache_read(self.number_proto, atom, site) {
+                Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                Some(None) => FieldCacheRead::StringMiss {
+                    prototype: self.number_proto,
+                    site: self.field_cache_index(site),
+                },
+                None => FieldCacheRead::Generic,
             };
             return self.finish_field_cache_read(p, object, atom, lookup);
         }
@@ -2587,25 +2550,17 @@ impl Vm {
             // Function, iterator and collection records have no cell; their shape answers like
             // the slot forms' (`shape_property_lookup`).
             Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_) | HeapReference::CollectionRecord(_)) => {
-                let lookup = if self.specialized && p.specialized {
-                    self.receiver_field_cache_read(self.shape_property_lookup(object, atom).and_then(|view| view.record_only()), atom, site)
-                } else {
-                    FieldCacheRead::Generic
-                };
+                let lookup = self.receiver_field_cache_read(self.shape_property_lookup(object, atom).and_then(|view| view.record_only()), atom, site);
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
             Some(HeapReference::StringRecord(_)) => {
-                let lookup = if self.specialized && p.specialized {
-                    match self.string_field_cache_read(atom, site) {
-                        Some(Some(hit)) => FieldCacheRead::Hit(hit),
-                        Some(None) => FieldCacheRead::StringMiss {
-                            prototype: self.string_proto,
-                            site: self.field_cache_index(site),
-                        },
-                        None => FieldCacheRead::StringGeneric,
-                    }
-                } else {
-                    FieldCacheRead::Generic
+                let lookup = match self.string_field_cache_read(atom, site) {
+                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                    Some(None) => FieldCacheRead::StringMiss {
+                        prototype: self.string_proto,
+                        site: self.field_cache_index(site),
+                    },
+                    None => FieldCacheRead::StringGeneric,
                 };
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
@@ -2631,10 +2586,8 @@ impl Vm {
         }
         let lookup = match legacy_cell {
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
-            Some(cell) if self.specialized && p.specialized => {
-                self.object_field_cache_read(cell, atom, site)
-            }
-            Some(_) | None => FieldCacheRead::Generic,
+            Some(cell) => self.object_field_cache_read(cell, atom, site),
+            None => FieldCacheRead::Generic,
         };
         self.finish_field_cache_read(p, object, atom, lookup)
     }
@@ -2693,7 +2646,6 @@ impl Vm {
     /// left to the general path.
     pub fn cached_string_field_hit(
         &self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         _site: u16,
@@ -2702,7 +2654,7 @@ impl Vm {
             return self.string_length_value(object);
         }
         self.heap.string(object)?;
-        if !self.string_field_site_cacheable(p, atom) {
+        if !self.string_field_site_cacheable(atom) {
             return None;
         }
         // A name the chain lacks, as an absent `type`, is `undefined` by a data walk of the
@@ -2733,10 +2685,8 @@ impl Vm {
     /// data property its site caches (`string_prototype_field_hit`): specialized code
     /// reading neither `length` nor an index, which the string itself answers, nor a name
     /// no shape answers. It depends on the site alone, so a handler checks it once.
-    pub fn string_field_site_cacheable(&self, p: &ResidualProgram, atom: Atom) -> bool {
+    pub fn string_field_site_cacheable(&self, atom: Atom) -> bool {
         atom != self.length_atom
-            && self.specialized
-            && p.specialized
             && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
             && self.field_cache_atom_eligible(atom)
     }
@@ -4045,7 +3995,7 @@ impl Vm {
         // A method cache naming `atom` declines the own-store probes before running them, so
         // only then is the store half still owed to the polymorphic path.
         let store_owed = self.method_caches_may_name(atom);
-        if !store_owed && self.cached_own_store_hit(p, object, value, site) {
+        if !store_owed && self.cached_own_store_hit(object, value, site) {
             return Ok(());
         }
         self.set_field_polymorphic(p, object, atom, value, site, strict, store_owed)
@@ -4057,22 +4007,18 @@ impl Vm {
     #[inline(always)]
     pub fn cached_field_store_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
     ) -> bool {
-        !self.method_caches_may_name(atom) && self.cached_own_store_hit(p, object, value, site)
+        !self.method_caches_may_name(atom) && self.cached_own_store_hit(object, value, site)
     }
 
     /// The own-store probes of `cached_field_store_hit` past its method-cache guard: the
     /// site's primary entry, then its megamorphic own slot, inline or hashed.
     #[inline(always)]
-    fn cached_own_store_hit(&mut self, p: &ResidualProgram, object: Value, value: Value, site: u16) -> bool {
-        if !(self.specialized && p.specialized) {
-            return false;
-        }
+    fn cached_own_store_hit(&mut self, object: Value, value: Value, site: u16) -> bool {
         let Some(data) = self.heap.object(object) else {
             return false;
         };
@@ -4115,13 +4061,12 @@ impl Vm {
     #[inline(always)]
     pub(super) unsafe fn cached_field_store_pointer(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         site: u16,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let slot = self.cached_own_writable_slot(object, atom, site)?;
         // SAFETY: the shared admission proves the own data slot; the caller
         // owns the raw writer's type and storage lifetime obligations.
         unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
@@ -4131,13 +4076,12 @@ impl Vm {
     /// `object` are admitted, and the slot's address for its entry record.
     pub fn cached_field_store_admission(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         site: u16,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let slot = self.cached_own_writable_slot(object, atom, site)?;
         let shape = self.heap.object(object)?.shape();
         // A Number store's own row admits the domain of the value it stores
         // (`Lowering::admit_slot_writes`): the entry keeps a Number slot's narrower type
@@ -4146,14 +4090,13 @@ impl Vm {
         let current = self.heap.slot_type(shape, slot);
         let writes = if writes == crate::typed_ir::Type::NUMBER && current.is_subtype(writes) { current } else { writes };
         // SAFETY: the address goes to the entry record alone; the region writes it as its admission says.
-        unsafe { self.cached_field_store_pointer(p, object, atom, site, writes) }
+        unsafe { self.cached_field_store_pointer(object, atom, site, writes) }
     }
 
     /// Admit an own data slot once for a no-reentry operation. Its physical
     /// encoding is independent of the shape/descriptor permission to write it.
-    fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
-        if !(self.specialized && p.specialized)
-            || !self.field_cache_atom_eligible(atom)
+    fn cached_own_writable_slot(&self, object: Value, atom: Atom, site: u16) -> Option<usize> {
+        if !self.field_cache_atom_eligible(atom)
             || self.method_caches_may_name(atom)
         {
             return None;
@@ -4187,27 +4130,25 @@ impl Vm {
     #[inline(always)]
     pub fn cached_field_write_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
     ) -> bool {
-        self.cached_field_store_hit(p, object, atom, value, site)
-            || self.cached_field_add_hit(p, object, atom, value, site)
+        self.cached_field_store_hit(object, atom, value, site)
+            || self.cached_field_add_hit(object, atom, value, site)
     }
 
     /// The add half of `cached_field_write_hit`, out of line so stores keep their code.
     #[inline(never)]
     fn cached_field_add_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
     ) -> bool {
-        if !(self.specialized && p.specialized) || !self.field_add_atom_eligible(atom) {
+        if !self.field_add_atom_eligible(atom) {
             return false;
         }
         let Some(data) = self.heap.ordinary_view(object) else {
@@ -4236,7 +4177,7 @@ impl Vm {
         store_owed: bool,
     ) -> Result<(), JsError> {
         // Only an ordinary object reaches the shape cache: a nullish base falls through to the uncached path's TypeError.
-        if self.set_field_cache_hit(p, object, atom, value, site, store_owed) {
+        if self.set_field_cache_hit(object, atom, value, site, store_owed) {
             return Ok(());
         }
         if self.is_typed_array_element(object, atom) { return self.set_property_with_program_mode(p, object, atom, value, strict); }
@@ -4368,9 +4309,6 @@ impl Vm {
         if self.is_private_name(atom) {
             self.set_property(object, atom, value)?;
             return Ok(());
-        }
-        if !self.specialized || !p.specialized {
-            return self.set_property_with_program(p, object, atom, value);
         }
         let site = self.field_cache_index(site);
         let existing = self
@@ -4553,7 +4491,7 @@ impl Vm {
         function: u32,
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
-        let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
+        let cacheable = self.field_cache_atom_eligible(atom);
         let Some(shape) = self.class_field_define_target(object).filter(|_| cacheable) else {
             return self.define_class_field(p, object, key, value);
         };
@@ -4782,14 +4720,13 @@ impl Vm {
     /// `cached_own_store_hit` already probed the store half and missed, leaving the add half.
     pub(super) fn set_field_cache_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
         site: u16,
         store_owed: bool,
     ) -> bool {
-        if !(self.specialized && p.specialized) || self.is_private_name(atom) {
+        if self.is_private_name(atom) {
             return false;
         }
         let Some(data) = self.heap.object(object) else {

@@ -500,7 +500,12 @@ pub(crate) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/lengths.rs"] pub(crate) mod lengths;
 #[path = "facts/run.rs"] pub(crate) mod run;
 pub(crate) use immediates::{constant_number, immediate, is_int32};
-pub(crate) use quench_runtime::compile::aot_facts::constant_type;
+
+/// The type a program constant denotes (`aot_facts::constant_type`), without the atom a String constant interns to: these
+/// facts read the constant table, not the program's atoms, so a string constant is any string of its exact length.
+pub(crate) fn constant_type(constant: &Constant) -> Type {
+    quench_runtime::compile::aot_facts::constant_type(constant, None)
+}
 pub(crate) use binary::{heap_operator, heap_primitive_binary};
 pub(crate) use lengths::IndexProof;
 pub(crate) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text, TypedAccess};

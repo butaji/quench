@@ -12,7 +12,7 @@ use super::lane_compile::LaneDependencies;
 use super::lane_region::StableFacts;
 use quench_runtime::code_dependencies::Invalidation;
 pub(crate) mod calls;
-pub(crate) use calls::{CallCode, RegionCalls};
+pub(crate) use calls::CallCode;
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::vm::global_facts::GlobalTable;
 use super::DirectCallee;
@@ -101,7 +101,7 @@ impl PendingOsrRegion {
     pub(crate) fn native_calls(&self) -> (Rc<quench_runtime::code_dependencies::PublishedCode<()>>, Box<[quench_runtime::value::Value]>) {
         let identities = match &self.calls {
             Some(calls) => calls.identities(),
-            None => self.directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.callee)).collect(),
+            None => self.directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.closure.callee)).collect(),
         };
         (self.watch.clone(), identities)
     }

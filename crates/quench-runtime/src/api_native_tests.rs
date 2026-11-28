@@ -2141,7 +2141,7 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
 
 #[test]
 fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
-    let mut compiler = crate::NativeJsCompiler::new(false);
+    let mut compiler = crate::NativeJsCompiler::new();
     let harness = compiler.compile_script(
         "const seed = 7; function readSeed() { return seed; }", "harness.js", Default::default(),
     ).unwrap();
@@ -2272,9 +2272,9 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
             if awaited { "await " } else { "" },
         );
         let sources = [("./entry.mjs", ENTRY), ("./barrel.mjs", BARREL), ("./dep.mjs", dependency.as_str())];
-        let mut compiler = crate::NativeJsCompiler::new(false);
+        let mut compiler = crate::NativeJsCompiler::new();
         let mut programs = sources.iter().map(|(name, source)| {
-            let key = crate::NativeSourceKey::new(name, &["unspecialized", crate::STATIC_MODULE_GOAL, source]).unwrap();
+            let key = crate::NativeSourceKey::new(name, &[crate::STATIC_MODULE_GOAL, source]).unwrap();
             compiler.compile_source(&key).unwrap()
         }).collect::<Vec<_>>();
         let entry = compiler.finish(programs.remove(0)).unwrap();
@@ -2286,7 +2286,7 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
         let host = TestHost::default()
             .with_modules(move |name| Ok(module_sources.iter().find(|module| module.name == name).cloned()))
             .with_native_programs(move |name, parts| Ok(lookup.borrow().iter().find(|(candidate, source, _)| {
-                candidate == name && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, source.as_str()]
+                candidate == name && parts == [crate::STATIC_MODULE_GOAL, source.as_str()]
             }).map(|(_, _, native)| native.clone())));
         let native = crate::NativeJsProgram::publish(entry.clone()).unwrap();
         let mut runtime = Runtime::new(host);
@@ -2312,12 +2312,12 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
 fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effects() {
     const SOURCE: &str = "globalThis.dependencyRan = true;";
     for mismatch in ["goal", "namespace", "source"] {
-        let mut compiler = crate::NativeJsCompiler::new(false);
+        let mut compiler = crate::NativeJsCompiler::new();
         let entry = compiler.compile_module("import './dep.mjs'; globalThis.entryRan = true;", "./entry.mjs").unwrap();
         let dependency = if mismatch == "goal" {
             compiler.compile_script(SOURCE, "./dep.mjs", Default::default()).unwrap()
         } else if mismatch == "namespace" {
-            crate::NativeJsCompiler::new(false).compile_module(SOURCE, "./dep.mjs").unwrap()
+            crate::NativeJsCompiler::new().compile_module(SOURCE, "./dep.mjs").unwrap()
         } else {
             compiler.compile_module(SOURCE, "./dep.mjs").unwrap()
         };
@@ -2328,7 +2328,7 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
                 if mismatch == "source" { "globalThis.dependencyRan = false;" } else { SOURCE },
             ))))
             .with_native_programs(move |name, parts| {
-                Ok((name == "./dep.mjs" && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, SOURCE])
+                Ok((name == "./dep.mjs" && parts == [crate::STATIC_MODULE_GOAL, SOURCE])
                     .then(|| dependency.clone()))
             });
         let native = crate::NativeJsProgram::publish(entry).unwrap();
@@ -2353,7 +2353,7 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
 
 #[test]
 fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effects() {
-    let mut compiler = crate::NativeJsCompiler::new(false);
+    let mut compiler = crate::NativeJsCompiler::new();
     let harness = compiler.compile_script("globalThis.harnessRan = true;", "harness.js", Default::default()).unwrap();
     let entry = compiler.compile_module("globalThis.entryRan = true;", "entry.mjs").unwrap();
     let dependency = compiler.compile_module("globalThis.depRan = true; export {};", "dep.mjs").unwrap();

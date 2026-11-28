@@ -48,6 +48,12 @@ impl Access {
         })
     }
 
+    /// The field-cache slot word of the slot (`GlobalSlot::slot`), which the lane addresses in the global's class cell
+    /// (`staged::entry::class_slot_address`); a row holds the word itself, not a byte offset into an arena.
+    fn slot_word(self) -> u64 {
+        u64::from(self.slot.slot)
+    }
+
     /// Whether the slot's observed type is Numbers only, which a load of it yields.
     pub(crate) fn numeric(self) -> bool {
         self.slot.ty != Type::NEVER && self.slot.ty.is_subtype(Type::NUMBER)

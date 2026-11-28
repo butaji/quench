@@ -1496,7 +1496,7 @@ impl Vm {
         };
         #[cfg(feature = "native-execution")]
         let native_program = {
-            let parts = kind.native_parts(self.specialization_part(), &parameters, &source);
+            let parts = kind.native_parts(&parameters, &source);
             match self.resolve_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
                 Ok(program) => program,
                 Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(program, &message),
@@ -1522,11 +1522,10 @@ impl Vm {
             let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
             // A Function body compiles from its text alone, so its compiled form goes through the
             // host's compile cache (`Host::kept_compiled_program`).
-            let kept_key = [self.specialization_part(), dynamic.text.as_str()];
+            let kept_key = [dynamic.text.as_str()];
             let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));
-                let specialized = self.specialized;
-                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+                self.decode_cached_program(bytes, text, 0, source_name).ok()
             });
             let compiled = kept.is_none();
             let residual = match kept {

@@ -2113,7 +2113,6 @@ pub struct Vm {
     /// The engine entries this runtime links (`execution_table`): `ALL` unless an image proved
     /// some of them unreachable from its program.
     pub(crate) execution: &'static ExecutionTable,
-    pub specialized: bool,
     pub(crate) heap: Heap,
     pub realm: Realm,
     pub object_proto: Value,
@@ -3395,7 +3394,6 @@ impl Vm {
         program: &Rc<ResidualProgram>,
         scope: builtins::RealmScope,
     ) -> Result<(), JsError> {
-        self.specialized = program.specialized;
         // Every intrinsic names a value of the heap the reset discards; a new realm can reuse
         // a discarded realm's identity, which must not find the old one's intrinsics.
         self.realm.intrinsics = Default::default();

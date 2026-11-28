@@ -228,7 +228,7 @@ impl Lowering<'_, '_> {
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
     pub(crate) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
-        let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
+        let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.closure.callee)) else { return false };
         if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call) || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
         let held = state.values[usize::from(instruction.register_b())].value.ty.function_identity();
@@ -312,7 +312,7 @@ impl Lowering<'_, '_> {
     /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
     fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let direct = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call");
-        let (callee, body) = (direct.callee, direct.target.function);
+        let (callee, body) = (direct.closure.callee, direct.target.function);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let loaded = match self.completion {
             Completion::Scalar(_) => {
