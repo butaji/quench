@@ -2243,22 +2243,6 @@ impl Vm {
         Some(value)
     }
 
-
-    /// Whether the site has an inherited entry (`inherited_field_hit`).
-    pub(super) fn field_site_inherited(&self, site: u16) -> bool {
-        self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
-    }
-
-    /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
-    pub(super) fn field_site_getter(&self, site: u16) -> bool {
-        self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
-    }
-
-    /// Whether the site's primary entry is a prototype's.
-    pub(super) fn field_site_holder(&self, site: u16) -> bool {
-        self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
-    }
-
     /// The data field of a direct object, or of its immediate prototype held in an object
     /// record, among the site's megamorphic entries, which include the primary entry:
     /// `cached_field_hit` and its holder tier for a site past one shape.
