@@ -229,8 +229,7 @@ impl Vm {
             return (NOT_FIXED, 0);
         }
         let Some(layout) = facts.class_union_layout(class) else { return (NOT_FIXED, 0) };
-        let domains = layout.fields.iter().all(|(atom, _)| facts.slot_domain(class, *atom).is_some());
-        if !domains || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
+        if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
             return (NOT_FIXED, 0);
         }
         // Only a `Constructed{C, true}` root is fixed: `seed_union_domains` seeds its union chain where the root is made,
