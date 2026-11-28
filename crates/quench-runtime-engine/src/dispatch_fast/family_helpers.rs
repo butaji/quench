@@ -3,8 +3,8 @@
 //! frame and declines, before any effect, where the general step decides. A declined row runs the general step
 //! (`lane_body_step`) from its PC; a completed one skips the frame bookkeeping and base refreshes, which only
 //! guest code or an allocation need. The arm is the one `Vm::step` runs (`write_binary_result`), so both paths
-//! share their semantics. The planner admits a row only where its site's feedback makes a decline rare
-//! (`function::feedback_admits`).
+//! share their semantics. The planner admits a row only where its site's operand class makes a decline rare
+//! (`function::direct_admits`).
 
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
@@ -12,7 +12,7 @@ use crate::ext_traits::*;
 use super::*;
 use crate::compiled::LANE_CALL_COMPLETED;
 use quench_runtime::vm::field_cache::FieldCacheProbe;
-use super::operand_feedback::{OperandClass, OperandKinds};
+use crate::operand_class::OperandClass;
 use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, Operand};
 use quench_runtime::staged::{DecodeContext, Operation};
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
@@ -27,11 +27,12 @@ pub(crate) fn covers(instruction: WideInstruction) -> bool {
     direct_operation(instruction).is_some()
 }
 
-/// Whether the site's feedback admits the direct run of the packed instruction `words` (`Step::Helper` rows
-/// carry them): a binary operator whose operands are not of an unseen kind, an element access that met a dense
-/// or typed element, a field access whose cache site is filled (`fields`, `Known::fields`; with none, as an image's body
+/// Whether the planner admits the direct run of the packed instruction `words` (`Step::Helper` rows carry them): a
+/// binary operator whose site's operands the solver does not type `Any` (`class`, `operand_class::OperandClass`), an
+/// element access (its arm declines to the general step at any element but a dense or typed one, so every access is
+/// admitted), a field access whose cache site is filled (`fields`, `Known::fields`; with none, as an image's body
 /// lowered before any run, the arm's cache probe decides), and the pure unary queries. Other rows decline the direct run.
-pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option<&dyn Fn(u16) -> bool>) -> bool {
+pub(crate) fn admits(words: [u64; 2], class: Option<OperandClass>, fields: Option<&dyn Fn(u16) -> bool>) -> bool {
     let Ok(imm) = u32::try_from(words[1]) else { return false };
     let Some(instruction) = WideInstruction::from_words(words[0], imm) else {
         return false;
@@ -40,8 +41,8 @@ pub(crate) fn admits(words: [u64; 2], site: Option<OperandKinds>, fields: Option
         return false;
     };
     match operation {
-        Operation::Binary { .. } => site.is_some_and(|site| site.class() != OperandClass::Any),
-        Operation::ElementRead { .. } | Operation::ElementWrite { .. } => site.is_some_and(OperandKinds::element_admitted),
+        Operation::Binary { .. } => class.is_some_and(|class| class != OperandClass::Any),
+        Operation::ElementRead { .. } | Operation::ElementWrite { .. } => true,
         Operation::GetField { lookup: FieldLookup::Atom { cache_site, .. }, .. } => fields.is_none_or(|filled| filled(cache_site)),
         Operation::SetField { .. } => fields.is_none_or(|filled| filled(instruction.cache_site_index())),
         Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } => true,
@@ -101,14 +102,14 @@ fn binary(vm: &mut Vm, frame: usize, instruction: WideInstruction, left: Operand
     true
 }
 
-/// An element read of a present dense element or a typed array's number (`element_read_kind`), written to the
+/// An element read of a present dense element or a typed array's number (`element_read_fast`), written to the
 /// result register as the interpreter's `step_index_get` writes it. A key that is not a register declines.
 fn element_read(vm: &mut Vm, frame: usize, instruction: WideInstruction, base: Register, key: Operand) -> bool {
     let Some(key) = key.register_index() else {
         return false;
     };
     let (object, key) = (vm.read(frame, base), vm.read(frame, key));
-    let Some((value, _)) = vm.element_read_kind(object, key) else {
+    let Some(value) = vm.element_read_fast(object, key) else {
         return false;
     };
     vm.write(frame, instruction.result_register(), value);

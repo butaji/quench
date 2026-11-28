@@ -2,7 +2,8 @@
 //! its `PROVEN_STEP` form, at load (`prove_loop_steps`) or when the loop site holding it retires (`retired_step`).
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{checked_step, int32_cell, operand_type, Handler, Ip, LaneContext, LaneInstruction, LoopSite, Operand};
+use super::{checked_step, Handler, Ip, LaneContext, LaneInstruction, LoopSite, Operand};
+use crate::operand_class::{int32_cell, operand_type};
 use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::staged::meaning::{means, Meaning};
