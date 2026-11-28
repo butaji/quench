@@ -266,7 +266,8 @@ impl Vm {
             .unwrap_or(default_prototype);
         let mut object = Self::empty_object(generator_prototype);
         if let Some(function) = function_object {
-            self.capture_constructed_name(&mut object, function, true);
+            let class = self.ordinary_class(function);
+            self.capture_constructed_name(&mut object, function, class, true);
         }
         let generator = self.heap.alloc_iterator(IteratorRecord {
             object,

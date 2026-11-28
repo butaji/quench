@@ -389,6 +389,9 @@ pub(crate) struct RegExpArgumentShare {
 /// arguments (`planned_call_sites`): the derivation's check on the callee's body, which the engine decides.
 pub type PlannedArmAdmission = fn(&ResidualProgram, u32, u16) -> bool;
 
+/// The `ProgramEntry::construct_sites` entry of a construct pc with no construct site fact.
+const NO_CONSTRUCT_CLASS: u32 = u32::MAX;
+
 struct ProgramEntry {
     residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -443,6 +446,9 @@ struct ProgramEntry {
     /// Per class id (a function id, or a synthetic class of `AotFacts::classes`): the layout id its constructed instances
     /// hold, 0 until the first construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
     class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
+    /// Per function, per construct pc: the class of that construct site (`AotFacts::construct_classes`), dense by pc and
+    /// `NO_CONSTRUCT_CLASS` where the site has no fact. Derived once from the facts (`construct_site_table`).
+    construct_sites: std::cell::OnceCell<Box<[Box<[u32]>]>>,
     /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
     /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
     class_prototypes: std::cell::RefCell<std::collections::BTreeMap<u32, Value>>,
@@ -745,6 +751,29 @@ impl ProgramStore {
     fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
         let headers = entry.class_headers.get_or_init(|| (0..Self::facts_of(entry).classes.count()).map(|_| std::cell::Cell::new(0)).collect());
         headers.get(class as usize)
+    }
+
+    /// The class of the construct site at `pc` of function `function` in program `id` (`AotFacts::construct_classes`), an
+    /// array read of the table `construct_site_table` derived: `None` where the site has no fact (an ordinary construction).
+    pub fn construct_class(&self, id: ProgramId, function: u32, pc: usize) -> Option<u32> {
+        let entry = self.entry(id)?;
+        let sites = entry.construct_sites.get_or_init(|| Self::construct_site_table(entry));
+        let class = *sites.get(function as usize)?.get(pc)?;
+        (class != NO_CONSTRUCT_CLASS).then_some(class)
+    }
+
+    /// The dense site table of `entry`: each function's row holds, at its construct pc, the class the facts give that site,
+    /// and is as long as its last construct site.
+    fn construct_site_table(entry: &ProgramEntry) -> Box<[Box<[u32]>]> {
+        let mut rows = vec![Vec::<u32>::new(); entry.residual.functions.len()];
+        for (&(function, pc), &class) in &Self::facts_of(entry).construct_classes {
+            let row = &mut rows[function as usize];
+            if row.len() <= pc as usize {
+                row.resize(pc as usize + 1, NO_CONSTRUCT_CLASS);
+            }
+            row[pc as usize] = class;
+        }
+        rows.into_iter().map(Vec::into_boxed_slice).collect()
     }
 
     /// The planned call sites of `function` in program `id`: each call whose plan (`AotFacts::call_plans`) is a framed
@@ -1250,6 +1279,7 @@ impl ProgramStore {
             selectors: std::cell::OnceCell::new(),
             class_method_vectors: Default::default(),
             class_headers: std::cell::OnceCell::new(),
+            construct_sites: std::cell::OnceCell::new(),
             class_prototypes: Default::default(),
             planned_targets: Default::default(),
             planned_registered: std::cell::Cell::new(false),

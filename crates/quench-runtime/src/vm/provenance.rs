@@ -48,6 +48,7 @@ impl FunctionNameShapes {
 pub(super) struct ConstructedShape {
     shape: u32,
     constructor: Value,
+    class: u32,
     new_target_is_base: bool,
     constructed: u32,
 }
@@ -60,6 +61,7 @@ impl ConstructedShape {
     pub(super) const EMPTY: Self = Self {
         shape: u32::MAX,
         constructor: Value::UNDEFINED,
+        class: 0,
         new_target_is_base: false,
         constructed: u32::MAX,
     };
@@ -76,6 +78,7 @@ impl ConstructedShape {
     fn same_construction(&self, other: &Self) -> bool {
         self.shape == other.shape
             && self.constructor == other.constructor
+            && self.class == other.class
             && self.new_target_is_base == other.new_target_is_base
     }
 }
@@ -88,11 +91,11 @@ pub(super) fn metadata_transitions(shapes: &[Shape], shape: u32) -> impl Iterato
         function_name.map(|name| ShapeTransition::FunctionName { name }),
         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
         shape_function_length_reconfigured(shapes, shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+        constructed_name.map(|(constructor, class, new_target_is_base)| ShapeTransition::Constructed { constructor, class, new_target_is_base }),
     ].into_iter().flatten()
 }
 
-pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
+pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, u32, bool)>, bool) {
     let (mut function, mut constructed) = (None, None);
     let mut current = Some(shape);
     while let Some(id) = current {
@@ -101,8 +104,9 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
             ShapeTransition::FunctionName { name } if function.is_none() => function = Some(name),
             ShapeTransition::Constructed {
                 constructor,
+                class,
                 new_target_is_base,
-            } if constructed.is_none() => constructed = Some((constructor, new_target_is_base)),
+            } if constructed.is_none() => constructed = Some((constructor, class, new_target_is_base)),
             _ => {}
         }
         current = shape.parent();
@@ -354,20 +358,23 @@ impl Vm {
         self.original_debug_name(function)
     }
 
+    /// The shape a construction of class `class` by `constructor` gives an object of `shape`: its `Constructed` root,
+    /// seeded with the union of `class` (`seed_union_domains`) when the root is a base's own.
     fn constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) -> u32 {
-        let entry = ConstructedShape { shape, constructor, new_target_is_base, constructed: shape };
+        let entry = ConstructedShape { shape, constructor, class, new_target_is_base, constructed: shape };
         let index = entry.cache_index();
         let cached = self.constructed_shapes[index];
         if cached.same_construction(&entry) {
             return cached.constructed;
         }
-        let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
-        self.seed_union_domains(constructor, constructed);
+        let constructed = self.derive_constructed_shape(shape, constructor, class, new_target_is_base);
+        self.seed_union_domains(constructor, class, constructed);
         self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
         constructed
     }
@@ -379,15 +386,17 @@ impl Vm {
         &mut self,
         shape: u32,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) -> u32 {
-        if shape_names(&self.shapes, shape).1 == Some((constructor, new_target_is_base)) {
+        if shape_names(&self.shapes, shape).1 == Some((constructor, class, new_target_is_base)) {
             return shape;
         }
         self.append_cached_shape_transition(
             shape,
             ShapeTransition::Constructed {
                 constructor,
+                class,
                 new_target_is_base,
             },
         )
@@ -397,29 +406,36 @@ impl Vm {
     /// runs (`capture_constructed_name`, `new.target` the constructor itself): an ahead image's
     /// shape recipe of a constructed object starts there (`aot_image::symbols::shape`).
     pub fn constructed_root_shape(&mut self, shape: u32, constructor: Value) -> u32 {
-        self.constructed_shape(shape, constructor, true)
+        let class = self.ordinary_class(constructor);
+        self.constructed_shape(shape, constructor, class, true)
     }
 
+    /// Records on `object` the `Constructed` root of a construction of class `class` by `constructor`. A construction
+    /// with no construct site passes `ordinary_class(constructor)`.
     pub(super) fn capture_constructed_name(
         &mut self,
         object: &mut Object,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) {
-        let shape = self.constructed_shape(object.shape(), constructor, new_target_is_base);
+        let shape = self.constructed_shape(object.shape(), constructor, class, new_target_is_base);
         self.heap.set_detached_object_shape(object, shape);
     }
 
+    /// Records on the object `value` the `Constructed` root of a construction of class `class` by `constructor`
+    /// (`capture_constructed_name` for an object already allocated).
     pub fn capture_constructed_value(
         &mut self,
         value: Value,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) {
         let Some(shape) = self.heap.object(value).map(|object| object.shape()) else {
             return;
         };
-        let shape = self.constructed_shape(shape, constructor, new_target_is_base);
+        let shape = self.constructed_shape(shape, constructor, class, new_target_is_base);
         self.heap.set_object_shape(value, shape);
     }
 

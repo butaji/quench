@@ -456,7 +456,8 @@ impl Vm {
             for record in records {
                 let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
                 let mut object = Self::empty_object(intrinsics.call_site_prototype);
-                self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, true);
+                let class = self.ordinary_class(intrinsics.call_site_constructor);
+                self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, class, true);
                 let site = self.heap.alloc_object(object);
                 let root = self.heap.root(site);
                 roots.push(root);

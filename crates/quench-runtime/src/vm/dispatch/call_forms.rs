@@ -371,7 +371,7 @@ impl Vm {
         let v = if i.is_super_construct() {
             self.construct_super_value(p, callee, args)?
         } else {
-            self.construct_value(p, callee, args)?
+            self.construct_value_at(p, f, pc, callee, args)?
         };
         if i.returns_from_frame() {
             return Ok(StepResult::Return(v));

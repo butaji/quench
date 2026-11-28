@@ -83,6 +83,9 @@ pub(super) const PRESHAPED_FIELDS: usize = crate::bytecode::PRESHAPED_FIELDS;
 pub(super) struct PreshapedReceiver {
     constructor: Value,
     start: u32,
+    /// The class the entry is derived for (a class id: the constructor's body or the synthetic class of its construct
+    /// site): its union layout sizes `union` and `fixed`, so one constructor's entries differ by class.
+    class: u32,
     shape: u32,
     len: u8,
     /// The field count of the constructor's class's union layout (`AotFacts::class_union_layout`), saturated;
@@ -119,6 +122,7 @@ impl PreshapedReceiver {
     pub(super) const EMPTY: Self = Self {
         constructor: Value::UNDEFINED,
         start: u32::MAX,
+        class: 0,
         shape: u32::MAX,
         len: 0,
         union: 0,
@@ -130,14 +134,14 @@ impl PreshapedReceiver {
     };
 
     #[inline(always)]
-    fn index(constructor: Value, start: u32) -> usize {
+    fn index(constructor: Value, start: u32, class: u32) -> usize {
         let handle = constructor.heap_index().unwrap_or_default() as usize;
-        (handle ^ start as usize) & (PRESHAPED_RECEIVER_ENTRIES - 1)
+        (handle ^ start as usize ^ class as usize) & (PRESHAPED_RECEIVER_ENTRIES - 1)
     }
 
     /// An entry that gives the receiver nothing.
-    fn none(constructor: Value, start: u32) -> Self {
-        Self { constructor, start, shape: start, ..Self::EMPTY }
+    fn none(constructor: Value, start: u32, class: u32) -> Self {
+        Self { constructor, start, class, shape: start, ..Self::EMPTY }
     }
 }
 
@@ -186,7 +190,7 @@ impl Vm {
     /// site's class (`construct_site_class`), whose header it records.
     #[inline]
     pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value, class: u32) -> Value {
-        let this = self.alloc_preshaped_receiver(object, constructor, constructor);
+        let this = self.alloc_preshaped_receiver(object, constructor, constructor, class);
         self.record_class_header(constructor, class, this);
         this
     }
@@ -195,9 +199,9 @@ impl Vm {
     /// `Constructed{constructor}` root (`capture_constructed_name`), for `new_target`. A fixed class (R4-F) is
     /// allocated as its union-shaped class cell, with no record; any other receiver takes its constant layout and
     /// learned storage (`preshape_receiver`).
-    pub(super) fn alloc_preshaped_receiver(&mut self, object: Object, constructor: Value, new_target: Value) -> Value {
+    pub(super) fn alloc_preshaped_receiver(&mut self, object: Object, constructor: Value, new_target: Value, class: u32) -> Value {
         let start = object.shape();
-        let index = self.preshaped_entry(constructor, start);
+        let index = self.preshaped_entry(constructor, start, class);
         if self.preshaped_receivers[index].fixed != NOT_FIXED {
             let this = self.alloc_fixed_construct_receiver(object, index);
             self.learn_receiver(this, new_target);
@@ -210,9 +214,9 @@ impl Vm {
             }
             return this;
         }
-        let capacity = self.construct_receiver_capacity(constructor, start);
+        let capacity = self.construct_receiver_capacity(constructor, start, class);
         let this = self.heap.alloc_object_with_capacity(object, capacity);
-        self.preshape_receiver(this, start, constructor, new_target);
+        self.preshape_receiver(this, start, constructor, new_target, class);
         this
     }
 
@@ -251,8 +255,8 @@ impl Vm {
     /// layout (`AotFacts::class_union_layout`) in slot order, and how many leading constant-layout names of `entry`
     /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, the union holds more than a
     /// class cell, a name is private, or `start` is not an empty ordinary shape.
-    fn derive_fixed_union(&mut self, constructor: Value, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
-        let Some(union) = self.fixed_union(constructor, start) else { return (NOT_FIXED, 0) };
+    fn derive_fixed_union(&mut self, constructor: Value, class: u32, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
+        let Some(union) = self.fixed_union(constructor, class, start) else { return (NOT_FIXED, 0) };
         let prefix = union
             .atoms()
             .iter()
@@ -262,12 +266,13 @@ impl Vm {
         (union.shape, prefix as u8)
     }
 
-    /// The union of a fixed class (R4-F), the decision every fixed construction shares (`derive_fixed_union`,
-    /// `ConstructPlan::fixed`): the shape `start` reaches by the names of `constructor`'s class's union layout
-    /// (`AotFacts::class_union_layout`) in slot order. `None` where the class has no union, the union holds more
-    /// than a class cell, a name is private, or `start` is not an empty ordinary shape.
-    pub fn fixed_union(&mut self, constructor: Value, start: u32) -> Option<FixedUnion> {
-        let (program, class, _) = self.same_realm_user_target(constructor)?;
+    /// The union of class `class` of `constructor` (R4-F), the decision every fixed construction shares (`derive_fixed_union`,
+    /// `ConstructPlan::fixed`): the shape `start` reaches by the names of the class's union layout
+    /// (`AotFacts::class_union_layout`) in slot order. `class` is the construct site's class, so a synthetic class takes its
+    /// own union. `None` where the class has no union, the union holds more than a class cell, a name is private, or `start`
+    /// is not an empty ordinary shape.
+    pub fn fixed_union(&mut self, constructor: Value, class: u32, start: u32) -> Option<FixedUnion> {
+        let (program, _, _) = self.same_realm_user_target(constructor)?;
         let facts = self.programs.aot_facts(program)?;
         // `AotFacts::class_writable_cell` decides it: slots are stable and no flag transition reaches an instance,
         // so nothing departs it. A union past one cell region has no spill slot yet (departure-free S2), so it
@@ -279,7 +284,7 @@ impl Vm {
         // new_target C starts from the empty `Constructed{C, true}` root, and `slot_domain` is Some for every union
         // atom by construction. So the start is that root, and these are invariants, not decisions.
         debug_assert!(!self.shape_is_dictionary(start) && self.shapes[start as usize].storage_len() == 0);
-        debug_assert_eq!(super::provenance::shape_names(&self.shapes, start).1, Some((constructor, true)));
+        debug_assert_eq!(super::provenance::shape_names(&self.shapes, start).1, Some((constructor, class, true)));
         let mut union = FixedUnion::new(start);
         for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
             // The fact excludes private names and duplicates (union_of).
@@ -296,9 +301,13 @@ impl Vm {
     /// read from, or `body` (the callee's own body, `ClassIds::body`) where the site has no such fact,
     /// which is an ordinary construction. A plan reads it once, where the plan is derived (`ConstructPlan::class`).
     pub fn construct_site_class(&self, program: ProgramId, function: u32, pc: usize, body: u32) -> u32 {
-        self.programs.aot_facts(program)
-            .and_then(|facts| facts.construct_classes.get(&(function, pc as u32)).copied())
-            .unwrap_or(body)
+        self.programs.construct_class(program, function, pc).unwrap_or(body)
+    }
+
+    /// The class of an ordinary construction by `constructor`, which no construct site names: its body (`ClassIds::body`)
+    /// for a user function of this realm, 0 for any other constructor (a native's root carries no union).
+    pub fn ordinary_class(&self, constructor: Value) -> u32 {
+        self.same_realm_user_target(constructor).map_or(0, |(_, body, _)| body)
     }
 
     /// Records the layout id of `this`, an instance `constructor` just constructed as class `class`, as that
@@ -331,8 +340,8 @@ impl Vm {
     /// learned to reach (`construct_receiver_capacity`); a constructor with no layout leaves its
     /// shape as it is.
     #[inline]
-    pub(super) fn preshape_receiver(&mut self, this: Value, start: u32, constructor: Value, new_target: Value) {
-        let index = self.preshaped_entry(constructor, start);
+    pub(super) fn preshape_receiver(&mut self, this: Value, start: u32, constructor: Value, new_target: Value, class: u32) {
+        let index = self.preshaped_entry(constructor, start, class);
         self.learn_receiver(this, new_target);
         let len = usize::from(self.preshaped_receivers[index].len);
         if len == 0 {
@@ -378,13 +387,13 @@ impl Vm {
 
     /// The memo index of the entry for a construction by `constructor` from template shape `start`,
     /// derived where it is stale (`derive_preshaped_receiver`).
-    fn preshaped_entry(&mut self, constructor: Value, start: u32) -> usize {
-        let index = PreshapedReceiver::index(constructor, start);
+    fn preshaped_entry(&mut self, constructor: Value, start: u32, class: u32) -> usize {
+        let index = PreshapedReceiver::index(constructor, start, class);
         let entry = &self.preshaped_receivers[index];
-        if entry.constructor != constructor || entry.start != start {
-            let mut derived = self.derive_preshaped_receiver(constructor, start);
-            derived.union = u8::try_from(self.union_capacity(constructor)).unwrap_or(u8::MAX);
-            (derived.fixed, derived.fixed_prefix) = self.derive_fixed_union(constructor, start, &derived);
+        if entry.constructor != constructor || entry.start != start || entry.class != class {
+            let mut derived = self.derive_preshaped_receiver(constructor, start, class);
+            derived.union = u8::try_from(self.union_capacity(constructor, class)).unwrap_or(u8::MAX);
+            (derived.fixed, derived.fixed_prefix) = self.derive_fixed_union(constructor, class, start, &derived);
             self.preshaped_receivers[index] = derived;
         }
         index
@@ -397,8 +406,8 @@ impl Vm {
         let layouts = self.shape_layouts();
         self.heap.track_slot_representations(&layouts);
         for shape in 0..self.shapes.len() {
-            if let ShapeTransition::Constructed { constructor, new_target_is_base: true } = self.shapes[shape].transition {
-                self.seed_union_domains(constructor, shape as u32);
+            if let ShapeTransition::Constructed { constructor, class, new_target_is_base: true } = self.shapes[shape].transition {
+                self.seed_union_domains(constructor, class, shape as u32);
             }
         }
     }
@@ -409,9 +418,9 @@ impl Vm {
     /// gives an object that root gets the seed. Only that root is seeded: it is keyed by the class and reached only by `new C()`
     /// with `new.target` C, so its slot owners hold no other class's stores. A derived constructor, a dictionary start and a
     /// `new.target` other than the constructor get no such root, so no seed. An anonymous constructor has its root too.
-    pub(super) fn seed_union_domains(&mut self, constructor: Value, start: u32) {
-        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
-        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) { return; }
+    pub(super) fn seed_union_domains(&mut self, constructor: Value, class: u32, start: u32) {
+        let Some((program, _, _)) = self.same_realm_user_target(constructor) else { return };
+        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, class, true)) { return; }
         if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 { return; }
         let Some(facts) = self.programs.aot_facts(program) else { return };
         let Some(layout) = facts.class_union_layout(class) else { return };
@@ -436,7 +445,7 @@ impl Vm {
         if self.shape_is_dictionary(shape) { return None; }
         let (_, constructed, _) = super::provenance::shape_names(&self.shapes, shape);
         match constructed {
-            Some((constructor, true)) => self.same_realm_user_target(constructor).map(|(program, class, _)| (program, class)),
+            Some((constructor, class, true)) => self.same_realm_user_target(constructor).map(|(program, _, _)| (program, class)),
             _ => None,
         }
     }
@@ -445,8 +454,8 @@ impl Vm {
     /// its constant layout, what its learned storage reached (`LearnedReceiver::slots`, sampled from the
     /// receivers before it), and the field count of its class's union layout (`AotFacts::class_union_layout`).
     /// The cell's fields past the receiver's own are `Value::DELETED` slack, the absent fields.
-    fn construct_receiver_capacity(&mut self, constructor: Value, start: u32) -> usize {
-        let index = self.preshaped_entry(constructor, start);
+    fn construct_receiver_capacity(&mut self, constructor: Value, start: u32, class: u32) -> usize {
+        let index = self.preshaped_entry(constructor, start, class);
         let entry = self.preshaped_receivers[index];
         let learned = self.learned_receivers[LearnedReceiver::index(constructor)];
         let learned = if learned.new_target == constructor { usize::from(learned.slots) } else { 0 };
@@ -455,8 +464,8 @@ impl Vm {
 
     /// The field count of the closed world's union layout of `constructor`'s class, which the closed world
     /// fixes for every instance (decision 4.2); 0 where no union layout is proven (the transition-grown cell).
-    fn union_capacity(&self, constructor: Value) -> usize {
-        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return 0 };
+    fn union_capacity(&self, constructor: Value, class: u32) -> usize {
+        let Some((program, _, _)) = self.same_realm_user_target(constructor) else { return 0 };
         let Some(facts) = self.programs.aot_facts(program) else { return 0 };
         facts.class_union_layout(class).map_or(0, |layout| layout.fields.len())
     }
@@ -554,8 +563,8 @@ impl Vm {
     /// it seeds it (`define_field_cached`).
     #[cold]
     #[inline(never)]
-    fn derive_preshaped_receiver(&mut self, constructor: Value, start: u32) -> PreshapedReceiver {
-        let none = PreshapedReceiver::none(constructor, start);
+    fn derive_preshaped_receiver(&mut self, constructor: Value, start: u32, class: u32) -> PreshapedReceiver {
+        let none = PreshapedReceiver::none(constructor, start, class);
         let Some(FunctionRecord { kind: FunctionKind::User(program_id, id), .. }) = self.heap.function(constructor) else {
             return none;
         };
