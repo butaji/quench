@@ -709,9 +709,10 @@ impl NodeHost {
 /// The callback of a host operation an image did not link: its program was compiled as one
 /// that cannot reach it (`aot::operations`).
 pub fn unlinked_operation(
-    _: &mut quench_runtime::NativeContext<'_>, _: quench_runtime::RootId, _: &[quench_runtime::RootId],
+    context: &mut quench_runtime::NativeContext<'_>, _: quench_runtime::RootId, _: &[quench_runtime::RootId],
 ) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-    Err(quench_runtime::RootedError::host("this host operation is not linked into the compiled image"))
+    let name = context.active_host_operation_name().unwrap_or("?");
+    Err(quench_runtime::RootedError::host(format!("host operation `{name}` is not linked into the compiled image")))
 }
 
 /// A module's state, made on the module's first use and dropped through its own vtable: a

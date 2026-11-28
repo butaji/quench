@@ -19,14 +19,6 @@ pub struct PayloadReduction {
 
 pub fn remove_offline_symbols(executable: &Path) -> Result<PayloadReduction, String> {
     let before = fs::read(executable).map_err(|error| error.to_string())?;
-    // `QUENCH_TRACE=build-dir` keeps the linked image with its local symbols beside the output, for a debugger.
-    if crate::trace::Channel::BuildDir.on() {
-        // `build-dir=DIR` names where; the build directory itself is removed after a successful compile.
-        let directory = crate::trace::Channel::BuildDir.value().map_or_else(|| executable.parent().unwrap_or(Path::new(".")).to_path_buf(), std::path::PathBuf::from);
-        let kept = directory.join(executable.file_name().unwrap_or_default()).with_extension("unstripped");
-        fs::write(&kept, &before).map_err(|error| error.to_string())?;
-        eprintln!("quench compile: unstripped image kept at {}", kept.display());
-    }
     // Retain the exported interface for runtime-loaded code. Plain Mach-O
     // `strip` rewrites its export trie, even when code/data bytes stay intact.
     super::link::checked_output(Command::new("strip").args(["-S", "-x"]).arg(executable), "native symbol removal")?;

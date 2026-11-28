@@ -1835,6 +1835,12 @@ impl<'a> NativeContext<'a> {
         root
     }
 
+    /// The declared name of the host operation this context runs, for diagnostics: an image's
+    /// unlinked operation names the operation its program reached.
+    pub fn active_host_operation_name(&self) -> Option<&'static str> {
+        self.vm.host_function_name(self.vm.active_native_callable()?)
+    }
+
     pub fn undefined(&mut self) -> RootId {
         self.scoped_value(Value::UNDEFINED)
     }

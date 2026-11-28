@@ -282,8 +282,7 @@ impl Vm {
     }
 
     /// The declared name of host function `function`, for diagnostics.
-    #[cfg(feature = "profile-lane-exits")]
-    pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
+    pub(crate) fn host_function_name(&self, function: Value) -> Option<&'static str> {
         let index = self.host_operation_index(self.heap.function(function)?.env)?;
         self.host.function_descriptor(index as usize).map(|binding| binding.name)
     }

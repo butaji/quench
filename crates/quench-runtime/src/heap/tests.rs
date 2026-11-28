@@ -1521,6 +1521,26 @@ fn a_cell_past_the_largest_region_spills_and_round_trips_its_fields() {
 }
 
 #[test]
+fn a_store_below_a_spilled_cells_spill_slot_stays_inline() {
+    // A store to an inline field of a cell that spills writes the cell (raytrace no-jit panicked: the run index
+    // `slot - spill` underflowed for a slot below the spill slot, and the store tried to grow the run).
+    const FIELDS: usize = 40;
+    let mut heap = Heap::new();
+    let layouts: Vec<(usize, Option<(u32, usize)>)> = (0..=FIELDS)
+        .map(|length| (length, length.checked_sub(1).map(|parent| (parent as u32, parent))))
+        .collect();
+    heap.register_shape_layouts(&layouts);
+    let values: Vec<Value> = (0..FIELDS).map(|slot| Value::integer(slot as i32)).collect();
+    let object = heap.alloc_object_with_properties(Value::NULL, FIELDS as u32, &values);
+    for slot in 0..FIELDS {
+        heap.property_set(object, slot, Value::integer(-(slot as i32)));
+    }
+    for slot in 0..FIELDS {
+        assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), slot), Some(Value::integer(-(slot as i32))), "slot {slot}");
+    }
+}
+
+#[test]
 fn deleting_the_last_added_key_returns_a_cell_to_its_parent_class() {
     let mut heap = Heap::new();
     register_field_shapes(&mut heap);

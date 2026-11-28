@@ -387,6 +387,14 @@ fn compile(options: Options) -> Result<(), String> {
         super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report)
     };
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
+    // `QUENCH_TRACE=build-dir` keeps the linked image with its local symbols, for a debugger: in `build-dir=DIR`, else
+    // beside the output (the build directory itself is removed after a successful compile).
+    if quench_runtime::trace::Channel::BuildDir.on() {
+        let directory = quench_runtime::trace::Channel::BuildDir.value().map_or_else(|| output.parent().unwrap_or(Path::new(".")).to_path_buf(), PathBuf::from);
+        let kept = directory.join(format!("{}.unstripped", output.file_name().unwrap_or_default().to_string_lossy()));
+        fs::copy(&staged, &kept).map_err(|error| error.to_string())?;
+        eprintln!("quench compile: unstripped image kept at {}", kept.display());
+    }
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
         report["symbol_audit_stage"] = json!("before_symbol_removal");
