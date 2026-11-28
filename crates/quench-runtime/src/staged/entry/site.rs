@@ -39,7 +39,7 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     }
     let slot = entry_slot(stage, entry);
     let open = if gated {
-        let old = class_field(stage, cell, slot);
+        let old = cell_field(stage, cell, slot);
         super::super::slot_store::int_over_int_gate(stage, (StagedRecordSpace::Class, granule, old), value)
     } else { stage.immediate_store_open() };
     stage.guard(open, miss)?;

@@ -3,19 +3,12 @@
 use super::*;
 
 /// The address of field `slot` of the live class cell `cell`: its flat run at `fields_offset`, the address
-/// `class_own_value` reads.
+/// `cell_field` reads and `class_store` writes.
 #[inline(always)]
 fn class_field_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
     let fields = stage.add_imm(cell, super::super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
     let offset = stage.mul_imm(slot, super::super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
     stage.add(fields, offset)
-}
-
-/// Field `slot` of the live class cell `cell`, the old value a gated store observes.
-#[inline(always)]
-pub(super) fn class_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
-    let address = class_field_address(stage, cell, slot);
-    stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
 }
 
 /// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store. The gate
@@ -27,21 +20,13 @@ pub(crate) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word,
 }
 
 /// Guards that the live class cell `cell` holds the class key the own entry `entry` stores in its receiver
-/// word, complemented as `shape_matches` reads it. The live test stays: `DEPARTED_CLASS` and `NO_RECEIVER`
-/// are one word, so without it an empty entry would match a departed cell.
+/// word (stored complemented: `key = complement - stored`), by `class_key_matches`, the one class guard.
 #[inline(always)]
 pub(super) fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<()> {
-    // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives its key
-    // `class | CLASS_KEY`; `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no
-    // stored entry, the empty one included. So the one compare is the class guard: no live test.
-    let class = super::super::object::cell_class(stage, cell);
-    let key = stage.add_imm(class, u64::from(CLASS_KEY));
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let complement = stage.constant(u64::from(ENTRY.receiver_complement));
-    let wanted = stage.sub(complement, key);
-    let difference = stage.sub(stored, wanted);
-    let same = stage.eq_imm(difference, 0u32);
-    stage.guard(same, miss)
+    let key = stage.sub(complement, stored);
+    class_key_matches(stage, cell, key, miss)
 }
 
 /// Guards that the live class cell `cell` holds the class key `key` a row's hole names (`class | CLASS_KEY`):
@@ -49,6 +34,8 @@ pub(super) fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Wo
 /// cell's `DEPARTED_CLASS` gives a word past u32, which equals no key.
 #[inline(always)]
 pub(crate) fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::Word, miss: S::Miss) -> Option<()> {
+    // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives `class | CLASS_KEY`;
+    // `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no key. So this compare is the whole guard.
     let class = super::super::object::cell_class(stage, cell);
     let held = stage.add_imm(class, u64::from(CLASS_KEY));
     let difference = stage.sub(held, key);
@@ -90,9 +77,7 @@ pub(crate) fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S:
 /// so the value is one load.
 #[inline(always)]
 pub(crate) fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
-    let fields = stage.add_imm(cell, super::super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.fields_offset as u64);
-    let offset = stage.mul_imm(slot, super::super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT.field_size as u64);
-    let address = stage.add(fields, offset);
+    let address = class_field_address(stage, cell, slot);
     stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
 }
 
