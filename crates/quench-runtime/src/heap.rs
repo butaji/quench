@@ -225,7 +225,7 @@ mod promise_record;
 pub use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
 mod records;
-pub(crate) use records::RecordBlockRecordsExt;
+pub use records::RecordBlockRecordsExt;
 mod class_space;
 mod departure;
 #[cfg(test)] mod class_space_tests;
