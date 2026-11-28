@@ -277,10 +277,15 @@ impl Lowering<'_, '_> {
 
     /// Where no method cache names `atom` now, a store admitted while `specialized` holds:
     /// that is a Stable fact, which a cache naming it retires (`MethodCacheAtoms::name`), so the
-    /// store reads the invalidation word, not the cache's names.
+    /// store reads the invalidation word, not the cache's names. Where the closed world names `atom` at no method
+    /// call site (`AotFacts::uncached_atoms`) and the run makes no call, no program runs inside the run to name it:
+    /// the store is admitted with no word, the subscription above retiring the code once a cache names it.
     pub(crate) fn store_held_unnamed(&mut self, atom: Atom, specialized: ir::Value) -> Option<ir::Value> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
+        if !self.native_calls && self.vm.facts.is_some_and(|facts| facts.uncached_atoms().contains(&atom)) {
+            return Some(specialized);
+        }
         let invalidated = invalidation_word(&mut self.builder, self.helpers, online.invalidation);
         let held = self.raw_compare_imm(Relation::Equal, invalidated, 0);
         Some(emit(&mut self.builder).all(specialized, held))
