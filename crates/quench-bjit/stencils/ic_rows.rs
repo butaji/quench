@@ -56,7 +56,7 @@ const ENTRY_HOLES: u8 = 2;
 /// slot (`GuardShape`, `LoadSlot`); the word goes to the destination `D`.
 #[inline(always)]
 fn get_row<const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut stage = StencilStage::from_hole(ENTRY_HOLES, payload);
     // The receiver is the word above the destination's offset in hole 0, not hole 1's (`HOLE_A`).
     let receiver = site_object(&s);
     let mut places = Places::new::<D, MEM, MEM>(s);
@@ -77,7 +77,7 @@ fn received<const N: usize>(mut frame: crate::places_property::PlannedPlaces<'_,
 /// slot's type is widened.
 #[inline(always)]
 fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut stage = StencilStage::from_hole(ENTRY_HOLES, payload);
     let mut places = Places::new::<MEM, A, MEM>(s);
     let step = step_property_of::<{ op_kind::SET_FIELD }, _, _>(&mut stage, &mut planned_frame(&mut places, [], Callout::FlatStore { int: INT }), receiver_set());
     finish_chained::<CHAINED>(places.s, step, |s, _| Out::Next(s))
@@ -89,7 +89,7 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
 /// leaves as `get_row`'s does. The word goes to `D`.
 #[inline(always)]
 fn class_get_row<const HELD: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut stage = StencilStage::from_hole(ENTRY_HOLES, payload);
     let object = site_object(&s);
     let key = stage.site(0);
     let slot = stage.site(0);
@@ -108,7 +108,7 @@ fn class_get_row<const HELD: bool, const CHAINED: bool, const D: u8>(s: S, paylo
 #[inline(always)]
 fn class_set_value<const A: u8>(s: &S, payload: usize) -> Option<u64> {
     let word = number_word::<A, HOLE_A>(s)?;
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut stage = StencilStage::from_hole(ENTRY_HOLES, payload);
     let object = word_at(s.frame, hole::<SET_RECEIVER>());
     let key = stage.site(0);
     let slot = stage.site(0);
@@ -132,7 +132,7 @@ fn class_set_row<const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out 
 #[inline(always)]
 fn proof(s: S) -> Out {
     let object = word_at(s.frame, hole::<0>());
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload(&s));
     let direct = value::is_direct_object(&mut stage, object);
     match stage.guard(direct, ()) {
         Some(()) => Out::Next(s),

@@ -19,6 +19,7 @@ use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::vm::global_facts::GlobalTable;
 use quench_runtime::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
+#[cfg(feature = "jit")]
 use quench_runtime::compile::liveness::RegisterMasks;
 use quench_runtime::typed_ir::Type;
 use quench_runtime::compile::aot_facts::AotFacts;

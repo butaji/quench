@@ -344,12 +344,14 @@ fn compile(options: Options) -> Result<(), String> {
             // A dynamic-source image links the standard build's library (`cargo build -p quench`, default
             // features), which that build left fresh: this cargo run only reports it. A static image's
             // support leaves out the JIT and the bundled sources, a build of its own.
-            // A minimal static support also builds its standard library for size: `panic_immediate_abort`
-            // drops the panic-message formatting, `optimize_for_size` selects the library's size-oriented code paths.
+            // A minimal static support also builds its standard library for size: the `immediate-abort`
+            // panic strategy drops the panic-message formatting, `optimize_for_size` selects the library's
+            // size-oriented code paths.
             let mut cargo = Command::new("cargo");
             cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1");
             if !support.allows_dynamic_source() && profile == "aot-image" {
-                cargo.args(["-Zbuild-std=std,panic_abort", "-Zbuild-std-features=panic_immediate_abort,optimize_for_size"]);
+                cargo.args(["-Zbuild-std=std,panic_abort", "-Zbuild-std-features=optimize_for_size", "-Zpanic-immediate-abort",
+                    "--config", "profile.aot-image.panic=\"immediate-abort\""]);
             }
             cargo.args(["build", "--locked", "--profile", &profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {

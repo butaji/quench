@@ -22,13 +22,13 @@ use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::stage::StencilStage;
 use crate::staged::{Concrete, Domain, NegativeZero, NumberOperation, Operation, Step, numeric, op_kind, step_generic_of, step_local_of, step_value_of};
 use crate::vm::operations::NumberRelation;
-use crate::words::{HOLE_A, Out, S, exit_here, hole};
+use crate::words::{HOLE_A, Out, S, exit_here, hole, payload};
 
 /// The Number operation over the row's places, whether it completed.
 #[inline(always)]
 fn number<const KIND: u8>(frame: &mut Places, operation: NumberOperation, _: Kind<KIND>) -> bool {
     // `step_number`'s arm for a Number operation, with the variant `KIND` known (`numeric::step_of`).
-    matches!(numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0), frame, operation), Step::Value(_))
+    matches!(numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), frame, operation), Step::Value(_))
 }
 
 /// The Number relation a value-form relation row of code `kind` computes: the staged relation's own variant, the one
@@ -90,7 +90,7 @@ pub(crate) fn bitwise_not_row(mut frame: Places) -> Out {
 #[inline(always)]
 pub(crate) fn initialize_local_row(mut frame: Places) -> Out {
     let slot = hole::<HOLE_A>() as u16;
-    let done = matches!(step_local_of::<{ op_kind::INITIALIZE_LOCAL }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::InitializeLocal { slot }), Step::Value(_));
+    let done = matches!(step_local_of::<{ op_kind::INITIALIZE_LOCAL }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::InitializeLocal { slot }), Step::Value(_));
     finish(frame, done)
 }
 
@@ -98,7 +98,7 @@ pub(crate) fn initialize_local_row(mut frame: Places) -> Out {
 /// neither `null` nor `undefined` (it writes nothing); a nullish operand leaves for the helper step, which raises.
 #[inline(always)]
 pub(crate) fn coercible_row(mut frame: Places) -> Out {
-    let done = matches!(step_value_of::<{ op_kind::REQUIRE_OBJECT_COERCIBLE }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::RequireObjectCoercible { register: LEFT }), Step::Value(_));
+    let done = matches!(step_value_of::<{ op_kind::REQUIRE_OBJECT_COERCIBLE }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::RequireObjectCoercible { register: LEFT }), Step::Value(_));
     finish(frame, done)
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn coercible_row(mut frame: Places) -> Out {
 /// frame slot (`undefined` is no int word). Needs `Places::constant` to answer the constant (places.rs).
 #[inline(always)]
 pub(crate) fn void_row(mut frame: Places) -> Out {
-    let done = matches!(step_generic_of::<{ op_kind::VOID }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Void { destination: DEST }), Step::Value(_));
+    let done = matches!(step_generic_of::<{ op_kind::VOID }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::Void { destination: DEST }), Step::Value(_));
     finish(frame, done)
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn void_row(mut frame: Places) -> Out {
 #[inline(always)]
 pub(crate) fn equality_row<const STRICT: bool, const NEGATED: bool>(mut frame: Places) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    let done = matches!(step_generic_of::<{ op_kind::EQUALITY }, _, _>(&mut Concrete::from_hole(0), &mut frame,
+    let done = matches!(step_generic_of::<{ op_kind::EQUALITY }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame,
         Operation::Equality { destination: DEST, left, right, strict: STRICT, negated: NEGATED }), Step::Value(_));
     finish(frame, done)
 }
