@@ -94,10 +94,10 @@ fn read_doubles(row: &Decoded) -> bool {
 }
 
 /// Keeps each site read's slot-type proof (`Decoded::typed`) only where a row drops a check on it: an inline-cache
-/// read (`Decoded::takes_ic_row`) whose slot holds a Number and whose destination is a pinned double, which delivers
-/// the word untested (`plan::ic_plan`); or whose slot holds direct objects and whose destination is a frame slot, which
-/// the destination's proof after the read relies on (`proofs::typed_object`). Code that makes a call or a helper step
-/// keeps none, as the call may widen the slot before a later run of the read.
+/// read (`Decoded::takes_ic_row`) whose slot holds direct objects and whose destination is a frame slot, whose fast row
+/// delivers the word with the destination's direct-object check left to the site row's path (`plan::ic_plan`). A Number
+/// slot keeps none: no row drops its tag test. Code that makes a call or a helper step keeps none, as the call may widen
+/// the slot before a later run of the read.
 ///
 /// INVARIANT (one fact store): a check the b-jit drops is backed by a fact-store proof and the dependency that keeps it
 /// true. The proof is the slot's observed type (`NativeFieldLoad::ty`, the type `Heap::slot_type` maintains on every
@@ -110,8 +110,7 @@ pub(crate) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
     for row in decoded.iter_mut() {
         let place = row.dst.map(|dst| homes.place(dst));
         let kept = match row.typed.map(|dependency| dependency.ty) {
-            Some(ty) if ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) => matches!(place, Some(Place::PinF(_))),
-            Some(_) => matches!(place, Some(Place::Mem)),
+            Some(ty) => !ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) && matches!(place, Some(Place::Mem)),
             None => false,
         };
         if calls || !row.takes_ic_row() || row.heap != Some(Heap::Site) || !kept {
@@ -254,19 +253,18 @@ mod tests {
         assert_eq!(variant_of(Kind::Lt, Some(GENERIC)), Variant::Generic);
     }
 
-    /// A site read into a pinned double keeps its Number proof (the dependency the code holds and the row that drops
-    /// the tag test); an object read into a frame slot keeps its object proof; a read into the other place, a read with
+    /// An object read into a frame slot keeps its object proof; a Number read, a read into the other place, a read with
     /// no inline-cache row, or code that makes a helper step keeps none.
     #[test]
     fn a_typed_read_keeps_its_proof_only_where_a_check_drops() {
         let number = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::NUMBER };
         let object = quench_runtime::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::DIRECT_OBJECT_FAMILY };
-        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(IcEntry::Shape(7)), proven: true, typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
+        let read = |dst: Register, typed: quench_runtime::code_dependencies::SlotDependency| Decoded { ic: Some(IcEntry::Shape(7)), typed: Some(typed), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
         // Web 0 holds a pinned double, web 1 a frame slot; web 2 is the receiver.
         let homes = Homes::of(&[], &[0], vec![0, 1, 2], &[Vec::new(), Vec::new(), Vec::new()]);
         let mut rows = [read(0, number), read(1, number), read(1, object), Decoded { ic: None, ..read(0, number) }];
         keep_typed_reads(&homes, &mut rows);
-        assert_eq!(rows.iter().map(|row| row.typed.is_some()).collect::<Vec<_>>(), [true, false, true, false]);
+        assert_eq!(rows.iter().map(|row| row.typed.is_some()).collect::<Vec<_>>(), [false, false, true, false]);
         let mut calling = [read(0, number), Decoded::step(Step::Helper, None)];
         keep_typed_reads(&homes, &mut calling);
         assert!(calling[0].typed.is_none(), "a helper step may widen the slot");

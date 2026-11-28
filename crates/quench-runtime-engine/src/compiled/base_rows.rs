@@ -114,12 +114,6 @@ pub(crate) enum Heap {
     /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
     /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
     IcSet { int: bool },
-    /// `IcGet` and `IcSet` of a receiver every path proved a direct object (`base_region::proofs`): one compare
-    /// of its auxiliary word with the entry's shape proves the shape and flat plain values (holes as theirs).
-    IcKnownGet,
-    /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
-    /// (`base_region::proofs`), so the row tests nothing of its own.
-    IcKnownSet { int: bool, admitted: bool },
     /// `IcGet` of a class-keyed entry (`ic_rows::class_get_row`): the field at hole 3 (a field index) of the live class cell
     /// the receiver (hole 0's upper half) is, whose class key hole 2 holds; a miss leaves as `IcGet`'s.
     IcGetClass,
@@ -131,14 +125,8 @@ pub(crate) enum Heap {
     /// The class-keyed add (`add::class_add`): hole 0 holds the before-key (low) and after-class (high), hole 2 the slot and the
     /// object register's frame offset; the value is hole 1. A hit continues at TAKEN.
     AddClass,
-    /// `IcKnownGet` of a receiver whose entry proved its shape and flat form (`ShapeFlat`, `base_region::proofs`): the
-    /// arena slot at hole 3 (its byte offset), no compare; hole 2 is zero and unread.
-    IcKnownGetFlat,
-    /// `IcKnownSet` of a receiver whose entry proved its shape and flat form: the flat slot's byte offset follows the
-    /// atom (hole 3) where not `admitted`, else is hole 2; no shape is compared (holes as the stencil reads them).
-    IcKnownSetFlat { int: bool, admitted: bool },
     /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
-    /// runs after its site row, so the receiver is proved one on every edge out of the access.
+    /// runs after its site row (`plan::ic_plan`).
     IcProof,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
@@ -181,9 +169,6 @@ pub(crate) enum Heap {
     /// The entry test of a live class cell (`base_region::link::entry_rows`): the register at hole 0 holds a direct object
     /// whose live class cell's class is the one in hole 1 (`guard::class`), else the entry leaves with nothing written.
     Class,
-    /// The entry test that the run stores specialized (`base_region::link::entry_rows`, `guard::stores`): else the entry
-    /// leaves with nothing written.
-    Stores,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
@@ -318,9 +303,9 @@ mod catalog_tests {
         let mut all = vec![
             Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
             Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
-            Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
-            Heap::Declared, Heap::CaptureIdentity, Heap::Class, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Class, Heap::Held, Heap::ThisHeld, Heap::Realm,
             Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::GlobalRead,
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
@@ -329,10 +314,6 @@ mod catalog_tests {
         for flag in [false, true] {
             all.push(Heap::IcSet { int: flag });
             all.push(Heap::TypeofIs { index: 0, negated: flag });
-            for admitted in [false, true] {
-                all.push(Heap::IcKnownSet { int: flag, admitted });
-                all.push(Heap::IcKnownSetFlat { int: flag, admitted });
-            }
         }
         all
     }

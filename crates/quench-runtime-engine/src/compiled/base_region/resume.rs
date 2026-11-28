@@ -87,9 +87,6 @@ pub(crate) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
         .entries
         .iter()
         .filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty())
-        // A row a body-established receiver proof reaches stands on the access that proved it, which a resume skips.
-        // An entry-seeded proof is re-established by `entry_rows`, which runs every declared guard (`layout.guards`).
-        .filter(|&&(_, row)| !layout.relies.get(row as usize).copied().unwrap_or(false))
         .map(|&(pc, row)| {
             let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row), row as usize)?;
             Ok(Stub { pc, rows, target: first + starts[row as usize] })

@@ -230,24 +230,10 @@ macro_rules! catalog {
     TYPED_INDEX_ROW: uses(Float, Unread, Src, Kept) x TYPED_KINDS twin: kernel(typed_load) = Heap::TypedIndex(k) => k,
     TYPED_STORE_ROW: uses(Unread, Src, Src, Kept) x TYPED_KINDS twin: kernel(typed_store_f64) = Heap::TypedStore(k) => k,
     TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) twin: kernel(typed_length) = Heap::TypedLength,
-    /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
-    /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
+    /// The receiver proof (`ic_rows.rs`): leaves unless the object register at hole 0 is a direct object, after an access's miss.
     IC_PROOF_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::IcProof,
-    IC_KNOWN_GET_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcKnownGet,
-    IC_KNOWN_SET_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: false, admitted: false },
-    IC_KNOWN_SET_INT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: true, admitted: false },
-    /// `IC_KNOWN_SET_ROW` of a store the region's entry admitted (`base_region::proofs`): no run-level stores test, the entry
-    /// test (`STORES_ROW`) having held and no call since.
-    IC_KNOWN_SET_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: false, admitted: true },
-    IC_KNOWN_SET_INT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSet { int: true, admitted: true },
-    /// `IC_KNOWN_GET_ROW` / `IC_KNOWN_SET_ROW` of a receiver whose entry proved its exact shape and flat form (`SHAPE_FLAT_ROW`,
-    /// `base_region::proofs`): the slot at its byte offset in the arena run, with no compare of the auxiliary word. The
-    /// flat set's holes are the admitted row's (`ADMITTED`) or the stores test's (`IC_KNOWN_SET_FLAT_ROW`) plus the offset.
-    IC_KNOWN_GET_FLAT_ROW: uses(Dst, Unread, Unread, Kept) twin: kernel(field_read) = Heap::IcKnownGetFlat,
-    IC_KNOWN_SET_FLAT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: false, admitted: false },
-    IC_KNOWN_SET_INT_FLAT_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: false },
-    IC_KNOWN_SET_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: false, admitted: true },
-    IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) twin: kernel(field_store) = Heap::IcKnownSetFlat { int: true, admitted: true },
+    // The known-receiver rows (a receiver the body proved an object) are retired: the numbering keeps their values free.
+    reserve 10,
     /// The class-keyed rows (`ic_rows.rs`, `entry::class_key_cell`): the own field, the held field and the own store of
     /// a live class cell whose class key (`class | CLASS_KEY`) hole 2 names, the field index at hole 3 (the shape rows'
     /// holes, with the key in the shape's). `IC_GET_HELD_CLASS_ROW`'s holder cell granule is hole 4.
@@ -270,9 +256,8 @@ macro_rules! catalog {
     CLASS_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Class,
     // The loop-receiver shape entry tests' values are retired: the numbering keeps them free.
     reserve 2,
-    /// A region's entry test that the run stores specialized (`JS_STEP_STORES_SPECIALIZED`, `slot_store::store_admitted`):
-    /// a hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
-    STORES_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Stores,
+    // The entry test that the run stores specialized is retired: the numbering keeps its value free.
+    reserve 1,
     /// `String.prototype.charCodeAt` of a flat string (hole 1: the receiver's frame slot) at an int32 index in range (hole 2):
     /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
     /// nothing written, to the call's own step.

@@ -117,10 +117,6 @@ pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Resul
     for proto in &layout.prototypes {
         rows.push(EntryRow { stencil: base_rows::stencil(class)?, holes: padded_holes([u64::from(proto.register) * SLOT, u64::from(proto.class), 0]), declared: true, number: None, int32: None, unbox: None });
     }
-    if layout.stores {
-        let stores = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-        rows.push(EntryRow { stencil: base_rows::stencil(stores)?, holes: padded_holes([0, 0, 0]), declared: true, number: None, int32: None, unbox: None });
-    }
     let identity = HeapRow { heap: Heap::CaptureIdentity, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for (slot, callee) in &layout.identities {
         rows.push(EntryRow { stencil: base_rows::stencil(identity)?, holes: padded_holes([u64::from(*slot), u64::from(*slot) * SLOT, *callee]), declared: true, number: None, int32: None, unbox: None });
