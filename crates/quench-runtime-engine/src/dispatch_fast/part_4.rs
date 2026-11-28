@@ -125,8 +125,8 @@ pub(super) fn initialize_fields_in_lane(
     let stores = code.function(function as usize).initializer_stores(&code.constants)?;
     let env = vm.same_realm_user_target(callee).map_or(Value::UNDEFINED, |(_, _, env)| env);
     let read = construct_plan::field_reader(vm, callee);
-    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, nested, each| {
-        add_stores_in_lane(vm, code, this, stores, argument, read, nested, each)
+    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, fixed, nested, each| {
+        add_stores_in_lane(vm, code, this, stores, argument, read, fixed, nested, each)
     })
 }
 
