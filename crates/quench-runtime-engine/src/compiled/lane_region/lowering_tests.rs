@@ -87,7 +87,7 @@ fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edg
     let word = quench_runtime::code_dependencies::Invalidation::default();
     let atoms = quench_runtime::bitset::BitSet::default();
     let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation: word.address(), constants: &[],
-        instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC };
+        instanceofs: &|_| None, shape_stable: &|_| false, names: None, root_constant: &|_| None }), ..VmFacts::STATIC };
     let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
     let native = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
         facts, &[], &BTreeMap::new(), &[], &*isa, &[], Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Dense).unwrap().function;

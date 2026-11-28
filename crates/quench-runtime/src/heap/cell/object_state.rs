@@ -141,13 +141,6 @@ impl Object {
         self.aux() & crate::value_vec::CONSTANT_FORM != 0
     }
 
-    /// Marks this object's values as held by code (`value_vec::CONSTANT_FORM`): until the bit
-    /// clears, every raw-word guard misses it and its stores go through the VM, which clears
-    /// it (`note_constant_write`). The caller subscribes its reader under `exact_shape`, which
-    /// the mark leaves unchanged.
-    pub(crate) fn mark_constant(&mut self) {
-        self.set_aux(self.aux() | crate::value_vec::CONSTANT_FORM);
-    }
 
     /// A write to one of this object's values, or a change of its layout or storage: where
     /// code holds its values (`holds_constant_mark`), that code retires, by the object's exact

@@ -419,14 +419,6 @@ impl<'a> ObjectMut<'a> {
     }
 
     #[inline(always)]
-    pub fn mark_constant(&mut self) {
-        match self {
-            ObjectMut::Record(object) => object.mark_constant(),
-            ObjectMut::Cell(cell) => cell.edit_class(|object| object.mark_constant()),
-        }
-    }
-
-    #[inline(always)]
     pub fn note_constant_write(&mut self) {
         match self {
             ObjectMut::Record(object) => object.note_constant_write(),

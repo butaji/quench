@@ -35,11 +35,10 @@ impl LoweringJob<'_> {
         let instanceofs = |constructor: Value| self.tables.instanceof(constructor);
         let names = |site: u16, atom| self.tables.name(site, atom);
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
-        let own_constant = |atom: Atom| self.tables.own_constant(atom);
         let root_constant = |pc: usize| self.tables.root_constant(pc);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }),
+            names: Some(&names), root_constant: &root_constant }),
             facts: self.aot.as_deref(), graph: self.graph.as_deref(), ..self.facts };
         let admitted = super::super::admission::specialize(super::super::admission::UnitRequest { kind: super::super::admission::UnitKind::Body, facts: Default::default() })?;
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,

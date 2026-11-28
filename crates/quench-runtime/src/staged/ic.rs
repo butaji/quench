@@ -43,10 +43,6 @@ pub enum IcOp<'a> {
     /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a holder whose fields
     /// move resets the field caches before any read (`Vm::drop_moved_holder_entries`), so it tests none. It ends the read.
     LoadHeldField { holder: u32, slot: u32 },
-    /// The read of the one object whose record is at `record` as `value`, while `watch` holds
-    /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
-    /// that starts from the receiver's word compares the word with the object's own instead.
-    OwnConstant { record: u64, watch: u64, value: u64 },
     /// A direct array's `length` from the receiver's word, its record among the array records
     /// at `records` (`elements::array_length`); any other receiver or form misses.
     ArrayLength { records: u64 },
@@ -196,7 +192,6 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         IcOp::PrototypeConstants(values) => return Break(prototype_constants(stage, at.shaped.expect("a prototype's constants follow the guard of the receiver's shape"), values, miss)),
         IcOp::HolderConstant(key) => return Break(holder_constant(stage, at.shaped.expect("a holder's constant follows the guard of the receiver's shape"), key, miss)),
         IcOp::Held { guard, watch, value } => return Break(holder_read(stage, at.record, guard, watch, value, miss)),
-        IcOp::OwnConstant { record, watch, value } => return Break(own_constant_read(stage, at.record, record, watch, value, miss)),
         IcOp::ArrayLength { records } => {
             let records = site_word(stage, records);
             return Break(super::elements::array_length(stage, records, at.record, miss));

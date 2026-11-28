@@ -1251,15 +1251,6 @@ impl Heap {
         })
     }
 
-    /// Marks the object `object`'s values as held by code (`Object::mark_constant`): its next
-    /// value write or layout change retires the readers subscribed under its exact shape and
-    /// clears the mark. No extras are made, so once written it takes every fast store again
-    /// (a prototype mark's extras would keep it off them for good). `None` for a non-object.
-    pub(crate) fn mark_own_constant(&mut self, object: Value) -> Option<()> {
-        self.object_mut(object)?.mark_constant();
-        Some(())
-    }
-
     #[inline] pub fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
