@@ -2886,7 +2886,7 @@ pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
 /// (`row_set_field_miss_path`). Chosen at load for a store the class's facts do not prove always stored.
 pub(crate) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
 /// The site facts of a field read whose value is the callee of a Math call the record after it
-/// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
+/// makes (`fuse_math_calls`): one argument, a register second argument,
 /// and a constant second argument. The row runs the call past its read (`math_row_resume`), the
 /// function's identity read by the VM (`PropertyFrame::math_call`).
 pub(crate) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
@@ -5352,9 +5352,6 @@ script_handler! {
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) {
             let native = *native;
             let handler = native_call_handler(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
-            if handler as *const () != call_row::<{ protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
-                native_calls::install_math_field_call(cx, ip, native);
-            }
             sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
         sibling!(native_call_miss, r, ip, Carried::script_in(cx, view))

@@ -486,6 +486,11 @@ pub(crate) fn derive_lane_view<'live>(
         specialize_constructs(&mut records, function_id, vm.programs.residual(program), facts);
         specialize_proved_arrays(&decoded, &mut records);
     }
+    // A Math call whose callee's field read the solve names (`fuse_math_calls`) takes its field record's row here, before the
+    // fusion passes read the records' handlers.
+    if let Some(facts) = facts.filter(|_| !wasm) {
+        fuse_math_calls(facts, function_id, vm, &decoded, &mut records);
+    }
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
@@ -1286,6 +1291,73 @@ pub(crate) fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: b
         if let Some(handler) = lone_target_handler(&lone, &lone_copy, records, target, &after) {
             records[jump].mode = target_test_word(|k| records.get(target + k));
             records[jump].handler = handler as *const ();
+        }
+    }
+}
+
+/// Fuses a Math call with the field read of its callee, at load: the field record takes the row of its Math site
+/// (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`), which runs the read and the call past it
+/// (`math_row_resume`). The shape is the bytecode's: the read of a callee register, the copies of one or two
+/// arguments into the call's window, then the `Call` of that register. The callee's identity decides it: the
+/// solve proves the callee register holds the builtin `Math.x` (`Identity::Builtin`, confirmed by
+/// `AotFacts::builtin_identity`), where `x` is a Math function a Math row runs. Without that fact no record changes.
+/// A record the row declines takes the generic step in place.
+fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, vm: &quench_runtime::vm::Vm,
+    decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
+    use quench_runtime::bytecode::Op;
+    use quench_runtime::typed_ir::Identity;
+    let function = facts.function_facts(function_id);
+    let own = own_bound_handlers();
+    let copy = generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let constant = generated_row!(quench_runtime::staged::LOAD_CONST_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    // The field read of `member` off the register `callee` before the call at `call_pc`, is Math function `member`:
+    // the solve's identity of the callee register, which the closed world proves in every run.
+    let math_callee = |call_pc: usize, callee: u16, member: u32| -> bool {
+        let Some(Identity::Builtin(path)) = function.cell_at(call_pc as u32, callee).map(|cell| cell.identity) else { return false };
+        let is_math = path.member == Some(member) && vm.atom_name(path.global) == "Math" && facts.builtin_identity(path);
+        is_math && quench_runtime::vm::native_rows::math_function(vm.atom_name(member))
+            .is_some_and(|native| super::native_calls::math_handler(native).is_some())
+    };
+    // The field record at `pc` reads a register's own field, and writes `callee`.
+    let reads_callee = |records: &[LaneInstruction], pc: usize, callee: u16| {
+        let field = &records[pc];
+        field.a == callee && own[1..].iter().step_by(2).any(|&handler| handler == field.handler)
+            && quench_runtime::staged::reads_named_field(decoded[pc].op())
+    };
+    for call_pc in 2..records.len() {
+        if decoded[call_pc].op() != Op::Call {
+            continue;
+        }
+        let (call_a, call_b, imm) = (records[call_pc].a, records[call_pc].b, decoded[call_pc].imm());
+        if quench_runtime::staged::call_complete::concrete_returns_callee_completion(call_a) {
+            continue;
+        }
+        let window = ImmediateLayout::call_window_base(imm);
+        match ImmediateLayout::argument_count(imm) {
+            1 => {
+                let (copy_pc, field_pc) = (call_pc - 1, call_pc - 2);
+                let argument = &records[copy_pc];
+                if decoded[copy_pc].op() != Op::Move || argument.handler != copy || argument.a != window || argument.a == records[field_pc].a {
+                    continue;
+                }
+                if reads_callee(&*records, field_pc, call_b) && math_callee(call_pc, call_b, decoded[field_pc].imm()) {
+                    records[field_pc].handler = generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as Handler as *const ();
+                }
+            }
+            2 if call_pc >= 3 => {
+                let (second_pc, first_pc, field_pc) = (call_pc - 1, call_pc - 2, call_pc - 3);
+                let (first, second) = (&records[first_pc], &records[second_pc]);
+                let constant_second = decoded[second_pc].op() == Op::LoadConst && second.handler == constant;
+                let shaped = decoded[first_pc].op() == Op::Move && first.handler == copy
+                    && (constant_second || (decoded[second_pc].op() == Op::Move && second.handler == copy))
+                    && first.a == window && second.a == window + 1;
+                let reads_apart = call_b != window && call_b != window + 1 && records[field_pc].a != window && records[field_pc].a != window + 1;
+                if shaped && reads_apart && reads_callee(&*records, field_pc, call_b) && math_callee(call_pc, call_b, decoded[field_pc].imm()) {
+                    let row = if constant_second { MATH_CALL2_CONST_SITE } else { MATH_CALL2_SITE };
+                    records[field_pc].handler = generated_row!(FIELD_LEAF_READ, ACC_NONE, row) as Handler as *const ();
+                }
+            }
+            _ => {}
         }
     }
 }

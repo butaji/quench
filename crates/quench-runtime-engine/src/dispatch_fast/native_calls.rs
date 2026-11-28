@@ -45,7 +45,7 @@ macro_rules! math_rows {
         const fn math_row_native(row: u8) -> Native {
             match row { $($row => Native::$native,)* _ => unreachable!() }
         }
-        fn math_handler(native: Native) -> Option<Handler> {
+        pub(crate) fn math_handler(native: Native) -> Option<Handler> {
             match native { $(Native::$native => Some(protocol_handler::<{ quench_runtime::staged::forms::PLAIN_CALL_ROW }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }>()),)* _ => None }
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
@@ -468,7 +468,7 @@ script_handler! {
 pub(crate) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_runtime::staged::Concrete>, const SITE: u8>(
     frame: &mut F, stage: &mut quench_runtime::staged::Concrete, r: Registers, ip: Ip, callee: u64) -> Ip {
     let first_ip = following(ip);
-    // SAFETY: the installer matched the copies and the `Call` that follow in this view.
+    // SAFETY: the load pass (`fuse_math_calls`) matched the copies and the `Call` that follow in this view.
     unsafe {
         if const { math_arity(SITE) == 1 } {
             let (copy, call_ip) = (&*first_ip, following(first_ip));
@@ -488,59 +488,6 @@ pub(crate) fn math_row_resume<F: quench_runtime::staged::PropertyFrame<quench_ru
         r.set(second.a, arguments[1]);
         r.set(call.a, Value::from_bits(value));
         following(call_ip)
-    }
-}
-
-/// Fuses the call `call_ip`, which `native_call_handler` just gave Math row handler `handler`,
-/// with the `GetField` of its callee and the `Move` of its one argument before it: the field
-/// record's row (`MATH_CALL_SITE`) runs the read and the call (`math_row_resume`). The callee
-/// register is the field's own read (`own_bound_handlers`), the copy a plain `Move` into the
-/// call's one-value window.
-pub(crate) fn install_math_field_call(cx: *mut LaneContext, call_ip: Ip, native: Native) {
-    if math_handler(native).is_none() { return }
-    // SAFETY: `call_ip` is a record of the running view, which starts at the context's base.
-    let pc = unsafe { record_pc(cx, call_ip) } as isize;
-    if pc < 2 {
-        return;
-    }
-    // SAFETY: as below; a two-argument call has its field record three before it.
-    let call = unsafe { &*call_ip };
-    if ImmediateLayout::argument_count(call.imm()) == 2 {
-        if pc >= 3 {
-            install_math_field_call2(call_ip);
-        }
-        return;
-    }
-    // SAFETY: both records precede the call in the same view.
-    let (copy_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2)) };
-    let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
-    let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
-        && ImmediateLayout::call_window_base(call.imm()) == copy.a;
-    let copies = copy.handler == generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
-    let reads_callee = field.a == call.b
-        && own_bound_handlers()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
-    if one_argument && copies && reads_callee && copy.a != field.a {
-        requicken(field_ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as Handler);
-    }
-}
-
-/// `install_math_field_call` of a two-argument call: a field record, a `Move` of the first
-/// argument and a `Move` or `LoadConst` of the second into the call's two-value window.
-fn install_math_field_call2(call_ip: Ip) {
-    // SAFETY: the three records precede the call in the same view (the caller checked).
-    let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
-    let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
-    let window = ImmediateLayout::call_window_base(call.imm());
-    let copy = generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
-    let constant_second = second.handler == generated_row!(quench_runtime::staged::LOAD_CONST_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
-    let shaped = first.handler == copy && (second.handler == copy || constant_second)
-        && first.a == window && second.a == window + 1;
-    let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
-        && own_bound_handlers()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
-    if shaped && reads_callee {
-        let row = if constant_second { generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as Handler }
-            else { generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as Handler };
-        requicken(field_ip, row);
     }
 }
 
