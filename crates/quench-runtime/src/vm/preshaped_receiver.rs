@@ -270,13 +270,10 @@ impl Vm {
         debug_assert_eq!(super::provenance::shape_names(&self.shapes, start).1, Some((constructor, true)));
         let mut union = FixedUnion::new(start);
         for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
-            if self.is_private_name(atom) {
-                return None;
-            }
+            // The fact excludes private names and duplicates (union_of), and bounds the count by MAX_CELL_FIELDS.
+            debug_assert!(!self.is_private_name(atom));
             let shape = self.transition_shape(union.shape, atom);
-            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 {
-                return None;
-            }
+            debug_assert!(!self.shape_is_dictionary(shape) && self.shapes[shape as usize].storage_len() == slot + 1);
             union.push(shape, atom);
         }
         Some(union)
