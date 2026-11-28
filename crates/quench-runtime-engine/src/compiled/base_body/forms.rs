@@ -112,13 +112,10 @@ fn a_numeric_operator_with_a_local_target_is_a_helper_step() {
     assert_eq!(runs, returns, "{} of {runs} body runs left for the interpreter", runs - returns);
 }
 
-/// `v instanceof C` of a constructor the VM proved steady is the fast row over the value's chain (the constructor a
-/// parameter or a global the function reads, guarded by identity), with the interpreter's step behind it for a cell
-/// the words do not walk, a primitive's cousin of any kind and another constructor; and a write of the constructor's
-/// `prototype` retires the body that held it, so the next answer is the interpreter's.
+/// `v instanceof K` takes the general path (the helper's decision over the value and the constructor), and a write of the
+/// constructor's `prototype` makes the next answer the interpreter's.
 #[test]
-fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it() {
-    let before = fast_rows(Opcode::Binary);
+fn instanceof_takes_the_general_path_and_sees_a_prototype_change() {
     let (interpreted, compiled, [runs, _]) = run_both(
         "class A {} class B extends A {} class C {} function F() {}
          function is(v, K) { return v instanceof K; }
@@ -136,7 +133,6 @@ fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it()
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Opcode::Binary) > before, "no instanceof fast row");
 }
 
 /// `'k' in o` of a constant key that one receiver layout answered is a row over the object's exact shape and prototype
@@ -235,11 +231,11 @@ fn new_of_a_constructor_that_captures_variables_runs_as_a_body() {
     assert!(runs > 100, "the bodies ran {runs} times");
 }
 
-/// `v instanceof C` and `'k' in o` as a branch are the comparison's row writing its boolean to a scratch register and the jump on it, as the
+/// `'k' in o` as a branch is the comparison's row writing its boolean to a scratch register and the jump on it, as the
 /// value forms are rows: the same answers the VM remembered, which leave at the jump for any other value and layout, where the
-/// interpreter decides.
+/// interpreter decides. `v instanceof A` as a branch takes the general path.
 #[test]
-fn instanceof_and_in_jumps_are_rows_followed_by_the_branch() {
+fn in_jumps_are_rows_followed_by_the_branch() {
     let before = fast_rows(Opcode::JumpBinaryFalse);
     let (interpreted, compiled, [runs, _]) = run_both(
         "class A {} class B extends A {} function F() {}
@@ -253,7 +249,7 @@ fn instanceof_and_in_jumps_are_rows_followed_by_the_branch() {
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Opcode::JumpBinaryFalse) > before, "no instanceof or `in` jump row");
+    assert!(fast_rows(Opcode::JumpBinaryFalse) > before, "no `in` jump row");
 }
 
 /// `o.m(x)` and `this.m(x)` are a load of the method (`GetField`) followed by a plain call of the register that holds it, which is a direct

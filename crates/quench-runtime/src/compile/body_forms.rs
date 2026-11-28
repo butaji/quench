@@ -4,7 +4,7 @@
 //! these at link time (`quench-runtime-engine`'s `call_body_forms` and `dispatch_fast::closure_targets`), and the
 //! AOT facts read the same functions (`AotFacts::body_entry` and its siblings), so both name one classification.
 
-use crate::bytecode::{CallPlan, Constant, FieldBase, FieldLookup, Function, ImmediateLayout, ImmediateRole, Instr, OperandKind, RETURN_REGISTER, Traits, WideInstruction};
+use crate::bytecode::{CallPlan, Constant, FieldBase, FieldLookup, Function, ImmediateLayout, ImmediateRole, OperandKind, RETURN_REGISTER, Traits, WideInstruction};
 use crate::vm::engine_types::{CallEntry, Framed, Frameless};
 
 /// The operator `!==`, as the oxc operator's index in a binary record's immediate.
@@ -48,10 +48,6 @@ pub fn body_entry(body: &Function, constants: &[Constant], frameless: bool, nati
         CallEntry::framed(Framed::Activates)
     } else if body.code.first().is_some_and(|packed| returning_field(body.widened(*packed))) {
         CallEntry::frameless(Frameless::Reads)
-    } else if element_read_body(body) {
-        CallEntry::frameless(Frameless::ReadsElement)
-    } else if forwarding_read_body(body) {
-        CallEntry::frameless(Frameless::ForwardsRead)
     } else if capture_read_body(body) {
         CallEntry::frameless(Frameless::ReadsCapture)
     } else if this_read_body(body) {
@@ -113,97 +109,6 @@ pub fn forwards_args(body: &Function, plan: &CallPlan) -> bool {
         && !plan.settles_in_loop
         && !plan.environment_activation
         && !plan.suspended_environment
-}
-
-/// Whether `base` reads `this` or a parameter: no nested chain and no local.
-fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
-    base.0 != FieldBase::NESTED
-        && base.local_index().is_none()
-        && base.register_index().is_none_or(|register| register < body.params)
-}
-
-/// Whether `body` is `GetField` of `this` or a parameter, `GetField` of a method of that,
-/// moves of its parameters in order into a call window, and the call of that method on the
-/// first field returning its completion (`CallEntry::frameless(Frameless::ForwardsRead)`), as `at(i) { return
-/// this.items.at(i); }` compiles.
-#[cold]
-#[inline(never)]
-fn forwarding_read_body(body: &Function) -> bool {
-    if !body.handlers.is_empty() {
-        return false;
-    }
-    let [field, method, rest @ ..] = body.code.as_slice() else {
-        return false;
-    };
-    let Some((moves, [call, ..])) = rest.split_at_checked(usize::from(body.params)) else {
-        return false;
-    };
-    let [field, method, call] = [field, method, call].map(|packed| body.widened(*packed));
-    let window = ImmediateLayout::call_window_base(call.imm());
-    let window_end = u32::from(window) + u32::from(body.params);
-    let survives_copies =
-        |register: u16| u32::from(register) < u32::from(window) || u32::from(register) >= window_end;
-    reads_receiver_field(field, body, survives_copies)
-        && reads_method(method, field, body, survives_copies)
-        && (window == 0 || window >= body.params)
-        && moves_parameters(body, moves, window)
-        && calls_method(call, method, field, body)
-}
-
-/// A `GetField` of `this` or a parameter, into a register past the parameters that the
-/// call's copies leave.
-fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    crate::staged::reads_named_field(field.op())
-        && field.result_flags() == 0
-        && field.result_register() >= body.params
-        && survives_copies(field.result_register())
-        && reads_this_or_parameter(FieldBase(field.b()), body)
-}
-
-/// A `GetField` of `field`'s value, into another register past the parameters that the
-/// call's copies leave.
-fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    crate::staged::reads_named_field(method.op())
-        && method.result_flags() == 0
-        && method.result_register() >= body.params
-        && method.result_register() != field.result_register()
-        && survives_copies(method.result_register())
-        && FieldBase(method.b()).register_index() == Some(field.a())
-}
-
-/// Each parameter, in order, moved to its place in the call window at `window`.
-fn moves_parameters(body: &Function, moves: &[Instr], window: u16) -> bool {
-    moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
-        let moved = body.widened(packed);
-        crate::staged::copies_register(moved.op()) && moved.b() == parameter && moved.a() == window + parameter
-    })
-}
-
-/// The call of `method` on `field` with every parameter, returning its completion.
-fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstruction, body: &Function) -> bool {
-    crate::staged::calls(call.op())
-        && call.result_flags() == RETURN_REGISTER
-        && call.b() == method.a()
-        && call.c() == field.a()
-        && ImmediateLayout::argument_count(call.imm()) == body.params
-}
-
-/// Whether `body` is `GetField` of `this` or a parameter, `GetIndex` of its result by a
-/// parameter, and `Return` of that (`CallEntry::frameless(Frameless::ReadsElement)`), as `at(i) { return
-/// this.items[i]; }` compiles.
-fn element_read_body(body: &Function) -> bool {
-    let [field, element, done, ..] = body.code.as_slice() else {
-        return false;
-    };
-    let [field, element, done] = [field, element, done].map(|packed| body.widened(*packed));
-    crate::staged::reads_named_field(field.op())
-        && !field.returns_from_frame()
-        && reads_this_or_parameter(FieldBase(field.b()), body)
-        && crate::staged::reads_element(element.op())
-        && element.b() == field.a()
-        && element.c() < body.params
-        && crate::staged::returns(done.op())
-        && done.a() == element.a()
 }
 
 /// The first instruction of `body` and the one after it, when it has two.

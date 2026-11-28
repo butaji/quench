@@ -243,10 +243,3 @@ pub(crate) fn holding_construct_plan_index(vm: &Vm, callee: Value, class: u32) -
     .then_some(index)
 }
 
-/// Records `resolution`, where `callee`'s forwarding read `function`, in plan `index`, which
-/// then also holds only while `function` and the holder of its `apply` keep their layouts.
-pub(crate) fn record_forwarded_resolution(vm: &mut Vm, index: usize, function: Value, resolution: ForwardedResolution) {
-    vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
-    watch_construct_plan(vm, index, false, &[function, resolution.apply_holder]);
-}
-

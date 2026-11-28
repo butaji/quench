@@ -83,15 +83,14 @@ impl CallEntry {
     pub(crate) fn reads(self) -> bool {
         self.is_any([
             Self::frameless(Frameless::Reads),
-            Self::frameless(Frameless::ReadsElement),
             Self::frameless(Frameless::ReadsCapture),
             Self::frameless(Frameless::ReadsThis),
         ])
     }
 
-    /// A body whose call a read answers (`call_read_in_lane`): its own read, or a forwarded one.
+    /// A body whose call a read answers (`call_read_in_lane`): its own read.
     #[inline(always)]
     pub(crate) fn answered_by_read(self) -> bool {
-        self.reads() || self == Self::frameless(Frameless::ForwardsRead)
+        self.reads()
     }
 }

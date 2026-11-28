@@ -78,7 +78,7 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     if let Some(method) = forwarded_method_of(vm, &target)
         && let Some(forwarded) = match resolved_forwarding_in_lane(cx, callee, plan.as_ref()) {
             Some(forwarded) => Some(forwarded),
-            None => forwarded_construction_in_lane(cx, target, method, this, class),
+            None => forwarded_construction_in_lane(cx, target, method, this),
         }
     {
         // A forwarded method that only initializes `this` from its parameters, which the
@@ -179,7 +179,6 @@ pub(in super::super) fn forwarded_construction_in_lane(
     constructor: ScriptCallTarget,
     method: quench_runtime::bytecode::ForwardedThisMethod,
     this: Value,
-    class: u32,
 ) -> Option<ScriptCallTarget> {
     // SAFETY: the context's program outlives the lane run, and the constructor belongs to it
     // (`Vm::resolve_script_call_target`), so the body's sites index the run's caches.
@@ -214,30 +213,7 @@ pub(in super::super) fn forwarded_construction_in_lane(
     {
         return None;
     }
-    let forwarded = script_target_in_lane(cx, function)?;
-    if let Some(resolution) = forwarded_resolution(vm, constructor.callee, class, method, function, apply) {
-        let index = construct_plan_index(constructor.callee, class)?;
-        record_forwarded_resolution(vm, index, function, resolution);
-    }
-    Some(forwarded)
-}
-
-/// Where a forwarding constructor's reads of `this.<method>` and its `apply`, which gave
-/// `function` and `apply`, resolved under `callee`'s plan of no fields while it holds
-/// (`ForwardedResolution`): own data properties of the plan's prototype and of the method's
-/// prototype, neither shadowed by the receiver template or the method, in shapes that fix
-/// their slots. `None` records nothing.
-// S7f DESIGN: the forwarded method reads its prototype's object record (`object_record`), which no ordinary object has
-// any more, so the resolution declines until its slot reads are made on the class cell.
-pub(in super::super) fn forwarded_resolution(
-    _vm: &Vm,
-    _callee: Value,
-    _class: u32,
-    _method: quench_runtime::bytecode::ForwardedThisMethod,
-    _function: Value,
-    _apply: Value,
-) -> Option<ForwardedResolution> {
-    None
+    script_target_in_lane(cx, function)
 }
 
 /// The method a forwarding constructor's construction activates, from `callee`'s plan's

@@ -22,8 +22,6 @@ pub(in super::super) unsafe fn call_read_in_lane(
         _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(this),
         // SAFETY: a capture-read target of the running program.
         _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => unsafe { read_capture_in_lane(vm, target) },
-        // A forwarding body reads through its field's record, which no record holds now: the call activates it.
-        _ if target.entry == CallEntry::frameless(Frameless::ForwardsRead) => None,
         // SAFETY: as for `LeafRead::of`.
         _ => unsafe { LeafRead::of(target) }?.run(vm, code, arguments, this),
     }

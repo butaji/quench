@@ -134,7 +134,7 @@ impl Vm {
         let graph = self.call_graph_of(&program);
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, &*program))
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
-        let tables = FactTables::of(self, function, unit, fields, &global_reads);
+        let tables = FactTables::of(self, function, unit, fields);
         let leaves: Vec<usize> = self.adding_stores(unit).collect();
         // A typed element read the interpreter's record observed takes its kind (`body_views::typed_reads`).
         let kinds = super::body_views::typed_reads(self, function, unit);
@@ -341,7 +341,7 @@ impl Vm {
             .map(|loads| loads.as_ref().map(|loads| loads.iter().map(|load| NativeFieldLoad { formed: None, ..*load }).collect::<Vec<_>>())).collect::<Vec<_>>();
         // A callee whose summary a withdrawal ended since the plan took it types a result the code no longer may.
         plan.direct.iter().map(|callee| callee.summary().is_some()).eq(taken.callee_summaries.iter().copied())
-            && FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads) == taken.tables
+            && FactTables::of(self, plan.function, &plan.unit, &plan.fields) == taken.tables
             && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
             && unformed(&self.unit_fields_in_lane(program, &plan.unit, plan.function, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.callee_capture_slots(callee)))

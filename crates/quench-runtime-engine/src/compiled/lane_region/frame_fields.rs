@@ -8,9 +8,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
-use quench_runtime::staged::{Region, ShapeFact, Shaped, Stage};
+use quench_runtime::staged::{ShapeFact, Shaped, Stage};
 use super::field_plans::LanePlans;
 use super::fixed_cells::entry_fixed_record;
 use super::frame::calls;
@@ -282,9 +281,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(Some(free))
     }
 
-    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, site: (u32, u16),
-        value: (ir::Value, Type), miss: ir::Block) -> Option<()> {
-        self.bound_store(stage, owner, object, site, value, miss)
+    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, _owner: Owner, object: ir::Value, (atom, site): (u32, u16),
+        (value, _fact): (ir::Value, Type), miss: ir::Block) -> Option<()> {
+        self.field_store_host(stage, object, atom, site, value, miss)
     }
 
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
@@ -315,40 +314,11 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(())
     }
 
-    /// The VM's own field-cache read (`Vm::cached_field_hit`) of the receiver's own slot,
-    /// through the site's bound slot first where the entry bound one; a miss leaves at `miss`.
-    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, atom: u32, site: u16,
+    /// The VM's own field read of the receiver through its site: the general call-out, which a site with no class arm
+    /// takes at compile time. A class-keyed receiver's reads are its plan's class arms, which decide before the probe.
+    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, _owner: Owner, object: ir::Value, atom: u32, site: u16,
         miss: ir::Block) -> Option<ir::Value> {
-        let entry = self.entry();
-        let bound = entry.and_then(|entry| entry.fields.iter().find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        let (Some(entry), Some(binding)) = (entry, bound) else {
-            return self.field_get_host(stage, object, atom, site, miss);
-        };
-        let Some(header) = self.proof_key(owner).and_then(|key| self.object_header(stage.builder, entry, key, true, miss)) else {
-            return self.field_get_host(stage, object, atom, site, miss);
-        };
-        let builder = &mut *stage.builder;
-        let (slow, done, packed) = (builder.create_block(), builder.create_block(), builder.create_block());
-        builder.set_cold_block(slow);
-        let packed_address = builder.append_block_param(packed, types::I64);
-        let result = builder.append_block_param(done, types::I64);
-        let address = emit_js_cached_field_slot(builder, binding, header, slow, Some(packed));
-        let value = emit(builder).raw_load(Lane::I64, regions::property_flags(self.fields.as_ref().and_then(|facts| facts.property)), address, 0);
-        emit(builder).jump(done, &[value]);
-        builder.switch_to_block(packed);
-        let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
-        let table = match self.helpers {
-            LaneHelpers::Bound(_, symbol) => super::super::linked_narrow_table(builder, symbol),
-            // A linking lowering names the loader's table by symbol, never this process's address.
-            LaneHelpers::Ahead => crate::symbol_words::symbol_address(builder, crate::aot_image::symbols::NARROW_WORDS_NAMESPACE, 0),
-            _ => super::super::process_narrow_table(builder),
-        };
-        emit_narrow_read(builder, narrow, table, done);
-        builder.switch_to_block(slow);
-        let value = self.field_get_host(stage, object, atom, site, miss)?;
-        stage.jump(done, &[value]);
-        stage.builder.switch_to_block(done);
-        Some(result)
+        self.field_get_host(stage, object, atom, site, miss)
     }
 
     /// The VM's element read past a hole or an index past the backing (`frame_elements::index_get`).

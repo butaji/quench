@@ -75,8 +75,9 @@ pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) { return None; }
     let site = adds(instruction.cache_site_index(), atom, !defines)?;
-    // S7f DESIGN: an add no class keys has no row since the object-record add rows went (S7j4a); its helper step adds it.
-    // The class row names its object register: a store to `this` has none.
+    // Every ordinary object is a class cell from birth, so an object's add is class-keyed. An add no class
+    // keys is a non-object receiver's: the general path adds it. The class row names its object register:
+    // a store to `this` has none.
     let keyed = site.transition.is_class_keyed() && site.transition.form().is_some() && receiver(instruction).is_some();
     keyed.then_some(Add { site })
 }

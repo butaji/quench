@@ -54,7 +54,7 @@ fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
         Some(Operation::RequireObjectCoercible { .. }) => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
         Some(Operation::Unary { .. }) => staged_unary_arm(instruction),
         Some(Operation::TypeofString { .. } | Operation::TypeofTest { .. }) => typeof_arm(instruction.unary_operator()),
-        // S7f DESIGN: a function naming has no row since the object-record naming rows went (S7j4a); its helper step names it.
+        // A function naming has no fast arm here: its helper step names the function (the lane's naming row is `lane_region::function_names`).
         // A binary with a Number constant operand has no `Operation::Binary` (it takes registers only), so it asks the staged meaning.
         _ if means(instruction, Meaning::Binary) => staged_binary_arm(instruction),
         _ => None,
