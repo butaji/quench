@@ -6,8 +6,7 @@ use crate::ext_traits::*;
 use super::{Edges, EmitFrame, FRAME};
 use super::tag_proofs::{decides_flat_strings, state_flat};
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
-    register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
-use crate::compiled::object_slots::inline_storage;
+    register_offset, Emit, JsStepDispatch, LaneHelper, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use quench_runtime::vm::global_facts::GlobalSlot;
 use super::{RegisterFact, Representation, Type};
 use quench_runtime::bytecode::Register;
@@ -152,27 +151,20 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
     (stage.constant(0), RegisterFact::canonical())
 }
 
-/// The projection of the global object's arena run behind its extras, and the object's tagged
-/// word: its record by id, the realm and the layout proved by dependencies the lowering took.
-/// The block's proof of it, where an earlier access made one (`LocalProofs::global`), is reused.
-fn global_layout(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, (cell, fact): (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
-    -> Option<(CheckedObject, ir::Value)> {
-    let bits = stage.constant(cell.global.to_bits());
-    if let Some((kept, len)) = frame.state.proofs.global && kept.fact() == fact && len == cell.storage_len { return Some((kept, bits)); }
-    let class_base = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
-    let address = ObjectRecord::prove(stage.builder, bits, class_base, None, miss).address(stage.builder);
-    let inline = inline_storage(stage.builder, address);
-    let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
-    let layout = CheckedObject::prove_arena_extras(stage.builder, (address, fact), inline, arena, cell.storage_len, miss)?;
-    frame.state.proofs.global = Some((layout, cell.storage_len));
-    Some((layout, bits))
+/// The address of the global's slot `cell` names: the global object's class cell at its granule (`cell_at_granule`),
+/// and the field the slot word addresses in it (`class_slot_address`, inline or spilled). The layout, realm and slot
+/// type are the dependencies the lowering took, so nothing here tests the cell.
+fn global_slot_address(stage: &mut Emit<'_, '_>, cell: GlobalSlot) -> ir::Value {
+    let granule = stage.constant(u64::from(cell.granule));
+    let class_cell = quench_runtime::staged::object::cell_at_granule(stage, granule);
+    let slot = stage.constant(u64::from(cell.slot));
+    quench_runtime::staged::entry::class_slot_address(stage, class_cell, slot)
 }
 
 /// The tagged word of the global's slot `held` names, read live under the layout the lowering holds.
-pub(crate) fn global_slot_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), miss: ir::Block)
+pub(crate) fn global_slot_read(_frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, held: (GlobalSlot, quench_runtime::staged::ShapeFact), _miss: ir::Block)
     -> Option<ir::Value> {
-    let (layout, _) = global_layout(frame, stage, held, miss)?;
-    let address = layout.arena_address(stage.builder, held.0.slot, miss)?;
+    let address = global_slot_address(stage, held.0);
     Some(stage.load_u64(quench_runtime::staged::Region::ObjectSlots.mutable(), address, 0))
 }
 
@@ -187,11 +179,11 @@ pub(crate) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let ty = frame.state.values[usize::from(source)].value.ty;
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
     if !ty.is_subtype(cell.ty) { return None; }
-    let (layout, bits) = global_layout(frame, stage, held, miss)?;
-    let address = layout.arena_address(stage.builder, cell.slot, miss)?;
+    let address = global_slot_address(stage, cell);
     #[cfg(test)]
     quench_runtime::vm::call_out::counts::bump(&quench_runtime::vm::call_out::counts::DIRECT_GLOBAL_STORES);
-    let record = stage.and_imm(bits, u64::from(u32::MAX));
+    // The record of the store gate is the global's class cell granule (`StagedRecordSpace::Class`).
+    let record = stage.constant(u64::from(cell.granule));
     // A Number is immediate, so the row stores it with no gate and cannot leave.
     if ty.is_subtype(Type::NUMBER) {
         return bound_full_store(stage, record, address, (value, ty), miss);
