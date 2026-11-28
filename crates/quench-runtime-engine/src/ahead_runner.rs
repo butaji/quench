@@ -25,9 +25,11 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
     live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, sites: &[FieldSite], image: bool) -> LaneView {
     let facts = vm.programs.aot_facts(program);
     let planned = vm.programs.planned_call_sites(program, function, crate::dispatch_fast::planned_calls::planned_arm_admits);
-    // A function's loop regions enter native code iff its predicted tier compiles it (design decision 4.9: the argmin,
-    // or the AOT mode's tier for an image, `ProgramStore::compiled_tier`).
-    let loop_regions = vm.programs.compiled_tier(program, function);
+    // A function's loops enter native code iff its predicted tier compiles it (design decision 4.9: the argmin,
+    // or the AOT mode's tier for an image, `ProgramStore::compiled_tier`), and a Cranelift tier and lane bodies run
+    // in this process: the load decides each loop's entry (`install_loop_sites`), not the run.
+    let loop_regions = vm.programs.compiled_tier(program, function)
+        && quench_runtime::vm::tier_policy::cranelift_runs() && crate::compiled::admission::lane_bodies_enrolled(vm);
     let mut view = crate::dispatch_fast::derive_lane_view(program, function, code, constants, vm, kind, live, sites,
         crate::compiled::admission::record_plan(loop_regions && quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
         vm.programs.reports_on_drop(), facts.as_deref(), planned);

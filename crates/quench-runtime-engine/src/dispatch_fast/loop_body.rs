@@ -4,7 +4,6 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use crate::compiled::tier_policy::PERCENT;
 use crate::compiled::{LaneBodyOutcome, LaneExit};
 #[cfg(feature = "jit")]
 use crate::compiled::LaneBodyWork;
@@ -16,13 +15,6 @@ use crate::compiled::loop_tier_up::raise_tier_up;
 #[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle;
-
-    /// A new loop site's body. A loop's body runs once per iteration, a loop weight above its function's frequency,
-    /// so its predicted tier is a compiled one (`tier_policy::predicted_tiers`, which never picks the interpreter
-    /// for a frequency that high); it compiles where the process runs Cranelift function tiers (the b-jit tier runs none).
-    pub(crate) fn initial() -> Self {
-        if quench_runtime::vm::tier_policy::cranelift_runs() { Self::IDLE } else { Self::Declined }
-    }
 
     /// The body to run, if it is ready.
     fn ready(&mut self) -> Option<std::rc::Rc<crate::compiled::LaneMethod>> {
@@ -52,46 +44,6 @@ impl LoopBody {
 impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
     pub(crate) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
-}
-
-/// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
-/// script callee): a loop whose calls no region inlines takes a body, and without one the loop
-/// interprets every iteration. Whether it did.
-/// Each call must be one the body runs inline (a Math function, a string builtin) or a script
-/// function's, which it inlines or calls by its entry, by the callee its register holds now: a
-/// body's general native call costs more than the lane's own.
-pub(crate) fn offer_body(cx: *mut LaneContext, r: Registers, site: &LoopSite) -> bool {
-    let vm = unsafe { vm(cx) };
-    if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !crate::compiled::admission::lane_bodies_enrolled(vm)
-        || !quench_runtime::vm::tier_policy::cranelift_runs() { return false; }
-    // SAFETY: the context's program outlives the lane run.
-    let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
-    let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
-        let call = function.widened(*packed);
-        vm.function_record(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
-            FunctionKind::Native(native) => crate::compiled::inlines_in_loop(native),
-            _ => true,
-        })
-    });
-    let calls = (site.header as usize..=site.backedge as usize)
-        .filter(|pc| function.code.get(*pc).is_some_and(|packed| crate::compiled::meaning_compiled::is_call(function.widened(*packed))));
-    // A loop no region runs (its analysis rejected an instruction) that holds an inner loop
-    // enters the inner loop's region on every pass: a body runs both natively, its calls
-    // whatever they are, which the tier model prices.
-    if site.analysis_failure.is_some() {
-        let nests = (site.header as usize + 1..site.backedge as usize).any(|pc| function.code.get(pc).is_some_and(|packed| {
-            let instruction = function.widened(*packed);
-            instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::JumpTarget
-                && (instruction.imm() as usize) <= pc && instruction.imm() as usize > site.header as usize
-        }));
-        // Without one, the loop's calls must run inline, as at any other loop: a body is the
-        // function's predicted tier's to give (`lane_facts::body_pick`), not the trips' count.
-        if !nests && !calls.into_iter().all(inline) { return false; }
-    } else if !calls.into_iter().all(inline) { return false; }
-    let mut body = site.body.borrow_mut();
-    if !matches!(*body, LoopBody::Declined) { return false; }
-    *body = LoopBody::IDLE;
-    true
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling`).
@@ -141,8 +93,7 @@ pub(crate) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: 
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     // A declined body is terminal: its dispatch has nothing to plan, run or count.
-    if !crate::compiled::admission::lane_bodies_enrolled(vm) || matches!(*site.body.borrow(), LoopBody::Declined)
-        || !site.is_hot() || site.tier.borrow().is_published() {
+    if matches!(*site.body.borrow(), LoopBody::Declined) || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
     run_loop_body(cx, r, ip, site)

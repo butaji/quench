@@ -816,17 +816,9 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     outcome
 }
 
-/// Gives a loop site that will not enter native code again its plain backward jump back,
-/// so each iteration takes the jump without the site's checks.
+/// Gives a loop site that will not enter native code again its plain backward jump back, so each iteration takes
+/// the jump without the site's checks. Its only edge is a refused body (`loop_jump_miss`); no compile starts here.
 pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
-    // A hot loop no region runs makes its function worth a body past the entry warm-up: its
-    // calls have run, so their sites have linked, and its next entry runs the loop natively.
-    // SAFETY: the program's views outlive the lane run.
-    if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
-        && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
-    {
-        specialize_in_lane(cx, own, site.function, &[]);
-    }
     // SAFETY: as `edge_rewrite`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
     let header = unsafe { ip.byte_offset(site.jump) };

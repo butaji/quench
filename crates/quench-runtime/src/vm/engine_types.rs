@@ -1014,8 +1014,6 @@ pub struct LoopSite {
     pub tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     pub body: std::cell::RefCell<LoopBody>,
-    /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
-    pub body_offered: std::cell::Cell<bool>,
     /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
     /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
     pub enclosed: std::cell::Cell<bool>,

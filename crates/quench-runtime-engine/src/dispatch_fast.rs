@@ -3321,17 +3321,11 @@ script_handler! {
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
         }
-        // A loop whose body is still to come keeps its backward jump, which a loop with no body
-        // would otherwise retire before the body is planned.
-        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() {
-            next!(cx, r, header, Carried::script_in(cx, view))
+        // A body refused at its compile retires the loop to its plain jump (`loop_retire_in_lane`); any
+        // other state keeps the backward jump, whose next entry asks for or polls the body.
+        if !site.body.borrow().pending() {
+            loop_retire_in_lane(cx, ip, site);
         }
-        // A loop whose calls no body inlines yet is offered a body once (`offer_body`).
-        if loop_body::offer_body(cx, r, site) {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        // A loop with no body takes its plain jump from now on.
-        loop_retire_in_lane(cx, ip, site);
         next!(cx, r, header, Carried::script_in(cx, view))
     }
 }

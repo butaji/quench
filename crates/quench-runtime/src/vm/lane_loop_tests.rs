@@ -224,38 +224,34 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
     assert_eq!(run.outcome.printed.len(), 2);
 }
 
-/// A function entered a few times whose loop is hot, and leaves at its calls, gets its lane body
-/// when the loop retires (`loop_retire_in_lane`), not after the entry warm-up it would never
-/// reach; its calls then run in the callees' bodies, and its results are the interpreter's.
+/// A loop's entering row is the load's decision (`install_loop_sites`): a function's view holds a loop site
+/// exactly where the function's predicted tier compiles it, before any entry has run the loop.
 #[test]
-fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_warm_up() {
+fn a_loop_holds_its_entering_row_exactly_where_its_function_is_predicted_compiled() {
     let source = r#"
-      function Table() { this.keys = []; this.count = 0; }
-      Table.prototype.put = function (key) {
-        if (this.keys.length > 64) this.keys = [];
-        this.keys.push(key); this.count = (this.count + key) | 0; return this.count;
-      };
-      function run(table, n) { let total = 0; for (let i = 0; i < n; i++) total = (total + table.put(i)) | 0; return total; }
-      const table = new Table();
-      let result = 0;
-      for (let repeat = 0; repeat < 8; repeat++) result = (result + run(table, 6000)) | 0;
-      print(result + " " + table.count + " " + table.keys.length);
+      function hot(n) { let s = 0; for (let i = 0; i < n; i++) s = (s + i * 3) | 0; return s; }
+      function cold(n) { let s = 0; for (let i = 0; i < n; i++) s = (s + i) | 0; return s; }
+      let total = 0;
+      for (let r = 0; r < 200; r++) total = (total + hot(20000)) | 0;
+      print((total + cold(2)) | 0);
     "#;
-    let interpreted = printed(source, "lane-hot-loop-driver.js", crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 1);
-    let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-hot-loop-driver.js").unwrap();
-    let function_id = program.functions.iter()
-        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
-        .unwrap();
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    if !super::compiled::loop_tier_compiles(crate::MemoryPolicy::Throughput) { return; }
+    let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-loop-load-decision.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
-    assert_eq!(output.take(), interpreted);
     let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("the driver's lane view");
-    assert!(!matches!(view.body_state_in_lane(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
+    assert!(!views.is_empty());
+    for name in ["hot", "cold"] {
+        let function_id = program.functions.iter()
+            .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
+            .unwrap();
+        let predicted = vm.programs.compiled_tier(super::program_store::ProgramId::MAIN, function_id as u32);
+        let sites = views.get(function_id).and_then(super::program_store::derived_lane_view).map_or(0, |view| view.loops.len());
+        assert_eq!(sites > 0, predicted, "{name}: a loop holds its entering row iff its function is predicted compiled");
+    }
 }
 
 /// A body its caller's body calls by its entry leaves at its own native calls (a string

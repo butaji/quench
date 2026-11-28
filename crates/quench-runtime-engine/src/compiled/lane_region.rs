@@ -54,7 +54,7 @@ pub(crate) mod global_reads;
 #[path = "lane_region/native_calls.rs"] pub(crate) mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] pub(crate) mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] pub(crate) mod data_view_calls;
-pub(crate) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call, IN_PLACE_CALL, LOOKUPS};
+pub(crate) use native_calls::{inlines_in_loop_call, native_method_call, IN_PLACE_CALL, LOOKUPS};
 #[path = "lane_region/stable.rs"]
 pub(crate) mod stable;
 #[path = "lane_region/polls.rs"]
