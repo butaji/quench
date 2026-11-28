@@ -703,10 +703,7 @@ pub(super) fn install_loop_sites<'live>(
                             rejections.push((reason, 1));
                         }
                     }
-                    // A loop the region analysis rejects keeps its site, diagnostics or not: its
-                    // function's lane body may run it (`loop_retire_in_lane`), and the
-                    // site retires to the plain jump where none does. A diagnostics run tiers
-                    // as any other.
+                    // A loop the region analysis rejects gets no site (`is_admitted`): its plain jump stays.
                     (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                 }
             };
@@ -736,11 +733,13 @@ pub(super) fn install_loop_sites<'live>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()), body_offered: std::cell::Cell::new(false),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
                     enclosed: std::cell::Cell::new(true),
                 },
             )
         })
+        // A loop the region analysis does not admit keeps its plain jump for good, decided here at load.
+        .filter(|(_, site)| site.is_admitted())
         .collect();
     let mut sites = sites;
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
