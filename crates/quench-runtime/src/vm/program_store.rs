@@ -441,8 +441,8 @@ struct ProgramEntry {
     /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
     /// (`set_class_method`), each of the selectors' count; `layouts::set_class_methods` holds its address.
     class_method_vectors: std::cell::RefCell<FxHashMap<u32, Box<[usize]>>>,
-    /// Per class (a constructor's function id): the layout id its constructed instances hold, 0 until the first
-    /// construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
+    /// Per class id (a function id, or a synthetic class of `AotFacts::classes`): the layout id its constructed instances
+    /// hold, 0 until the first construction records it (`Vm::record_class_header`). Allocated on first use (`class_header_cell`).
     class_headers: std::cell::OnceCell<Box<[std::cell::Cell<u32>]>>,
     /// Per recorded class: the prototype its first instance had, which the class-header edge resolves the planned arms
     /// from (`Vm::record_class_edge`). It is the snapshot's record of the class, and a root while the program lives.
@@ -682,7 +682,12 @@ impl ProgramStore {
     /// shared by every lowering of the program after it.
     pub fn aot_facts(&self, id: ProgramId) -> Option<std::sync::Arc<crate::compile::aot_facts::AotFacts>> {
         let entry = self.entry(id)?;
-        Some(std::sync::Arc::clone(entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))))
+        Some(std::sync::Arc::clone(Self::facts_of(entry)))
+    }
+
+    /// The AOT facts of `entry`, solved on its first use (`aot_facts`).
+    fn facts_of(entry: &ProgramEntry) -> &std::sync::Arc<crate::compile::aot_facts::AotFacts> {
+        entry.aot_facts.get_or_init(|| std::sync::Arc::new(crate::compile::aot_facts::analyze(&entry.residual)))
     }
 
     /// The method selectors of program `id` (`compile::call_plan::Selectors`), solved on its first call from its AOT facts.
@@ -729,15 +734,17 @@ impl ProgramStore {
         })))
     }
 
-    /// The header cell of class `class` (a class id, `AotFacts::constructed_classes`) in program `id`: the layout id its
-    /// constructed instances hold, recorded once by the first construction (`Vm::record_class_header`), 0 until then. A
-    /// synthetic class has no cell (`class_header_cell`), so it has no header.
+    /// The header cell of class `class` (a class id, `AotFacts::classes`: a function id or a synthetic class) in program
+    /// `id`: the layout id its constructed instances hold, recorded once by the first construction of the class
+    /// (`Vm::record_class_header`), 0 until then.
     pub fn class_header(&self, id: ProgramId, class: u32) -> Option<&std::cell::Cell<u32>> {
         Self::class_header_cell(self.entry(id)?, class)
     }
 
+    /// The header cells of `entry`, one per class id: the count `AotFacts::classes` gives, which is the functions and the
+    /// synthetic classes. The table is sized on first use, from the facts that count them (`facts_of`).
     fn class_header_cell(entry: &ProgramEntry, class: u32) -> Option<&std::cell::Cell<u32>> {
-        let headers = entry.class_headers.get_or_init(|| (0..entry.residual.functions.len()).map(|_| std::cell::Cell::new(0)).collect());
+        let headers = entry.class_headers.get_or_init(|| (0..Self::facts_of(entry).classes.count()).map(|_| std::cell::Cell::new(0)).collect());
         headers.get(class as usize)
     }
 
