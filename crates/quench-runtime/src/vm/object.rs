@@ -1441,7 +1441,7 @@ impl Vm {
             return None;
         }
         let object = self.heap.object(value)?;
-        if object.record_only().is_none_or(|record| record.has_side_descriptors()) || self.shapes[object.shape() as usize].facts.slot_getters() {
+        if object.has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(object.shape(), self.length_atom)?;

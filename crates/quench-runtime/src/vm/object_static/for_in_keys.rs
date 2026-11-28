@@ -277,7 +277,7 @@ impl Vm {
         let Some(listed) = self.for_in.own_keys.as_ref() else { return false };
         // Side descriptors are record data.
         self.heap.object(object)
-            .filter(|data| data.record_only().is_none_or(|record| !record.has_side_descriptors()))
+            .filter(|data| !data.has_side_descriptors())
             .and_then(|data| listed.keys(self.own_receiver_key(object, data.shape()), self.heap.collection_epoch()))
             == Some(keys)
     }
@@ -346,7 +346,7 @@ impl Vm {
         let walked = last.map_or(0, |last| last + 1);
         let provable = chain[..walked].iter().all(|&(object, _)| {
             self.heap.object(object).is_some_and(|data| {
-                data.record_only().is_none_or(|record| !record.has_side_descriptors()) && !self.shape_is_dictionary(data.shape())
+                !data.has_side_descriptors() && !self.shape_is_dictionary(data.shape())
             })
         });
         if let Some(slots) = receiver_slots.filter(|_| memoized && last.is_none_or(|last| last == 0)) {
@@ -446,7 +446,7 @@ impl Vm {
             self.heap.object(walked_object).is_some_and(|data| {
                 data.shape() == shape
                     // Side descriptors are record data.
-                    && data.record_only().is_none_or(|record| !record.has_side_descriptors())
+                    && !data.has_side_descriptors()
                     && chain.get(index + 1).is_none_or(|&(next, _)| data.proto() == next)
             })
         })

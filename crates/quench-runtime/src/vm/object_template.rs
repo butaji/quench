@@ -332,7 +332,7 @@ impl Vm {
             && self.heap.object(value).is_some_and(|object| {
                 object.is_extensible()
                     && !object.was_used_as_prototype()
-                    && object.record_only().is_none_or(|record| !record.has_side_descriptors())
+                    && !object.has_side_descriptors()
                     && !object.is_module_namespace()
             })
     }

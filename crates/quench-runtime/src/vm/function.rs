@@ -300,7 +300,7 @@ impl Vm {
     pub fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.heap.object(object)?;
         // record-only: side descriptors
-        if data.record_only().is_some_and(|record| record.has_side_descriptors()) || self.shapes[data.shape() as usize].facts.slot_getters() {
+        if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
             return None;
         }
         let slot = self.shape_slot(data.shape(), atom)?;

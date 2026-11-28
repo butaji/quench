@@ -101,7 +101,7 @@ impl Vm {
         // Side descriptors are record data.
         let data = self.heap.object(object)?;
         let shape = data.shape();
-        if data.record_only().is_some_and(|record| record.has_side_descriptors()) || self.shape_is_dictionary(shape) {
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
             return None;
         }
         if let Some(Some(keys)) = self.enumerable_key_lists.get(shape as usize) {
@@ -129,7 +129,7 @@ impl Vm {
         // Side descriptors are record data.
         let data = self.heap.object(object)?;
         let shape = data.shape();
-        if data.record_only().is_some_and(|record| record.has_side_descriptors()) || self.shape_is_dictionary(shape) {
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
             return None;
         }
         self.own_enumerable_key_values_of_shape(object, shape)
@@ -162,7 +162,7 @@ impl Vm {
         }
         // Side descriptors are record data.
         let data = self.heap.object(object)?;
-        if data.record_only().is_some_and(|record| record.has_side_descriptors()) || self.shape_is_dictionary(data.shape()) {
+        if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) {
             return None;
         }
         self.shape_enumerable_slots_checked(object, data)
