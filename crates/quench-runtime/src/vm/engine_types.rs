@@ -1276,8 +1276,6 @@ pub struct StableFacts {
     /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
     /// (`Heap::subscribe_slot_observation`).
     pub slots: Box<[crate::code_dependencies::SlotDependency]>,
-    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
-    pub instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
     /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
     /// first object to leave one retires it (`Heap::subscribe_shape`).
     pub shapes: Box<[u32]>,

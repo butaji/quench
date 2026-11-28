@@ -33,7 +33,6 @@ Operation::TypeofIndex typeof_op
 Operation::TypeofTest typeof_op
 Operation::TypeofString typeof_op
 Operation::IndexWrite arr_store_int
-Operation::AddSite - stencil row only: no opcode decodes to it
 Operation::InstanceOf v_instanceof
 Operation::DirectArray - stencil guard: its cost is the guarded operation's
 Operation::ArrayLength arr_length

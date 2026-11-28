@@ -1,7 +1,6 @@
 //! `instanceof` of a steady constructor: the walk of a value's prototype chain for the constructor's `prototype`
 //! (`Vm::steady_instanceof` finds the link), by the words of a direct object's chain first
-//! (`staged::object::instanceof_by_words`, which the b-jit's row runs too), and the facts a lowering takes of a
-//! constructor (`Vm::instanceof_fact`).
+//! (`staged::object::instanceof_by_words`, which the b-jit's row runs too).
 
 use super::finalization::instanceof_layout_index;
 use super::*;
@@ -53,37 +52,5 @@ impl Vm {
         // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
         Some((object, ProtoLink::object_granule_link(prototype.direct_object_index()?.granule())?.bits(), slot))
-    }
-
-    /// The encoded `prototype` link `instanceof constructor` tests a chain for, where the steady case proved
-    /// the constructor (`proved_constructor`).
-    pub(super) fn instanceof_link(&self, constructor: Value) -> Option<u32> {
-        self.proved_constructor(constructor).map(|(_, link, _)| link)
-    }
-
-    /// The facts a lowering may take of `instanceof constructor` as Stable, from what the steady case
-    /// remembers of the constructor (`proved_constructor`): `None` where the steady case has not proved them.
-    pub fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
-        let (object, link, slot) = self.proved_constructor(constructor)?;
-        Some(crate::code_dependencies::InstanceofFact {
-            link,
-            shape: object.exact_shape(),
-            slot: u16::try_from(slot).ok()?,
-            holder: self.heap.object(object.proto())?.exact_shape(),
-            chain: self.has_instance_chain(constructor)?,
-        })
-    }
-
-    /// The objects `@@hasInstance` is looked up on from `constructor` (itself first) to the native holder,
-    /// that one included: a new prototype of any, or an `@@hasInstance` of its own, would change what the
-    /// lookup finds. `None` where the chain does not reach the holder.
-    fn has_instance_chain(&self, constructor: Value) -> Option<crate::code_dependencies::PrototypeChain> {
-        let mut current = constructor;
-        let mut depth = 1u8;
-        while current != self.instanceof_has_instance_holder {
-            current = self.heap.object(current)?.proto();
-            depth = depth.checked_add(1)?;
-        }
-        Some(crate::code_dependencies::PrototypeChain { link: ProtoLink::of(constructor).bits(), depth })
     }
 }

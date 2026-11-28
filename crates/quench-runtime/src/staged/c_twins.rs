@@ -102,7 +102,6 @@ row_twins! {
         TypeofTest => kernel(typeof_op),
         TypeofString => kernel(typeof_op),
         IndexWrite => kernel(arr_store_int),
-        AddSite => none("stencil row only: no opcode decodes to it"),
         InstanceOf => kernel(v_instanceof),
         DirectArray => none("stencil guard: its cost is the guarded operation's"),
         ArrayLength => kernel(arr_length),

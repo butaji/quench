@@ -46,7 +46,7 @@ kernels! {
     math_sqrt, math_trunc, neg_op, not_op, parse_int, shl_shr, str_charcodeat, str_compare, truthy_int,
     typed_length, typed_load, typed_store_f64, typeof_op, ushr, v_alloc_array4, v_alloc_closure,
     v_arguments_length, v_array_push_grow, v_closure_counter, v_destructure_obj, v_for_in, v_for_of_array,
-    v_global_var, v_instanceof, v_let_block, v_new_point, v_obj_add, v_proto_chain3_field, v_super_call,
+    v_global_var, v_instanceof, v_let_block, v_obj_add, v_proto_chain3_field, v_super_call,
     v_throw_catch,
 }
 

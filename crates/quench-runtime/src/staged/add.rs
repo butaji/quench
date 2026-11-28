@@ -57,26 +57,9 @@ fn admitted_gated<S: Stage, const HELD: bool>(stage: &mut S, space: StagedRecord
     Some(payload)
 }
 
-/// The compiled site's add of `value` at the slot of `edge` to the object word `object`. An edge keyed by a class
-/// (`Edge::before` carries `CLASS_KEY`, `Transition::edge`) is the live cell's add (`class_add`), and the cell's class
-/// key is the one guard: a cell of another class matches no key and leaves to the VM. A shape-keyed edge names an
-/// object record, and a direct object is a live cell with none, so it leaves at `miss`.
-#[inline(always)]
-pub fn site_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, value: S::Word, miss: S::Miss) -> Option<()> {
-    let keyed = edge_keys_class(stage, edge.before);
-    stage.choose_leaving(keyed, #[inline(always)] |stage| {
-        class_add(stage, object, edge, value, miss)?;
-        Some(stage.constant(0))
-    }, #[inline(always)] |stage| {
-        super::guard::no_record(stage, miss)?;
-        None
-    })?;
-    Some(())
-}
-
 /// The add of `value` at the slot of a class-keyed `edge` to the live class cell the direct object `object` is
 /// (`add_cell_property`): where `object` is no direct object, or its cell is of another class, it leaves before
-/// any write. The class-keyed rows (`ADD_CLASS_ROW`) run it on its own; `site_add` runs it for a keyed edge.
+/// any write. The class-keyed rows (`ADD_CLASS_ROW`) run it on its own.
 #[inline(always)]
 pub fn class_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, value: S::Word, miss: S::Miss) -> Option<()> {
     let direct = super::value::is_direct_object(stage, object);
@@ -85,14 +68,6 @@ pub fn class_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, 
     let cell = super::object::cell_at_granule(stage, granule);
     let class = super::object::cell_class(stage, cell);
     add_cell_property(stage, (granule, cell, class), edge, value, miss)
-}
-
-/// Whether the edge's `before` is a class key (`CLASS_KEY` set): a record's before-layout id is below
-/// `LAYOUT_CAPACITY`, so its bit is clear.
-#[inline(always)]
-fn edge_keys_class<S: Stage>(stage: &mut S, before: S::Word) -> S::Cond {
-    let bit = stage.and_imm(before, u64::from(CLASS_KEY));
-    stage.ne_imm(bit, 0u32)
 }
 
 /// The add of `value` at the slot of `edge` to the live class cell `cell` at `granule`, in place: it holds the

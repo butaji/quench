@@ -389,8 +389,6 @@ class v_instanceof_A {}
 class v_instanceof_B extends v_instanceof_A {}
 class v_instanceof_C {}
 ops.v_instanceof = function (n) { const objs = [new v_instanceof_A(), new v_instanceof_B(), new v_instanceof_C(), {}]; let c = 0; for (let i = 0; i < n; i++) { if (objs[i & 3] instanceof v_instanceof_A) c = (c + 1) | 0; } return c; };
-class v_new_point_Point { constructor(x, y) { this.x = x; this.y = y; } }
-ops.v_new_point = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new v_new_point_Point(i, i + 1); s = (s + p.x + p.y) | 0; } return s; };
 ops.v_obj_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const o = { a: i, b: i + 1, c: i & 7 }; s = (s + o.a + o.b - o.c) | 0; } return s; };
 class v_linked_list_walk_Node { constructor(v) { this.v = v; this.next = null; } }
 ops.v_linked_list_walk = function (n) { const nodes = []; for (let k = 0; k < 256; k++) nodes.push(new v_linked_list_walk_Node((k * 7 + 3) & 255)); for (let k = 0; k < 256; k++) nodes[k].next = nodes[(k + 1) & 255]; let node = nodes[0], s = 0; for (let i = 0; i < n; i++) { s = (s + node.v) | 0; node = node.next; } return s; };

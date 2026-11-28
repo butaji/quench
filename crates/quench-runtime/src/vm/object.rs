@@ -2036,7 +2036,7 @@ impl Vm {
         }
     }
 
-    /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
+    /// The add `atom`'s site recorded that compiled code may run (its staged add): a define's
     /// (`chained` false) needs no chain proof, an adding store's needs the entry whose prototype chain
     /// is proved now (`FieldAddCache::proof_holds`), whose link the code then tests per receiver and
     /// whose proof it holds as a Stable fact. `None` where the site recorded none.
