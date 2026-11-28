@@ -4041,6 +4041,11 @@ pub struct ResidualProgram {
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
+    /// Whether the host calls the value the program's root returns exactly once per run of the root: the CommonJS loader's
+    /// wrapper `(function (exports, require, module, __filename, __dirname) { ... })`, which it evaluates and then calls once.
+    /// The host sets it on the program it prepared, before the program runs (`Vm::evaluate_embedding_owned_script_with_origin`);
+    /// the closed world reads that body as running once, as the root does (`aot_facts::identity::once_body`).
+    pub host_calls_result_once: bool,
 }
 
 /// The encoded records of a decoded program's deferred functions (`binary::decode_program`):

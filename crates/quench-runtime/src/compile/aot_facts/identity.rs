@@ -143,40 +143,64 @@ pub(super) fn global_object_proof(flows: &[FunctionFlow], facts: &AotFacts, cens
     }))
 }
 
+/// The body that runs the program's top-level code, once per run: the root, or the body of the one closure the root makes and
+/// returns where the host calls that value once (`ResidualProgram::host_calls_result_once`, the CommonJS loader's wrapper, whose
+/// body holds the whole script). The wrapper body runs once only while no code can reach it as a value to call it again: it reads
+/// no `arguments` (`arguments.callee` is the wrapper), and the program names no `caller` (a function's `caller` read may be the
+/// wrapper). A root that does anything but make that closure and return it keeps the root as the body.
+pub(crate) fn once_body(program: &ResidualProgram) -> u32 {
+    use crate::bytecode::JsDenotation;
+    if !program.host_calls_result_once || program.atoms.iter().any(|name| name == "caller") { return 0; }
+    let wrapped = program.with_record(0, |root| {
+        let mut made = None;
+        for pc in 0..root.code.len() {
+            let instruction = root.instruction_at(pc);
+            match instruction.op() {
+                Op::MakeClosure if made.is_none() => made = Some(instruction.closure_function_index()),
+                op if matches!(op.js_denotation(), JsDenotation::Noop | JsDenotation::LoadConst | JsDenotation::Move
+                    | JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore | JsDenotation::Return) => {}
+                _ => return None,
+            }
+        }
+        made
+    });
+    wrapped.filter(|&body| program.with_record(body as usize, |function| {
+        function.arguments_slot.is_none() && (0..function.code.len()).all(|pc| !function.instruction_at(pc).op().reads_arguments())
+    })).unwrap_or(0)
+}
+
 /// The bodies whose closure is created at most once per run (`AotFacts::closure_identity`): a body with exactly one
-/// `MakeClosure` site in the whole program, where that site lies in the root's own code outside every loop of the root.
-/// The root runs once, so the site runs at most once and every value of the closure is that one object. A function
-/// declaration hoisted at program level is such a site. A body created in a nested function, or in a loop, is not.
+/// `MakeClosure` site in the whole program, where that site lies in the code of a body that runs once (the root, or the CommonJS
+/// wrapper's body, `once_body`) outside every loop of it. Such a body runs once, so the site runs at most once and every value of
+/// the closure is that one object. A function declaration hoisted at program level, or at the top of a CommonJS module, is such a
+/// site. A body created in another nested function, or in a loop, is not.
 pub(super) fn closures_once(program: &ResidualProgram, world: World) -> BTreeSet<u32> {
     if world != World::Closed {
         return BTreeSet::new();
     }
-    // Per body, its creation sites as (created by the root, pc).
-    let mut sites: BTreeMap<u32, Vec<(bool, usize)>> = BTreeMap::new();
-    let mut root_backward = Vec::new();
+    let once = [0, once_body(program)];
+    // Per body, its creation sites as (created by a body that runs once, pc, that body).
+    let mut sites: BTreeMap<u32, Vec<(bool, usize, u32)>> = BTreeMap::new();
+    let mut backward = BTreeMap::new();
     for id in 0..program.function_count() {
-        let (top, created, backward) = program.with_record(id, |function| {
-            let top = function.parent.is_none();
-            let created: Vec<(usize, u32)> = (0..function.code.len())
+        let top = once.contains(&(id as u32));
+        let created: Vec<(usize, u32)> = program.with_record(id, |function| {
+            if top { backward.insert(id as u32, function.backward_transfers()); }
+            (0..function.code.len())
                 .filter_map(|pc| {
                     let instruction = function.instruction_at(pc);
                     (instruction.op() == Op::MakeClosure).then(|| (pc, instruction.closure_function_index()))
                 })
-                .collect();
-            let backward = if top { function.backward_transfers() } else { Vec::new() };
-            (top, created, backward)
+                .collect()
         });
-        if top {
-            root_backward = backward;
-        }
         for (pc, body) in created {
-            sites.entry(body).or_default().push((top, pc));
+            sites.entry(body).or_default().push((top, pc, id as u32));
         }
     }
     sites
         .into_iter()
         .filter_map(|(body, created)| match created.as_slice() {
-            [(true, pc)] if !may_repeat(&root_backward, *pc) => Some(body),
+            [(true, pc, owner)] if backward.get(owner).is_some_and(|transfers| !may_repeat(transfers, *pc)) => Some(body),
             _ => None,
         })
         .collect()

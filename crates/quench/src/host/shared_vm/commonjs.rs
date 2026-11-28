@@ -3603,7 +3603,8 @@ fn evaluate_wrapper(
         let error = super::esm_errors::type_stripping_unsupported(filename);
         return Err(throw_module_load_error(context, error)?);
     }
-    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript)
+    // The loader calls the wrapper this evaluates once (`run_wrapper`, `compile_public`), whichever module it is.
+    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript, true)
 }
 
 pub(crate) fn compile_public(

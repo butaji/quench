@@ -1,4 +1,5 @@
-//! Frozen facts: a binding or a named field the program writes exactly once, with an immediate, at the root, where that store
+//! Frozen facts: a binding or a named field the program writes exactly once, with an immediate, in the body that runs the
+//! top-level code once (the root, or the CommonJS wrapper's body: `identity::once_body`; "the root" below), where that store
 //! dominates every read of the key. Such a value never changes after the store, so a frozen image folds it at each read
 //! (`AotFacts::dominated_root_store`). The decision lives here, over the closed world's own call graph and dominators, so no
 //! tier re-derives it.
@@ -7,7 +8,7 @@
 //! `gate::verify` has checked it):
 //! - Single write. The program's flows record exactly one write of `K` (fields: one write of the name, on any object). A write
 //!   the census cannot follow (`Census::wild`) reaches the key and kills the fact.
-//! - Root store. That one write is in the root function (id 0) and reached from the root's entry. Its source register holds an
+//! - Root store. That one write is in that body and reached from its entry. Its source register holds an
 //!   immediate constant loaded in the same basic block, with no write of the register between, so the stored value is that
 //!   constant on every path to the store.
 //! - Dominance. Every read of `K` (`FunctionFlow::key_reads`) runs after the store. A read in the root must be dominated by the
@@ -35,10 +36,11 @@ use super::AotFacts;
 #[allow(unused_imports)]
 use crate::staged::glue_prelude::*;
 
-/// The single store of a frozen key: the root's store of an immediate, which dominates every read of the key.
+/// The single store of a frozen key: the store of an immediate in the body that runs the top-level code once (the root, or the
+/// CommonJS wrapper's body, `identity::once_body`), which dominates every read of the key.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RootStore {
-    /// The function the store lies in: always the root (id 0).
+    /// The function the store lies in: the body that runs once (`identity::once_body`).
     pub function: u32,
     /// The store's PC in `function`.
     pub pc: u32,
@@ -68,8 +70,8 @@ pub(super) fn root_stores(program: &crate::bytecode::ResidualProgram, world: Wor
     census: &Census, escaped: &Escapes,
 ) -> BTreeMap<FactKey, RootStore> {
     if world != World::Closed || flows.is_empty() { return BTreeMap::new(); }
-    let root = program.function(0);
     let order = RootOrder::of(program, flows, census, escaped);
+    let root = program.function(order.body as usize);
     let (writes, reads) = fact_sites(flows);
     let mut roots = BTreeMap::new();
     for (&key, sites) in &writes {
@@ -79,7 +81,7 @@ pub(super) fn root_stores(program: &crate::bytecode::ResidualProgram, world: Wor
         let Some(value) = store_value(program, root, &order.blocks, &order.dominators, pc) else { continue };
         // The solve's cell of the stored word is no wider than the constant it holds.
         if !word.cell.ty.is_subtype(Type::immediate(value)) { continue; }
-        roots.insert(key, RootStore { function: 0, pc, cell: word.cell, value });
+        roots.insert(key, RootStore { function: order.body, pc, cell: word.cell, value });
     }
     roots
 }
@@ -112,7 +114,7 @@ pub(super) fn undominated_closures(program: &crate::bytecode::ResidualProgram, f
 /// closures and stores them into the owner's slots, so it runs on entry before any code that could read a slot (a load, a
 /// call, an access that may run a getter). Each activation of the owner makes its own slots, and every function that reads
 /// one runs only after a call, which the prologue makes none of: no read sees the slot before its store, however often the
-/// owner runs and whatever escapes (`dominating_store` asks the root alone, which a CommonJS body is not).
+/// owner runs and whatever escapes (`dominating_store` asks only the body that runs once).
 fn prologue_store(program: &crate::bytecode::ResidualProgram, key: FactKey, sites: &[(u32, u32, Word)]) -> bool {
     use crate::bytecode::Op;
     let (FactKey::Slot { owner, .. }, [(function, pc, _)]) = (key, sites) else { return false };
@@ -127,19 +129,27 @@ fn fact_sites(flows: &[FunctionFlow]) -> (BTreeMap<FactKey, Vec<(u32, u32, Word)
     let mut writes: BTreeMap<FactKey, Vec<(u32, u32, Word)>> = BTreeMap::new();
     let mut reads: BTreeMap<FactKey, Vec<(u32, u32)>> = BTreeMap::new();
     for (function, flow) in flows.iter().enumerate() {
+        // One instruction that writes or reads several keys of a group (a named store writes the name's `Member` key and the
+        // class's own or `MemberAny` key) is one site of it.
         for &(pc, key, word) in &flow.writes {
-            if let Some(group) = fact_group(key) { writes.entry(group).or_default().push((function as u32, pc, word)); }
+            let Some(group) = fact_group(key) else { continue };
+            let sites = writes.entry(group).or_default();
+            if !sites.iter().any(|&(at, site, _)| (at, site) == (function as u32, pc)) { sites.push((function as u32, pc, word)); }
         }
         for &(pc, key) in &flow.key_reads {
-            if let Some(group) = fact_group(key) { reads.entry(group).or_default().push((function as u32, pc)); }
+            let Some(group) = fact_group(key) else { continue };
+            let sites = reads.entry(group).or_default();
+            if !sites.contains(&(function as u32, pc)) { sites.push((function as u32, pc)); }
         }
     }
     (writes, reads)
 }
 
-/// The root's order facts the dominance rules read: its blocks and their dominators, and the functions a seed or an escape may
+/// The order facts of the body that runs the top-level code once (`body`: the root, or the CommonJS wrapper's body,
+/// `identity::once_body`) the dominance rules read: its blocks and their dominators, and the functions a seed or an escape may
 /// start at any time (`seeded`).
 struct RootOrder {
+    body: u32,
     blocks: Blocks,
     dominators: Dominators,
     seeded: Vec<bool>,
@@ -147,27 +157,31 @@ struct RootOrder {
 
 impl RootOrder {
     fn of(program: &crate::bytecode::ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Self {
-        let root = program.function(0);
+        let body = super::identity::once_body(program);
+        let root = program.function(body as usize);
         let blocks = Blocks::of(&Successors::of_code(root), root.code.len());
         let dominators = Dominators::of(&blocks, root.code.len());
         let mut seeded = vec![false; flows.len()];
         for seed in gate::seeds(program, flows, census, escaped) {
             if let Some(slot) = seeded.get_mut(seed as usize) { *slot = true; }
         }
-        Self { blocks, dominators, seeded }
+        // The body runs once, from its entry, and its own reads are ordered by its dominators: no seed or escape starts it again
+        // (`once_body`), though the host's call of the wrapper makes it a seed and its return an escape.
+        if let Some(slot) = seeded.get_mut(body as usize) { *slot = false; }
+        Self { body, blocks, dominators, seeded }
     }
 }
 
 /// The one write of a key that is a root store dominating every read of it (`key_reads`): the write is the key's only one, in the
-/// root and reached from its entry, and runs before every read. Its PC and the word it writes; None where any of that fails.
+/// body that runs once (`RootOrder::body`) and reached from its entry, and runs before every read. Its PC and the word it writes; None where any of that fails.
 /// Shared by the immediate stores (`root_stores`) and the closure stores (`undominated_closures`).
 fn dominating_store(order: &RootOrder, flows: &[FunctionFlow], facts: &AotFacts, census: &Census, sites: &[(u32, u32, Word)],
     key_reads: &[(u32, u32)],
 ) -> Option<(u32, Word)> {
     let [(function, pc, word)] = sites else { return None };
     // A store no path from the entry reaches never writes the key.
-    if *function != 0 || !order.dominators.reached(*pc) { return None; }
-    dominates_reads(flows, facts, census, &order.seeded, &order.dominators, *pc, key_reads).then_some((*pc, *word))
+    if *function != order.body || !order.dominators.reached(*pc) { return None; }
+    dominates_reads(flows, facts, census, &order.seeded, &order.dominators, order.body, *pc, key_reads).then_some((*pc, *word))
 }
 
 /// The key a write or a read of `key` belongs to: a global's own, a slot's own, and a named property's name-wide group (every
@@ -224,25 +238,28 @@ fn immediate(constant: &Constant) -> Option<Value> {
 /// Whether every read in `key_reads` runs after the store at root `store`: a read in the root is dominated by it, and a read in
 /// another function runs only after it (`late`).
 fn dominates_reads(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, seeded: &[bool], dominators: &Dominators,
-    store: u32, key_reads: &[(u32, u32)],
+    body: u32, store: u32, key_reads: &[(u32, u32)],
 ) -> bool {
     if key_reads.is_empty() { return true; }
-    let late = late_functions(flows, facts, census, seeded, dominators, store);
+    let late = late_functions(flows, facts, census, seeded, dominators, body, store);
     key_reads.iter().all(|&(function, pc)| {
-        if function == 0 { dominators.dominates_pc(store, pc) } else { late.get(function as usize).copied().unwrap_or(false) }
+        if function == body { dominators.dominates_pc(store, pc) } else { late.get(function as usize).copied().unwrap_or(false) }
     })
 }
 
-/// Per function, whether it runs only after the root store at `store`: not a seed, and every call the solve may reach it by is
-/// made in the root after the store, or from a function that is itself late. A greatest fixpoint: a function starts late and
-/// loses the mark at the first call that may run before the store.
-fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, seeded: &[bool], dominators: &Dominators, store: u32) -> Vec<bool> {
-    let mut late: Vec<bool> = (0..flows.len()).map(|function| function != 0 && !seeded[function]).collect();
+/// Per function, whether it runs only after the store at `store` of the body that runs once (`body`): not a seed, and every call
+/// the solve may reach it by is made in that body after the store, or from a function that is itself late. A greatest fixpoint:
+/// a function starts late and loses the mark at the first call that may run before the store. The root, where it is not the
+/// body, runs before it.
+fn late_functions(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, seeded: &[bool], dominators: &Dominators, body: u32,
+    store: u32,
+) -> Vec<bool> {
+    let mut late: Vec<bool> = (0..flows.len()).map(|function| function != body as usize && function != 0 && !seeded[function]).collect();
     loop {
         let mut changed = false;
         for (caller, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
-                let after_store = if caller == 0 { dominators.dominates_pc(store, call.pc) } else { late[caller] };
+                let after_store = if caller == body as usize { dominators.dominates_pc(store, call.pc) } else { late[caller] };
                 if after_store { continue; }
                 for callee in reached_by(caller as u32, call, facts, census) {
                     if let Some(mark) = late.get_mut(callee as usize) && *mark {
