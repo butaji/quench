@@ -1718,6 +1718,9 @@ const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, head.memory
 const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
 const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
+// The stencils read the call context through the stand-in head (`CallContextWords`): its offsets are the context's.
+const _: () = assert!(quench_runtime::staged::layout_offsets::CALL_CONTEXT_BODY_SHIM == std::mem::offset_of!(CallContext, head.body_shim));
+const _: () = assert!(quench_runtime::staged::layout_offsets::CALL_CONTEXT_ADAPTER_PAYLOAD == std::mem::offset_of!(CallContext, head.adapter_payload));
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
