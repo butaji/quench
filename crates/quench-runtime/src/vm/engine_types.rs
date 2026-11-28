@@ -2375,6 +2375,58 @@ pub struct ConstructPlan {
     /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
     /// construction of a recorded class allocates its receiver alone.
     pub recorded: bool,
+    /// Where a fixed class (R4-F) allocates its receivers as class cells of its union shape: each field's
+    /// union slot (`FixedCellPlan`). `None` for any other plan, whose receivers are records of `shape`.
+    pub fixed: Option<FixedCellPlan>,
+}
+
+/// A fixed class's union (R4-F), as `Vm::fixed_union` derives it: the shape its instances' cells have, and the
+/// names of the class's union layout in slot order, `atoms()`.
+#[derive(Clone, Copy)]
+pub struct FixedUnion {
+    pub shape: u32,
+    atoms: [crate::bytecode::Atom; crate::heap::MAX_CELL_FIELDS],
+    len: usize,
+}
+
+impl FixedUnion {
+    /// The union's names in slot order.
+    pub fn atoms(&self) -> &[crate::bytecode::Atom] {
+        &self.atoms[..self.len]
+    }
+
+    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: `None` where a name
+    /// is no union name or the names are not in slot order, where the cell's key order would differ from the
+    /// stores' (the plan does not hold then).
+    pub fn cell_slots(&self, names: &[crate::bytecode::Atom]) -> Option<[u8; CONSTRUCT_PLAN_FIELDS]> {
+        let mut slots = [0; CONSTRUCT_PLAN_FIELDS];
+        let mut next = 0;
+        for (field, name) in names.iter().enumerate() {
+            let slot = next + self.atoms()[next..].iter().position(|atom| atom == name)?;
+            slots[field] = u8::try_from(slot).ok()?;
+            next = slot + 1;
+        }
+        Some(slots)
+    }
+
+    /// A fixed class's union of `shape` (`Vm::fixed_union`) with no names yet.
+    pub(crate) fn new(shape: u32) -> Self {
+        Self { shape, atoms: [0; crate::heap::MAX_CELL_FIELDS], len: 0 }
+    }
+
+    /// `self` with `atom` as its next union name, its shape `shape`.
+    pub(crate) fn push(&mut self, shape: u32, atom: crate::bytecode::Atom) {
+        self.shape = shape;
+        self.atoms[self.len] = atom;
+        self.len += 1;
+    }
+}
+
+/// A fixed class's plan (`ConstructPlan::fixed`): the union shape its cell has, and each plan field's union slot.
+#[derive(Clone, Copy)]
+pub struct FixedCellPlan {
+    pub shape: u32,
+    pub slots: [u8; CONSTRUCT_PLAN_FIELDS],
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -2444,7 +2496,8 @@ pub enum ConstructPlanKind {
     /// arguments as passed.
     Passed,
     /// An initializer constructor's plan with defaulted or computed fields
-    /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
+    /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`), or a fixed class's cell (`ConstructPlan::fixed`),
+    /// whose fields are gathered into the cell's slots.
     Defaulted,
     /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
     /// forwarding (`forwarded_fields_in_lane`).
@@ -3705,6 +3758,7 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     nested: None,
     super_parent: Value::UNDEFINED,
     recorded: false,
+    fixed: None,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {

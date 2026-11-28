@@ -66,6 +66,7 @@
 use super::*;
 use crate::bytecode::FieldConstant;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
+use super::engine_types::FixedUnion;
 
 /// Entries in the direct-mapped `Vm::preshaped_receivers` memo; a power of two.
 pub(super) const PRESHAPED_RECEIVER_ENTRIES: usize = 64;
@@ -101,6 +102,17 @@ pub(super) struct PreshapedReceiver {
 
 /// `PreshapedReceiver::fixed` of a class that is not fixed.
 const NOT_FIXED: u32 = u32::MAX;
+
+/// The union slots of a fixed cell's leading fields, in order: slot `k` is `k`.
+const LEADING_SLOTS: [u8; PRESHAPED_FIELDS] = {
+    let mut slots = [0; PRESHAPED_FIELDS];
+    let mut slot = 0;
+    while slot < PRESHAPED_FIELDS {
+        slots[slot] = slot as u8;
+        slot += 1;
+    }
+    slots
+};
 
 impl PreshapedReceiver {
     /// An entry no construction matches: no constructor is `undefined`.
@@ -204,16 +216,25 @@ impl Vm {
     }
 
     /// The fixed class's cell (R4-F) for entry `index`: its union shape's fields are the leading constant-layout
-    /// values that hold their slots (`fixed_prefix`), `Value::DELETED` for every other absent union field. Its
-    /// class is `intern_class(union shape, object's link, 0)`, claimed through `claim_fixed_cell`, so no record is made.
+    /// values that hold their slots (`fixed_prefix`), `Value::DELETED` for every other absent union field
+    /// (`allocate_fixed_cell`).
     fn alloc_fixed_construct_receiver(&mut self, object: Object, index: usize) -> Value {
         let entry = self.preshaped_receivers[index];
-        let shape = entry.fixed;
-        let length = self.shapes[shape as usize].storage_len();
         let prefix = usize::from(entry.fixed_prefix);
-        let mut values = [Value::DELETED; crate::heap::MAX_CELL_FIELDS];
-        values[..prefix].copy_from_slice(&entry.values[..prefix]);
-        self.heap.claim_fixed_cell(shape, object.proto_link().bits(), &values[..length])
+        self.allocate_fixed_cell(entry.fixed, object.proto(), &LEADING_SLOTS[..prefix], &entry.values[..prefix])
+    }
+
+    /// The one allocation of a fixed class's instances (R4-F): a class cell of union shape `shape` whose fields are
+    /// `values`, each at its union slot `slots`, every other union field `Value::DELETED`, its class
+    /// `intern_class(shape, prototype's link, 0)`, made by `claim_fixed_cell`, so no record is made. `prototype` is
+    /// the instances' prototype.
+    pub fn allocate_fixed_cell(&mut self, shape: u32, prototype: Value, slots: &[u8], values: &[Value]) -> Value {
+        let length = self.shapes[shape as usize].storage_len();
+        let mut fields = [Value::DELETED; crate::heap::MAX_CELL_FIELDS];
+        for (&slot, &value) in slots.iter().zip(values) {
+            fields[usize::from(slot)] = value;
+        }
+        self.heap.claim_fixed_cell(shape, crate::heap::ProtoLink::of(prototype).bits(), &fields[..length])
     }
 
     /// The union shape of a fixed class (R4-F): the shape `start` reaches by the names of `constructor`'s class's union
@@ -221,40 +242,48 @@ impl Vm {
     /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, the union holds more than a
     /// class cell, a name is private, or `start` is not an empty ordinary shape.
     fn derive_fixed_union(&mut self, constructor: Value, start: u32, entry: &PreshapedReceiver) -> (u32, u8) {
-        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return (NOT_FIXED, 0) };
-        let Some(facts) = self.programs.aot_facts(program) else { return (NOT_FIXED, 0) };
-        // One fact decides it (`AotFacts::class_fixed_cell`: a union layout of at most MAX_CELL_FIELDS fields whose
-        // instances never depart), the same bit the lane reads for direct addressing.
-        if !facts.class_fixed_cell(class) {
-            return (NOT_FIXED, 0);
-        }
-        let Some(layout) = facts.class_union_layout(class) else { return (NOT_FIXED, 0) };
-        let domains = layout.fields.iter().all(|(atom, _)| facts.slot_domain(class, *atom).is_some());
-        if !domains || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
-            return (NOT_FIXED, 0);
-        }
-        // Only a `Constructed{C, true}` root is fixed: `seed_union_domains` seeds its union chain where the root is made,
-        // so every slot of a fixed receiver's shape is seeded (the NO-JIT invariant).
-        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) {
-            return (NOT_FIXED, 0);
-        }
-        let mut shape = start;
-        for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
-            if self.is_private_name(atom) {
-                return (NOT_FIXED, 0);
-            }
-            shape = self.transition_shape(shape, atom);
-            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 {
-                return (NOT_FIXED, 0);
-            }
-        }
-        let prefix = layout
-            .fields
+        let Some(union) = self.fixed_union(constructor, start) else { return (NOT_FIXED, 0) };
+        let prefix = union
+            .atoms()
             .iter()
             .zip(&entry.atoms[..usize::from(entry.len)])
-            .take_while(|&(&(atom, _), &entry_atom)| atom == entry_atom)
+            .take_while(|&(&atom, &entry_atom)| atom == entry_atom)
             .count();
-        (shape, prefix as u8)
+        (union.shape, prefix as u8)
+    }
+
+    /// The union of a fixed class (R4-F), the decision every fixed construction shares (`derive_fixed_union`,
+    /// `ConstructPlan::fixed`): the shape `start` reaches by the names of `constructor`'s class's union layout
+    /// (`AotFacts::class_union_layout`) in slot order. `None` where the class has no union, the union holds more
+    /// than a class cell, a name is private, or `start` is not an empty ordinary shape.
+    pub fn fixed_union(&mut self, constructor: Value, start: u32) -> Option<FixedUnion> {
+        let (program, class, _) = self.same_realm_user_target(constructor)?;
+        let facts = self.programs.aot_facts(program)?;
+        // One fact decides it (`AotFacts::class_fixed_cell`: a union layout of at most MAX_CELL_FIELDS fields whose
+        // instances never depart), the same bit the lane reads for direct addressing.
+        if !facts.class_fixed_cell(class) { return None; }
+        let layout = facts.class_union_layout(class)?;
+        let domains = layout.fields.iter().all(|(atom, _)| facts.slot_domain(class, *atom).is_some());
+        if !domains || self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
+            return None;
+        }
+        // Only a `Constructed{C, true}` root is fixed: its union chain is seeded where the root is made, so every slot of
+        // a fixed receiver's shape is seeded (the NO-JIT invariant).
+        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) {
+            return None;
+        }
+        let mut union = FixedUnion::new(start);
+        for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
+            if self.is_private_name(atom) {
+                return None;
+            }
+            let shape = self.transition_shape(union.shape, atom);
+            if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 {
+                return None;
+            }
+            union.push(shape, atom);
+        }
+        Some(union)
     }
 
     /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
