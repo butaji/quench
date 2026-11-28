@@ -51,6 +51,7 @@ script_handler! {
             debug_assert!(entry.body.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         }
         // A proved leaf site is one its function's inlined view may splice in (N7a).
+        #[cfg(feature = "jit")]
         super::inlined_views::note_leaf_site(cx, ip);
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`materialize_leaf_in_lane`), which a binding past the receiver's own

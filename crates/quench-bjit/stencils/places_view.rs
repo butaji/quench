@@ -175,7 +175,7 @@ impl<'a> ElementFrame<Concrete> for PlacesView<'a> {
 /// backing `(values, length)` the loop's entry proved (`entry::entry_backing`).
 #[inline(always)]
 pub(crate) fn entry_dense<const H: u8>(payload: usize) -> ElementView<u64> {
-    let mut stage = StencilStage::from_hole(H);
+    let mut stage = StencilStage::from_hole(H, payload);
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let offset = stage_site(&mut stage);
     let (values, length) = entry::entry_backing(&mut stage, record, offset);
@@ -193,7 +193,7 @@ pub(crate) fn typed_kind<const KIND: u8>(first: u8) -> Option<NativeKind> {
 #[inline(always)]
 pub(crate) fn entry_typed<const KIND: u8>(payload: usize, (at, first): (u8, u8)) -> Option<ElementView<u64>> {
     let native = typed_kind::<KIND>(first)?;
-    let mut stage = StencilStage::from_hole(at);
+    let mut stage = StencilStage::from_hole(at, payload);
     let offset = stage_site(&mut stage);
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let values = entry::entry_word(&mut stage, record, offset);

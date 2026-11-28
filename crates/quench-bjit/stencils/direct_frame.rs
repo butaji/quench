@@ -141,7 +141,7 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     /// record lives on the lane stack).
     #[inline(always)]
     fn register(&self, at: usize) -> Register {
-        StencilStage::from_hole(0).load_u16(Region::Frame.mutable(), self.record as u64, at as i32) as Register
+        StencilStage::from_hole(0, payload(&self.places.s)).load_u16(Region::Frame.mutable(), self.record as u64, at as i32) as Register
     }
 
     /// The call the record makes: its callee register, receiver register and window of `ARGC` arguments.
@@ -166,7 +166,7 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     #[inline(always)]
     fn argument_words(&self) -> [u64; ARGC] {
         let s = &self.places.s;
-        let mut stage = StencilStage::from_hole(0);
+        let mut stage = StencilStage::from_hole(0, payload(&self.places.s));
         let window = self.register(offset_of!(CallRecord, args_register));
         let places = (self.record + offset_of!(CallRecord, argument_places)) as *const u8;
         let mut words = [0u64; ARGC];
@@ -188,8 +188,8 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
     /// native header a record (`LaneStack::spill_plain`), leaving no plain header, or a helper linked it
     /// (`native_frames::link_header`), which cleared its NATIVE flag and gave it a side record that pops with it.
     #[inline(always)]
-    fn pop(a: &Admitted) {
-        let mut stage = StencilStage::from_hole(0);
+    fn pop(a: &Admitted, payload: usize) {
+        let mut stage = StencilStage::from_hole(0, payload);
         protocol::pop_native_frame(&mut stage, &a.tops, a.top as u64, a.frames, Some((a.depth, a.registers)), #[inline(always)] |_| {
             core::hint::cold_path();
             // SAFETY: the payload's helper is `pop_observed_header_in_lane`, which takes the VM and residual words.
@@ -238,11 +238,11 @@ impl<'p, const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: b
         let (Some(a), Some(body)) = (self.admitted, self.returned) else { return Ended::Refused };
         match LaneStatus::of(body.status) {
             Some(LaneStatus::NotEntered) => {
-                Self::pop(&a);
+                Self::pop(&a, payload(&self.places.s));
                 Ended::Refused
             }
             Some(LaneStatus::Threw) => {
-                Self::pop(&a);
+                Self::pop(&a, payload(&self.places.s));
                 Ended::Raised
             }
             _ => Ended::Left(body.status, body.value),
@@ -404,7 +404,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         let header = protocol::BodyHeader { call: self.field(offset_of!(CallRecord, call)), caller_registers: file,
             caller_base: self.field(offset_of!(CallRecord, caller_base)), packed,
             callee: self.callee_field(offset_of!(CalleeRecord, callee)) };
-        let mut stage = StencilStage::from_hole(0);
+        let mut stage = StencilStage::from_hole(0, payload(&self.places.s));
         // Its body and descriptor at the frame's index (the descriptor links the native header where Rust observes
         // it, `native_frames::link_header`), the plain depth and window it bumps: the native frame every tier pushes.
         protocol::push_native_frame(&mut stage, &a.tops, protocol::NativeFrame { window: a.top as u64, header, body: word_at(a.cell, CELL_BODY_AT),
@@ -421,7 +421,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
     /// The callee completed with `value`: its window and frame pop, and the word goes to the call's register.
     #[inline(always)]
     fn call_settle(&mut self, stage: &mut Concrete, site: &Invocation, _entered: Entered<u64, ()>, _room: Room<u64>, value: u64) -> Option<()> {
-        Self::pop(&self.admitted?);
+        Self::pop(&self.admitted?, payload(&self.places.s));
         stage.store_u64(Region::Frame.mutable(), self.places.s.frame as u64, word_offset(site.result), value);
         Some(())
     }

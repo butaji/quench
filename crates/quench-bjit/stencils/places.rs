@@ -29,9 +29,11 @@ const fn rep_of(place: u8) -> Representation {
     }
 }
 
+/// The stage of a value word's tag tests and number conversions, which address no table: they read only the
+/// word (`StencilStage::words`).
 #[inline(always)]
 fn stage() -> Concrete {
-    Concrete::from_hole(0)
+    Concrete::words()
 }
 
 /// The binary64 bits of the int32 in the low half of `value`.

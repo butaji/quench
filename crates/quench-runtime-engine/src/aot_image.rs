@@ -38,6 +38,7 @@ pub(crate) mod file;
 mod page;
 #[path = "aot_image/demand.rs"]
 pub mod demand;
+#[cfg(feature = "jit")]
 #[path = "aot_image/class_recipe.rs"]
 pub(crate) mod class_recipe;
 

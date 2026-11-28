@@ -43,7 +43,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
 /// general loop.
 #[cfg(not(feature = "jit"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn view_in_lane<'a>(vm: &Vm, _program: ProgramId, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
+pub(crate) fn view_in_lane<'a>(_vm: &Vm, _program: ProgramId, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
     ahead_lane_view(code, constants)
 }
