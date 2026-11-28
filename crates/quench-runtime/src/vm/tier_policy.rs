@@ -185,13 +185,6 @@ pub fn regexp_stitches(stencils: bool) -> bool {
     stencils && base_runs() && !cranelift_runs()
 }
 
-/// Whether execution records the run-time feedback a compiled tier reads when it compiles later (such as
-/// `ProgramStore::note_js_jit_dataview_float64`): only where tiers compile at run time, compiled execution.
-#[inline(always)]
-pub fn feeds_compiled_tiers(mode: crate::ExecutionMode) -> bool {
-    mode == crate::ExecutionMode::Compiled
-}
-
 /// Whether a Wasm function runs as the module's native code rather than the lane's records: compiled execution. A lane
 /// call of a Wasm export then enters the native entry, and the lane does not activate it in place.
 #[inline(always)]

@@ -293,12 +293,6 @@ impl ProgramStore {
     fn write_totals(&self, out: &mut impl Write) -> io::Result<()> {
         writeln!(
             out,
-            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"get_entries\":{},\"set_entries\":{}}}",
-            self.js_jit_dataview_float64_get_entries,
-            self.js_jit_dataview_float64_set_entries
-        )?;
-        writeln!(
-            out,
             "QUENCH_JS_JIT_TIER_TRACKING {{\"tracked_functions\":{},\"tracking_limit\":{},\"exhaustion_events\":{}}}",
             self.js_jit_tracked_functions,
             JS_JIT_MAX_TRACKED_FUNCTIONS,

@@ -622,7 +622,6 @@ impl<const ROW: u8> quench_runtime::staged::call_native::InPlaceBody<Concrete> f
         let (args, vm) = unsafe { (window_at(arguments, self.count), vm(self.cx)) };
         let (native, receiver) = (const { in_place_row_native(ROW) }, Value::from_bits(receiver));
         if let Some(value) = const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) }.then(|| vm.data_view_access_of(native, receiver, args)).flatten() {
-            if quench_runtime::vm::tier_policy::feeds_compiled_tiers(vm.execution_mode) { vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64); }
             return Some(value.to_bits());
         }
         vm.in_place_native_value_inline(self.code, native, self.callee, receiver, args).map(Value::to_bits)
