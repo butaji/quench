@@ -45,7 +45,7 @@ pub(in super::super) fn activate_gathering_in_lane(
             );
             vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
         }
-        return Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc, this, false, None, Some(target.registers)));
+        return Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc, this, false, Some(target.registers)));
     }
     // The entry, which callers read in place, is copied before the rest array allocates.
     let target = &{ *target };
@@ -54,7 +54,7 @@ pub(in super::super) fn activate_gathering_in_lane(
     });
     let callee_registers = fill_window_in_lane(vm, target, passed, argc.min(fixed));
     callee_registers.set(fixed, rest);
-    Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None, None))
+    Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None))
 }
 
 #[inline(always)]

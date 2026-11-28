@@ -105,7 +105,7 @@ pub(crate) fn site_target(vm: &super::Vm, view: &LaneView, function: u32, pc: us
 /// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
 /// latest first.
 pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, function: u32, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
-    super::site_targets_in_lane(vm, view, function, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
+    super::site_targets_in_lane(vm, view, function, pc as u32).into_iter().filter_map(|site| {
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
     })

@@ -168,7 +168,7 @@ pub(crate) fn direct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc:
         .unwrap_or((std::ptr::null(), 0));
     Some(crate::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(),
         bound: quench_runtime::vm::engine_types::BoundClosure::new(target.callee.to_bits(), crate::compiled::entry_cell::capture_word(capture_values, capture_len, capture_stores(target.capture).is_some())),
     })
 }

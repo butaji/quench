@@ -3658,10 +3658,7 @@ impl Vm {
                         // The construction's skipped forwarding constructor becomes the frame
                         // it would have been, pending at its forwarding call, whose dead
                         // registers hold `undefined`; the method's frame runs inside it.
-                        // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
-                        // SAFETY: a native frame's callee outlives the run.
-                        let forwarder = unsafe { activation.callee.as_ref() }
-                            .map_or_else(|| payload.forwarder(), |callee| callee.forwarder)
+                        let forwarder = payload.forwarder()
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;

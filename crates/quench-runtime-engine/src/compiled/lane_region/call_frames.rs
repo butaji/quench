@@ -246,13 +246,13 @@ impl EmitFrame<'_> {
     /// Whether the arguments of `site` have the entry types of `callee`'s body (`LaneMethod::entry_param_types`): the
     /// argument window's register `k` holds a value of parameter `k`'s type (`self.state`), so the body's proven entry,
     /// which skips those guards, takes them as the caller proved them. A call that does not pass a register window, that
-    /// forwards its arguments, or whose target a forwarder names proves none.
+    /// forwards its arguments proves none.
     /// An image's proven callee pins no body, so it proves none and enters its cell's entry.
     fn arguments_proven(&self, site: &Invocation, callee: DirectSite<'_>) -> bool {
         let DirectSite::Owned(callee) = callee else { return false };
         let Some(types) = callee.body.as_deref().and_then(|body| body.entry_param_types()) else { return false };
         let Arguments::Window { first, count } = site.arguments else { return false };
-        if site.forwards || callee.forwarder.is_some() || usize::from(count) < types.len() { return false; }
+        if site.forwards || usize::from(count) < types.len() { return false; }
         types.iter().enumerate().all(|(index, ty)| self.state.values.get(usize::from(first) + index)
             .is_some_and(|fact| fact.value.ty.is_subtype(*ty)))
     }

@@ -99,7 +99,7 @@ impl Lowering<'_, '_> {
                             let callee = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
-                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(callee, identity),
+                                CalleeBinding::Identity(identity) => self.is_identity(callee, identity),
                             };
                             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                             emit_js_guard(&mut self.builder, matched, exit);

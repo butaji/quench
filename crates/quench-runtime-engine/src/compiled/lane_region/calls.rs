@@ -38,10 +38,10 @@ impl Lowering<'_, '_> {
         let callee_index = usize::from(inlined.callee_register);
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
-            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } if state.values[callee_index].value.ty.function_identity() == Some(identity)
+            CalleeBinding::Identity(identity) if state.values[callee_index].value.ty.function_identity() == Some(identity)
                 || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) =>
                     (None, Type::function(identity)),
-            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
+            CalleeBinding::Identity(identity) => (
                 Some(self.is_identity(callee, identity)),
                 Type::function(identity),
             ),
@@ -168,10 +168,8 @@ impl Lowering<'_, '_> {
                 // A construction of a stores-only constructor, whose arguments are a window of the caller's
                 // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
                 let initializing = match (site.arguments, owned) {
-                    // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
-                    // allocates (`DirectCallee::forwarder`): that path keeps its body.
                     (quench_runtime::staged::Arguments::Window { first, count }, Some(callee))
-                        if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
+                        if site.constructs() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
                     _ => None,
                 };
                 let returned = typed.map(|(_, returned)| returned);

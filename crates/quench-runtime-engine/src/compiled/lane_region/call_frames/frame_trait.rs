@@ -25,7 +25,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
                 let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
                 // A guarded call of a JIT plan reads the closure it calls and its captures from the bound words, which
                 // its helper call rebinds to another closure of the function (`DirectCallee::bound`).
-                self.rebinds.set(!proven && !self.helpers.links() && !site.constructs() && owned.forwarder.is_none());
+                self.rebinds.set(!proven && !self.helpers.links() && !site.constructs());
                 if self.rebinds.get() { owned.bound.read.set(true); }
                 (identity, owned.sloppy.map(Value::to_bits))
             }
@@ -52,23 +52,24 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         Some(self.call_site()?.registers)
     }
 
-    /// The receiver the constructor's plan allocates (`LaneHelper::ConstructReceiver`); a due
-    /// collection answers the deleted marker. An initializing construction (`CallSite::initializing`)
+    /// The receiver the constructor's plan allocates. An initializing construction (`CallSite::initializing`)
     /// is allocated finished from its arguments in the caller's window (`LaneHelper::Construct`), as
     /// `lane_body_construction` makes it: the plan's fields, or the initializer's cached adds. Its
-    /// body is not entered (`call_enter`), so the helper is the whole construction.
+    /// body is not entered (`call_enter`), so the helper is the whole construction. Any other construction
+    /// has no receiver a plan finishes without its forwarded initializer, so its receiver is the deleted
+    /// marker, which its guard (`guard_received`) takes to the helper path.
     fn call_receiver(&mut self, stage: &mut Emit<'_, '_>, constructor: ir::Value) -> Option<ir::Value> {
         let call = self.call_site()?;
-        // The class the receiver is built under, a compile-time constant (`compiled::constructions`).
-        let class = stage.constant(u64::from(call.construct?));
+        let construct = call.construct?;
         if let Some((first, count)) = call.initializing {
+            // The class the receiver is built under, a compile-time constant (`compiled::constructions`).
+            let class = stage.constant(u64::from(construct));
             let arguments = stage.add_imm(call.registers, quench_runtime::staged::word_bytes(first));
             let argc = stage.constant(u64::from(count));
             let helper = self.helpers.target(&mut stage.builder, LaneHelper::Construct);
             return Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, class, arguments, argc]));
         }
-        let helper = self.helpers.target(&mut stage.builder, LaneHelper::ConstructReceiver);
-        Some(emit_lane_helper_call(stage.builder, self.payload, helper, &[self.payload, constructor, class]))
+        Some(stage.constant(Value::DELETED.to_bits()))
     }
 
     /// An indirect callee's window is its record's words, read at run time.

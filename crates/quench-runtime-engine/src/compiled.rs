@@ -878,7 +878,6 @@ lane_helper_inventory! {
     Construct => constructions::construct_in_lane,
     /// A materialized kept receiver's planned construction, made whatever is due (`materialize_construct_in_lane`).
     MaterializeConstruct => constructions::materialize_construct_in_lane,
-    ConstructReceiver => constructions::construct_receiver_in_lane,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).

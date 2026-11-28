@@ -11,7 +11,7 @@ const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, 
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: quench_runtime::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-    DirectFacts { callee: 7, cell: 0x1000, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false, closed: false, descriptor: 0 }
+    DirectFacts { callee: 7, cell: 0x1000, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, held: false, closed: false, descriptor: 0 }
 }
 
 /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
@@ -46,7 +46,6 @@ fn every_other_call_takes_the_helper_with_its_reason() {
     assert_eq!(choose(&SHAPE, None), helper(Declined::NoTarget));
     let many = CallShape { argc: MAX_DIRECT_ARGC as u16 + 1, ..SHAPE };
     assert_eq!(choose(&many, Some(&facts(4, 9))), helper(Declined::Arguments));
-    assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
     assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
     assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
     for form in [CallForm::Construct, CallForm::Stepped] {
