@@ -39,7 +39,7 @@ use std::process::Command;
 
 /// The closed world of a core image, as values: the same tables its catalog names.
 #[derive(Clone, Copy)]
-pub(super) struct ClosedTables {
+pub struct ClosedTables {
     pub(super) builtins: &'static BuiltinTable,
     pub(super) execution: &'static ExecutionTable,
 }

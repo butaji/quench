@@ -87,7 +87,7 @@ fn retained_text(program: &ResidualProgram, retention: ImageRetention) -> Option
 impl CompiledSources {
     /// The link inputs of every program, the demand their images reach in aggregate, and (for a
     /// core image) the closed world of the realm they reach (`ReachableRealm`).
-    pub(super) fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>, Option<ClosedTables>), String> {
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>, Option<ClosedTables>), String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
