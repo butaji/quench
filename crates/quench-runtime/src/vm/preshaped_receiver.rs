@@ -158,24 +158,36 @@ impl LearnedReceiver {
 impl Vm {
     /// Allocates the receiver template `object` of a construction whose body `constructor` runs
     /// first thing, with `constructor` its `new.target`, in the constructor's constant layout or
-    /// with its learned storage (`preshape_receiver`).
+    /// with its learned storage (`preshape_receiver`). The receiver is the instance of `class`, the
+    /// site's class (`construct_site_class`), whose header it records.
     #[inline]
-    pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value) -> Value {
+    pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value, class: u32) -> Value {
         let start = object.shape();
         let capacity = self.construct_receiver_capacity(constructor, start);
         let this = self.heap.alloc_object_with_capacity(object, capacity);
         self.preshape_receiver(this, start, constructor, constructor);
-        self.record_class_header(constructor, this);
+        self.record_class_header(constructor, class, this);
         this
     }
 
-    /// Records the layout id of `this`, an instance `constructor` just constructed, as its class's header
-    /// (`ProgramStore::class_header`), once per class, at the class-header edge (`record_class_edge`). A class whose
-    /// instances keep one layout (`AotFacts::class_layout`) takes it from its first instance, and a planned call site
-    /// (`planned_call_row`) reads a receiver's class from that header: no receiver reaches such a site before its
-    /// class's header is recorded.
-    pub fn record_class_header(&mut self, constructor: Value, this: Value) {
-        let Some((program, class, _)) = self.same_realm_user_target(constructor) else { return };
+    /// The class of the construction at `pc` of function `function` of program `program`: the class
+    /// `AotFacts::construct_classes` gives that site, the synthetic class of its body and the key it was
+    /// read from, or `body` (the callee's own body, `ClassIds::body`) where the site has no such fact,
+    /// which is an ordinary construction. A plan reads it once, where the plan is derived (`ConstructPlan::class`).
+    pub fn construct_site_class(&self, program: ProgramId, function: u32, pc: usize, body: u32) -> u32 {
+        self.programs.aot_facts(program)
+            .and_then(|facts| facts.construct_classes.get(&(function, pc as u32)).copied())
+            .unwrap_or(body)
+    }
+
+    /// Records the layout id of `this`, an instance `constructor` just constructed as class `class`, as that
+    /// class's header (`ProgramStore::class_header`), once per class, at the class-header edge (`record_class_edge`).
+    /// A class whose instances keep one layout (`AotFacts::class_layout`) takes it from its first instance, and a
+    /// planned call site (`planned_call_row`) reads a receiver's class from that header: no receiver reaches such
+    /// a site before its class's header is recorded. The program is `constructor`'s; the class is the site's, so
+    /// two classes that share one body keep their headers apart.
+    pub fn record_class_header(&mut self, constructor: Value, class: u32, this: Value) {
+        let Some((program, _, _)) = self.same_realm_user_target(constructor) else { return };
         let Some((layout, prototype)) = self.heap.object(this).map(|object| (object.layout_id(), object.proto())) else { return };
         if self.programs.class_header(program, class).is_some_and(|header| header.get() == 0) {
             self.record_class_edge(program, class, layout, prototype);

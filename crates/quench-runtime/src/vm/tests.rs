@@ -1142,6 +1142,34 @@ fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
 }
 
 #[test]
+fn class_factory_constructions_record_a_header_per_class() {
+    // `Class.create` returns one body for every class it makes, so the two classes share their constructor's body. Each
+    // construction site names its class (`AotFacts::construct_classes`): the two classes are distinct ids over that body,
+    // and each records its own header.
+    let source = r#"
+      var Class = { create: function () { return function () { this.x = 1; }; } };
+      var A = Class.create();
+      var B = Class.create();
+      function makeA() { return new A(); }
+      function makeB() { return new B(); }
+      function warm() { for (var k = 0; k < 4; k++) { makeA(); makeB(); } }
+      warm();
+    "#;
+    let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
+    let program = Engine::specialize(source, "class-factory-headers.js").unwrap();
+    vm.execute(&program).unwrap();
+    let facts = vm.programs.aot_facts(super::program_store::ProgramId::MAIN).expect("the main program has AOT facts");
+    let classes: std::collections::BTreeSet<u32> = facts.construct_classes.values().copied().collect();
+    assert_eq!(classes.len(), 2, "the two factory classes are two classes");
+    let bodies: std::collections::BTreeSet<u32> = classes.iter().map(|&class| facts.class_body(class)).collect();
+    assert_eq!(bodies.len(), 1, "both classes run the factory's one body");
+    for class in classes {
+        let header = vm.programs.class_header(super::program_store::ProgramId::MAIN, class).expect("every class id has a header cell");
+        assert_ne!(header.get(), 0, "a construction of each class records its header");
+    }
+}
+
+#[test]
 fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store() {
     // A hot function builds objects through a forwarding constructor whose initializer calls
     // a function and returns an object: the construction yields the receiver whatever the

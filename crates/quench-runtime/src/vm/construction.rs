@@ -877,10 +877,14 @@ impl Vm {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
+        pc: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value, Value)> {
         let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, super::ConstructKind::Base)?;
-        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
+        // The construction is the site `pc` of the calling frame: its class is the site's, not the body's (`construct_site_class`).
+        let caller = &self.frames[frame];
+        let class = self.construct_site_class(caller.program, caller.function, pc, id);
+        Some((program_id, id, env, self.inline_construct_receiver(callee, class)?))
     }
 
     /// `new callee(...)` of a derived class constructor that the loop may push in place, as
@@ -1008,10 +1012,12 @@ impl Vm {
     /// whose prototype is the callee's own data `prototype`, when that is an object, in the
     /// callee's constant layout (`preshaped_receiver`), as every caller runs its body next.
     /// A construct plan's own allocations take the empty template (`inline_construct_template`):
-    /// a plan records the stores its body adds from it.
-    pub fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
+    /// a plan records the stores its body adds from it. `class` is the construct site's class
+    /// (`construct_site_class`), whose header the receiver records; a path with no site passes the
+    /// callee's body (`ClassIds::body` of the body), which is an ordinary construction.
+    pub fn inline_construct_receiver(&mut self, callee: Value, class: u32) -> Option<Value> {
         let object = self.inline_construct_template(callee)?;
-        Some(self.alloc_construct_receiver(object, callee))
+        Some(self.alloc_construct_receiver(object, callee, class))
     }
 
     /// The object `inline_construct_receiver` allocates, before it is allocated.

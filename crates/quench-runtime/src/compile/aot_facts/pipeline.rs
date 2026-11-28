@@ -178,7 +178,8 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     // cell's holes are the stores' and the allocations', so the types the solve reads must see them. A round whose feedback is
     // the one it solved with is final, so the facts of the last round are the ones its solve read.
     let mut feedback = length_settle::Feedback::default();
-    let mut built = ClassIds::default();
+    // Without a settled round the table keeps the functions alone (no synthetic class), so its count is the function count.
+    let mut built = ClassIds::build(&[], program.function_count() as u32);
     for round in 0..LENGTH_ROUNDS {
         let mut found = types::Types::of(&flows, &facts, &census, &scope).bottom();
         let mut settled = false;

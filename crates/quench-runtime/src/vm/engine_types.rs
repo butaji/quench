@@ -2420,6 +2420,10 @@ pub struct ConstructPlan {
     /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
     /// construction of a recorded class allocates its receiver alone.
     pub recorded: bool,
+    /// The class of the construct site this plan serves (`Vm::construct_site_class`, read from
+    /// `AotFacts::construct_classes` once, where the plan is derived): the callee's body for an ordinary
+    /// site, a synthetic class for a body constructed under several binding keys. The header records under it.
+    pub class: u32,
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -3753,6 +3757,8 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     nested: None,
     super_parent: Value::UNDEFINED,
     recorded: false,
+    // The sentinel's callee is `undefined`, which no construction names, so its class is never read.
+    class: 0,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {

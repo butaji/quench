@@ -55,6 +55,12 @@ impl ClassIds {
         self.ids.get(&(body, key)).copied().unwrap_or(body)
     }
 
+    /// The number of class ids: the functions and the synthetic classes, so every class id is below it. A runtime sizes its
+    /// per-class tables (`ProgramStore::class_header`) by this count.
+    pub(crate) fn count(&self) -> u32 {
+        self.functions + self.synthetic.len() as u32
+    }
+
     /// The function body class `class` runs: `class` itself for an ordinary class, the body of its pair for a synthetic one.
     pub(super) fn body(&self, class: u32) -> u32 {
         match class.checked_sub(self.functions).and_then(|index| self.synthetic.get(index as usize)) {
