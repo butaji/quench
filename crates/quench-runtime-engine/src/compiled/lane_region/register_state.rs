@@ -251,8 +251,6 @@ impl ReceiverRecovery {
 /// Region-wide facts proved at entry.
 pub(super) struct Entry {
     pub(super) receiver: LaneReceiver,
-    /// This heap's non-null record reservation, fixed for the native run.
-    pub(super) object_table: Option<CheckedObjectTable>,
     /// Entry receiver certificates: record locators of `this` (the final entry) and of the
     /// caller registers no unit instruction writes. Records stay put in a run, which
     /// collects nothing; shapes are derived per use.

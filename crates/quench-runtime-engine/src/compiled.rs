@@ -685,7 +685,7 @@ fn emit_js_cached_field_slot(
     binding: Option<FieldSlotBinding>,
     header: Option<object_slots::ObjectHeader>,
     packed_slot: Option<ir::Block>,
-) -> (ir::Value, ir::Value) {
+) -> ir::Value {
     use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
     use quench_runtime::staged::object::plain_payload;
@@ -693,7 +693,6 @@ fn emit_js_cached_field_slot(
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = receiver;
-    let record_id = quench_runtime::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, arena, .. } = binding;
@@ -775,7 +774,7 @@ fn emit_js_cached_field_slot(
         let storage = own_storage(builder);
         arena.address(builder, storage, slot, fallback)
     };
-    (address, record_id)
+    address
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -809,8 +808,8 @@ fn emit_js_payload_fixed_word(builder: &mut FunctionBuilder<'_>, payload: ir::Va
     object_slots::emit(builder).load_u64(Region::Dispatch.readonly(), payload, offset)
 }
 
-/// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
-/// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
+/// A record reservation's base in the dispatch payload (`JsStepDispatch::function_record_base`, `array_record_base`):
+/// fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     use quench_runtime::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
@@ -848,20 +847,17 @@ fn emit_lane_helper_call(
 }
 
 /// The mark list a store into record space `space` reads its owner's mark blocks from. A class cell's
-/// mark is read through `class_mark_lists` instead (`class_mark_table`), so `Class` never reaches here.
+/// mark is read through `class_mark_lists` instead (`class_mark_table`), and an ordinary object is a class
+/// cell too, so neither `Class` nor `Object` (no record table, `S7f`) reaches here.
 fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_runtime::staged::barrier::MarkList {
     use quench_runtime::staged::barrier::MarkList;
     match space {
-        quench_runtime::staged::StagedRecordSpace::Object => MarkList {
-            blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
-            count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
-        },
         quench_runtime::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
-        quench_runtime::staged::StagedRecordSpace::Class => {
-            unreachable!("a class cell's mark is read through `class_mark_table`")
+        quench_runtime::staged::StagedRecordSpace::Object | quench_runtime::staged::StagedRecordSpace::Class => {
+            unreachable!("a class cell's mark is read through `class_mark_table`; no object record exists")
         }
     }
 }
@@ -1412,15 +1408,10 @@ pub(crate) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
-    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
-    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
-    pub(crate) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
     /// The root constant a capture read at a PC takes (`FactTables::root_constant`): a written-once root
     /// binding's function, with the program whose root it is; `None` where none may be held.
     pub(crate) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
 }
-
-pub(crate) use quench_runtime::vm::engine_types::OwnConstant;
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where
@@ -3247,23 +3238,14 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    // S7f DESIGN: the object record table is gone, so every direct object is classed as `NonRecord` by the profile.
     #[cfg(feature = "profile-native-ops")]
-    let storage = {
-        use quench_runtime::vm::native_op_profile::StoreStorage;
-        match receiver.direct_object_index() {
-            None => StoreStorage::NonRecord,
-            // S7f DESIGN: the object record table is gone; a direct object has no record to classify.
-            Some(_) => StoreStorage::NonRecord,
-        }
-    };
-    // A receiver of another shape the site met stores through its polymorphic entries, as
-    // long as the store keeps the record's layout, which the caller's proofs rely on.
-    let (receiver, value, layout) = (receiver, value, quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
-    // Only the primary entry's hit proves its slot's representation (`general_store`).
-    let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
-    if primary { general_store::record_store_class(vm, site as u16, value); }
-    let hit = primary
-        || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
+    let storage = quench_runtime::vm::native_op_profile::StoreStorage::NonRecord;
+    // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
+    // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
+    let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
+    let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
+    if hit { general_store::record_store_class(vm, site as u16, value); }
     #[cfg(feature = "profile-native-ops")]
     quench_runtime::vm::native_op_profile::record_store(storage, hit);
     u64::from(hit)
@@ -3361,8 +3343,7 @@ unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: Value)
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
 /// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
-/// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
-/// `Vm::polymorphic_own_field_store_hit`), else the cached add of the property
+/// object has (`Vm::primary_own_field_store_hit`), else the cached add of the property
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
@@ -3378,10 +3359,8 @@ unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, rec
     if vm.collection_due() {
         return 0;
     }
-    // A site past one shape stores through its megamorphic own entries, which may widen the
-    // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden).is_none()
-        && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+    // The cached add of the property (the polymorphic own entries it used to try were record-tier, S7g): a miss leaves.
+    if !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
         return 0;
     }
     crate::dispatch_fast::note_allocation(vm);
@@ -4029,8 +4008,6 @@ impl JsStepDispatch {
         (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
         self.buffer_relocations = quench_runtime::tier_surface::buffer_relocations_address().addr();
         self.epoch = vm.heap_reads().collection_epoch();
-        let (blocks, count) = vm.heap_reads().native_object_mark_blocks();
-        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap_reads().native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap_reads().native_array_mark_blocks();
@@ -9818,80 +9795,6 @@ mod tests {
                 assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
             }
         });
-    }
-
-    #[test]
-    fn native_holder_read_does_not_require_receiver_arena_storage() {
-        for (source, inline_holder) in [
-            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);", false),
-            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; globalThis.box=new Box(); box.own=1; read(box);", true),
-        ] {
-        let program = quench_runtime::Engine::specialize(source, "packed-holder.js").unwrap();
-        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-        let atom = vm.lookup_atom("box").unwrap();
-        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object(receiver).unwrap().record_only().unwrap().inline_properties().is_some());
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let function = program.functions.iter().position(|function|
-            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
-        let site = program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
-            Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site), _ => None,
-        }).unwrap();
-        let cache = vm.field_cache_entry(site);
-        assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
-        assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
-        let holder = vm.heap_reads().object(prototype).unwrap();
-        assert_eq!(holder.exact_shape(), cache.holder);
-        let holder = holder.record_only().expect("a prototype record");
-        assert_eq!(holder.inline_properties().is_some(), inline_holder);
-        assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
-
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 4]);
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut native, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let parameters = builder.block_params(entry).to_vec();
-        let mut binding = FieldSlotBinding {
-            receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
-            holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
-            slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
-            arena: FieldArena::Unbound { values: parameters[0], length: parameters[1] },
-            writes: None, admitted: None,
-        };
-        let slot = binding.slot.read(&mut builder);
-        binding.arena = binding.arena.bind(&mut builder, slot);
-        let miss = builder.create_block();
-        let unused = builder.ins().iconst(types::I64, 0);
-        let (address, _) = emit_js_cached_field_slot(&mut builder, unused,
-            parameters[3], site, true, miss, Some(binding), None, None);
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        builder.ins().return_(&[value]);
-        builder.switch_to_block(miss);
-        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-        builder.ins().return_(&[deleted]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the four inputs name this VM's live reservation, arena and
-        // receiver. No guest call or collection occurs while the code runs.
-        let run = unsafe { std::mem::transmute::<*mut u8,
-            unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
-        let (values, length) = vm.heap_reads().native_property_values();
-        // S7f: the first word of the entry's ABI was the object record table, which is gone; it is passed as 0.
-        let records = 0_usize;
-        assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
-        // A receiver that has not proved the cached shape cannot read this slot.
-        assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
-        assert_eq!(unsafe { run(records, values, length, vm.realm.globals.to_bits()) }, Value::DELETED.to_bits());
-        }
     }
 
     #[test]

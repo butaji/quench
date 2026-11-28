@@ -35,7 +35,7 @@ impl EmitFrame<'_> {
         if let Some(bound) = binding.admitted { emit_js_guard(stage.builder, bound, slow); }
         emit_js_guard(stage.builder, admitted, slow);
         let id = stage.and_imm(object, u64::from(u32::MAX));
-        let (address, _) = emit_js_cached_field_slot(stage.builder, self.payload, object,
+        let address = emit_js_cached_field_slot(stage.builder, self.payload, object,
             site, false, slow, Some(binding), header, Some(packed));
         store::bound_full_store(stage, id, address, (value, fact), slow)?;
         stage.jump(done, &[]);

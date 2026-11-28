@@ -23,8 +23,6 @@ pub(crate) struct FactTables {
     pub(super) instanceofs: std::collections::BTreeMap<u64, quench_runtime::code_dependencies::InstanceofFact>,
     pub(super) stable_shapes: std::collections::BTreeSet<u32>,
     pub(super) names: std::collections::BTreeMap<(u16, Atom), (quench_runtime::staged::add_plan::Transition, u64)>,
-    /// The own members of constant-marked objects the VM holds, by atom (`Vm::own_constants`).
-    pub(super) own_constants: std::collections::BTreeMap<Atom, OwnConstant>,
     /// The capture reads of the unit's own instructions that reach the program root's environment
     /// at a slot the root writes once, by PC, with the function each holds now (`root_constants`).
     pub(super) root_constants: std::collections::BTreeMap<usize, Value>,

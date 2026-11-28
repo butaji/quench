@@ -139,10 +139,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The semantic type the lowering's state holds of the register: a static fact.
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
-    fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        let entry = self.entry().or(self.table_entry)?;
-        Some(headers::object_table_base(stage.builder, entry, self.payload))
-    }
+    /// S7f DESIGN: the object record table is gone (every ordinary object is a class cell), so no table is
+    /// offered; a planned read that needed it leaves through its own decline.
+    fn object_records(&mut self, _stage: &mut Emit<'b, 'c>) -> Option<ir::Value> { None }
 
     /// The entry's `this`, which a body that reads fields has proved bound.
     fn field_this(&mut self, stage: &mut Emit<'b, 'c>, _miss: ir::Block) -> Option<ir::Value> {
@@ -184,10 +183,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             stage.branch_if(present, (join, &[object, shape, inline]), (other, &[]));
             stage.builder.switch_to_block(other);
             let this = stage.builder.use_var(self.this?);
-            let records = headers::object_table_base(stage.builder, entry, self.payload);
             let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = headers::class_table_base(stage.builder, self.payload);
-            let header = ObjectHeader::prove_readable(stage.builder, this, None, records, class_base, functions, miss);
+            let header = ObjectHeader::prove_readable(stage.builder, this, None, functions, class_base, miss);
             // A readable proof names a record or a function's object, whose shape and storage form it reads.
             let (shape, inline) = (header.shape.expect("a readable header names a record"), header.inline.expect("a readable header names a record"));
             stage.goto(join, &[header.address, shape, inline]);
@@ -196,10 +194,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         }
         let header = match owner {
             Owner::Temporary => {
-                let records = headers::object_table_base(stage.builder, entry, self.payload);
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
                 let class_base = headers::class_table_base(stage.builder, self.payload);
-                ObjectHeader::prove_readable(stage.builder, object, None, records, class_base, functions, miss)
+                ObjectHeader::prove_readable(stage.builder, object, None, functions, class_base, miss)
             }
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
@@ -339,7 +336,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         builder.set_cold_block(slow);
         let packed_address = builder.append_block_param(packed, types::I64);
         let result = builder.append_block_param(done, types::I64);
-        let (address, _) = emit_js_cached_field_slot(builder, self.payload, object,
+        let address = emit_js_cached_field_slot(builder, self.payload, object,
             site, true, slow, Some(binding), header, Some(packed));
         let value = emit(builder).raw_load(Lane::I64, regions::property_flags(self.fields.as_ref().and_then(|facts| facts.property)), address, 0);
         emit(builder).jump(done, &[value]);

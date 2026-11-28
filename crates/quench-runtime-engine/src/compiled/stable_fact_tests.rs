@@ -21,7 +21,7 @@ fn compiled_lane_body(source: &str, name: &str) -> (Vm, ResidualProgram, LaneMet
 /// Installs a method cache entry for `owner.atom`, as a call site's first call does.
 fn name_in_a_method_cache(vm: &mut Vm, owner: Value, atom: Atom) {
     let callee = vm.own_property(owner, atom).unwrap();
-    let shape = vm.heap_reads().object_record(owner).unwrap().shape();
+    let shape = vm.heap_reads().object(owner).unwrap().shape();
     let target = vm.call_target(callee).unwrap();
     let slot = vm.shape_slot(shape, atom).unwrap() as u16;
     let site = vm.method_caches.len();

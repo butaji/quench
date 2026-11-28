@@ -158,7 +158,7 @@ impl Lowering<'_, '_> {
                     let packed_address = self.builder.append_block_param(packed, types::I64);
                     let done = self.builder.create_block();
                     let address = self.builder.append_block_param(done, types::I64);
-                    let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder,
+                    let arena_address = emit_js_cached_field_slot(&mut self.builder,
                         self.payload, object, site,
                         false, exit, Some(binding), Some(object_header), Some(packed));
                     self.goto(done, &[arena_address]);

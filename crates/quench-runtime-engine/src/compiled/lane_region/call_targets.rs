@@ -126,11 +126,10 @@ impl Lowering<'_, '_> {
         let header = match receiver {
             quench_runtime::staged::Receiver::Register(register) => {
                 let bits = self.tagged(state, register);
-                let records = emit_js_record_base(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
                 let class_base = headers::class_table_base(&mut self.builder, self.payload);
                 // The register's solver type proves its family where it names a direct object: no family test (`ObjectRecord::prove`).
                 let known = Some(state.values[usize::from(register)].value).filter(|fact| tag_proofs::proves_object(fact.ty));
-                ObjectHeader::prove(&mut self.builder, bits, ObjectTable::Unchecked(records), class_base, known, missed)
+                ObjectHeader::prove(&mut self.builder, bits, class_base, known, missed)
             }
             _ => self.object_header(state, None, true, missed),
         };
