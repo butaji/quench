@@ -119,7 +119,7 @@ fn holder_load(fields: &[u32], (function, slot, len): (u32, u16, usize), atom: u
     let holder = symbols.guard_shape(holder, slot, GuardAccess::Holder).filter(|key| *key < symbolic)?;
     Some(NativeFieldLoad {
         shape: symbolic | receiver, holder: Some(symbolic | holder), slot, storage_len: len, storage: None,
-        ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None,
+        ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None,
     })
 }
 
@@ -130,6 +130,6 @@ fn own_load((function, slot): (u32, u16), fields: &[u32], access: GuardAccess, s
     let key = symbols.guard_shape(recipe, slot, access)?;
     (key < quench_runtime::staged::ic::SYMBOLIC_SHAPE).then_some(NativeFieldLoad {
         shape: quench_runtime::staged::ic::SYMBOLIC_SHAPE | key, holder: None, slot, storage_len: fields.len(), storage: None,
-        ty: access.stored().or(access.read()).unwrap_or(quench_runtime::typed_ir::Type::ANY), inherited: None, function_shape: false, formed: None, holder_cell: None,
+        ty: access.stored().or(access.read()).unwrap_or(quench_runtime::typed_ir::Type::ANY), inherited: None, function_shape: false, formed: None, holder_cell: None, class: None,
     })
 }

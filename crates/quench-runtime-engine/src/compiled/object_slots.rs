@@ -312,9 +312,10 @@ impl InheritedConstant {
 #[quench_macros::ext(NativeFieldLoadOps1)]
 impl NativeFieldLoad {
     /// Whether a read of it proves its receiver a direct object of its shape: an own slot of
-    /// a shape no function record held. A guessed shape proves nothing (`guessed`).
+    /// a shape no function record held. A guessed shape proves nothing (`guessed`). A class-keyed read
+    /// proves a live cell, which no record-path consumer of the shape may take for a record: no proof.
     pub(crate) fn own_direct(self) -> bool {
-        self.holder.is_none() && !self.function_shape && !self.guessed()
+        self.holder.is_none() && !self.function_shape && !self.guessed() && self.class.is_none()
     }
 
     /// Whether the shape is an ahead image's guess (`ic::SYMBOLIC_SHAPE`), never an observation:
@@ -373,7 +374,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None, class: None };
         assert!(field.valid());
         for shape in [quench_runtime::vm::NO_FIELD_RECEIVER,
             quench_runtime::value_vec::DICTIONARY_STORAGE, quench_runtime::value_vec::DICTIONARY_STORAGE | 1] {

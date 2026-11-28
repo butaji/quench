@@ -139,7 +139,7 @@ fn own_flat_load(known: Known, site: u16) -> Option<crate::compiled::object_slot
     let loads = known.reads?(site);
     let [load] = loads[..] else { return None };
     // The row reads and writes either storage form, as the record's inline flag says.
-    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
+    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape && load.class.is_none()).then_some(load)
 }
 
 /// The dependency that proves the one own flat entry's slot holds one type a read may keep: a Number type
@@ -165,7 +165,7 @@ fn own_slot_type(known: Known, site: u16) -> Option<quench_runtime::typed_ir::Ty
 /// The one own load cache `site` proves, whose shape and slot type a store's admission stands on.
 fn own_slot_load(known: Known, site: u16) -> Option<crate::compiled::object_slots::NativeFieldLoad> {
     let [load] = known.reads?(site)[..] else { return None };
-    (load.holder.is_none() && load.valid()).then_some(load)
+    (load.holder.is_none() && load.valid() && load.class.is_none()).then_some(load)
 }
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
