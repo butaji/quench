@@ -9,8 +9,7 @@
 //! from the first tier's run (headers are bytecode positions, the same on every tier). It is
 //! measured in the loop region compiled for it, else in the body compiled for its function; its
 //! hottest loop is `flow::hottest`. A kernel with no loop (a recursive function) is measured
-//! per call, along the scalar entry of the body that has one (`flow::call_path`). Dumps are
-//! deterministic only when compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
+//! per call, along the scalar entry of the body that has one (`flow::call_path`).
 
 mod asm;
 mod classes;
@@ -42,8 +41,6 @@ const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
 const TRACE_CHANNELS: &str = "js-jit,jit-dump=";
-const DEV_VARIABLE: &str = "QUENCH_DEV";
-const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 /// The longest one kernel run may take before it counts as hung.
 const RUN_SECONDS: u32 = 300;
 
@@ -75,9 +72,9 @@ fn node(config: &Config, host: &Path, kernel: &Path, flag: Option<&str>, dumps: 
     let mut command = config.command(host);
     command.args(flag).arg(kernel);
     if let Some(directory) = dumps {
-        command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display())).env(DEV_VARIABLE, SYNCHRONOUS_COMPILE);
+        command.env(TRACE_VARIABLE, format!("{TRACE_CHANNELS}{}", directory.display()));
     }
-    // A kernel runs in seconds; one past the deadline is hung (a sync compile that never returns) and fails the step.
+    // A kernel runs in seconds; one past the deadline is hung (a compile that never returns) and fails the step.
     let run = process::run_within(&command, RUN_SECONDS)?;
     if run.success { Ok(run) } else { Err(format!("{} {} failed:\n{}", kernel.display(), flag.unwrap_or("(default)"), run.excerpt())) }
 }

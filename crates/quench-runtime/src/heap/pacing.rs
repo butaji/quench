@@ -277,7 +277,6 @@ const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
 /// promoted anyway.
 mod aging;
 use aging::Aging;
-use crate::vm::tier_policy::memory_mix_has;
 
 /// Work-clock costs, in nanoseconds of a typical host: a full collection's per live weight kept
 /// and the mutator's per weight allocated (median of Splay's full intervals, no-JIT, x86_64,
@@ -505,47 +504,12 @@ impl MemoryPolicy {
         self.pacing().returns_pages
     }
 
-    /// The policy's own pacing table.
-    const fn table(self) -> GenerationalPacing {
+    /// The policy's pacing table (`GenerationalPacing`).
+    pub(super) const fn pacing(self) -> GenerationalPacing {
         match self {
             Self::Throughput => THROUGHPUT_PACING,
             Self::MemoryFirst => MEMORY_FIRST_PACING,
         }
-    }
-
-    pub(super) fn pacing(self) -> GenerationalPacing {
-        let first = MEMORY_FIRST_PACING;
-        let mut mixed = self.table();
-        if memory_mix_has("pages") {
-            mixed.returns_pages = first.returns_pages;
-        }
-        if memory_mix_has("young") {
-            mixed.young = first.young;
-            mixed.minimum_young = first.minimum_young;
-            mixed.maximum_young = first.maximum_young;
-            mixed.surviving_young_factor = first.surviving_young_factor;
-        }
-        if memory_mix_has("young-max") {
-            mixed.maximum_young = first.maximum_young;
-        }
-        if memory_mix_has("full") {
-            mixed.old_growth = first.old_growth;
-            mixed.headroom = first.headroom;
-            mixed.minimum_old_growth = first.minimum_old_growth;
-            mixed.allocation_cap = first.allocation_cap;
-            mixed.minimum_allocation_cap = first.minimum_allocation_cap;
-            mixed.survival_limit = first.survival_limit;
-        }
-        if memory_mix_has("aging") {
-            mixed.promotion_age = first.promotion_age;
-            mixed.promoted_garbage_aging = first.promoted_garbage_aging;
-            mixed.aging_interval = first.aging_interval;
-            mixed.ages_from_start = first.ages_from_start;
-        }
-        if memory_mix_has("external") {
-            mixed.minimum_external_budget = first.minimum_external_budget;
-        }
-        mixed
     }
 }
 

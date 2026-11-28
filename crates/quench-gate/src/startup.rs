@@ -225,11 +225,7 @@ pub(crate) fn write_v8_scripts(root: &Path, scratch: &Path) -> Result<Vec<(Strin
 
 /// The environment every measured run starts with: the mode's JIT flags, no caches, a fresh
 /// cache directory.
-fn environment(command: &mut Command, mode: &str, scratch: &Path) {
-    // The forced tier compiles synchronously; the default mode runs as users run it.
-    if mode != INTERPRETER && mode != DEFAULT {
-        command.env("QUENCH_DEV", "sync-compile");
-    }
+fn environment(command: &mut Command, scratch: &Path) {
     command.env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", scratch);
 }
 
@@ -246,7 +242,7 @@ fn instructions(config: &Config, host: &Path, mode: &str, script: &Path, scratch
         .arg(host)
         .args((mode != DEFAULT).then_some(mode))
         .arg(script);
-    environment(&mut command, mode, scratch);
+    environment(&mut command, scratch);
     let run = process::run(&mut command)?;
     if !run.success {
         return Err(format!("{} {mode} {} failed under callgrind\n{}", host.display(), script.display(), run.excerpt()));
@@ -305,7 +301,7 @@ fn touched_text_kb(config: &Config, host: &Path, mode: &str, script: &Path, scra
         .arg(host)
         .args((mode != DEFAULT).then_some(mode))
         .arg(script);
-    environment(&mut command, mode, scratch);
+    environment(&mut command, scratch);
     let run = process::run(&mut command)?;
     if !run.success {
         return Err(format!("{} {mode} {} failed under cachegrind\n{}", host.display(), script.display(), run.excerpt()));
@@ -343,7 +339,7 @@ fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch:
     let gate = env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
     let mut command = config.command(gate);
     command.arg(MEASURE_RSS).arg(&out).arg(host).args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
-    environment(&mut command, mode, scratch);
+    environment(&mut command, scratch);
     let status = command.status().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
     if !status.success() {
         return Err(format!("{} {mode} {} exited with {status}", host.display(), script.display()));
