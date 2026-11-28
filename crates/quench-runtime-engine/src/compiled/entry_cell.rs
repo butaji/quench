@@ -33,16 +33,8 @@ const _: () = {
 
 
 
-/// One raised run in `EntryCell::counters` (its high word): a run of the body that ended by
-/// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
-pub(crate) use quench_runtime::staged::layout_offsets::RAISED_RUN;
-
 #[quench_macros::ext(EntryCellOps1)]
 impl EntryCell {
-    /// The runs of the body that ended by an exception through a native caller, for tests.
-    #[cfg(test)]
-    pub(crate) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
-
     /// A cell of an unpublished function, whose entry is `stub`, the engine's entry stub (`lane_body_abi::entry_stub`).
     pub(crate) fn new(stub: usize) -> Self {
         let cell = Self { entry: Default::default(), recovery: Default::default(), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: Default::default(), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: std::cell::Cell::new(1),

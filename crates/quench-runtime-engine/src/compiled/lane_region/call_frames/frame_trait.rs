@@ -178,9 +178,6 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LaneStatus::Threw as u32));
         stage.branch(did_raise, (raised, &[]), (left, &[]));
         stage.builder.switch_to_block(raised);
-        let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
-        let counted = stage.add_imm(counters, RAISED_RUN);
-        stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
         self.pop_native(stage, room);
         stage.jump(call.raised, &[]);
         stage.builder.switch_to_block(left);

@@ -1,6 +1,6 @@
 // A hot element store of a young heap value into an array a collection left marked must log
 // the array (staged::barrier::value_unlogged): otherwise the next collection frees the young
-// value while the old array still points at it. Run in every mode, --u-jit included.
+// value while the old array still points at it. Run in every mode.
 function put(a, i) { a[1] = { v: i }; a[2] = [i]; }
 function lost() {
   const olds = [];

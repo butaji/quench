@@ -10,7 +10,7 @@
 //! from        event            to
 //! Interpreter Warm             Warming
 //! Warming     Compile          Compiling
-//! Compiling   Publish(tier)    BJit | QJit | UJit      (mode admits the tier; QJit only in --q-jit)
+//! Compiling   Publish(tier)    BJit | UJit             (mode admits the tier)
 //! Compiling   Abandon          Warming                 (a compile a lifecycle edge outran)
 //! published   Demote           Warming                 (respecialize, lifecycle edge, leaves)
 //! published   Retire           Retired                 (rejected: waits for a retry)
@@ -33,7 +33,6 @@ pub enum TierState {
     Warming,
     Compiling,
     BJit,
-    QJit,
     UJit,
     Retired,
     Declined,
@@ -59,27 +58,22 @@ const TRANSITIONS: &[(TierState, TierEvent, TierState)] = &[
     (Interpreter, Warm, Warming),
     (Warming, Compile, Compiling),
     (Compiling, Publish(Tier::Base), BJit),
-    (Compiling, Publish(Tier::Quick), QJit),
     (Compiling, Publish(Tier::Ultra), UJit),
     (Compiling, Publish(Tier::Ahead), UJit),
     (Compiling, Abandon, Warming),
     (BJit, Demote, Warming),
-    (QJit, Demote, Warming),
     (UJit, Demote, Warming),
     (BJit, Retire, Retired),
-    (QJit, Retire, Retired),
     (UJit, Retire, Retired),
     (Retired, Rewarm, Warming),
     (Warming, Decline, Declined),
     (Compiling, Decline, Declined),
     (BJit, Decline, Declined),
-    (QJit, Decline, Declined),
     (UJit, Decline, Declined),
     (Retired, Decline, Declined),
 ];
 
-/// Whether the process's mode admits `event`: a compile or publication of a tier the mode
-/// allows, and QuickJIT only where it is the only Cranelift tier (`--q-jit`).
+/// Whether the process's mode admits `event`: a compile or publication of a tier the mode allows.
 fn admitted(event: TierEvent) -> bool {
     match event {
         Compile => tier_policy::may_compile(),
@@ -129,12 +123,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_table_is_deterministic_and_quick_is_not_default() {
+    fn the_table_is_deterministic() {
         for (i, a) in TRANSITIONS.iter().enumerate() {
             assert!(TRANSITIONS[i + 1..].iter().all(|b| (a.0, a.1) != (b.0, b.1)), "{a:?}");
         }
         assert_eq!(transition(Interpreter, Warm), Some(Warming));
-        assert_eq!(transition(Compiling, Publish(Tier::Quick)).is_some(), tier_policy::may_publish(Tier::Quick));
         assert_eq!(transition(Declined, Warm), None);
     }
 }

@@ -326,12 +326,12 @@ impl Vm {
 
     /// The predicted tier of `function`'s lane body in `program` (`lane_facts::body_pick`), where it is the running
     /// program: a program not running has no table, so its bodies are the interpreter's.
-    pub(crate) fn lane_pick(&self, program: &ResidualProgram, function: u32, called_by_loop: bool) -> quench_runtime::vm::tier_policy::PredictedTier {
+    pub(crate) fn lane_pick(&self, program: &ResidualProgram, function: u32) -> quench_runtime::vm::tier_policy::PredictedTier {
         let interpreted = quench_runtime::vm::tier_policy::PredictedTier::Interpreter;
         if !self.programs.residual(self.active_program).is_some_and(|running| std::ptr::eq(running, program)) { return interpreted; }
         let predicted = self.programs.predicted_tiers(self.active_program);
         let aot = self.programs.ahead_images(self.active_program, program).is_some();
-        super::lane_facts::body_pick(aot, predicted.as_deref().unwrap_or(&[]), function, called_by_loop)
+        super::lane_facts::body_pick(aot, predicted.as_deref().unwrap_or(&[]), function)
     }
 
     /// The call graph of `program`, where it is the running program (`ProgramStore::call_graph`): a graph of another
@@ -447,7 +447,7 @@ impl Vm {
         self.host.before_native_compilation();
         let method = self.plan_lane_method(program, function, captures, &direct, None, &|_, _, _, _| true)
             .and_then(|(mut plan, native)| match image::compile(native, plan.lowered.scalar.take(), plan.lowered.proven.take(),
-                super::jit_backend::CompileLevel::run_default()) {
+                super::jit_backend::CompileLevel::Optimized) {
                 Ok(code) => plan.finish(&code.code, code.scalar, code.proven),
                 Err(_) => None,
             });
@@ -483,8 +483,8 @@ impl Vm {
         // entries would pay for that size.
         // The body's tier is its predicted tier through the policy (`lane_body_tier`): the interpreter's pick compiles
         // nothing, whoever calls the function.
-        let level = super::jit_backend::CompileLevel::run_default();
-        let pick = self.lane_pick(program, function, caller.called_by_regions());
+        let level = super::jit_backend::CompileLevel::Optimized;
+        let pick = self.lane_pick(program, function);
         if quench_runtime::vm::tier_policy::lane_body_tier(pick).is_none() { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Unpaid) }
         let Some(graph) = self.call_graph_of(program) else { refuse(self, Refusal::NoUnit); return Err(Unstarted::Declined) };
         super::base_region::count(super::base_region::Event::BodyPlanned);

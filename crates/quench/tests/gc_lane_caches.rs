@@ -7,7 +7,7 @@ use std::process::Command;
 fn lane_caches_retire_at_a_collection_in_every_mode() {
     let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gc_lane_caches.cjs");
     // `--` ends the options: the default mode, every tier on.
-    for flag in ["--no-jit", "--b-jit", "--u-jit", "--"] {
+    for flag in ["--no-jit", "--"] {
         let output = Command::new(env!("CARGO_BIN_EXE_quench"))
             .arg("--expose-gc")
             .arg(flag)

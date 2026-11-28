@@ -26,7 +26,6 @@ const MAX_TOLERANCE: f64 = 0.5;
 /// Selects this mode; the remaining arguments are the ordinary suite options.
 pub(crate) const FLAG: &str = "--tier-invariant";
 const TOLERANCE_FLAG: &str = "--tier-tolerance";
-const Q_JIT_FLAG: &str = "--tier-q-jit";
 
 const BYTES_PER_MIB: u64 = 1 << 20;
 
@@ -38,46 +37,30 @@ struct Mode {
     engine: &'static str,
     label: &'static str,
     flag: Option<&'static str>,
-    /// Measured only when asked for (`--tier-q-jit`).
-    opt_in: bool,
 }
 
 const MODES: &[Mode] = &[
-    Mode { engine: "quench-default", label: "default", flag: None, opt_in: false },
-    Mode { engine: "quench-b-jit", label: "b-jit", flag: Some("--b-jit"), opt_in: false },
-    Mode { engine: "quench-u-jit", label: "u-jit", flag: Some("--u-jit"), opt_in: false },
-    Mode { engine: "quench-q-jit", label: "q-jit", flag: Some("--q-jit"), opt_in: true },
-    Mode { engine: "quench-no-jit", label: "no-jit", flag: Some("--no-jit"), opt_in: false },
+    Mode { engine: "quench-default", label: "default", flag: None },
+    Mode { engine: "quench-no-jit", label: "no-jit", flag: Some("--no-jit") },
 ];
 
-/// `upper` must score at least `lower * (1 - tolerance)`. "default >= every
-/// tier" is one relation per tier: it fails exactly when default trails the
-/// best tier.
-const RELATIONS: &[(&str, &str)] = &[
-    ("default", "b-jit"),
-    ("default", "u-jit"),
-    ("default", "q-jit"),
-    ("b-jit", "no-jit"),
-    ("u-jit", "no-jit"),
-    ("q-jit", "no-jit"),
-];
+/// `upper` must score at least `lower * (1 - tolerance)`: default must not trail the interpreter.
+const RELATIONS: &[(&str, &str)] = &[("default", "no-jit")];
 
 /// Command-line choices of `--tier-invariant`.
 pub(crate) struct Config {
     pub(crate) tolerance: f64,
-    pub(crate) q_jit: bool,
 }
 
 impl Config {
     /// Splits this mode's own flags from the arguments the suite parser takes.
     fn extract(args: &[String]) -> (Self, Vec<String>) {
-        let mut config = Self { tolerance: DEFAULT_TOLERANCE, q_jit: false };
+        let mut config = Self { tolerance: DEFAULT_TOLERANCE };
         let mut rest = Vec::new();
         let mut args = args.iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 FLAG => {}
-                Q_JIT_FLAG => config.q_jit = true,
                 TOLERANCE_FLAG => {
                     config.tolerance = args
                         .next()
@@ -95,9 +78,6 @@ impl Config {
         (0.0..MAX_TOLERANCE).contains(&tolerance)
     }
 
-    fn modes(&self) -> impl Iterator<Item = &'static Mode> + '_ {
-        MODES.iter().filter(|mode| self.q_jit || !mode.opt_in)
-    }
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -169,8 +149,8 @@ struct Report {
 }
 
 fn mode_engines(options: &Options, config: &Config) -> Vec<EngineSpec> {
-    let mut engines: Vec<EngineSpec> = config
-        .modes()
+    let mut engines: Vec<EngineSpec> = MODES
+        .iter()
         .map(|mode| {
             let argv = mode.flag.map(String::from).into_iter().collect();
             spec(mode.engine, &options.quench, argv, BTreeMap::new())
@@ -188,14 +168,14 @@ fn fixture_report(
     output_equal: bool,
 ) -> FixtureReport {
     let per_mode = |read: fn(&super::EngineSummary) -> Option<f64>| {
-        config
-            .modes()
+        MODES
+            .iter()
             .map(|mode| (mode.label, summaries.get(mode.engine).and_then(read)))
             .collect::<BTreeMap<_, _>>()
     };
     let scores = per_mode(|summary| summary.median_score);
-    let max_rss_bytes = config
-        .modes()
+    let max_rss_bytes = MODES
+        .iter()
         .map(|mode| (mode.label, summaries.get(mode.engine).and_then(|s| s.median_max_rss_bytes)))
         .collect();
     let measured = scores
@@ -213,7 +193,7 @@ fn fixture_report(
 }
 
 fn print_table(config: &Config, name: &str, report: &FixtureReport) {
-    let cells = config.modes().map(|mode| {
+    let cells = MODES.iter().map(|mode| {
         let score = report.scores[mode.label];
         let rss = report.max_rss_bytes[mode.label];
         format!(
@@ -269,7 +249,7 @@ pub(crate) fn run(args: &[String]) -> i32 {
         created_unix_ns: now_ns(),
         rounds: options.rounds,
         tolerance: config.tolerance,
-        modes: config.modes().map(|mode| mode.label).collect(),
+        modes: MODES.iter().map(|mode| mode.label).collect(),
         executable: engines[0].executable.display().to_string(),
         host: host_identity(),
         fixtures,
@@ -298,7 +278,7 @@ mod tests {
         entries.iter().copied().collect()
     }
 
-    const ORDERED: &[(&str, f64)] = &[("default", 100.0), ("b-jit", 95.0), ("u-jit", 90.0), ("no-jit", 50.0)];
+    const ORDERED: &[(&str, f64)] = &[("default", 100.0), ("no-jit", 50.0)];
 
     #[test]
     fn ordered_scores_pass() {
@@ -306,33 +286,16 @@ mod tests {
     }
 
     #[test]
-    fn default_trailing_best_tier_beyond_tolerance_fails() {
-        let found = violations(
-            &scores(&[("default", 80.0), ("b-jit", 100.0), ("u-jit", 70.0), ("no-jit", 50.0)]),
-            true,
-            true,
-            DEFAULT_TOLERANCE,
-        );
-        assert_eq!(found.len(), 1);
-        assert!(matches!(&found[0], Violation::Slower { upper, lower, .. } if upper == "default" && lower == "b-jit"));
+    fn default_trailing_the_interpreter_beyond_tolerance_fails() {
+        let found = violations(&scores(&[("default", 40.0), ("no-jit", 50.0)]), true, true, DEFAULT_TOLERANCE);
+        assert!(matches!(&found[..], [Violation::Slower { upper, lower, .. }] if upper == "default" && lower == "no-jit"));
     }
 
     #[test]
     fn shortfall_within_tolerance_passes() {
-        let within = scores(&[("default", 96.0), ("b-jit", 100.0), ("u-jit", 100.0), ("no-jit", 96.0)]);
+        let within = scores(&[("default", 96.0), ("no-jit", 100.0)]);
         assert!(violations(&within, true, true, DEFAULT_TOLERANCE).is_empty());
-        assert_eq!(violations(&within, true, true, 0.0).len(), 2);
-    }
-
-    #[test]
-    fn tier_below_no_jit_fails() {
-        let found = violations(
-            &scores(&[("default", 100.0), ("b-jit", 100.0), ("u-jit", 40.0), ("no-jit", 50.0)]),
-            true,
-            true,
-            DEFAULT_TOLERANCE,
-        );
-        assert!(matches!(&found[..], [Violation::Slower { upper, lower, .. }] if upper == "u-jit" && lower == "no-jit"));
+        assert_eq!(violations(&within, true, true, 0.0).len(), 1);
     }
 
     #[test]
@@ -342,27 +305,10 @@ mod tests {
     }
 
     #[test]
-    fn unmeasured_q_jit_adds_no_relation() {
-        let (config, _) = Config::extract(&[]);
-        assert_eq!(config.modes().count(), MODES.len() - 1);
-        assert!(violations(&scores(ORDERED), true, true, config.tolerance).is_empty());
-    }
-
-    #[test]
-    fn q_jit_joins_the_relations_when_measured() {
-        let mut with_q = scores(ORDERED);
-        with_q.insert("q-jit", 30.0);
-        let found = violations(&with_q, true, true, DEFAULT_TOLERANCE);
-        assert_eq!(found.len(), 1);
-        assert!(matches!(&found[0], Violation::Slower { upper, lower, .. } if upper == "q-jit" && lower == "no-jit"));
-    }
-
-    #[test]
     fn own_flags_are_split_from_suite_options() {
-        let args = ["--fixtures", "a,b", FLAG, TOLERANCE_FLAG, "0.1", Q_JIT_FLAG, "--runs", "2"]
-            .map(String::from);
+        let args = ["--fixtures", "a,b", FLAG, TOLERANCE_FLAG, "0.1", "--runs", "2"].map(String::from);
         let (config, rest) = Config::extract(&args);
-        assert!(config.q_jit && config.tolerance == 0.1);
+        assert!(config.tolerance == 0.1);
         assert_eq!(rest, ["--fixtures", "a,b", "--runs", "2"]);
     }
 

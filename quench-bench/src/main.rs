@@ -2681,7 +2681,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [engine options]\n       quench-bench --tier-differential --quench PATH [--seed S] [--count N] [--iterations N] [--timeout-ms N] [--out-dir DIR]\n       quench-bench --residuals [--quench PATH] [--kernels NAME,NAME,...] [--ratchet PATH] [--update-ratchet] [--timeout-ms N]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [engine options]\n       quench-bench --tier-differential --quench PATH [--seed S] [--count N] [--iterations N] [--timeout-ms N] [--out-dir DIR]\n       quench-bench --residuals [--quench PATH] [--kernels NAME,NAME,...] [--ratchet PATH] [--update-ratchet] [--timeout-ms N]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }

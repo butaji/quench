@@ -433,9 +433,8 @@ struct ProgramEntry {
     aot_facts: std::cell::OnceCell<std::sync::Arc<crate::compile::aot_facts::AotFacts>>,
     /// The program's call graph and its loop-or-cycle facts, solved once beside `aot_facts` (`call_graph`).
     call_graph: std::cell::OnceCell<std::sync::Arc<crate::compile::call_graph::CallGraph>>,
-    /// Per function, its predicted tier as a call of its body from a loop's region or not (`[called outside a loop,
-    /// called by a loop]`), solved once beside `call_graph` (`predicted_tiers`).
-    predicted_tiers: std::cell::OnceCell<std::sync::Arc<[[crate::vm::tier_policy::PredictedTier; 2]]>>,
+    /// Per function, its predicted tier (one argmin over all its entries), solved once beside `call_graph` (`predicted_tiers`).
+    predicted_tiers: std::cell::OnceCell<std::sync::Arc<[crate::vm::tier_policy::PredictedTier]>>,
     /// The program's method selectors (`compile::call_plan::Selectors`), solved once beside `call_graph` (`selectors`).
     selectors: std::cell::OnceCell<std::sync::Arc<crate::compile::call_plan::Selectors>>,
     /// Per class layout: the method vector of the class's `CallRecord` addresses by selector, allocated on first write
@@ -722,14 +721,14 @@ impl ProgramStore {
         })))
     }
 
-    /// The predicted tier of each function of program `id`, per whether a loop region calls it (`tier_policy::predicted_tier`),
-    /// solved on its first call from `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
-    pub fn predicted_tiers(&self, id: ProgramId) -> Option<std::sync::Arc<[[crate::vm::tier_policy::PredictedTier; 2]]>> {
+    /// The predicted tier of each function of program `id` (`tier_policy::predicted_tier`), solved on its first call from
+    /// `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
+    pub fn predicted_tiers(&self, id: ProgramId) -> Option<std::sync::Arc<[crate::vm::tier_policy::PredictedTier]>> {
         let entry = self.entry(id)?;
         let graph = self.call_graph(id)?;
         Some(std::sync::Arc::clone(entry.predicted_tiers.get_or_init(|| {
             (0..entry.residual.functions.len() as u32)
-                .map(|function| [false, true].map(|called_by_loop| crate::vm::tier_policy::predicted_tier(&graph, &entry.residual, function, called_by_loop)))
+                .map(|function| crate::vm::tier_policy::predicted_tier(&graph, &entry.residual, function))
                 .collect()
         })))
     }
@@ -1648,13 +1647,13 @@ impl ProgramStore {
 
     /// Whether the predicted tier of `function` of program `id` is a compiled one: the one predicate of design 4.9 that
     /// every lane derive, entry and back-edge gate and the JavaScript and Wasm entries read. It is the argmin of the
-    /// function's entry column of `predicted_tiers`, or the u-jit of an ahead-of-time image (`tier_policy::body_tier`);
+    /// function's entry in `predicted_tiers`, or the u-jit of an ahead-of-time image (`tier_policy::body_tier`);
     /// false for the interpreter's pick and for a function that does not exist. Which compiled tier a build allows is
     /// the compile sites' question (`tier_policy::lane_body_tier`), not this one's.
     pub fn compiled_tier(&self, id: ProgramId, function: u32) -> bool {
         let Some(table) = self.predicted_tiers(id) else { return false };
         let aot = self.residual(id).is_some_and(|program| self.ahead_images(id, program).is_some());
-        let predicted = table.get(function as usize).map_or(crate::vm::tier_policy::PredictedTier::Interpreter, |row| row[0]);
+        let predicted = table.get(function as usize).copied().unwrap_or(crate::vm::tier_policy::PredictedTier::Interpreter);
         crate::vm::tier_policy::body_tier(aot, predicted) != crate::vm::tier_policy::PredictedTier::Interpreter
     }
 

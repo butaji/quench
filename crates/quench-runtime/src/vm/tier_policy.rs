@@ -6,7 +6,7 @@
 //! never a controller.
 
 use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
-use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
+use crate::compile::call_graph::CallGraph;
 pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
@@ -51,9 +51,8 @@ pub fn arms_inline(plan: &crate::compile::call_plan::CallPlan, graph: &CallGraph
 }
 
 /// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
-/// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, where it
-/// allows no other: `--b-jit` runs Base alone, `--q-jit` Quick alone, `--u-jit` Ultra alone, and a mode that
-/// leaves Base out (aarch64's default) runs Ultra for a Base pick.
+/// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, and a mode
+/// that leaves Base out (aarch64's default) runs Ultra for a Base pick.
 pub fn lane_body_tier(pick: PredictedTier) -> Option<Tier> {
     let wanted = match pick {
         PredictedTier::Interpreter => return None,
@@ -63,7 +62,7 @@ pub fn lane_body_tier(pick: PredictedTier) -> Option<Tier> {
     if crate::jit_mode::tiers_allowed(&[wanted]) {
         return Some(wanted);
     }
-    [Tier::Ultra, Tier::Base, Tier::Quick].into_iter().find(|tier| crate::jit_mode::tiers_allowed(&[*tier]))
+    [Tier::Ultra, Tier::Base].into_iter().find(|tier| crate::jit_mode::tiers_allowed(&[*tier]))
 }
 
 /// The base a share in percent is a share of.
@@ -151,18 +150,9 @@ pub fn may_compile() -> bool {
     crate::jit_mode::tiers_allowed(Tier::ANY)
 }
 
-/// Whether `tier` may publish a body: a tier the mode allows, with QuickJIT only where it is the only Cranelift tier.
+/// Whether `tier` may publish a body: a tier the mode allows.
 pub fn may_publish(tier: Tier) -> bool {
-    match tier {
-        Tier::Quick => crate::jit_mode::quick_only(),
-        tier => crate::jit_mode::tiers_allowed(&[tier]),
-    }
-}
-
-/// Whether QuickJIT is the only Cranelift tier (`--q-jit`): every Cranelift compile is `CompileLevel::Quick`, and a
-/// published lane body is a QuickJIT body.
-pub fn quick_only() -> bool {
-    crate::jit_mode::quick_only()
+    crate::jit_mode::tiers_allowed(&[tier])
 }
 
 /// Whether BaseJIT (stencil) bodies and regions run in this process.
@@ -170,20 +160,9 @@ pub fn base_runs() -> bool {
     crate::jit_mode::tiers_allowed(&[Tier::Base])
 }
 
-/// Whether a Cranelift tier (QuickJIT or UltraJIT) runs: the tiers that compile what BaseJIT does not build.
+/// Whether a Cranelift tier (UltraJIT) runs: the tier that compiles what BaseJIT does not build.
 pub fn cranelift_runs() -> bool {
     crate::jit_mode::tiers_allowed(Tier::CRANELIFT)
-}
-
-/// Whether loop regions take the stencil tier in place of Cranelift: every region is a stencil region, and none
-/// is promoted to UltraJIT.
-pub fn loop_regions_are_stencils() -> bool {
-    crate::jit_mode::base_only()
-}
-
-/// Whether a Wasm module's entries are stitched from stencils, where no Cranelift code is generated.
-pub fn wasm_module_routes_to_stencils() -> bool {
-    crate::jit_mode::base_only()
 }
 
 /// What `policy` lets the tiers compile.
@@ -299,19 +278,19 @@ pub const ENTRY_IR_UJIT: u64 = 300;
 const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
 const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
 
-/// The tier a function runs in: the argmin over the three tiers of its predicted IR. A run of the function costs its
-/// work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in) times its static
-/// frequency (`CallGraph::frequency`) times the tier's cost per bytecode; a compiled tier adds its one-time compile
-/// over the bytecodes; each call of the function pays its tier's entry (`ENTRY_IR_*`). `called_by_loop` is a loop
-/// region's call of the function, one loop more. Ties go to the tier that compiles less: the interpreter, then the
-/// b-jit. Pure: no count and no clock.
-pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32, called_by_loop: bool) -> PredictedTier {
+/// The tier a function runs in: the argmin over the three tiers of its predicted IR. Its entries are its static frequency
+/// (`CallGraph::frequency`), which already weighs each call site `LOOP_WEIGHT` per loop it sits in: a run of the
+/// function costs its work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in)
+/// times the tier's cost per bytecode, for each entry; each entry pays its tier's entry cost (`ENTRY_IR_*`); a compiled
+/// tier adds its one-time compile over the bytecodes, once for the body. Ties go to the tier that compiles less: the
+/// interpreter, then the b-jit. Pure: no count and no clock.
+pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32) -> PredictedTier {
     let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
-    let frequency = graph.frequency(function).saturating_mul(if called_by_loop { LOOP_WEIGHT } else { 1 });
+    let entries = graph.frequency(function);
     let work = graph.loop_work(function);
-    let run = |per_op: u64| frequency.saturating_mul(work).saturating_mul(per_op);
+    let run = |per_op: u64| entries.saturating_mul(work).saturating_mul(per_op);
     let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
-    let entry = |per_call: u64| frequency.saturating_mul(per_call);
+    let entry = |per_call: u64| entries.saturating_mul(per_call);
     let interpreter = run(INTERPRETER_IR_PER_OP).saturating_add(entry(ENTRY_IR_INTERPRETER));
     let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_BJIT));
     let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_UJIT));

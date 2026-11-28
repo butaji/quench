@@ -25,7 +25,6 @@ fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
         ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
         ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
         ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
-        ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
         ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
         ("layout_table_base", quench_runtime::tier_surface::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
         ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),

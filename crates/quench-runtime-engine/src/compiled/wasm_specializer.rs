@@ -1,32 +1,21 @@
-//! The Wasm tiers as specializers of the interpreter onto one program (`vm::specializer`), as
+//! The Wasm tier as a specializer of the interpreter onto one program (`vm::specializer`), as
 //! the JS tiers are (`RegionSpecializer`). The u-jit's Cranelift body and entry
-//! (`Analysis::build_function`, `build_entry`) and the b-jit's stitched rows (`stitched_entry`,
-//! which runs `wasm_stitch::stitch`) are the two publications. The callers keep their drivers,
+//! (`Analysis::build_function`, `build_entry`) are its publication. The callers keep their drivers,
 //! their order and their fallbacks: a failed specialization is an `Err`, which they read as the
-//! function running in the interpreter (or as a callee without an entry).
+//! function running in the interpreter.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::specializer::Specializer;
 
-/// The tier a Wasm function is specialized for, with the inputs that tier reads.
-pub(crate) enum WasmTierChoice<'s, 'a> {
-    /// The u-jit: a Cranelift body and entry, compiled later (`compile_built_functions`).
-    Optimizing {
-        analysis: &'s Analysis<'a>,
-        isa: &'s dyn cranelift_codegen::isa::TargetIsa,
-        guarded: bool,
-        fixed_base: Option<i32>,
-        diagnostics_enabled: bool,
-    },
-    /// The b-jit: the function's stitched rows, which are its entry (`stitched_entry`).
-    Baseline {
-        analysis: &'s Analysis<'a>,
-        memory_slot: Option<u32>,
-        entry_cells: &'s [std::cell::Cell<usize>],
-        callable: &'s [bool],
-    },
+/// The inputs the u-jit's Cranelift body and entry read: the analysis, the ISA and the memory's guard.
+pub(crate) struct WasmOptimizing<'s, 'a> {
+    pub(crate) analysis: &'s Analysis<'a>,
+    pub(crate) isa: &'s dyn cranelift_codegen::isa::TargetIsa,
+    pub(crate) guarded: bool,
+    pub(crate) fixed_base: Option<i32>,
+    pub(crate) diagnostics_enabled: bool,
 }
 
 /// One Wasm function of one program, to be specialized for `tier`.
@@ -41,50 +30,38 @@ pub(crate) struct WasmSpecializer<'s, 'a> {
     pub(crate) reference_site_ids: &'a [(usize, usize)],
     /// The gate's proof that this function's Wasm compile may run (`UnitKind::Wasm`, minted by `specialize`).
     pub(crate) admitted: super::admission::CompiledUnit,
-    pub(crate) tier: WasmTierChoice<'s, 'a>,
+    pub(crate) tier: WasmOptimizing<'s, 'a>,
 }
 
-/// What a Wasm specialization publishes.
+/// What a Wasm specialization publishes: the Cranelift body and entry of the function, not yet compiled to code.
 pub(crate) enum WasmResidual {
-    /// The Cranelift body and entry of the function, not yet compiled to code.
     Compiled(ir::Function, ir::Function),
-    /// The function's stitched rows: its whole entry, in the `WasmEntry` ABI.
-    Rows(Vec<u8>),
 }
 
 impl Specializer for WasmSpecializer<'_, '_> {
     type Residual = WasmResidual;
 
-    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
+    fn specialize(self, _program: &ResidualProgram) -> Result<Self::Residual, String> {
         let Self { index, plans, full_plan, reference_site_ids, tier, admitted } = self;
         let _ = admitted;
-        match tier {
-            WasmTierChoice::Optimizing { analysis, isa, guarded, fixed_base, diagnostics_enabled } => {
-                // The body, then the entry, in the order the u-jit driver always built them.
-                let body = analysis.build_function(
-                    isa,
-                    index,
-                    full_plan,
-                    plans,
-                    guarded,
-                    fixed_base,
-                    reference_site_ids,
-                    diagnostics_enabled,
-                );
-                let plan = plans
-                    .get(index)
-                    .and_then(Option::as_ref)
-                    .ok_or_else(|| format!("function {index} has no plan"))?;
-                let entry = analysis.build_entry(isa, index, plan, MemoryArguments::of(fixed_base, guarded));
-                let body = body.ok_or_else(|| format!("function {index} does not build a body"))?;
-                Ok(WasmResidual::Compiled(body, entry))
-            }
-            WasmTierChoice::Baseline { analysis, memory_slot, entry_cells, callable } => {
-                let _ = program;
-                stitched_entry(analysis, index, (plans, entry_cells, callable), memory_slot, (full_plan, reference_site_ids))
-                .map(WasmResidual::Rows)
-                .ok_or_else(|| format!("function {index} does not stitch"))
-            }
-        }
+        let WasmOptimizing { analysis, isa, guarded, fixed_base, diagnostics_enabled } = tier;
+        // The body, then the entry, in the order the u-jit driver always built them.
+        let body = analysis.build_function(
+            isa,
+            index,
+            full_plan,
+            plans,
+            guarded,
+            fixed_base,
+            reference_site_ids,
+            diagnostics_enabled,
+        );
+        let plan = plans
+            .get(index)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("function {index} has no plan"))?;
+        let entry = analysis.build_entry(isa, index, plan, MemoryArguments::of(fixed_base, guarded));
+        let body = body.ok_or_else(|| format!("function {index} does not build a body"))?;
+        Ok(WasmResidual::Compiled(body, entry))
     }
 }

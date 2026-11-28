@@ -12,24 +12,10 @@ use std::{cell::RefCell, rc::Rc};
 /// The tier a run is held to.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Tier {
-    /// `--b-jit`: stencil bodies.
-    BJit,
-    /// `--u-jit`: Cranelift bodies.
-    UJit,
-    /// Both tiers, as a process runs by default.
+    /// Every tier, as a process runs by default: the policy picks each function's tier.
     Full,
-    /// Both tiers, with the guard of this index forced to leave (`forced_miss`).
+    /// Every tier, with the guard of this index forced to leave (`forced_miss`).
     Forced(usize),
-}
-
-impl Tier {
-    pub(super) fn jit_mode(self) -> JitMode {
-        match self {
-            Self::BJit => JitMode::BaseOnly,
-            Self::UJit => JitMode::UltraOnly,
-            Self::Full | Self::Forced(_) => JitMode::Full,
-        }
-    }
 }
 
 /// What the tier must have done: at least `completed` bodies ending their activation, and at
@@ -75,14 +61,14 @@ impl Run {
 
 /// `source` run after the global scripts `scripts` (source and name) in one realm, in `mode`
 /// under `jit`.
-pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, jit: JitMode) -> Run {
+pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode) -> Run {
     let program = Engine::specialize(source, "oracle.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     quench_runtime::vm::engine_calls::EngineVm::set_execution_mode(&mut vm, mode);
     vm.programs.enable_js_lane_methods();
-    let completion = quench_runtime::jit_mode::with_mode(jit, || if scripts.is_empty() {
+    let completion = quench_runtime::jit_mode::with_mode(JitMode::Full, || if scripts.is_empty() {
         quench_runtime::test_support::execute(&mut vm, &program).map(drop)
     } else {
         quench_runtime::test_support::execute_after_scripts(&mut vm, scripts, &program).map(drop)
@@ -108,9 +94,9 @@ pub(super) fn assert_tier_agrees_after(scripts: &[(&str, &str)], source: &str, t
 /// outcomes agree, whatever the tier ran; the tier's run. A program whose point is its semantics,
 /// not a tier's engagement, is held to this alone.
 pub(super) fn assert_outcomes_agree_after(scripts: &[(&str, &str)], source: &str, tier: Tier) -> Run {
-    let interpreted = run(source, scripts, ExecutionMode::Interpreted, JitMode::Full);
+    let interpreted = run(source, scripts, ExecutionMode::Interpreted);
     forced_miss::arm(match tier { Tier::Forced(guard) => Some(guard), _ => None });
-    let compiled = run(source, scripts, ExecutionMode::Compiled, tier.jit_mode());
+    let compiled = run(source, scripts, ExecutionMode::Compiled);
     forced_miss::arm(None);
     assert_eq!(compiled.outcome, interpreted.outcome, "{tier:?} ended unlike the interpreter");
     compiled

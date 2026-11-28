@@ -50,7 +50,7 @@ pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
 }
 
 /// `[options] <x>.qimg [args]`: stage the image file's programs, then run its entry under `options`
-/// (the mode flags, as `--b-jit`, which precede a script).
+/// (the mode flags, as `--no-jit`, which precede a script).
 pub fn run(options: &[String], image: &str, arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     let file = std::fs::read(image).map_err(|error| format!("{image}: {error}"))?;
     run_file(options, image, &file, arguments)
@@ -78,7 +78,7 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
 
 /// The image command line, if it is one: `[options] <x>.qimg ...`.
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
-    // Options (`--b-jit`, `--no-jit`) may precede the image, as they precede a script.
+    // Options (`--no-jit`) may precede the image, as they precede a script.
     let at = arguments.iter().position(|argument| !argument.starts_with("--"))?;
     let (options, [image, rest @ ..]) = arguments.split_at(at) else { return None };
     image.ends_with(EXTENSION).then(|| run(options, image, rest.iter().cloned()))
