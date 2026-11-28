@@ -223,10 +223,11 @@ impl Proofs {
         }
     }
 
-    /// Whether a String method named `atom` is still the host's: no store or definition names it, and nothing the analysis
-    /// cannot follow may reach a builtin prototype (a builtin some call may define on, `changed`, may be one).
-    pub(super) fn string_method(&self, atom: u32) -> bool {
-        !self.wild && !self.defined && !self.any_change && self.changed.is_empty() && !self.stored.contains(&atom)
+    /// Whether a String method named `atom` is still the host's: no store or definition names it, and no call the analysis
+    /// cannot follow may be handed `String` or its prototype (`changed` names the global `string`, String.prototype's).
+    pub(super) fn string_method(&self, atom: u32, string: Option<u32>) -> bool {
+        !self.wild && !self.defined && !self.any_change && string.is_none_or(|global| !self.changed.contains(&global))
+            && !self.stored.contains(&atom)
     }
 
     /// Whether global `atom` is still the builtin the host installed: the program never writes it, nor reaches the
