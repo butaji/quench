@@ -109,7 +109,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity.
-        if !self.callee_is_builtin(defined, pc, callee) {
+        if !self.callee_is_builtin(pc, callee) {
             let held = self.tagged(state, callee);
             let same = self.is_identity(held, value);
             emit_js_guard(&mut self.builder, same, exit);
