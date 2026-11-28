@@ -397,7 +397,7 @@ impl GenerationalPacing {
 
     /// Whether the collection after `outcome` is full: old growth or allocation past the
     /// table's bounds, or live weight growth.
-    fn next_full(&self, state: &PacingState, outcome: &CollectionOutcome) -> bool {
+    fn next_full(&self, _state: &PacingState, outcome: &CollectionOutcome) -> bool {
         self.full_due(outcome.live_after_full, outcome.live, outcome.since_full)
             || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight)
     }

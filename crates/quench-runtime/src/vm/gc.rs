@@ -1025,9 +1025,6 @@ impl Vm {
             Some(&closure_reads),
             full,
         );
-        if let Roots::Closed(_) = policy {
-            self.prune_closed_realm();
-        }
         // The heap's collection counter advanced inside that call, the only path into it: every
         // cache keyed on `CacheEpochs::gc` retires here, before any VM code reads one again.
         self.cache_epochs.bump_gc();
@@ -1041,6 +1038,10 @@ impl Vm {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
+        // The closed-world dump's realm pruning runs once the shape trace has been read (it borrows the VM's shape tables).
+        if let Roots::Closed(_) = policy {
+            self.prune_closed_realm();
+        }
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
         // Heap weak fields are pruned during collection. Prune the VM-owned

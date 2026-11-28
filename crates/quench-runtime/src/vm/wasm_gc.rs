@@ -1,5 +1,6 @@
 use super::*;
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue, ObjectLayout};
+use crate::staged::wasm_memory_bytes::MemoryLoadWasmMemoryBytesExt;
 
 mod window;
 pub mod stage;

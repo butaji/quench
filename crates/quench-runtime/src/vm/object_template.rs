@@ -130,7 +130,7 @@ impl Vm {
                     if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                         return None;
                     }
-                    self.heap.property_get(data, slot)?
+                    self.heap.property_get_ref(data, slot)?
                 }
                 None => Value::DELETED,
             };
@@ -234,7 +234,7 @@ impl Vm {
                 return true;
             };
             self.template_layout_object(probe.holder)
-                .and_then(|object| self.heap.property_get(object, slot as usize))
+                .and_then(|object| self.heap.property_get_ref(object, slot as usize))
                 == Some(probe.value)
         })
     }

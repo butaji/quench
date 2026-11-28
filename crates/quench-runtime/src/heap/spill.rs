@@ -154,11 +154,11 @@ pub(super) fn dispose_dead_runs<'a, T, F: Fn(&ValueArena, u32) -> Option<u32>>(
         }
         if layouts::class_is_dictionary(class) {
             // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
-            let word = unsafe { *cell.add(1) };
+            let word = Value::from_bits(unsafe { *cell.add(1) });
             values.release_dictionary(dictionary_id_of(word));
         } else if let Some(from) = spill_of(&*values, class) {
             // SAFETY: the spill word is the cell's field `from`, one word past its header.
-            let word = unsafe { *cell.add(1 + from as usize) };
+            let word = Value::from_bits(unsafe { *cell.add(1 + from as usize) });
             arena.free_run(spill_offset_of(word));
         }
         false

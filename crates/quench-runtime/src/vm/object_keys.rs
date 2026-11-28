@@ -176,7 +176,7 @@ impl Vm {
     pub(super) fn shape_enumerable_slots_checked(
         &self,
         object: Value,
-        data: &Object,
+        data: crate::heap::ObjectRef<'_>,
     ) -> Option<super::enumerable_key_memo::EnumerableSlots> {
         let shape = data.shape();
         if let Some(slots) = self.enumerable_keys.get(shape) {

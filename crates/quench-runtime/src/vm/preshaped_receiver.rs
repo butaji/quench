@@ -65,7 +65,6 @@
 //! would have saved.
 use super::*;
 use crate::bytecode::FieldConstant;
-use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::engine_types::FixedUnion;
 
 /// Entries in the direct-mapped `Vm::preshaped_receivers` memo; a power of two.

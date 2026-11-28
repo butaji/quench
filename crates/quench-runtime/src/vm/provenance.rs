@@ -481,7 +481,7 @@ impl Vm {
         if object.was_used_as_prototype() {
             return None;
         }
-        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+        if let Some((constructor, _, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
             // An anonymous constructor's root names nothing: its empty name reads as no name, as it did before the root was made.
             return new_target_is_base
                 .then(|| self.debug_function_name(constructor))

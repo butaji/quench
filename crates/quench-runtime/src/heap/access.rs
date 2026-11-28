@@ -3,7 +3,7 @@ use super::{
     PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
-use crate::value::{HeapReference, ObjectRef32, Value};
+use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use super::object_view::{ObjectMut, ObjectRef};
 use std::collections::HashSet;

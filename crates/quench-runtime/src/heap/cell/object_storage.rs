@@ -390,7 +390,4 @@ impl Object {
         }
         previous
     }
-
-    /// Takes `source`'s property values, given `properties`, the arena's duplicate of
-    /// `source.properties()`, and returns the storage this object held before.
 }

@@ -15,7 +15,7 @@ impl ProgramStore {
         if self.ahead_images(id, p).is_some() {
             return false;
         }
-        std::ptr::eq(&**entry.residual, p) && entry.compiled.is_none() && entry.wasm_signatures.is_none()
+        std::ptr::eq(&**entry.residual, p) && entry.wasm_signatures.is_none()
     }
 
     /// Adds `values`, the materialized constants a chunk appended to program `id`, to its own.
