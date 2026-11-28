@@ -4997,12 +4997,7 @@ impl Heap {
             return;
         }
         if let Some(granule) = self.live_class_cell(object) {
-            // An ordinary cell's add is its class edge (`class_cell_add`): the new slot follows its shape's last, and
-            // the cell takes `shape`'s class in place (a field past its region spills into its run).
-            let before = class_shape(class_space::header_class(self.class_space.header(granule)));
-            let slot = self.properties.shape_length(before);
-            self.class_cell_add(granule, before, shape, slot, value);
-            return;
+            return self.class_cell_append(granule, value, shape);
         }
         let _slot = if let Some(object_ref) = object.direct_object_index() {
             // An add appends to a record's arena run (a departed cell is a record).

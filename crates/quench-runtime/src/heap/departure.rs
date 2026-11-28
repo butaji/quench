@@ -181,6 +181,14 @@ impl Heap {
         }
     }
 
+    /// The append of `value` to live cell `granule` (not dictionary storage), which moves it to `shape`: the new slot is
+    /// the one after its shape's last, and the cell takes `shape`'s class in place (`class_cell_add`).
+    pub(crate) fn class_cell_append(&mut self, granule: u32, value: Value, shape: u32) {
+        let before = layouts::class_shape(header_class(self.class_space.header(granule)));
+        let slot = self.properties.shape_length(before);
+        self.class_cell_add(granule, before, shape, slot, value);
+    }
+
     /// The add of `value` as field `slot` of live cell `granule` along the shape edge `before` -> `after`, for a cell with
     /// no class key (a constant-marked cell, `live_class_key`): the mark clears first (`note_cell_write` retires the
     /// readers of the mark), then the add is `class_cell_add`, which takes the after-shape's class in place.
