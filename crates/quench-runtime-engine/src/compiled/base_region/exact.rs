@@ -47,7 +47,7 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
     let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
-    let seeds = Seeds { contracts: &[], model: None, signless: &[] };
+    let seeds = Seeds::typed();
     let mut exact: BitSet = BitSet::with_capacity(instructions.len());
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(constants, instructions[pc]) {
