@@ -44,7 +44,6 @@ pub(crate) mod entry_facts;
 pub(crate) mod exact;
 pub(crate) mod fold;
 pub(crate) mod function;
-pub(crate) use function::inlined_exit_key;
 pub(crate) mod globals;
 pub(crate) mod link;
 pub(crate) mod locals;
@@ -342,13 +341,13 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<Site>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], sites: &[Option<Site>], seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
     loop {
         let (webs, renamed) = Webs::split(span, decoded, &merged);
-        let reprs = representations(span, &renamed, widened, seen, &webs);
+        let reprs = representations(span, &renamed, sites, seen, &webs);
         let homes = Homes::of(&ranked(&renamed, &reprs, Some(Representation::Int32)), &ranked(&renamed, &reprs, Some(Representation::Float64)), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {

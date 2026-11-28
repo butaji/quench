@@ -1134,18 +1134,17 @@ pub(super) fn leave_counts_in_lane(cx: *mut LaneContext, exit: crate::compiled::
 }
 
 /// With diagnostics, counts a leave of `own`'s body into a warming callee, which
-/// `leave_counts_in_lane` keeps from its feedback, in the view's report.
+/// `leave_counts_in_lane` keeps out of the body's leave counts, in the view's report.
 pub(super) fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
     if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
         own.tier().body_stats.warming_leaves.set(own.tier().body_stats.warming_leaves.get() + 1);
     }
 }
 
-/// Counts a run of `own`'s body that ended at `exit` on its typed edge (`ExitTable::cross`), and in the diagnostics leave table.
+/// Records a run of `own`'s body that ended at `exit` in the diagnostics leave table.
 #[inline(always)]
 pub(super) fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
     crate::compiled::body_leave::body_ended(cx, exit);
-    method.exits.cross(exit);
     if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
     }

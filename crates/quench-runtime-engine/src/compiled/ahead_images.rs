@@ -527,8 +527,7 @@ impl Vm {
         let slots = guard_dependencies(&images.image, self, &lane.code);
         let holders = holder_dependencies(&images.image, self, &lane.code);
         // The leaves the image's lowering laid out, each inlined one with the values it stores.
-        let exits = ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone(),
-            crossings: (0..lane.exits.sites.len()).map(|_| std::cell::Cell::new(0)).collect() };
+        let exits = ExitTable { sigs: lane.exits.sigs.clone(), sites: lane.exits.sites.clone() };
         // Closed (`LaneMethod::closed`): every call it makes that is no inlined frame's is a proven one, which a direct
         // caller's native frames admit as a JIT body's direct calls; its entry cell then publishes it, which the
         // proven calls of other image bodies enter. A body with any other call takes the VM's helper there.

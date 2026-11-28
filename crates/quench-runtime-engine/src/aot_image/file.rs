@@ -186,8 +186,7 @@ fn read_exits(words: &mut Words<'_>) -> Result<ExitTable, String> {
         let fact = *FACTS.get(usize::from(words.byte()?)).ok_or("an exit fact the image cannot name")?;
         Ok(ExitSite { word, sig, id, unit_pc, fact })
     }).collect::<Result<Vec<_>, String>>()?;
-    let crossings = (0..sites.len()).map(|_| std::cell::Cell::new(0)).collect();
-    Ok(ExitTable { sigs, sites, crossings })
+    Ok(ExitTable { sigs, sites })
 }
 
 fn put_base(out: &mut Vec<u8>, base: &BaseImage) {

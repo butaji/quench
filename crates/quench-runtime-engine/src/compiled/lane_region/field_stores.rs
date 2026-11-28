@@ -251,8 +251,7 @@ impl Lowering<'_, '_> {
 
     /// Whether a store of a loop region that its in-place arms miss leaves at its PC rather than
     /// calling the VM's store: the call would spill every value live across the loop and keep the
-    /// loop's poll (a reentry). A store left at often enough is widened (`LoopTier::left_at`), and
-    /// the recompile takes the VM's store there.
+    /// loop's poll (a reentry). A store that added its property (`lane_compile::adding_stores`) takes the VM's store there.
     pub(super) fn store_leaves(&self) -> bool {
         matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&self.at)
     }
