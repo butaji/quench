@@ -4975,7 +4975,7 @@ impl Vm {
                 let facts = self.programs.aot_facts(id);
                 let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false), false,
+                    derive_lane_view(id, function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false), false,
                         facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };
@@ -5645,12 +5645,12 @@ const LOAD_NAME_CALL: u8 = 1;
 /// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
-/// What a by-name load's first run resolves its name to: the `name_row` instance its
-/// record runs from then on, which holds the binding.
+/// How a by-name load or store's name resolves, decided at load (`name_resolution`): the `name_row` instance its
+/// record runs from, which holds the binding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameResolution {
-    /// The active realm's function for the native an internal name stands for
-    /// (`Vm::intrinsic_natives`), which no binding can shadow and no scope affects.
+    /// The active realm's function for the native an internal name stands for, which no binding can shadow and no scope
+    /// affects.
     Native,
     /// The global `undefined`, which is non-writable and non-configurable and which no global
     /// lexical declaration may shadow (GlobalDeclarationInstantiation rejects a restricted
@@ -5669,95 +5669,19 @@ enum NameResolution {
 }
 
 
-script_handler! {
-    /// A by-name load's first run, the miss its generated row takes (`name_load_miss`): the VM's
-    /// resolution of its name (`name_resolution`) fills the record, whose handler from then on
-    /// is the row instance (`name_row`) holding the binding, or leaves every run to the general
-    /// path. `KIND` is the load's (`LOAD_NAME`).
-    #[inline(never)]
-    fn load_name_resolve_miss<KIND: u8>(cx, r, ip, i, view) {
-        let load = match KIND {
-            LOAD_NAME_CALL => quench_runtime::staged::NameLoad::Call,
-            LOAD_NAME_TYPEOF => quench_runtime::staged::NameLoad::Typeof,
-            _ => quench_runtime::staged::NameLoad::Read,
-        };
-        let bound: Handler = match name_resolution(cx, i.imm()) {
-            NameResolution::Native => name_row::<FLAG_NAME_NATIVE>(load),
-            NameResolution::Undefined => name_row::<FLAG_NAME_UNDEFINED>(load),
-            NameResolution::Global => name_row::<FLAG_NAME_GLOBAL>(load),
-            NameResolution::Intrinsic => name_row::<FLAG_NAME_INTRINSIC>(load),
-            NameResolution::General => {
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                if code.function_get(running_function_in_lane(cx) as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-                    let scoped = name_row::<FLAG_SCOPE>(load);
-                    requicken(ip, scoped);
-                    sibling!(scoped, r, ip, Carried::script_in(cx, view))
-                }
-                // Any other name's scope is a runtime fact, which the general path's read settles
-                // (`name_probe_miss`).
-                if !unsafe { vm(cx) }.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
-                    // The probe is the row's miss at `FLAG_PROBE` (`name_probe`), which settles the record after.
-                    let probing = name_row::<{ lane_frame::FLAG_PROBE }>(load);
-                    requicken(ip, probing);
-                    sibling!(probing, r, ip, Carried::script_in(cx, view))
-                }
-                requicken(ip, exit_lane);
-                return exit(ip);
-            }
-        };
-        requicken(ip, bound);
-        sibling!(bound, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-
 /// The global value property `name_resolution` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
-    /// A `StoreName` row's miss (`Miss::StoreNameFirst`), the name's first-run resolution: an
-    /// assignment to a name the global object answers whenever no global lexical binding
-    /// shadows it (as `name_resolution` decides for a read) takes
-    /// `store_global_name_miss`, a `var`'s initializer too, which stores as one: the
-    /// declaration made the property, and a lexical binding is never hinted. The record stays
-    /// on its row, which stores through the hint this arm sets. Any other store always takes
-    /// the general path.
-    #[inline(never)]
-    fn store_name_first_miss<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let function = running_function_in_lane(cx);
-        let global = !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-            && vm.programs.names_are_global(unsafe { (*cx).program });
-        if global {
-            sibling!(store_global_name_miss, r, ip, Carried::script_in(cx, view))
-        }
-        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-            let scoped = lane_frame::scoped_store_row();
-            requicken(ip, scoped);
-            sibling!(scoped, r, ip, Carried::script(cx))
-        }
-        requicken(ip, exit_lane);
-        exit(ip)
-    }
-}
-
-script_handler! {
-    /// The global name store past the row's hint (`global_name_store`): the global object's own
-    /// writable data field, which becomes the hint where no realm declares the name lexically
-    /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
-    /// from then on.
+    /// The global name store past the row's hint (`global_name_store`), which a global store's row takes at load: the
+    /// global object's own writable data field, which becomes the hint where no realm declares the name lexically
+    /// (`Vm::global_name_hintable`). Where a realm declares it, the store leaves to the general path at this store, and
+    /// the record keeps its row: a declaration retires the hints (`note_global_lexical_names`).
     #[inline(never)]
     fn store_global_name_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (atom, globals) = (i.imm(), vm.realm.globals);
-        // A lexical declaration of the name is never withdrawn, so its stores always take the
-        // general path.
         if !vm.global_name_hintable(atom) {
-            requicken(ip, exit_lane);
             return exit(ip);
         }
         let Some(hint) = vm
@@ -5772,15 +5696,15 @@ script_handler! {
 }
 
 script_handler! {
-    /// `name_row` of a global, past its record's hint: an
-    /// initialized global lexical binding of
-    /// the name, which the general path's search finds first there; else the global object's
-    /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
-    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general
-    /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
-    /// `undefined`.
+    /// `name_row` of a global, past its record's hint: an initialized global lexical binding of the name, which the
+    /// general path's search finds first there, and which a `LEXICAL` row's hint locates by index; else the global
+    /// object's own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
+    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general path for an
+    /// uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`. A global row that
+    /// finds a lexical binding keeps no hint: its row reads the global object's hint, which a lexical index must not
+    /// name, so the read repeats here until a declaration retires the hints (`note_global_lexical_names`).
     #[inline(never)]
-    fn global_name_refresh_miss<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
+    fn global_name_refresh_miss<KIND: u8, SCOPED: bool, LEXICAL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -5788,27 +5712,19 @@ script_handler! {
         // A read the general path found past a scope that could declare the name holds only
         // until some scope does (`Vm::note_dynamic_scope_name`).
         if SCOPED && vm.scope_names.declared(atom) {
-            requicken(ip, exit_lane);
             return exit(ip);
         }
         let value = match vm.global_name_read(code, atom, i.c) {
             quench_runtime::vm::field_cache::GlobalNameRead::Value(value, hint) => {
                 if let Some(hint) = hint {
                     set_field_hint(ip, hint);
-                } else if !SCOPED
+                } else if LEXICAL
                     && let Some(index) = vm.realm.global_lexical_bindings.get_index_of(&atom)
                     && let Ok(index) = u16::try_from(index)
                     && index != NO_CALL_LINK
                 {
-                    // A declared name's read names its binding by index (`FLAG_NAME_LEXICAL`'s row),
-                    // which the global lexical bindings never move.
+                    // A declared name's row locates its binding by index, which the global lexical bindings never move.
                     set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, index));
-                    let load = match KIND {
-                        LOAD_NAME_CALL => quench_runtime::staged::NameLoad::Call,
-                        LOAD_NAME_TYPEOF => quench_runtime::staged::NameLoad::Typeof,
-                        _ => quench_runtime::staged::NameLoad::Read,
-                    };
-                    requicken(ip, name_row::<FLAG_NAME_LEXICAL>(load));
                 }
                 value
             }

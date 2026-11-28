@@ -160,7 +160,6 @@ impl Vm {
             concat_memo: _,
             regexp_matchers: _,
             atom_classes: _,
-            intrinsic_natives: _,
             native_table: _, first_chunks: _, streamed_stubs: _,
             dynamic_strings: _,
             symbol_registry,
@@ -561,7 +560,6 @@ impl Vm {
         self.name_atom_memo.clear();
         self.private_site_homes.clear();
         self.atom_classes.clear();
-        self.intrinsic_natives.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();

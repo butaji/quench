@@ -456,29 +456,18 @@ pub(super) fn cross_plain_handler(argc: u16) -> Handler {
     }
 }
 
-/// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
-/// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
-/// binding source text can declare, except the internal globals the realm installs on its global
+/// The resolution of the by-name load or store of `atom` in program `id`, decided at load from static facts only: the
+/// atom's text, whether the function's names resolve statically (`names_static`) and whether the program's names are
+/// global (`names_are_global`). A native an internal name stands for is read from the atom's text by its row. An
+/// internal name is no binding source text can declare, except the internal globals the realm installs on its global
 /// object, which a static lookup reads as any other.
-pub(super) fn name_resolution(cx: *mut LaneContext, atom: u32) -> NameResolution {
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let vm = unsafe { vm(cx) };
+pub(super) fn name_resolution(vm: &Vm, residual: &quench_runtime::ResidualProgram, id: quench_runtime::vm::ProgramId, names_static: bool, atom: u32) -> NameResolution {
     let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
-    if internal && let Some(native) = quench_runtime::bytecode::intrinsic_name_native(&code.atoms[atom as usize]) {
-        let slot = atom as usize;
-        if vm.intrinsic_natives.len() <= slot {
-            vm.intrinsic_natives.resize(slot + 1, None);
-        }
-        vm.intrinsic_natives[slot] = Some(native);
+    if internal && quench_runtime::bytecode::intrinsic_name_native(&residual.atoms[atom as usize]).is_some() {
         return NameResolution::Native;
     }
-    // The running function decides the name's scope: a running leaf's is its materialized
-    // activation's.
-    materialize_running_leaf_in_lane(cx);
-    let function = running_function_in_lane(cx);
-    let global = code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
-        && vm.programs.names_are_global(unsafe { (*cx).program })
+    let global = names_static
+        && vm.programs.names_are_global(id)
         && (!internal || quench_runtime::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(atom)));
     match (global, vm.atom_name(atom)) {
         (true, UNDEFINED_GLOBAL) => NameResolution::Undefined,

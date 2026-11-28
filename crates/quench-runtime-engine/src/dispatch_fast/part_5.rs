@@ -152,6 +152,7 @@ pub(super) fn plain_frame_local(function: &Function, slot: usize) -> bool {
 /// Without facts (`None`) the view takes no cell's instance.
 #[cfg(feature = "jit")]
 pub(crate) fn derive_lane_view<'live>(
+    program: quench_runtime::vm::ProgramId,
     function_id: u32,
     function: &Function,
     constants: &[Value],
@@ -182,6 +183,8 @@ pub(crate) fn derive_lane_view<'live>(
         .then(|| memory_register(function))
         .flatten();
     let entries = entered_records(&decoded, function.parameter_end_pc);
+    // The program and its facts that decide the by-name rows (`named_name_row`); none where the facts do not decide.
+    let named_program = facts.and_then(|facts| vm.programs.get(program).map(|residual| (residual, facts)));
     // Wasm instructions, whose fusions the passes under `wasm` make, occur only in Wasm
     // bodies: JavaScript compiles to none of them.
     let wasm = kind == quench_runtime::bytecode::ProgramKind::Wasm;
@@ -323,13 +326,19 @@ pub(crate) fn derive_lane_view<'live>(
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                // The installed row of the opcode and accumulator; where that is the first-run field read, the load
-                // chooses its row from the atom and base instead (`named_read_row`), keeping the row's `produces`.
-                handler_in_lane(backward_jump, acc, op as usize).map(|row| {
-                    match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
+                // The installed row of the opcode and accumulator. Where that is the first-run field read, the load chooses its
+                // row from the atom and base instead (`named_read_row`); a by-name load or store chooses its row from its name's
+                // static resolution (`named_name_row`). Either keeps the row's `produces`.
+                handler_in_lane(backward_jump, acc, op as usize).and_then(|row| {
+                    if by_name_default(op).is_some_and(|default| default as usize == row.handler as usize) {
+                        let (residual, facts) = named_program.as_ref()?;
+                        return named_name_row(vm, residual, program, facts, function_id, op, instruction.imm())
+                            .map(|handler| LaneHandler { handler, ..row });
+                    }
+                    Some(match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
                         Some(handler) => LaneHandler { handler, ..row },
                         None => row,
-                    }
+                    })
                 })
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
@@ -1443,6 +1452,44 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction) -> 
     // miss where they are not yet bound.
     let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
     Some(single_base_handler(base, this, register, row_get_field_miss))
+}
+
+/// The default row of the by-name load or store `op`, which `named_name_row` replaces at load. `None` for any other opcode.
+fn by_name_default(op: quench_runtime::bytecode::Op) -> Option<Handler> {
+    if let Some(load) = quench_runtime::staged::name_load(op) {
+        return Some(name_row::<FLAG_UNREAD>(load));
+    }
+    (op == quench_runtime::bytecode::Op::StoreName).then(|| generated_row!(quench_runtime::staged::GLOBAL_WRITE_ROW, ACC_NONE, FLAG_UNREAD) as Handler)
+}
+
+/// The row of the by-name load or store `op` of `atom` in function `function_id` of program `id`, chosen at load from the
+/// program's static facts: the name's resolution (`name_resolution`), the function's static name scope (`names_static`),
+/// the closed world's global lexical names (`global_lexical_names`) and the function's window scope
+/// (`CallPlan::holds_window_scope`). A global store keeps its default row, whose miss stores through the global object's
+/// hint, except a name the closed world declares lexically, whose stores leave to the general path. `None` is the generic
+/// step, which the record takes where no fact decides it.
+fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::ResidualProgram, id: quench_runtime::vm::ProgramId,
+    facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, op: quench_runtime::bytecode::Op, atom: u32) -> Option<Handler> {
+    let names_static = facts.function_facts(function_id).names_static();
+    let window = residual.function_get(function_id as usize).is_some_and(|body| body.call_plan(residual).holds_window_scope());
+    let lexical = facts.global_lexical_names().binary_search(&atom).is_ok();
+    let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
+    if let Some(load) = quench_runtime::staged::name_load(op) {
+        return match name_resolution(vm, residual, id, names_static, atom) {
+            NameResolution::Native => Some(name_row::<FLAG_NAME_NATIVE>(load)),
+            NameResolution::Undefined => Some(name_row::<FLAG_NAME_UNDEFINED>(load)),
+            NameResolution::Global if lexical => Some(name_row::<FLAG_NAME_LEXICAL>(load)),
+            NameResolution::Global => Some(name_row::<FLAG_NAME_GLOBAL>(load)),
+            NameResolution::Intrinsic => Some(name_row::<FLAG_NAME_INTRINSIC>(load)),
+            NameResolution::General if window => Some(name_row::<FLAG_SCOPE>(load)),
+            NameResolution::General if !internal => Some(name_row::<{ lane_frame::FLAG_PROBE }>(load)),
+            NameResolution::General => None,
+        };
+    }
+    if names_static && !internal && vm.programs.names_are_global(id) {
+        return (!lexical).then(|| by_name_default(op)).flatten();
+    }
+    window.then(lane_frame::scoped_store_row)
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at

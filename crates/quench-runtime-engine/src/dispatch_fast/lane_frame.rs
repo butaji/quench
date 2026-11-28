@@ -44,7 +44,7 @@ type ConstantFieldsTest = unsafe fn(*mut (), Value, u16) -> bool;
 /// How a by-name load's record reads its name once resolved (`name_resolution`).
 #[derive(Clone, Copy)]
 pub(crate) enum NameRead {
-    /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
+    /// The active realm's function for the native the name's text stands for (`intrinsic_name_native`).
     Native,
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
@@ -2323,7 +2323,7 @@ impl<const OP: u16, const FLAG: u8> quench_runtime::staged::Fields for LaneField
 pub(crate) const FLAG_UNREAD: u8 = 0;
 pub(crate) const FLAG_CLEAR: u8 = 1;
 pub(crate) const FLAG_SET: u8 = 2;
-/// `generated_row`'s `FLAG` for a by-name load (`NameLoad`) whose first run resolved its name to a
+/// `generated_row`'s `FLAG` for a by-name load (`NameLoad`) whose name, resolved at load, is a
 /// native an internal name stands for (`NameRead::Native`).
 pub(crate) const FLAG_NAME_NATIVE: u8 = 3;
 /// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
@@ -2337,9 +2337,9 @@ pub(crate) const FLAG_NAME_INTRINSIC: u8 = 6;
 /// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
 /// but a refresh checks the scopes' declarations first (`global_name_refresh_miss`, `SCOPED`).
 pub(crate) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
-/// `FLAG` of a by-name load of a declared global lexical name: its record's hint locates the binding by
-/// index (`NameRead::Lexical`), which a refresh of a global name requickens to (`global_name_refresh_miss`).
-/// Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
+/// `FLAG` of a by-name load of a name the closed world declares lexically (`AotFacts::global_lexical_names`): its
+/// record's hint locates the binding by index (`NameRead::Lexical`), which its refresh sets (`global_name_refresh_miss`,
+/// `LEXICAL`). Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
 pub(crate) const FLAG_NAME_LEXICAL: u8 = 16;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
@@ -2483,8 +2483,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         return LaneFrame::<ACC> { heap: Some(heap), elements, ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { quench_runtime::staged::name_load(LaneFields::<OP>::OPCODE).is_some() } {
-        // A by-name load reads the binding its record's first run resolved (`FLAG`, `name_row`);
-        // an unresolved record holds none, so its row misses to the resolve (`name_load_miss`).
+        // A by-name load reads the binding its record's row was chosen for at load (`FLAG`, `name_row`).
         let binding = match FLAG {
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
@@ -2704,9 +2703,8 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture read the lane's walk, which requickens the record to the root binding it finds
-/// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
-/// (`store_name_first_miss`).
+/// a capture read the lane's walk (`load_capture_walk_miss`), for a global store the global object's
+/// store (`store_global_name_miss`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
     if local_result_site(op as u16, FLAG) {
@@ -2721,7 +2719,7 @@ pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
         quench_runtime::staged::Miss::StoreNameFirst => match FLAG {
             // A window's store the scope does not take leaves to the general step.
             FLAG_SCOPE => super::exit_lane as Handler,
-            _ => super::store_name_first_miss as Handler,
+            _ => super::store_global_name_miss as Handler,
         },
         quench_runtime::staged::Miss::NameLoad(load) => name_load_miss::<FLAG>(load),
         quench_runtime::staged::Miss::General | quench_runtime::staged::Miss::CompareChain => general_step_in_lane,
@@ -2739,10 +2737,9 @@ pub(crate) const fn name_row<const FLAG: u8>(load: quench_runtime::staged::NameL
     }
 }
 
-/// Where a by-name load's row leaves when its binding does not answer it: the first run (and a
-/// native's, which is resolved again) resolves the name (`load_name_resolve_miss`); a global's
-/// read takes its refresh (`global_name_refresh_miss`); an undefined or intrinsic read takes
-/// the general path, which the lane exits to.
+/// Where a by-name load's row leaves when its binding does not answer it: a global's read takes
+/// its refresh (`global_name_refresh_miss`); a probe takes its probe (`name_probe_miss`); any
+/// other read takes the general path, which the lane exits to.
 const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) -> Handler {
     match load {
         quench_runtime::staged::NameLoad::Read => name_miss_kind::<FLAG, { super::LOAD_NAME }>(),
@@ -2754,11 +2751,11 @@ const fn name_load_miss<const FLAG: u8>(load: quench_runtime::staged::NameLoad) 
 /// `name_load_miss` for the by-name load of kind `KIND`.
 const fn name_miss_kind<const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
-        FLAG_NAME_GLOBAL | FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<KIND, false> as Handler,
-        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<KIND, true> as Handler,
-        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::exit_lane as Handler,
+        FLAG_NAME_GLOBAL => super::global_name_refresh_miss::<KIND, false, false> as Handler,
+        FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<KIND, false, true> as Handler,
+        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<KIND, true, false> as Handler,
         FLAG_PROBE => super::probe_handler::<KIND>(),
-        _ => super::load_name_resolve_miss::<KIND> as Handler,
+        _ => super::exit_lane as Handler,
     }
 }
 
@@ -4442,7 +4439,9 @@ unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<V
     let vm = unsafe { vm(cx.cast::<LaneContext>()) };
     match read {
         NameRead::Native => {
-            let native = vm.intrinsic_natives.get(atom as usize).copied().flatten()?;
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx.cast::<LaneContext>()).code };
+            let native = quench_runtime::bytecode::intrinsic_name_native(&code.atoms[atom as usize])?;
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
