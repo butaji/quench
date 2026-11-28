@@ -408,12 +408,8 @@ pub(crate) use quench_runtime::vm::engine_types::World;
 
 pub(crate) use quench_runtime::vm::engine_types::IndirectSite;
 
-pub(crate) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
-    stitch_naming(function, params, returns, world, &|_| false).map(|(code, _)| code)
-}
-
-/// `stitch`, with the code offset and hole value of every absolute word whose value `symbolic` names (an
-/// image's symbol, which its World gave as that value): the words a loader fills (`aot_image::wasm`).
+/// The stitched code of `function`, with the code offset and hole value of every absolute word whose value `symbolic`
+/// names (an image's symbol, which its World gave as that value): the words a loader fills (`aot_image::wasm`).
 pub(crate) fn stitch_naming(function: &Function, params: usize, returns: bool, world: &World<'_>, symbolic: &dyn Fn(u64) -> bool)
     -> Option<(Vec<u8>, Vec<(usize, u64)>)> {
     let instructions: Vec<WideInstruction> =
