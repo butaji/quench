@@ -10,7 +10,7 @@
 
 #![allow(dead_code)]
 
-use super::cell::{Object, ObjectExtras, ProtoLink};
+use super::cell::{ElementFacts, Object, ObjectExtras, ProtoLink};
 use super::dependencies::Watch;
 use super::class_space::{header_class, header_with_class};
 use super::Heap;
@@ -89,6 +89,33 @@ impl CellViewMut<'_> {
         *self.header = header_with_class(*self.header, object.layout_id());
     }
 
+    /// The layout of the cell's object, which its descriptor marks retire readers of (`Object::exact_shape`).
+    fn exact_shape(&self) -> u32 {
+        Object::of_class(header_class(*self.header)).exact_shape()
+    }
+
+    /// `Object::mark_side_descriptors` on the cell: a prototype's layout change retires, then its extras take the fact.
+    fn mark_side_descriptors(&mut self) {
+        let shape = self.exact_shape();
+        let extras = self.extras.as_deref_mut().expect("a cell's extras are made before a descriptor mark");
+        extras.note_prototype_layout_change(shape);
+        extras.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);
+    }
+
+    /// `Object::mark_indexed_descriptors` on the cell: as for its record, the layout change and the array proofs retire.
+    fn mark_indexed_descriptors(&mut self) {
+        let shape = self.exact_shape();
+        let extras = self.extras.as_deref_mut().expect("a cell's extras are made before a descriptor mark");
+        extras.note_prototype_layout_change(shape);
+        super::array_proofs::retire_array_storage_proofs();
+        extras.mark_element_fact(ElementFacts::INDEXED_DESCRIPTORS);
+    }
+
+    /// Records element fact `bit` in the cell's extras (`ObjectMut::mark_length_descriptor`).
+    fn mark_element_fact(&mut self, bit: u8) {
+        self.extras.as_deref_mut().expect("a cell's extras are made before a descriptor mark").mark_element_fact(bit);
+    }
+
     /// `Object::mark_as_prototype` on the cell: its extras take the prototype mark.
     fn mark_as_prototype(&mut self) {
         let extras = self.extras.as_deref_mut().expect("a cell's extras are made before its prototype mark");
@@ -140,6 +167,15 @@ impl<'a> ObjectRef<'a> {
         }
     }
 
+    /// Whether the object's side descriptors may hold an entry (`Object::has_side_descriptors`); a cell's fact is in its
+    /// extras, and a cell with none holds no side descriptor.
+    #[inline(always)]
+    pub fn has_side_descriptors(&self) -> bool {
+        match self {
+            ObjectRef::Record(object) => object.has_side_descriptors(),
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(|extras| extras.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)),
+        }
+    }
     read_methods! {
         layout_id -> u32;
         proto_link -> ProtoLink;
@@ -276,6 +312,30 @@ impl<'a> ObjectMut<'a> {
         self.as_shared().is_module_namespace()
     }
 
+    /// Marks the object's side descriptors (`Object::mark_side_descriptors`): a cell's extras take the mark.
+    #[inline(always)]
+    pub fn mark_side_descriptors(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.mark_side_descriptors(),
+            ObjectMut::Cell(cell) => cell.mark_side_descriptors(),
+        }
+    }
+    /// Marks the object's index-keyed descriptors (`Object::mark_indexed_descriptors`).
+    #[inline(always)]
+    pub fn mark_indexed_descriptors(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.mark_indexed_descriptors(),
+            ObjectMut::Cell(cell) => cell.mark_indexed_descriptors(),
+        }
+    }
+    /// Marks the object's `length` descriptor (`Object::mark_length_descriptor`).
+    #[inline(always)]
+    pub fn mark_length_descriptor(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.mark_length_descriptor(),
+            ObjectMut::Cell(cell) => cell.mark_element_fact(ElementFacts::LENGTH_DESCRIPTOR),
+        }
+    }
     /// Marks the object as a prototype (`Object::mark_as_prototype`): a cell's extras take the mark.
     #[inline(always)]
     pub fn mark_as_prototype(&mut self) {

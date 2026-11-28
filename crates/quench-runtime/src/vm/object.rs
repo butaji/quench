@@ -646,7 +646,7 @@ impl Vm {
     #[inline(always)]
     pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
         // record-only: side descriptors
-        if self.heap.object(object).is_some_and(|data| data.record_only().is_none_or(|record| !record.has_side_descriptors())) {
+        if self.heap.object(object).is_some_and(|data| !data.has_side_descriptors()) {
             return None;
         }
         self.descriptors.get(&(object, key)).copied()
@@ -666,7 +666,9 @@ impl Vm {
             }
             _ => (false, false),
         };
-        if let Some(data) = self.heap.object_record_mut(object) {
+        // The marks are the object's element facts: a cell's live in its extras, made here (`ensure_cell_extras`).
+        self.heap.ensure_cell_extras(object);
+        if let Some(mut data) = self.heap.object_mut(object) {
             data.mark_side_descriptors();
             if index {
                 data.mark_indexed_descriptors();
