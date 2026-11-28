@@ -1,4 +1,4 @@
-//! The object record's state: its brand, structured-serialization policy, boxed and stack data, and its constant marks.
+//! The object record's state: its brand, structured-serialization policy, and boxed and stack data.
 
 use super::*;
 
@@ -132,35 +132,11 @@ impl Object {
     /// storage (`ValueVec::EXOTIC_ACCESS`).
     #[inline(always)]
     pub(crate) fn ordinary_shape(&self) -> u32 {
-        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM | crate::value_vec::CONSTANT_FORM)
+        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM)
     }
 
-    /// Whether code holds this object's values as constants (`value_vec::CONSTANT_FORM`).
-    #[inline(always)]
-    pub(crate) fn holds_constant_mark(&self) -> bool {
-        self.aux() & crate::value_vec::CONSTANT_FORM != 0
-    }
-
-
-    /// A write to one of this object's values, or a change of its layout or storage: where
-    /// code holds its values (`holds_constant_mark`), that code retires, by the object's exact
-    /// shape as it subscribed (`watch_prototype_values`), and the mark clears, so later stores
-    /// take every fast path again. One test of the header word otherwise.
-    #[inline(always)]
-    pub(crate) fn note_constant_write(&mut self) {
-        if self.holds_constant_mark() {
-            self.clear_constant_mark();
-        }
-    }
-
-    #[inline(never)]
-    pub(super) fn clear_constant_mark(&mut self) {
-        prototype_values::retire(self.exact_shape());
-        self.set_aux(self.aux() & !crate::value_vec::CONSTANT_FORM);
-    }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
-        self.note_constant_write();
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
         self.note_global_layout_change();

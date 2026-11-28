@@ -11,7 +11,6 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use quench_runtime::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
 
@@ -222,11 +221,6 @@ pub(crate) enum Heap {
     /// holds a value whose tag decides its index, the entry of the table of result strings at hole 2 written to
     /// the register at hole 0, else the row leaves into the helper step after it.
     TypeofString,
-    /// The fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
-    /// register at hole 0's upper half is walked along its prototype chain for the `prototype` link the code holds (hole 1's
-    /// upper half, beside the constructor register's offset), where the constructor register holds exactly the identity of
-    /// hole 2, a boolean written to the register at hole 0's lower half, else the row leaves into the helper step after it.
-    Instanceof,
     /// The fast arm of `Unary`'s `typeof` test: whether (or, where `negated`, whether not) that index is
     /// `index` (hole 2), as a boolean.
     TypeofIs { index: u8, negated: bool },
@@ -252,30 +246,15 @@ pub(crate) enum Heap {
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
     Append,
-    /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
-    /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
-    /// activation's receiver, by the transition holes 0 and 2 carry (`numeric::site_bits::ADD_AFTER_AT`,
-    /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
-    /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
-    /// into the helper step after the row, or the leave a guarded row makes.
-    Add { form: Form, this: bool },
     /// The fast arm of `ForInNext` (`staged::iteration::for_in_next`): the for-in state in the frame slot of
     /// hole 1 yields its next key to the slot of hole 0 where its memo proves the snapshot current, else the row
     /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
     ForIn,
-    /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
-    /// whose offset hole 2 carries (`numeric::site_bits::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
-    /// hole 2 names, moving between the shapes of hole 0 (`numeric::site_bits::ADD_AFTER_AT`), where it holds the empty
-    /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
-    Name { form: Form },
     /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the
     /// register operands the planner names (`steps::fast_arm`), its destination a frame slot, which a miss leaves for the
     /// helper step after the row. A hit continues at TAKEN.
     Staged(u8),
 }
-
-/// The storage forms an add row exists for, in the order of the catalog's add rows (packed, arena, either).
-pub(crate) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -307,7 +286,7 @@ impl Heap {
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(crate) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Class | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Class | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
@@ -341,7 +320,7 @@ pub(crate) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
 /// variant over every payload its arms tell apart, so a variant whose code is not a catalog row fails here.
 #[cfg(test)]
 mod catalog_tests {
-    use super::{FORMS, Heap, library};
+    use super::{Heap, library};
 
     /// Every variant, with each payload value its arms distinguish: every typed kind, every staged code, every flag and form.
     fn every_variant() -> Vec<Heap> {
@@ -351,7 +330,7 @@ mod catalog_tests {
             Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
             Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Class, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
-            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
+            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::GlobalRead,
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
         all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
@@ -362,12 +341,6 @@ mod catalog_tests {
             for admitted in [false, true] {
                 all.push(Heap::IcKnownSet { int: flag, admitted });
                 all.push(Heap::IcKnownSetFlat { int: flag, admitted });
-            }
-        }
-        for form in FORMS {
-            all.push(Heap::Name { form });
-            for this in [false, true] {
-                all.push(Heap::Add { form, this });
             }
         }
         all

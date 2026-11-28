@@ -21,6 +21,10 @@ pub const EXOTIC_ACCESS: u32 = 1 << 30;
 pub const INLINE_FORM: u32 = 1 << 29;
 pub const EXTRAS_FORM: u32 = 1 << 28;
 pub const NARROW_FORM: u32 = 1 << 27;
+/// Auxiliary bit 25 is reserved: no word sets it. It was the constant mark of an object whose values code held as
+/// constants; with the mark's writers gone the bit stays clear, and no other field takes it, so the region and shape
+/// bit layout keeps its positions (`value_vec::RESERVED_AUX_BIT`).
+pub const RESERVED_AUX_BIT: u32 = 1 << 25;
 /// The auxiliary word's meta bits of an object that is not extensible or is frozen.
 pub const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
 /// The meta bit of a frozen array's elements (`value_vec::VALUE_VEC_FROZEN`).

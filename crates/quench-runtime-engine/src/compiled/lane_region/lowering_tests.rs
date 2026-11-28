@@ -54,7 +54,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
         let native = region.function;
         let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
-                if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks) as i32));
+                if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.class_mark_lists) as i32));
         assert_eq!(barrier, ty == Type::ANY,
             "only the admitted integer excludes a heap edge:\n{native}");
     }
@@ -147,7 +147,7 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
         if matches!(native.dfg.insts[def], ir::InstructionData::Load { .. }));
     native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, arg, .. }
-            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks) as i32 && loaded(arg))).count()
+            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.class_mark_lists) as i32 && loaded(arg))).count()
 }
 
 #[test]

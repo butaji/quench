@@ -4367,7 +4367,6 @@ impl Heap {
             ObjectMut::Cell(_) => unreachable!("a class cell that declines a store takes a class transition in the cell path, never a record"),
             ObjectMut::Record(record) => record,
         };
-        record.note_constant_write();
         if record.store_packed_inline_values(values) {
             return;
         }
@@ -5390,9 +5389,6 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     if declines_widening(widened, layout) { return false; }
     // The observed slot's word: the raw double of a Number-typed slot (`ValueArena::stored_word`).
     let value = properties.stored_word(data.shape(), slot, value);
-    // Code that held the object's values as constants retires before the write
-    // (`Object::note_constant_write`); the exact shape a cache records leaves the mark out.
-    data.note_constant_write();
     // A plain arena run first, by one payload compare (`Object::plain_arena_start`): the
     // extras-tag and flag tests of `exact_storage` were six instructions per store.
     if let Some(start) = data.plain_arena_start() {

@@ -199,7 +199,6 @@ impl<'a> ObjectRef<'a> {
         is_extensible -> bool;
         is_frozen -> bool;
         has_exotic_access -> bool;
-        holds_constant_mark -> bool;
         is_array -> bool;
         is_module_namespace -> bool;
         admits_cached_add -> bool;
@@ -310,10 +309,6 @@ impl<'a> ObjectMut<'a> {
         self.as_shared().has_exotic_access()
     }
     #[inline(always)]
-    pub fn holds_constant_mark(&self) -> bool {
-        self.as_shared().holds_constant_mark()
-    }
-    #[inline(always)]
     pub fn is_array(&self) -> bool {
         self.as_shared().is_array()
     }
@@ -415,14 +410,6 @@ impl<'a> ObjectMut<'a> {
         match self {
             ObjectMut::Record(object) => object.set_frozen(value),
             ObjectMut::Cell(cell) => cell.edit_class(|object| object.set_frozen(value)),
-        }
-    }
-
-    #[inline(always)]
-    pub fn note_constant_write(&mut self) {
-        match self {
-            ObjectMut::Record(object) => object.note_constant_write(),
-            ObjectMut::Cell(cell) => cell.edit_class(|object| object.note_constant_write()),
         }
     }
 

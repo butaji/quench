@@ -1951,10 +1951,9 @@ impl Vm {
             self.heap.dictionary_cell_add(granule, id, transition.after, usize::from(transition.slot), value);
             return;
         }
-        // The remaining cell is constant-marked, which has no class key: its mark clears, then the add takes the
-        // class edge from its shape (`constant_cell_add`).
+        // The remaining cell takes the add along its class edge from its shape (`class_cell_add`).
         let transition = transition.record_form();
-        self.heap.constant_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value);
+        self.heap.class_cell_add(granule, transition.before, transition.after, usize::from(transition.slot), value);
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its

@@ -254,7 +254,7 @@ impl EntryReads {
 pub(crate) fn self_checking(row: &Decoded, site: Option<Site>) -> bool {
     let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
         && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
-        && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
+        && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
         && !row.proven && !row.checked && !row.admitted && !row.recheck;
     bare && leaves_on_other(row.kind) && variant_of(row.kind, site) != Variant::Concat
 }

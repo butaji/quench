@@ -83,18 +83,11 @@ pub enum Operation<W, P> {
     TypeofString { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
-    /// A property add of `value` to the object at the record table `records`, through a site's
-    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
-    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
-    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
-    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
-    /// A function's inferred name `name` written to the function word `function`'s empty name slot
-    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
-    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
+    /// A property add of `value` to `object` through a site's transition `edge` (and the prototype `link`
+    /// a chained site must hold), storing it in `form` (`add::site_add`). No opcode decodes to it, and no
+    /// row builds it since the object-record add rows were deleted (S7j4a). Leaves at the miss edge where the add declines.
+    #[allow(dead_code)] // no opcode decodes to it, and no stencil row builds it any more
+    AddSite { object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
     /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
     /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
     /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
@@ -351,6 +344,7 @@ pub mod kind {
     pub const TYPEOF_STRING: u16 = 18;
     pub const INDEX_WRITE: u16 = 19;
     pub const ADD_SITE: u16 = 20;
+    /// Retired with `Operation::NamingSite` (S7j4a): no operation takes it. The number stays, so the shard table keeps its positions.
     pub const NAMING_SITE: u16 = 21;
     pub const INSTANCE_OF: u16 = 22;
     pub const DIRECT_ARRAY: u16 = 23;

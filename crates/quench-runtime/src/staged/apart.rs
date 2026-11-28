@@ -28,7 +28,6 @@ pub const fn operation_kind<W, P>(operation: &Operation<W, P>) -> u16 {
         Operation::TypeofString { .. } => kind::TYPEOF_STRING,
         Operation::IndexWrite { .. } => kind::INDEX_WRITE,
         Operation::AddSite { .. } => kind::ADD_SITE,
-        Operation::NamingSite { .. } => kind::NAMING_SITE,
         Operation::InstanceOf { .. } => kind::INSTANCE_OF,
         Operation::DirectArray { .. } => kind::DIRECT_ARRAY,
         Operation::ArrayLength { .. } => kind::ARRAY_LENGTH,

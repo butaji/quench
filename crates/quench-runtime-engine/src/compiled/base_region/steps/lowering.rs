@@ -43,7 +43,7 @@ fn typeof_arm(operator: u32) -> Option<Heap> {
 /// The heap row that is the fast arm of `instruction`, where its meaning has one that a register's
 /// word (`staged::iteration`, `staged::value`) or the backing's own layout words
 /// (`elements::append_in_room`) decide.
-fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
+fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
     match staged_of(instruction) {
         Some(Operation::PropertyKey { .. }) => Some(Heap::Key),
         // One element (not a spread, not elisions) defined at the literal's length: the case a capacity word decides.
@@ -54,9 +54,8 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Some(Operation::RequireObjectCoercible { .. }) => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
         Some(Operation::Unary { .. }) => staged_unary_arm(instruction),
         Some(Operation::TypeofString { .. } | Operation::TypeofTest { .. }) => typeof_arm(instruction.unary_operator()),
-        // The naming is a recorded site (`names`); a binary with a Number constant operand has no
-        // `Operation::Binary` (it takes registers only), so both ask the staged meaning.
-        _ if means(instruction, Meaning::SetFunctionName) => names::of(known, instruction).map(names::Name::heap),
+        // S7f DESIGN: a function naming has no row since the object-record naming rows went (S7j4a); its helper step names it.
+        // A binary with a Number constant operand has no `Operation::Binary` (it takes registers only), so it asks the staged meaning.
         _ if means(instruction, Meaning::Binary) => staged_binary_arm(instruction),
         _ => None,
     }
@@ -86,8 +85,7 @@ fn staged_plain_arm(instruction: WideInstruction, code: u8) -> Option<Heap> {
 /// through, the way a store names its array (`Decoded::base`).
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
     match fast {
-        Heap::Add { .. } | Heap::AddClass => adds::operands(instruction),
-        Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
+        Heap::AddClass => adds::operands(instruction),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
         Heap::Staged(numeric::row_names::STAGED_VOID) => (None, None),
         Heap::Staged(numeric::row_names::STAGED_BITWISE_NOT | numeric::row_names::STAGED_COERCIBLE) => (Some(Source::Register(instruction.register_b())), None),
@@ -153,9 +151,9 @@ pub(crate) fn lowering(instruction: WideInstruction, known: Known, helpers: Lane
     }
     let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { Step::Leave };
     let in_place = addressed(LaneHelper::Step) && steps_in_place(instruction);
-    let fast = fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap));
+    let fast = fast_arm(instruction).or_else(|| adds::of(known, instruction).map(adds::Add::heap));
     match fast {
-        Some(fast @ (Heap::Add { .. } | Heap::AddClass)) if !in_place => Step::Guard(fast),
+        Some(fast @ Heap::AddClass) if !in_place => Step::Guard(fast),
         _ if addressed(LaneHelper::Step) && instruction.op().raises() => Step::Throw,
         _ if !in_place => called_out(),
         Some(fast) => Step::Fast(fast),
@@ -192,10 +190,9 @@ pub(crate) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
                 _ => None,
             };
             let add = adds::of(known, instruction).filter(|add| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == add.heap()));
-            let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
             let result = written.next();
             let packed = packed_words(step, instruction, helpers);
-            Decoded { target, a: read, b: right, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), packed, ..Decoded::step(step, result) }
+            Decoded { target, a: read, b: right, base, also: written.next(), add, atom: add.map(|_| instruction.atom_index()), packed, ..Decoded::step(step, result) }
         }
     }
 }

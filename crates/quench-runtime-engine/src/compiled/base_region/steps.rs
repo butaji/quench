@@ -16,7 +16,7 @@
 //!    it, which continues at the reloads of the registers live at the target (`branching`).
 //!    Where the instruction's meaning has a fast arm that a register's own word decides
 //!    (`staged::iteration`: `RequireIteratorResult`, `ToPropertyKey`, `ForInNext` over its state's memo) or the backing's layout words
-//!    (`staged::elements::append_in_room`: a one-element `AppendArray`), or a site's recorded transition (`adds`, `names`), the run is that arm's heap row
+//!    (`staged::elements::append_in_room`: a one-element `AppendArray`), or a site's recorded transition (`adds`), the run is that arm's heap row
 //!    first (`Step::Fast`, `plan_fast`): its hit hops past the helper step to the next instruction,
 //!    and its miss enters the helper step laid out behind it, the slow arm, so the generic step is
 //!    only the operation's remainder.
@@ -185,12 +185,11 @@ fn step_helper(decoded: &Decoded, helpers: LaneHelpers) -> LaneHelper {
     decoded.own_step.filter(|helper| decoded.packed.is_none() && call_plan::helper_address(helpers, *helper).is_some()).unwrap_or(LaneHelper::Step)
 }
 
-/// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
+/// The plan of a fast arm or guard of `fast`: a class-keyed add has its own planner, the rest
 /// share `plan_fast`; `chain` is the helper chain a fast arm falls back to.
 fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: Option<Planned>, helpers: LaneHelpers) -> Result<Planned, String> {
     match fast {
-        Heap::Add { .. } | Heap::AddClass => adds::plan(decoded, layout, pc, chain),
-        Heap::Name { .. } => names::plan(decoded, layout, pc, chain),
+        Heap::AddClass => adds::plan(decoded, layout, pc, chain),
         _ => plan_fast(decoded, fast, layout, pc, chain, helpers),
     }
 }

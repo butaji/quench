@@ -128,11 +128,8 @@ pub(crate) struct Decoded {
     /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
     /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
     pub(crate) class_read: bool,
-    /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
-    /// the receiver is the activation's `this`.
+    /// The recorded class-keyed transition the add row runs (`adds`).
     pub(crate) add: Option<adds::Add>,
-    /// The recorded naming a `SetFunctionName` row runs (`names`).
-    pub(crate) name: Option<names::Name>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(crate) checked: bool,
@@ -205,7 +202,7 @@ pub(crate) struct Decoded {
 
 impl Decoded {
     pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
     }
 
     pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -517,7 +514,7 @@ pub(crate) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
             .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))
-        .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site))))))
+        .unwrap_or_else(|| names(known, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site)))))
 }
 
 /// The step `row` with the table of `typeof` result strings its fast arm reads (hole 2) where the VM has

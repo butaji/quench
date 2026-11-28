@@ -66,7 +66,7 @@ fn may_reshape(row: &Decoded) -> bool {
     let reads_alone = row.heap.is_some_and(|heap| matches!(heap, Heap::Held | Heap::ThisHeld | Heap::Declared | Heap::Prototype | Heap::Class | Heap::Realm
         | Heap::TypedLength | Heap::TypedIndex(_) | Heap::TypedStore(_)));
     (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave | Step::Allocate))
-        || row.add.is_some() || row.name.is_some() || row.instanceof.is_some() || row.holder.is_some() || row.global.is_some()
+        || row.add.is_some() || row.instanceof.is_some() || row.holder.is_some() || row.global.is_some()
         || row.declined.is_some() || row.checked
 }
 

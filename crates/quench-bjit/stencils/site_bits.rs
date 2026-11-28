@@ -6,8 +6,6 @@
 /// Half of a 64-bit word: the bit where a row's second field starts in a word split in two.
 const WORD_HALF: u32 = u64::BITS / 2;
 
-/// Bits below the function register's frame offset in a naming row's hole 2, which carries the slot beneath it.
-pub const NAME_FUNCTION_AT: u32 = ADD_SLOT_BITS;
 /// Bits below the after-shape in an add row's hole 0, which carries the before-shape beneath it.
 pub const ADD_AFTER_AT: u32 = WORD_HALF;
 /// An add row's hole 2: the slot in its low `ADD_SLOT_BITS`, the prototype link a chained add proves

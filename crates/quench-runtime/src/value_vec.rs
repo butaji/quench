@@ -3,7 +3,7 @@ use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
-mod aux_form; mod buffer; mod plan_values;
+mod buffer; mod plan_values;
 mod subscribe;
 mod runs; mod arena; mod snapshot; mod shapes; mod access; mod dictionary; mod young; mod inspect; mod release; mod allocate;
 use buffer::PropertyBuffer;
@@ -29,17 +29,16 @@ pub fn decode_staged_word(word: u64) -> Value {
 }
 
 // The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
-pub use crate::staged::object_encoding::{CLASS_REGION_SHIFT, DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
+pub use crate::staged::object_encoding::{CLASS_REGION_SHIFT, DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, RESERVED_AUX_BIT, START_MASK};
 pub const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
-pub(crate) use aux_form::CONSTANT_FORM;
 /// The auxiliary bits a shape occupies: below the class region bits (`CLASS_REGION_SHIFT`), which a class word uses
 /// for its cell's capacity region and no shape or record word sets. This narrows the shape field from 25 bits to 22,
 /// so `SHAPE_LIMIT` is 4 M shapes less one (the last stays unused, see `set_auxiliary`).
 pub(crate) const SHAPE_MASK: u32 = (1 << CLASS_REGION_SHIFT) - 1;
 /// Shapes are numbered below `SHAPE_LIMIT`, which the all-ones sentinel bounds.
 pub(crate) const SHAPE_LIMIT: u32 = SHAPE_MASK;
-const _: () = assert!(CONSTANT_FORM & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
-const _: () = assert!(SHAPE_MASK & (CONSTANT_FORM | STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0);
+const _: () = assert!(RESERVED_AUX_BIT & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
+const _: () = assert!(SHAPE_MASK & (RESERVED_AUX_BIT | STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 /// The words a narrow run of `len` values fills.
 #[inline(always)] const fn narrow_words(len: usize) -> usize {
@@ -178,7 +177,7 @@ impl ValueVec {
     /// to `auxiliary` exactly when the vector is neither in dictionary storage nor an exotic
     /// object's, so one comparison with a recorded shape proves all three.
     #[inline(always)] pub(crate) const fn exact_auxiliary(self) -> u32 {
-        self.auxiliary & !(STORAGE_FORM | CONSTANT_FORM)
+        self.auxiliary & !STORAGE_FORM
     }
 
     #[inline] pub(crate) fn has_inline_property_storage(self) -> bool {

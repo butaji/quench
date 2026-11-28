@@ -14,8 +14,6 @@ impl Heap {
     /// The fold moves fields, and a marked holder's vacated field is read by address as well, so the holder edge fires on
     /// every drop (`holder_fields_moved`).
     pub(crate) fn class_cell_drop_last(&mut self, granule: u32, parent: u32) {
-        // A constant mark clears on any write, the delete included, before the class is read.
-        self.note_cell_write(granule);
         self.note_cell_layout_change(granule);
         let before = header_class(self.class_space.header(granule));
         debug_assert!(!layouts::class_is_dictionary(before), "a dictionary cell drops no key in place");

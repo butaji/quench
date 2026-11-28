@@ -124,7 +124,6 @@ impl<'a> EmitFrame<'a> {
         self.state.proofs.headers.clone_from(&before.proofs.headers);
         self.state.proofs.records.clone_from(&before.proofs.records);
         self.state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
-        if self.state.proofs.global != before.proofs.global { self.state.proofs.global = None; }
         if let Some(Some(register)) = self.proof_key(owner) {
             self.state.values[usize::from(register)] = before.values[usize::from(register)];
         }

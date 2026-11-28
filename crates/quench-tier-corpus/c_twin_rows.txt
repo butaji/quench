@@ -34,7 +34,6 @@ Operation::TypeofTest typeof_op
 Operation::TypeofString typeof_op
 Operation::IndexWrite arr_store_int
 Operation::AddSite - stencil row only: no opcode decodes to it
-Operation::NamingSite - stencil row only: no opcode decodes to it
 Operation::InstanceOf v_instanceof
 Operation::DirectArray - stencil guard: its cost is the guarded operation's
 Operation::ArrayLength arr_length
@@ -133,21 +132,12 @@ heap::LOAD_CHECKED_ROW v_let_block
 heap::STORE_CHECKED_ROW v_let_block
 heap::TYPEOF_STRING_ROW typeof_op
 heap::CALLEE_CAPTURE_ROW c_closure_read
-heap::INSTANCEOF_ROW v_instanceof
 heap::REALM_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::GLOBAL_READ_ROW v_global_var
 heap::GLOBAL_STORE_ROW v_global_var
 heap::CONSTANT_ROW - constant load; no kernel isolates it
 heap::APPEND_ROW arr_push
-heap::ADD_PACKED_ROW v_obj_add
-heap::ADD_ARENA_ROW v_obj_add
-heap::ADD_EITHER_ROW v_obj_add
-heap::THIS_ADD_PACKED_ROW v_new_point
-heap::THIS_ADD_ARENA_ROW v_new_point
-heap::THIS_ADD_EITHER_ROW v_new_point
 heap::FOR_IN_ROW v_for_in
-heap::NAME_EITHER_ROW - function naming; no kernel isolates it
-heap::NAME_ARENA_ROW - function naming; no kernel isolates it
 heap::IC_GET_ROW field_read
 heap::IC_GET_HOLDER_ROW v_proto_chain3_field
 heap::IC_SET_ROW field_store
