@@ -44,8 +44,6 @@ impl EngineLaneView for LaneView {
 pub fn function_candidate(function: &Function, program: &ResidualProgram) -> bool { quench_engine2_fn_function_candidate(function, program) }
 
 #[inline(always)]
-
-#[inline(always)]
 pub fn subscribe_stable(stable: &StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>, facts: &mut crate::vm::tier_queries::FactWatch<'_>) -> bool { quench_engine2_fn_subscribe_stable(stable, code, facts) }
 
 #[inline(always)]

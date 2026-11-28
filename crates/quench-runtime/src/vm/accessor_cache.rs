@@ -55,7 +55,7 @@ impl Vm {
         } else {
             self.heap.ordinary_view(cache.holder)?
         };
-        let held = self.heap.property_get_ref(holder, usize::from(cache.slot));
+        let held = self.heap.property_get_ref(holder, cache.slot as usize);
         match cache.slot_accessor {
             SlotAccessor::Getter => held.map(|getter| (Some(getter), None)),
             SlotAccessor::Pair => match self.heap.get(held?) {
@@ -63,7 +63,7 @@ impl Vm {
                 _ => None,
             },
             SlotAccessor::Attributes => self
-                .slot_attributes(holder, usize::from(cache.slot))
+                .slot_attributes(holder, cache.slot as usize)
                 .map(|attributes| (attributes.getter, attributes.setter)),
         }
     }

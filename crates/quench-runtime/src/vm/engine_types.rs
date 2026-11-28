@@ -3862,9 +3862,9 @@ impl CallCode {
         // A dead callee a record's guard compares at each call only unbinds that record: its row misses from then on
         // (`Value::DELETED` names no closure) and the helper rebinds it to the next closure it calls
         // (`dispatch_fast::rebind_region_call`). One an entry check holds by a constant retires the code.
-        let unbind = |word: u64| for record in self.records.iter().filter(|record| record.callee == word) {
+        let unbind = |word: u64| for (_, callee) in self.records.iter().filter(|(_, callee)| callee.callee == word) {
             // SAFETY: the records are read in place by the code on this thread, which no collection runs inside.
-            unsafe { (*std::ptr::from_ref(&**record).cast_mut()).callee = Value::DELETED.to_bits() };
+            unsafe { (*std::ptr::from_ref(&**callee).cast_mut()).callee = Value::DELETED.to_bits() };
         };
         // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
         // words), as is one an entry check holds: its death retires the code.
@@ -3873,7 +3873,7 @@ impl CallCode {
             let word = callee.callee.to_bits();
             if self.held.contains(&word) { return true; }
             if callee.bound.read.get() { return false; }
-            if !self.records.iter().any(|record| record.call == callee.call as u64) { return true; }
+            if !self.records.iter().any(|(record, _)| record.call == callee.call as u64) { return true; }
             unbind(word);
             false
         });
@@ -4889,8 +4889,8 @@ impl Records {
     /// `records` as a view's records, in their own allocation, which the records never leave.
     pub fn new(records: Box<[LaneInstruction]>) -> Self {
         let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> = Vec::from(records).into_iter().map(std::cell::UnsafeCell::new).collect::<Vec<_>>().into_boxed_slice();
-        // SAFETY: the pointer keeps the whole allocation's provenance, and the boxed records never move.
-        let first = unsafe { std::cell::UnsafeCell::raw_get(cells.as_ptr()).cast_const() };
+        // The pointer keeps the whole allocation's provenance, and the boxed records never move.
+        let first = std::cell::UnsafeCell::raw_get(cells.as_ptr()).cast_const();
         Self { cells, first }
     }
 
@@ -5509,12 +5509,6 @@ impl EntryCell {
     pub fn withdraw(&self) {
         self.unpublish();
     }
-}
-
-impl Evidence {
-
-    #[inline]
-    pub const fn half_mask(&self) -> u64 { (1 << self.half_bits) - 1 }
 }
 
 impl LaneStack {

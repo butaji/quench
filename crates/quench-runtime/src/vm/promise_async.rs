@@ -380,7 +380,7 @@ impl Vm {
             self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
                 let awaited = vm.fresh_derived_promise(promise)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
-                Ok(awaited)
+                Ok::<_, JsError>(awaited)
             })?
         } else {
             source

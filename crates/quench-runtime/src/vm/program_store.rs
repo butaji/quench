@@ -2396,7 +2396,7 @@ impl ProgramStore {
     }
 
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
+        self.jit_code_cache.mapped_bytes
     }
 
     /// The epoch program contexts are derived at (`context_epoch`).

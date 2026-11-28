@@ -2403,7 +2403,7 @@ impl Vm {
         self.set_builtin_value_named(prototype, "message", empty_message)?;
         if native != Native::Error {
             let error_constructor = self.native_value(Native::Error);
-            if let Some(function) = self.heap.object_mut(constructor) {
+            if let Some(mut function) = self.heap.object_mut(constructor) {
                 function.set_proto(error_constructor);
             }
         }

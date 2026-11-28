@@ -1906,7 +1906,7 @@ impl Vm {
 
     /// The structured-clone DataCloneError: an Error named DataCloneError that hosts
     /// present as their DOMException.
-    pub(super) fn data_clone_error(&mut self, program: &ProgramRecord, message: &str) -> JsError {
+    pub(super) fn data_clone_error(&mut self, program: &ResidualProgram, message: &str) -> JsError {
         let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])
