@@ -38,6 +38,9 @@ pub struct NativeSupport {
     layers: Option<PathBuf>,
     /// The allocator (`quench-alloc`), which a core image names as its global allocator.
     alloc: Option<PathBuf>,
+    /// The standard library a minimal static support built itself (`-Zbuild-std`, `aot/cli.rs`), which the driver
+    /// links in place of the sysroot's; `None` where the support links the sysroot's.
+    built_std: Option<PathBuf>,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
@@ -62,6 +65,7 @@ impl NativeSupport {
         let mut engine = None;
         let mut layers = None;
         let mut alloc = None;
+        let mut built_std = None;
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
@@ -84,6 +88,10 @@ impl NativeSupport {
                     // A dynamic-source image links the standard build's artifacts (default features:
                     // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
                     // symbol audit checks that the compiler is dropped.
+                    if name == "std" {
+                        built_std = artifact["filenames"].as_array().into_iter().flatten().filter_map(Value::as_str)
+                            .find(|file| file.ends_with(".rlib")).map(PathBuf::from);
+                    }
                     if let Some(library) = layer_library(&artifact, name)? {
                         match name {
                             "quench_runtime_engine" => engine = Some(library),
@@ -165,6 +173,7 @@ impl NativeSupport {
             engine,
             layers,
             alloc,
+            built_std,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
@@ -265,6 +274,13 @@ impl NativeSupport {
         let parent = |path: &Path, what: &str| path.parent().ok_or_else(|| format!("{what} has no parent")).map(Path::to_path_buf);
         command.arg("--extern").arg(format!("quench_runtime={}", self.runtime.display()))
             .arg("-L").arg(format!("dependency={}", parent(&self.runtime, "runtime library")?.display()));
+        // A minimal static support built its own standard library (`-Zbuild-std`, `aot/cli.rs`), with the
+        // `immediate-abort` panic strategy: the driver links that `std`, not the sysroot's, under the same strategy.
+        if let Some(std) = &self.built_std {
+            command.env("RUSTC_BOOTSTRAP", "1")
+                .args(["-Z", "unstable-options", "-C", "panic=immediate-abort"])
+                .arg("--extern").arg(format!("noprelude:std={}", std.display()));
+        }
         if node_host {
             command.arg("--extern").arg(format!("{}={}", self.host_crate, self.host.display()))
                 .arg("-L").arg(format!("dependency={}", parent(&self.host, "support library")?.display()));
@@ -645,3 +661,4 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
