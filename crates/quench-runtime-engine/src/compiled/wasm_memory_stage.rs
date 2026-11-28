@@ -21,6 +21,7 @@ use quench_runtime::staged::wasm_memory::{
 use quench_runtime::wasm::INDEX_GROW_FAILURE;
 use quench_runtime::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Emitter<'_, '_> {
     /// The length a call passes after the context when the memory is unguarded (`length` is

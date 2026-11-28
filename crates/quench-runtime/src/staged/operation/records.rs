@@ -3,6 +3,9 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::staged::OperationOperationExt;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The instruction queries the tiers ask (runtime only, as the stencils decode no instruction), and the
 /// queries the runtime's profile and VM ask of the rows.

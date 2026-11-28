@@ -14,6 +14,7 @@ use quench_runtime::staged::{NumberOperation, Operation, Protocol};
 use crate::compiled::performed;
 
 pub(crate) use quench_runtime::staged::CallRecord;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The call form `instruction` makes (`CallRecord::of`, the staged module's form of every
 /// call-family record, eval calls and array constructions included).

@@ -15,6 +15,7 @@ use cranelift_codegen::ir::types;
 use quench_runtime::staged::machine::{Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use super::super::object_slots::emit;
 use crate::compiled::regions;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A fault-polling body records its poll instruction: the poll page's fault takes it at a set flag. A body that polls
 /// by compare runs the staged back-edge poll instead (`staged::poll::back_edge_poll`, `Lowering::interrupt_check`).

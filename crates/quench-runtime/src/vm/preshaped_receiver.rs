@@ -231,7 +231,8 @@ impl Vm {
 
     /// The one allocation of a fixed class's instances (R4-F): a class cell of union shape `shape` whose fields are
     /// `values`, each at its union slot `slots`, every other union field `Value::DELETED`, its class
-    /// `intern_class(shape, prototype's link, 0)`, made by `claim_fixed_cell`, so no record is made. `prototype` is
+    /// `intern_class(shape, prototype's link, 0, region)` with the region of `values` (`cell_region_for`), made by
+    /// `claim_fixed_cell`, so no record is made. `prototype` is
     /// the instances' prototype.
     pub fn allocate_fixed_cell(&mut self, shape: u32, prototype: Value, slots: &[u8], values: &[Value]) -> Value {
         let length = self.shapes[shape as usize].storage_len();

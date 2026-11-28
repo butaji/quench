@@ -8,6 +8,7 @@ use quench_runtime::staged::ic;
 use quench_runtime::staged::object::{own_layout, read_slot, Form, PackedAccess};
 use quench_runtime::staged::Region;
 use quench_runtime::typed_ir::Representation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
 /// plain and marked as prototypes.

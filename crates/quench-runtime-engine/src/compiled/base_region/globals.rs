@@ -29,6 +29,7 @@ use quench_runtime::tier_surface::{GlobalFact, GlobalLayoutFact};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot, StableCell};
 use quench_bjit::{padded_holes, HOLES};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
 /// record id the object is named by.

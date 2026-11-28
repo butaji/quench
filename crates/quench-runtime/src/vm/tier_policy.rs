@@ -10,6 +10,7 @@ use crate::compile::call_graph::CallGraph;
 pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
 /// (`base_region::inline_plan`). Which callees inline is `inlines`; this is the stitch's room.

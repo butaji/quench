@@ -18,6 +18,7 @@ use quench_runtime::vm::activation::{FrameRecord, SuspendKind};
 use quench_runtime::vm::error::FrameSite;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneSites;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The source pc of the frame an activation's caller becomes, paused at the call of `above`
 /// (`ActivationView::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call

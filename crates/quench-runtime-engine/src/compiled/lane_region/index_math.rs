@@ -16,6 +16,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The span of integers an index word holds of an arithmetic result of `range`: the Numbers it agrees with.
 pub(crate) fn held(range: IntRange) -> IntRange { range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT) }

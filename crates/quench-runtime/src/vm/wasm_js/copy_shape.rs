@@ -9,6 +9,7 @@ use super::*;
 use crate::bytecode::{Atom, FieldBase, FieldLookup, Operand, OperandKind, Register, RETURN_REGISTER};
 use crate::staged::{Arguments, CallOperation, Callee, DecodeContext, Invocation, NumberOperation, Operation, Receiver};
 use crate::vm::operations::NumberArithmetic;
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// What a register or a frame local holds in a candidate helper body, as the walk proves it.
 #[derive(Clone, Copy, PartialEq, Eq)]

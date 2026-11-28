@@ -4,6 +4,7 @@
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// A constant's value and type: an immediate, or in online code the string or BigInt the

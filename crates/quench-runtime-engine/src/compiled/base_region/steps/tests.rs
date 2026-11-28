@@ -2,6 +2,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Op;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 fn instruction(op: Op) -> WideInstruction {
     WideInstruction::new(op, 1, 2, 3, 0)

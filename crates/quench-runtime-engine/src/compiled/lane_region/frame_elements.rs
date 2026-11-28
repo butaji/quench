@@ -16,6 +16,7 @@ use quench_runtime::staged::typed_elements::TypedView;
 use quench_runtime::staged::{ElementFrame, Stage};
 use quench_runtime::staged::barrier::MarkList;
 use crate::compiled::emit_js_guard;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.

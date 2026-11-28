@@ -57,6 +57,7 @@ pub struct GeneralCodeCursor {
     back_edges: bool,
 }
 
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub struct PendingGeneralCall {
     pub caller: usize,

@@ -9,6 +9,7 @@ use super::super::builtin_calls::Builtin;
 use super::super::native_calls::{Inline, definition_before};
 use quench_runtime::tier_surface::Native;
 use quench_runtime::vm::global_facts::{GlobalRead, ReceiverLink};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where a kept array's access lands: the one element the solver proves the index names, or any of
 /// them by the index's word (`kept_index`).

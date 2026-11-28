@@ -7,6 +7,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The call-out row (`Operation::call_out`) of `instruction` where this lowering makes it: in a

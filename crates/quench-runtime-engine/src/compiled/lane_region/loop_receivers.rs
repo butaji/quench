@@ -11,6 +11,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A register whose object a loop's entering edge proved of an exact shape, for the blocks
 /// `header..=end`.

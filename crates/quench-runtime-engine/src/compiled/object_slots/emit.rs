@@ -8,6 +8,7 @@ use quench_runtime::staged::{Access, Stage, Table};
 use quench_runtime::staged::flow::FlowStage;
 use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::compiled::regions;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The specializer's stage (`quench_runtime::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.

@@ -22,6 +22,7 @@ use quench_runtime::staged::{DecodeContext, Operation};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::ValueType;
 use super::function::ClassProto;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 const fn language(kind: ValueType) -> u16 {
     1 << kind as u16

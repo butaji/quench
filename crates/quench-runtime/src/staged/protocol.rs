@@ -29,6 +29,9 @@ use crate::value::ValueLayout;
 use crate::Value;
 
 pub use super::native_frame::{pop_native_frame, push_native_frame, set_body_top, set_values, LaneWords, NativeFrame, NativePlaces, PayloadTops};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 const _: () = assert!(std::mem::size_of::<Value>() == std::mem::size_of::<u64>(), "a register of a window is one word");
 

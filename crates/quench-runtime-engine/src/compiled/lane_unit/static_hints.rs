@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, PropertyDefinitionMode, WideInstruction};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,

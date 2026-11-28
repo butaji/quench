@@ -15,6 +15,7 @@ pub(crate) mod pc_map;
 pub(crate) use pc_map::PcMap;
 use quench_runtime::bitset::BitSet;
 use quench_runtime::compile::liveness::{register_in, RegisterMasks};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// One inlined call: its frame, its callee and where leaving in its setup resumes.
 pub(crate) struct Site<'b> {

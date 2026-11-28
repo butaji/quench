@@ -835,6 +835,7 @@ impl Completion {
 }
 
 pub(crate) use quench_runtime::vm::engine_types::ElementViews;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(ElementViewsOps1)]
 impl ElementViews {

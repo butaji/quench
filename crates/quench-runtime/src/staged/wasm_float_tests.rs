@@ -13,6 +13,9 @@ use crate::wasm::float::{
 };
 use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 const SIGNALING_NAN_PAYLOAD: u32 = 1;
 

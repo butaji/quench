@@ -6,6 +6,7 @@ use super::property_key::PropertyKey;
 use super::*;
 mod for_in_keys;
 pub(super) use for_in_keys::ForInMemo;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     /// `Object.create(proto)` before its properties argument: an empty ordinary object
@@ -221,7 +222,7 @@ impl Vm {
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
-                Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
+                Some(Cell::TypedArray { object, .. }) => typed_array_kind_name(object.native.kind()),
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",

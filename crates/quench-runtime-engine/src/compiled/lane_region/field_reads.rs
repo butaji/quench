@@ -6,6 +6,7 @@ use quench_runtime::vm::global_facts::ReceiverLink;
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The cache site of the last read of `instruction`'s lookup, whose slots the value comes from;
 /// `None` for a lookup with a sink.

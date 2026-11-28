@@ -184,6 +184,7 @@ impl Unit {
 }
 
 use super::tier_policy::{charges_growth, INLINE_GROWTH_PERCENT, PERCENT};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 

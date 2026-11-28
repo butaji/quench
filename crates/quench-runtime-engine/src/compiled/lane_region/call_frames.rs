@@ -22,6 +22,7 @@ use quench_runtime::staged::call::admit_room;
 use quench_runtime::staged::{Access, Region};
 use quench_runtime::staged::{plan_entry, Arguments, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
 use quench_runtime::typed_ir::BindingTime;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where a run's completion goes: the block a run leaves at with its status and result word.
 #[derive(Clone, Copy)]

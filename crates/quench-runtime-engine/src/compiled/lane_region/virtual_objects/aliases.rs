@@ -5,6 +5,7 @@
 //! alias seam.
 
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Releases `register` from every kept receiver's aliases: a definition of it names another value. A
 /// receiver with no alias left dies.

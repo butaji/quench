@@ -26,6 +26,7 @@ use quench_runtime::wasm::V128_BYTES;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use quench_runtime::wasm::simd::SimdOperator;
 use quench_bjit::padded_holes;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame byte of vector register `register` in a function of `registers` registers: its low
 /// word (the high word is 8 more).

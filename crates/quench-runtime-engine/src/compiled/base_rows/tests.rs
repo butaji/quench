@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 /// the runtime's own.
 use super::super::CallContext;
 use quench_runtime::vm::wtf16::native_string as form;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[allow(dead_code)]
 #[path = "../../../../quench-bjit/stencils/layout.rs"]
 pub(crate) mod stencil_layout;

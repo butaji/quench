@@ -17,7 +17,7 @@
 //! common case.
 
 use super::cell::{ProtoLink, header_word};
-use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS};
+use crate::staged::object_encoding::{CAPACITY_CLASSES, DICTIONARY_STORAGE, EXOTIC_ACCESS, FROZEN, NON_EXTENSIBLE, OBJECT_ARRAY, PROTO_INDEX_BITS, region_field_capacity};
 use crate::value_vec::{CONSTANT_FORM, SHAPE_LIMIT, SHAPE_MASK};
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
@@ -173,22 +173,46 @@ pub(crate) fn intern(word: u64) -> u32 {
 pub(crate) const CLASS_FLAG_MASK: u64 = (CONSTANT_FORM | EXOTIC_ACCESS | DICTIONARY_STORAGE) as u64
     | ((OBJECT_ARRAY | NON_EXTENSIBLE | FROZEN) as u64) << u32::BITS;
 
-/// The class id of an ordinary object with prototype link `link`, exact shape `shape` and `flags`
-/// (`CLASS_FLAG_MASK` bits): the interned header word, so equal classes share one id as every
-/// header does. The capacity of a cell is its region's (`class_space::region_capacity`), not a
-/// bit of the class word, so the word has no capacity field.
-pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64) -> u32 {
+/// The capacity-region bits of a class word, in its auxiliary word: bits 22 to 24 hold the cell's region `k`
+/// (1 to 5, `staged::object_encoding::CAPACITY_CLASSES`) as `k << CLASS_REGION_SHIFT`. Shapes occupy bits 0 to 21
+/// (`value_vec::SHAPE_MASK`), and no record word sets these bits, so a class word's region is only ever a class's.
+/// The region is part of the class's identity: two classes equal in shape, link and flags but in different regions
+/// are different ids, so every cell of one class holds one capacity, and a cell keeps its region through its
+/// transitions (`class_region` is read from the class it leaves).
+pub(crate) use crate::staged::object_encoding::{CLASS_REGION_MASK, CLASS_REGION_SHIFT};
+
+/// The class id of an ordinary object with prototype link `link`, exact shape `shape`, `flags` (`CLASS_FLAG_MASK`
+/// bits) and capacity region `region` (1 to 5, a class cell's region): the interned header word, so equal classes
+/// share one id as every header does. The region is in the class word (`CLASS_REGION_MASK`), so it is part of the
+/// class identity; the cell's capacity is `class_space::region_capacity` of its granule, which equals
+/// `region_field_capacity(region)`.
+pub(crate) fn intern_class(shape: u32, link: ProtoLink, flags: u64, region: u32) -> u32 {
     assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
     assert!(flags & !CLASS_FLAG_MASK == 0, "class flags outside the class word");
     assert!(link.bits() & !PROTO_INDEX_BITS == 0, "prototype link outside its field");
+    assert!((1..CAPACITY_CLASSES as u32).contains(&region), "a class cell's region is a cell region");
     let meta = link.bits() | (flags >> u32::BITS) as u32;
-    let auxiliary = shape | flags as u32;
+    let auxiliary = shape | flags as u32 | (region << CLASS_REGION_SHIFT);
     intern(header_word(meta, auxiliary))
 }
 
 /// The shape of class `id`: the shape bits of its auxiliary word.
 pub(crate) fn class_shape(id: u32) -> u32 {
     auxiliary(id) & SHAPE_MASK
+}
+
+/// The capacity region of class `id` (1 to 5): the region bits of its auxiliary word. Only the ids of cell classes
+/// (`intern_class`) carry one; a record's layout reads 0.
+pub(crate) fn class_region(id: u32) -> u32 {
+    (auxiliary(id) & CLASS_REGION_MASK) >> CLASS_REGION_SHIFT
+}
+
+/// The spill slot of a class cell of region `region` holding `fields` fields: `None` where the fields fit the
+/// region's capacity, else the capacity less one, the slot whose field word holds the spill pointer. The class
+/// records the point at which its own fields spill (`Heap::class_spill_from`); the shape length is the table's.
+pub(crate) fn spill_from(region: u32, fields: usize) -> Option<u32> {
+    let capacity = region_field_capacity(region);
+    (fields > capacity).then(|| capacity as u32 - 1)
 }
 
 /// The prototype link of class `id`: the index bits of its meta word.
@@ -265,19 +289,30 @@ mod tests {
     fn class_round_trips_shape_link_and_flags() {
         let link = ProtoLink::from_bits(0x0123_4567 & PROTO_INDEX_BITS);
         let flags = CONSTANT_FORM as u64 | ((FROZEN | OBJECT_ARRAY) as u64) << u32::BITS;
-        let id = intern_class(1234, link, flags);
+        let id = intern_class(1234, link, flags, 3);
         assert_eq!(class_shape(id), 1234);
         assert_eq!(class_link(id), link);
         assert_eq!(class_flags(id), flags);
-        assert_eq!(intern_class(1234, link, flags), id, "interning is stable");
-        assert_ne!(intern_class(1235, link, flags), id, "a shape is part of the class");
+        assert_eq!(class_region(id), 3);
+        assert_eq!(intern_class(1234, link, flags, 3), id, "interning is stable");
+        assert_ne!(intern_class(1235, link, flags, 3), id, "a shape is part of the class");
+        assert_ne!(intern_class(1234, link, flags, 4), id, "a region is part of the class");
     }
 
     #[test]
     fn plain_class_is_the_plain_header_word_of_link_and_shape() {
-        let id = ProtoLink::NULL.class(5);
-        assert_eq!(word(id), header_word(ProtoLink::NULL.bits(), 5));
+        let id = ProtoLink::NULL.class(5, 1);
+        assert_eq!(word(id), header_word(ProtoLink::NULL.bits(), 5 | (1 << CLASS_REGION_SHIFT)));
         assert_eq!(class_flags(id), 0);
         assert_eq!(class_shape(id), 5);
+        assert_eq!(class_region(id), 1);
+    }
+
+    #[test]
+    fn spill_is_the_last_slot_of_an_overfull_region() {
+        assert_eq!(spill_from(1, 1), None);
+        assert_eq!(spill_from(1, 2), Some(0));
+        assert_eq!(spill_from(3, 7), None);
+        assert_eq!(spill_from(3, 8), Some(6));
     }
 }

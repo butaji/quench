@@ -17,6 +17,7 @@ pub(crate) use quench_runtime::vm::engine_types::FrozenAssumptions;
 
 
 pub use quench_runtime::vm::engine_types::NativeJsProgram;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 

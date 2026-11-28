@@ -88,6 +88,7 @@ pub(crate) enum Symbol {
 pub(crate) use quench_runtime::vm::engine_types::HeapValueRecipe;
 
 pub(crate) use quench_runtime::vm::engine_types::ShapeRecipe;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Recipes or labels interned to dense keys: one key per distinct value, in first-seen order.
 struct Interned<T> {
@@ -508,7 +509,8 @@ pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<
     let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
     if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape))
+    let region = quench_runtime::tier_surface::cell_region_for(recipe.fields.len())?;
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape, region))
 }
 
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its

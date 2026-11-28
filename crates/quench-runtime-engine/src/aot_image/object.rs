@@ -18,6 +18,7 @@ use crate::native_object::{NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, Nat
 use cranelift_codegen::{ir, isa::{CallConv, TargetIsa}};
 use quench_bjit::call_record::CallRecord;
 use std::collections::BTreeMap;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The system linker's name of lane helper number `helper`, which the runtime binds.
 /// Every body starts at this alignment in the object.

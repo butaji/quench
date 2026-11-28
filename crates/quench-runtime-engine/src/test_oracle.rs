@@ -8,6 +8,7 @@ use quench_runtime::vm::Vm;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::{Engine, ExecutionMode, JitMode, Value};
 use std::{cell::RefCell, rc::Rc};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The tier a run is held to.
 #[derive(Clone, Copy, Debug)]

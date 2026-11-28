@@ -1,5 +1,8 @@
 use super::*;
 use crate::bytecode::{Op, WideInstruction};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// Each allocation opcode decodes to its row with the operands the catalog fixes, and
 /// no other opcode decodes.

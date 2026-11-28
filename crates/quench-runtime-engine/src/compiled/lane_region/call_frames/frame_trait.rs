@@ -1,4 +1,5 @@
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// A callee's bound `this` is the callee's own fact (`dispatch_fast::receiver_trusted`): the call guards nothing.

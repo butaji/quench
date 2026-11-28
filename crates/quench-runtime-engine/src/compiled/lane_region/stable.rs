@@ -11,6 +11,7 @@ use quench_runtime::staged::property::StoreJoin;
 use quench_runtime::staged::{Region, ShapeFact, Stage};
 
 pub(crate) use quench_runtime::vm::engine_types::StableFacts;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The Stable facts a lowering folded so far.
 #[derive(Default)]

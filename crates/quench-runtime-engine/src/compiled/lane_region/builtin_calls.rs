@@ -12,6 +12,7 @@ use quench_runtime::staged::array_search::{DenseNeedle, scan_dense};
 use quench_runtime::staged::region::Region;
 use quench_runtime::staged::{Domain, builtins, elements, strings};
 use quench_runtime::tier_surface::Native;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]

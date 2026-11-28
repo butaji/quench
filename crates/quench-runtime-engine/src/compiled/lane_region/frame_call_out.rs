@@ -16,6 +16,7 @@ use quench_runtime::staged::store::bound_full_store;
 use quench_runtime::Value;
 use cranelift_codegen::ir;
 use quench_runtime::staged::{flow::FlowStage, Stage};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.

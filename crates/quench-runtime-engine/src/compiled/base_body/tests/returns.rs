@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{assert_bodies_never_leave, run_both};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// An instruction that carries the return flag (`return a + b`, `-x`, `o.p`, `typeof v`, `a < b`,
 /// `f(x)`) is its row followed by the completion with its result: the body never leaves, and the

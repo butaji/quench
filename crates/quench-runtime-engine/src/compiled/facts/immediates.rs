@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use quench_runtime::bytecode::{Constant, Operand, OperandKind};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::value::Value;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The value a constant denotes where it is an immediate (no heap allocation): numbers,
 /// booleans, `null` and `undefined`.

@@ -9,6 +9,7 @@ use super::*;
 use super::call_out::{CallSite, HostControl, HostFrame};
 use crate::bytecode::WideInstruction;
 use crate::staged::{CallFrame, Concrete, DelegationStep, SuspendEffect, Operation, Step, Suspending};
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     /// The suspension row `i` at `site`, by its staged row on the interpreter's stage: the step

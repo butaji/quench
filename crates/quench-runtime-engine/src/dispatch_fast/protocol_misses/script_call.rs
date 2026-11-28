@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 // Parameter codes (the low byte of `protocol_family::SCRIPT_CALL | code`). The argument count of
 // `script_call_prove_miss` is in bits 0-2 (`ANY_ARGC` is 5), `PLAIN` is bit 3, and `RETURNS` (a returning

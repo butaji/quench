@@ -8710,6 +8710,7 @@ const VOID_RESULT_CONSTANT: usize = 1;
 
 
 pub(crate) use quench_runtime::vm::engine_types::DirectTierEntry;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(DirectTierEntryOps1)]
 impl DirectTierEntry {

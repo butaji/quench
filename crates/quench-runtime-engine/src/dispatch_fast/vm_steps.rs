@@ -12,6 +12,7 @@ use super::*;
 use quench_runtime::staged::exit::Exit;
 use quench_runtime::staged::frame::CONTEXT_THIS;
 use quench_runtime::vm::engine_types::JsStepDispatch;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The call-out of the record at `call_pc`, its operands read from the running registers:
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it

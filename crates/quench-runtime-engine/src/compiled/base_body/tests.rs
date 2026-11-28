@@ -4,6 +4,7 @@ use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;
 use crate::test_oracle::{assert_tier_agrees_after, Expect, Tier};
 use quench_runtime::vm::tier_events::Event;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[path = "tests/inlined.rs"]
 pub(crate) mod inlined;

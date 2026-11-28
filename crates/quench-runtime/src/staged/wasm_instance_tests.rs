@@ -11,6 +11,9 @@ use super::wasm_step::Step;
 use crate::bytecode::{Op, WideInstruction};
 use crate::{Value, WasmType};
 use crate::wasm::integer::I64BinaryOperator as Binary;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 #[test]
 fn the_table_names_the_register_and_instance_opcodes() {

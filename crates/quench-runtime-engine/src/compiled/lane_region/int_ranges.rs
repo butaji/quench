@@ -16,6 +16,7 @@ use super::*;
 use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
 use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Reach, Resolved, Shape, Version};
 use super::loop_versions::affine_reach::Ends;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The facts one analysis proves, by unit PC.
 pub(crate) struct IntRanges {

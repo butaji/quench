@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What the call site's target record says of its callee, read once (`DirectFacts::of`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

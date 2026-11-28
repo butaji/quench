@@ -77,6 +77,7 @@ pub(crate) struct CallPart {
 }
 
 pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
 /// the choice that made them.

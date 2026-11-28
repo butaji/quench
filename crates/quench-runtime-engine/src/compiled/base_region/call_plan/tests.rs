@@ -5,6 +5,7 @@ use super::*;
 use super::facts::Declined;
 use super::shape::Method;
 use quench_bjit::call_record as protocol;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None, op: quench_runtime::bytecode::Op::Call };
 

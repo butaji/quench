@@ -11,6 +11,7 @@ use quench_runtime::bytecode::{Register, WideInstruction};
 use quench_runtime::staged::{string_length, strings, Comparison, Operation};
 use super::*;
 use super::builtin_calls::continues;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A loop-invariant register whose flat facts the loop holds: one a `charCodeAt` of the loop reads
 /// (`reads_units`), or one a strict equality of the loop compares (`held_strings_equal`).

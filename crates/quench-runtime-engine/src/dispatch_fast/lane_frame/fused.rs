@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The word a row's double result publishes where it may stay raw (`raw_result`): its raw bits, except a
 /// NaN, which keeps the canonical form `LaneFrame::write` gives it (its raw bits could fall in the boxed

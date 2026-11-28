@@ -3,6 +3,7 @@ use crate::staged::typed_elements::{
     element_integer, element_number, find_number_element, store_double_element, store_element_number,
     native_word, store_number_element, NATIVE_LITTLE_ENDIAN,
 };
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
 
@@ -305,7 +306,7 @@ impl Vm {
     pub(super) fn typed_array_number_element(&self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;
-        if kind.is_bigint() {
+        if typed_array_kind_is_bigint(kind) {
             return None;
         }
         let Some(word) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
@@ -323,7 +324,7 @@ impl Vm {
     /// store copies or moves it; anything else stays on the general path.
     pub fn typed_array_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
         let view = self.typed_array_view(object)?;
-        if view.kind.is_bigint() || view.kind == TypedArrayKind::Float16 {
+        if typed_array_kind_is_bigint(view.kind) || view.kind == TypedArrayKind::Float16 {
             return None;
         }
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
@@ -412,7 +413,7 @@ impl Vm {
     /// `get_index` of a BigInt typed array at an index key (the BigInt it allocates); `None` for any other read.
     pub fn bigint_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
         // One cell read decides the kind; a Number kind's or any other object's read declines here.
-        let view = self.typed_array_view(object).filter(|view| view.kind.is_bigint())?;
+        let view = self.typed_array_view(object).filter(|view| typed_array_kind_is_bigint(view.kind))?;
         let index = self.array_index_key(key)? as usize;
         let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
         Some(self.bigint_element(view.kind, bytes))
@@ -434,7 +435,7 @@ impl Vm {
             return Some(element_value(kind, number));
         }
         let Some(bytes) = self.typed_field(&view, index) else { return Some(Value::UNDEFINED) };
-        Some(if kind.is_bigint() {
+        Some(if typed_array_kind_is_bigint(kind) {
             self.bigint_element(kind, bytes)
         } else {
             element_value(kind, element_number(kind, &bytes[..kind.width()], NATIVE_LITTLE_ENDIAN))
@@ -621,7 +622,7 @@ impl Vm {
             return false;
         };
         match self.typed_array_view(object) {
-            Some(view) if !view.kind.is_bigint() => {
+            Some(view) if !typed_array_kind_is_bigint(view.kind) => {
                 self.typed_array_write_view(view, index, &TypedArrayElement::Number(number));
                 true
             }
@@ -636,7 +637,7 @@ impl Vm {
         let Some(Cell::BigInt(integer)) = self.heap.get(value) else { return false };
         let bits = integer.wrapping_u64();
         match self.typed_array_view(object) {
-            Some(view) if view.kind.is_bigint() => {
+            Some(view) if typed_array_kind_is_bigint(view.kind) => {
                 self.typed_array_write_view(view, index, &TypedArrayElement::BigInt(bits));
                 true
             }
@@ -743,7 +744,7 @@ impl Vm {
     ) -> [u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH] {
         // A Number element is its kind's word (`element_word`): the first `width` bytes, the rest zero.
         if let TypedArrayElement::Number(number) = value
-            && !kind.is_bigint()
+            && !typed_array_kind_is_bigint(kind)
         {
             return crate::staged::typed_elements::element_word(kind, *number);
         }
@@ -842,7 +843,7 @@ impl Vm {
             unreachable!("typed copy target was validated");
         };
         let (target_kind, target_buffer, target_offset) = (object.native.kind(), *buffer, object.offset);
-        if source_kind.is_bigint() != target_kind.is_bigint() {
+        if typed_array_kind_is_bigint(source_kind) != typed_array_kind_is_bigint(target_kind) {
             return Err(self.type_error(p, super::operations::MIXED_BIGINT_TYPES.into()));
         }
         if source_kind == target_kind {
@@ -875,7 +876,7 @@ impl Vm {
             }
             return Ok(());
         }
-        if !source_kind.is_bigint()
+        if !typed_array_kind_is_bigint(source_kind)
             && self.typed_array_convert_numbers(source_buffer, source_offset, source_kind, target_buffer, target_offset + target_start * target_kind.width(), target_kind, length)
         {
             return Ok(());
@@ -998,7 +999,7 @@ impl TypedArrayView {
 /// raw double word (`Value::from_f64_raw`), any other element's Number as `Value::number` makes it.
 #[inline(always)]
 pub(crate) fn element_value(kind: TypedArrayKind, number: f64) -> Value {
-    if kind.is_float() { Value::from_f64_raw(number) } else { Value::number(number) }
+    if typed_array_kind_is_float(kind) { Value::from_f64_raw(number) } else { Value::number(number) }
 }
 
 /// Writes the first `width` bytes of `encoded` at `start` of `store`, as fixed-width moves:
@@ -1196,7 +1197,7 @@ impl Vm {
         let Some(length) = length.get() else {
             return;
         };
-        if kind.is_bigint() || kind == TypedArrayKind::Float16 {
+        if typed_array_kind_is_bigint(kind) || kind == TypedArrayKind::Float16 {
             return;
         }
         let Some(Cell::ArrayBuffer { bytes, detached: false, immutable, .. }) = self.heap.buffer_bytes_mut(buffer) else {

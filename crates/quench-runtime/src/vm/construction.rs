@@ -1,4 +1,5 @@
 use super::*;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 #[path = "array_construction.rs"]
 mod array_construction;
 #[cfg(test)]
@@ -1313,7 +1314,7 @@ impl Vm {
         let prototype_atom = self.prototype_atom();
         let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.heap.object(prototype).is_none() {
-            let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(TypedArrayKind::name)
+            let Some(intrinsic) = TypedArrayKind::of_constructor(native).map(typed_array_kind_name)
                 .or_else(|| match native {
                     Native::Object => Some("Object"),
                     Native::Function => Some("Function"),
@@ -1415,7 +1416,7 @@ impl Vm {
         new_target: Value,
     ) -> Result<Value, JsError> {
         if let Some(kind) = TypedArrayKind::of_constructor(native) {
-            let name = kind.name();
+            let name = typed_array_kind_name(kind);
             return self.construct_typed_array_with_new_target(
                 p,
                 args,

@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The environment of the environment window whose entries start at `entries`
 /// (`WINDOW_ENVIRONMENT`): the one already made, or a new environment of `function` of

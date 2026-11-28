@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use super::layouts::{class_link, class_shape};
+use super::layouts::{class_link, class_region, class_shape};
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
@@ -247,6 +247,8 @@ impl ClassSpace {
     /// charged as an allocation. `None` where the region is full. `fields` must fit the region.
     pub(super) fn claim_cell(&mut self, region: u32, class: u32, fields: &[Value], allocated: &mut usize) -> Option<u32> {
         debug_assert!((1..CAPACITY_CLASSES as u32).contains(&region) && fields.len() <= region_field_capacity(region));
+        // A class names its region (`layouts::intern_class`), so a cell of the class is a cell of that region.
+        debug_assert_eq!(class_region(class), region, "a cell's class names the region it is claimed from");
         if !self.ensure_reserved() {
             return None;
         }

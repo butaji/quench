@@ -6,6 +6,9 @@
 use super::Emission;
 use crate::bytecode::{ImmediateLayout, Op, Register};
 use crate::wasm::i31::I31Operator;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// `result = conversion(input)`, an externref internalize or externalize, `conversion` the
 /// lowering's selector.

@@ -16,6 +16,7 @@ use quench_runtime::tier_surface::Native;
 use quench_runtime::vm::engine_types::LaneImage;
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use std::collections::BTreeSet;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The runtime an image reaches.
 #[derive(Default, Debug)]

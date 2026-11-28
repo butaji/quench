@@ -31,6 +31,7 @@ use quench_runtime::staged::wasm_invoke::step_known_call_of;
 use quench_runtime::staged::{CallFrame, Callee, Constant, Entered, Frame, Invocation, NoPlans, PropertyFrame, Room,
     Stage, Step as StagedStep};
 use super::object_slots::Emit;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether `instruction` is a Wasm call whose destination is flagged as a return: a tail call,
 /// after which the function returns (nothing follows it on its path).

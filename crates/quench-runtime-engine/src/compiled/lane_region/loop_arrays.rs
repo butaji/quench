@@ -5,6 +5,7 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::facts::TypedAccess;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// An array base a local loop indexes and never redefines: its loop's entry proves the
 /// array's view once, writable where the loop stores through it, and only the element

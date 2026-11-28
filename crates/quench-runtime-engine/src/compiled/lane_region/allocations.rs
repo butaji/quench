@@ -9,6 +9,7 @@ use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::ARRAY_LITERAL_WINDOW;
 use quench_runtime::staged::Allocation;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The instructions after `pc` that no edge enters, as many as a literal's element

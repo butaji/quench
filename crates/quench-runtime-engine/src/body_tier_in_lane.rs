@@ -7,6 +7,7 @@ use quench_runtime::vm::tier_machine::TierState;
 use super::{Handler, LaneBody, LaneView};
 
 pub(crate) use quench_runtime::vm::engine_types::LaneBodyHistory;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 #[path = "lane_body_specialize.rs"]

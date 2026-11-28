@@ -21,6 +21,7 @@ mod shared {
 }
 
 use shared::{NumberWord, Outcome};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What the compiled row returns: it left at its miss edge, or it defined an int32 or a binary64
 /// word, which it stored through its result pointer.

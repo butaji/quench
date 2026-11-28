@@ -16,6 +16,7 @@ use super::*;
 use quench_runtime::staged::Form;
 use quench_runtime::staged::add_plan::AddSite;
 use quench_bjit::{padded_holes, HOLES};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What one add instruction runs: the site's transition, the storage form it can take
 /// (`Transition::form`) and whether the receiver is the activation's `this`.

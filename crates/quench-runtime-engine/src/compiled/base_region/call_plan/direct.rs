@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
 /// `PLACED_ARGUMENTS` only) and the register is spilled: its place and its window register.

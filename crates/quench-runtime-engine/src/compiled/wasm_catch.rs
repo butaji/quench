@@ -12,6 +12,7 @@ use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, Mach
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_instance::local_register;
 use cranelift_codegen::ir::{self, MemFlagsData};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The catch a raise enters: the pc its thrown value goes to, and the register that holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

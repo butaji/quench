@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `DefineField`'s miss (`define_field_miss`).
 pub(crate) const DEFINE_FIELD: u8 = 0;

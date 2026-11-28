@@ -11,6 +11,7 @@ use super::*;
 use quench_runtime::bytecode::Register;
 use quench_runtime::staged::protocol::fill_call;
 use quench_runtime::staged::{Arguments, Callee, Concrete, DecodeContext, FunctionId, Invocation, Passed, Receiver};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Values a call gathers from its register list, kept inline up to what a call usually passes.
 pub(crate) type Gathered = SmallVec<[Value; GATHERED_INLINE_VALUES]>;

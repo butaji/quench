@@ -12,6 +12,9 @@ use crate::heap::TypedArrayKind as Kind;
 use crate::heap::{BufferBytes, BufferViewObject, Cell, Heap, Object, ViewLength};
 use crate::typed_ir::{IntRange, Type};
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A frame holding a typed view over `bytes`: register 0 is the array, 1 the int32 key, 2 the
 /// Number (its `f64` bits) a store writes.

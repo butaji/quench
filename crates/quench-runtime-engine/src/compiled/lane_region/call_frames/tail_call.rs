@@ -4,6 +4,7 @@
 //! is the stub (its body was withdrawn) or the running frame is not a native header, the call is made as any other.
 
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl<'a, 'f> Lowering<'a, 'f> {
     /// The arguments window of the sibling tail call at `pc` (`CallSite::tail`): a returning call of a body the running

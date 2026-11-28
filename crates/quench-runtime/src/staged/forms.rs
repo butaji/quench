@@ -205,6 +205,9 @@ pub enum CallRecord {
 mod glue;
 #[cfg(not(stencil_build))]
 pub use glue::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 #[cfg(test)]
 mod tests;

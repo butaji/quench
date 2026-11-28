@@ -25,6 +25,7 @@ use quench_runtime::staged::machine::{Lane, MachineAccess, MachineScalar, Relati
 use quench_runtime::vm::global_facts::GlobalRead;
 use super::super::object_slots::emit;
 use super::super::declared_checks::LANE_TESTED;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The alias region of the function's entry cell, which a scalar call reads its entry from.
 const CELL: Access = Region::EntryCell.mutable();
