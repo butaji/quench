@@ -33,7 +33,7 @@ fn spilled_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::
 /// (`cell + fields_offset + slot * field_size`), or a spilled field's (`spilled_address`). A plain field index has no
 /// spilled bit, so it takes the inline arm; the non-spilled arm does no extra load.
 #[inline(always)]
-fn class_slot_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
+pub fn class_slot_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
     let spilled_bit = stage.and_imm(slot, u64::from(SPILLED_SLOT));
     let is_spilled = stage.ne_imm(spilled_bit, 0u32);
     stage.choose(is_spilled, #[inline(always)] |stage| spilled_address(stage, cell, slot),

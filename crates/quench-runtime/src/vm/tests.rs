@@ -21907,7 +21907,7 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
 #[test]
 fn lane_feedback_stores_take_polymorphic_own_slots() {
     // A store to `this` across receivers of two shapes, which a body left at, stores through
-    // the site's megamorphic own entries (`Vm::polymorphic_own_field_store_hit`), a widening
+    // the site's class-keyed own entries (`Vm::cached_field_store_hit`), a widening
     // double among them, and every read sees what the interpreter's does.
     let source = r#"
      (function () {

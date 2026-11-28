@@ -4,6 +4,7 @@
 use super::{Atom, Value, Vm};
 use crate::code_dependencies::SlotDependency;
 use crate::heap::{GlobalCell, GlobalFact, GlobalLayoutFact};
+use crate::staged::field_cache_layout::spilled_slot;
 use crate::typed_ir::Type;
 
 /// A global object's own data property that a lane body stores to, or loads for a `typeof`,
@@ -13,18 +14,20 @@ use crate::typed_ir::Type;
 /// so its writes notify nothing) and no inheritor reads the global object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlobalSlot {
-    pub slot: u16,
+    /// The field-cache slot word of the property: its field index, or a spilled slot word (`spilled_slot`) where the
+    /// global class spills there. Readers address it through `staged::entry::class_slot_address` (inline and spilled alike).
+    pub slot: u32,
     /// The slot count of the global object's shape.
     pub storage_len: usize,
     /// The slot's observed type: a store of a value of it needs no admission.
     pub ty: Type,
-    /// What the code holds of `ty` (`None` where any value fits or none was observed).
+    /// What the code holds of `ty` (`None` where any value fits or none was observed). Its slot is the field index.
     pub dependency: Option<SlotDependency>,
     pub layout: GlobalLayoutFact,
     /// The global object, and the realm field that names it while its realm is active.
     pub global: Value,
-    /// The record id of the global object (`Heap::record_id`), read from the heap the code compiles against.
-    pub record: u32,
+    /// The granule of the global object's class cell (`Value::direct_object_index`), read from the heap the code compiles against.
+    pub granule: u32,
     pub realm_offset: i32,
 }
 
@@ -210,12 +213,50 @@ impl Vm {
         i32::try_from(std::mem::offset_of!(Vm, realm) + std::mem::offset_of!(super::Realm, globals)).expect("the realm's global lies within the VM")
     }
 
-    /// The global object's own data property `atom` as a slot a lane body holds, for its `store` or its `typeof`.
-    /// The global object is a class cell, and a class cell's data field carries no shape hint to name it by, so no
-    /// slot is held here (the class-keyed tiers answer its reads).
+    /// The global object's own data property `atom` under its exact shape, as its shape and field index: plain data
+    /// (writable where `store`), of a shape that is no dictionary or exotic one, and not a private name.
+    fn global_own_data_field(&self, globals: Value, atom: Atom, store: bool) -> Option<(u32, u32)> {
+        let object = self.heap.object(globals)?;
+        let shape = object.exact_shape();
+        if shape != object.shape() || self.owned_shape_edits_in_place(shape) || self.is_private_name(atom) {
+            return None;
+        }
+        let slot = self.shape_slot(shape, atom)?;
+        let attributes = self.slot_attributes(object, slot)?;
+        if attributes.accessor || (store && !attributes.writable) {
+            return None;
+        }
+        Some((shape, u32::try_from(slot).ok()?))
+    }
+
+    /// The global object's own data property `atom` as a slot a lane body holds, for its `store` or its `typeof`; `None`
+    /// where a lexical binding may shadow the name, the property is no (writable) data property, or a store would be
+    /// seen by code that holds the cell's value or by an inheritor of the global object (`GlobalSlot`).
     pub fn stable_global_slot(&mut self, atom: Atom, store: bool) -> Option<GlobalSlot> {
-        let _ = (atom, store);
-        None
+        let globals = self.realm.globals;
+        if !self.global_name_hintable(atom) { return None; }
+        let granule = globals.direct_object_index()?.granule();
+        let (shape, field) = self.global_own_data_field(globals, atom, store)?;
+        self.heap.ensure_cell_extras(globals);
+        let table = self.heap.object_mut(globals).map(|mut o| o.global_values_table())?;
+        let cell = GlobalCell::Slot(field);
+        // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
+        while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
+        let held = crate::heap::global_value_fact(table, cell).is_some();
+        let inherited = self.heap.object(globals)?.was_used_as_prototype();
+        if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
+        let index = usize::try_from(field).ok()?;
+        let ty = self.heap.slot_type(shape, index);
+        let dependency = (ty != Type::ANY && ty != Type::NEVER)
+            .then_some(SlotDependency { shape, slot: u16::try_from(field).ok()?, ty });
+        // A field at or past the class's spill slot is a spilled slot word, the same as an IC entry's (`spill_encoded_entry`).
+        let slot = match self.heap.live_spill_from(granule).filter(|&from| field >= from) {
+            Some(from) => spilled_slot(from, field - from),
+            None => field,
+        };
+        Some(GlobalSlot { slot, storage_len: self.shapes.get(shape as usize)?.storage_len(), ty, dependency,
+            layout: crate::heap::global_layout_fact(table)?, global: globals, granule,
+            realm_offset: Self::realm_globals_offset() })
     }
 
     /// The global lexical binding `atom` of the active realm as a slot code reads live (`LexicalSlot`), where the record holds it
