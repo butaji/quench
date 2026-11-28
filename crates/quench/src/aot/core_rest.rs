@@ -185,7 +185,7 @@ pub(super) fn dump(image: &Path, work: &Path, report: &mut Value) -> Vec<Dump> {
     match image_dump::dump_image(image, work, 1, UNDUMPED, &request) {
         Ok(dumps) => {
             report["bootstrap"] = json!({"status": "dumped", "kind": "closed_world_state", "runs_entry_at_start": false,
-                "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes()})).collect::<Vec<_>>()});
+                "runs": dumps.iter().map(|(dump, raw)| json!({"raw_bytes": raw, "page_bytes": dump.page_bytes(), "arena_bytes": dump.arena_bytes(), "copied_bytes": dump.copied_bytes(), "regions": dump.regions.len()})).collect::<Vec<_>>()});
             dumps.into_iter().map(|(dump, _)| dump).collect()
         }
         Err(error) => {

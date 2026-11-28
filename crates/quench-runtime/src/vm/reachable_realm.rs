@@ -341,9 +341,9 @@ impl Vm {
         let Some(atom) = self.lookup_atom(name) else { return Ok(()) };
         let globals = self.realm.globals;
         let prototype = PropertyKey::string(self.prototype_atom);
-        for constructor in self.materialized_values(entry, globals, PropertyKey::string(atom))? {
+        for constructor in self.materialized_values(entry, closure, globals, PropertyKey::string(atom))? {
             if self.is_object_like(constructor) {
-                for value in self.materialized_values(entry, constructor, prototype)? {
+                for value in self.materialized_values(entry, closure, constructor, prototype)? {
                     self.enqueue(closure, value);
                 }
             }
@@ -352,9 +352,9 @@ impl Vm {
     }
 
     /// `holder`'s own values of `key`, materialized first when lazy.
-    fn materialized_values(&mut self, entry: &ResidualProgram, holder: Value, key: PropertyKey) -> Result<Vec<Value>, JsError> {
+    fn materialized_values(&mut self, entry: &ResidualProgram, closure: &mut Closure, holder: Value, key: PropertyKey) -> Result<Vec<Value>, JsError> {
         if self.is_pending_lazy_data_property(holder, key) {
-            self.materialize_lazy_data_property(entry, holder, key)?;
+            self.materialize_reached(entry, closure, holder, key)?;
         }
         Ok(self.own_values(holder, key))
     }
@@ -363,10 +363,19 @@ impl Vm {
     fn root_global(&mut self, entry: &ResidualProgram, closure: &mut Closure, name: &str) -> Result<(), JsError> {
         let Some(atom) = self.lookup_atom(name) else { return Ok(()) };
         let globals = self.realm.globals;
-        for value in self.materialized_values(entry, globals, PropertyKey::string(atom))? {
+        for value in self.materialized_values(entry, closure, globals, PropertyKey::string(atom))? {
             self.enqueue(closure, value);
         }
         Ok(())
+    }
+
+    /// Materializes `holder`'s lazy member `key`, which the closure reaches. Its initializer is reached too: an image
+    /// whose run reads the member materializes it again, so the initializer's native stays in the closed table.
+    fn materialize_reached(&mut self, entry: &ResidualProgram, closure: &mut Closure, holder: Value, key: PropertyKey) -> Result<(), JsError> {
+        if let Some(initializer) = self.lazy_initializer(holder, key) {
+            self.enqueue(closure, initializer);
+        }
+        self.materialize_lazy_data_property(entry, holder, key)
     }
 
     fn enqueue(&self, closure: &mut Closure, value: Value) {
@@ -389,7 +398,7 @@ impl Vm {
             // Materialize the lazy members the closure exposes before the keys are read.
             for key in self.shape_keys(shape) {
                 if self.admitted(closure, holder, key) && self.is_pending_lazy_data_property(holder, key) {
-                    self.materialize_lazy_data_property(entry, holder, key)?;
+                    self.materialize_reached(entry, closure, holder, key)?;
                 }
             }
             let shape = self.heap.object(holder).map_or(shape, |data| data.shape());
